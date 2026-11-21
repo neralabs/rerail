@@ -1,6 +1,6 @@
 //! The `.rerail` parser as Rust, written by the Bitlex compiler from the grammar (`rr_parser/rr.bitlex`), never by
-//! hand: tier 1 (`tier1.rs`) from the lexer's statements (`rerail_compiler::bitlex_lex_rust`), tier 2 (`tier2.rs`) from
-//! the tree rules (`rerail_compiler::bitlex_rust`). It is the compile's
+//! hand: tier 1 (`tier1.rs`) from the lexer's statements (`rerail_bitlex::bitlex_lex_rust`), tier 2 (`tier2.rs`) from
+//! the tree rules (`rerail_bitlex::bitlex_rust`). It is the compile's
 //! that `rerail_rr_parser::compiled` makes, so its codes are the JIT's. `rerail-rr-parser`'s `rust_is_current`
 //! checks they are the compiler's output, and writes them again with `RERAIL_BLESS=1`; its tests check tier 1's
 //! records against the interpreter's, and the tapes against the JIT's.

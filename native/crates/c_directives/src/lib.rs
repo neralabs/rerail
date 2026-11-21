@@ -8,8 +8,9 @@
 //! which is its reference. A file the grammar refuses (a construct
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_cpu_stream::{native_cpu_clusters, native_cpu_stream};
 
 /// The grammar.
 pub const GRAMMAR: &str = include_str!("../directives.bitlex");
@@ -105,7 +106,7 @@ pub(crate) fn lower_kinds(grammar: &str, kinds: &[&str], fields: &[&str]) -> Res
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     for b in &mut native.block_programs {
-        b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
     }
     Ok((program, native, compiled.words.clone(), compiled.machine.clone()))
 }
@@ -165,7 +166,7 @@ impl Compiled {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
         match run_resident(&[&self.native], &batch, Segments { blocks: 29, warm: 1 }) {
-            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_metal::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
+            Ok((_, run)) => Ok((0..files.len()).map(|i| rerail_cpu_stream::tier2_on::image_on(&self.parser, &run, i).ok()).collect()),
             Err(rerail_compiler::Error::BackendCapacity) if files.len() > 1 => {
                 let (a, b) = files.split_at(files.len() / 2);
                 let mut out = self.metal_images(a)?;

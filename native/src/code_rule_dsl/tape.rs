@@ -44,7 +44,7 @@ pub mod wire;
 pub mod tokens;
 mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-// cratify: `token_readers` is rerail-w's (it mounts it)
+// cratify: `token_readers` is rerail-classic's (it mounts it)
 pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).
@@ -187,7 +187,7 @@ impl Grammar {
         self.kinds.field_name(code)
     }
 
-    /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
+    /// The tree-sitter language of this grammar's dialect (the predecessor's accessor; the packed runtime's
     /// Metal tests compile queries against it).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn language(&self) -> Language {

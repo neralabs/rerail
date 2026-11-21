@@ -18,8 +18,9 @@
 //! The files are not in the repository; each test runs by name with its variables set.
 
 use crate::json::{base, files_in, form};
-use rerail_compiler::ladder::{Compiled, IdNode, as_ids, compile_step, reference};
+use rerail_cpu_stream::ladder::{Compiled, IdNode, as_ids, compile_step, reference};
 use rerail_compiler::*;
+use rerail_cpu_block::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -156,6 +157,17 @@ fn simdjson_forms_trees_are_14_jsons() {
         if want.is_some() { parsed += 1 } else { refused += 1 }
     }
     eprintln!("{} files: {parsed} parsed, {refused} refused, by both forms alike", inputs.len());
+}
+
+/// The JIT's format 16 run of the simdjson form passes each node to the writer's ops at its word (`direct`,
+/// `native_cpu_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
+/// buffer. (Kept from the Rust trees' test, which 0555 removed.)
+#[test]
+fn simdjson_forms_sixteen_run_is_direct() {
+    let jit = simdjson_form();
+    let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
+    assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
+    assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
 }
 
 /// Values nested `n` deep for each `n`: arrays, objects, and an object's value an array's by turns.
@@ -751,7 +763,7 @@ fn jsonc_comments_equal_tree_sitter() {
     paths.extend(files_in("RERAIL_JSON_CORPUS").into_iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| m.len() < 100_000)));
     const CLEAN: [(&str, bool); 8] = [("// c", true), ("//", true), ("// a, [1] é\r", true), ("/* c */", false), ("/**/", false), ("/***/", false), ("/* a * b / c */", false), ("/*\n{\n*/", false)];
     const QUOTED: [(&str, bool); 2] = [("// \"x", true), ("/* \" */", false)];
-    let mut rng = rerail_compiler::ladder::Rng(0x5eed_c0de);
+    let mut rng = rerail_cpu_stream::ladder::Rng(0x5eed_c0de);
     let (mut equal, mut quoted_refused, mut ts_errors, mut problems) = (0usize, 0usize, 0usize, Vec::new());
     for path in &paths {
         let bytes = std::fs::read(path).expect("reads");
@@ -922,7 +934,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
     ];
     for name in ["json-rfc", "jsonc"] {
         let c = form(name);
-        let mut rng = rerail_compiler::ladder::Rng(0x9e37_79b9_7f4a_7c15);
+        let mut rng = rerail_cpu_stream::ladder::Rng(0x9e37_79b9_7f4a_7c15);
         let mut files: Vec<Vec<u8>> = Vec::new();
         for _ in 0..300 {
             let mut f = Vec::new();
@@ -1103,11 +1115,11 @@ fn jsonc_refusals_by_reason() {
 fn json_rust() -> (String, String) {
     let source = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
     let stmts = ::bitlex::syntax::parse(&source).expect("parses");
-    let ids = rerail_compiler::ladder::Ids::default();
+    let ids = rerail_cpu_stream::ladder::Ids::default();
     let kind = |n: &str| Some(ids.of(n));
     let field = |n: &str| Some(ids.of(&format!("field {n}")));
-    let symbols = rerail_compiler::bitlex_masks::Symbols { kind: &kind, field: &field };
-    let c = rerail_compiler::bitlex_masks::compile_shaped(&stmts, &[rerail_compiler::bitlex_masks::FALLBACK], Some(&symbols), rerail_compiler::bitlex_masks::Shape::Auto).expect("compiles");
+    let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
     let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
     let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
     (tier1, tier2)

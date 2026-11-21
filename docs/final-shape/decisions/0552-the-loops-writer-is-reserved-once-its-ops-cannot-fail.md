@@ -1,6 +1,6 @@
 # 0552: The loop's writer is reserved once, and its ops cannot fail
 
-Status: done by the implementer. It is 0544's and 0547's item (the user's, 2026-11-20: an open, a leaf and a close
+Status: done by the implementer. It is 0544's and 0577's item (the user's, 2026-11-20: an open, a leaf and a close
 that cannot fail where the room is reserved once) redone in the form 0551 writes. How it is done is the
 implementer's choice. Follows 0551. Page 40, step 55.
 

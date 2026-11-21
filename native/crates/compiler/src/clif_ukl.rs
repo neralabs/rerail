@@ -25,6 +25,7 @@
 //! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
 //! one result.
 
+#[path = "clif_ukl/shape.rs"]
 mod shape;
 
 use shape::{Shape, returned_call, successors};

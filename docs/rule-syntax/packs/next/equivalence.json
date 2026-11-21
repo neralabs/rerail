@@ -1,0 +1,40 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "next",
+  "equivalent": false,
+  "untranslated": {
+    "next-no-page-custom-font": "failed: check-rr reader-failed next-no-page-custom-font.rerail: not lowered yet: default_component: match_all over $v, a node or span not bound by `source`, `src_line`, `kind` or a capture"
+  },
+  "different": {
+    "next-no-async-client-component": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        }
+      }
+    },
+    "next-no-duplicate-head": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 0
+        }
+      }
+    },
+    "next-no-location-assign-relative-destination": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    }
+  }
+}

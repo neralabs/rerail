@@ -61,7 +61,7 @@ pub(super) struct Chosen {
 /// the same rules in another order takes the same choices, which derive the same rows.
 pub fn key(p: &super::body::Placed) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.plan-choices/v2\0");
+    hash.update(b"rerail.plan-choices/v3\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
         hash.update(b"\0");
@@ -69,12 +69,18 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
     }
     // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
     // The settings are one `.about` relation of the version's digest (a sum of its fact relations' hashes): its hash
-    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings.
+    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings. The
+    // program's own row (`program`, one constant) is taken out too: a version holds it once it states any about row
+    // (`Builder::set_about_rows`), so a program whose only about row is a message held it and one with none did not,
+    // and the two keyed apart. Every other about row holds it, so it says nothing of its own.
     use crate::code_rule_dsl::logic::program_image::Cell;
     let v = &p.v;
-    let settings = v.about_facts().into_iter().find(|f| v.text(f.name()) == "setting");
+    let about = v.about_facts();
+    let named = |name: &str| about.iter().find(|f| v.text(f.name()) == name);
+    let settings = named("setting");
+    let own = named("program").map_or(0, |f| f.hash());
     hash.update(b"\0program\0");
-    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
+    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).wrapping_sub(own).to_le_bytes());
     for row in settings.into_iter().flat_map(|f| f.rows()) {
         let cells: Vec<Cell> = row.collect();
         let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned(), Cell::Branded(b) => b.to_string() };

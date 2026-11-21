@@ -83,12 +83,12 @@ fn joined(prog: &Arc<Version>, more: &Version) -> StoreResult<Arc<Version>> {
 }
 
 /// The kept rows a warm run reads, filled by its caller (`slice`).
-pub(in crate::code_rule_dsl) const KEPT_MATCH: &str = "temp.wave_kept_match";
-pub(in crate::code_rule_dsl) const KEPT_SPAN: &str = "temp.wave_kept_span";
+pub const KEPT_MATCH: &str = "temp.wave_kept_match";
+pub const KEPT_SPAN: &str = "temp.wave_kept_span";
 
 /// One lowered clause of the wave: its name (`policy/clause`), the prefilter's plan for its roots
 /// and its lowered matcher.
-pub(in crate::code_rule_dsl) struct Clause {
+pub struct Clause {
     pub name: String,
     /// Its policy's id and its own: the key of its violations (`violation("<policy>", "<clause>", …)`).
     pub key: (String, String),
@@ -106,7 +106,7 @@ pub(in crate::code_rule_dsl) struct Chunk {
     pub candidates: Vec<Vec<Vec<u32>>>,
 }
 
-pub(in crate::code_rule_dsl) struct Wave {
+pub struct Wave {
     /// Where the labels and root programs run: the CPU or Metal, compiled now or in the
     /// background (`compilation`).
     backend: ExecutionBackend,
@@ -170,18 +170,18 @@ struct WavePlans(std::sync::Mutex<crate::code_rule_dsl::stats::plans::Plans>);
 
 impl Wave {
     /// The wave of `clauses`, each its own forbid rule demanded everywhere (`Logic::per_clause`).
-    pub(in crate::code_rule_dsl) fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
+    pub fn new(clauses: &[Clause], backend: ExecutionBackend) -> StoreResult<Self> {
         Self::with_logic(clauses, super::policies::Logic::per_clause(clauses)?, backend)
     }
 
     /// Whether the demand statement reads a `py.*` family: the wave then reads it before its batch.
-    pub(in crate::code_rule_dsl) fn demand_reads_py(&self) -> bool {
+    pub fn demand_reads_py(&self) -> bool {
         let py = |rel: &str| crate::code_rule_dsl::facts::vtab::syntax::is_family(rel);
         self.logic.demand.as_ref().is_some_and(|v| v.rules().any(|r| r.body().any(|l| l.atom().is_some_and(|a| py(v.rel_name(a.rel()))))))
     }
 
     /// The wave of `clauses` running the policies' rules `logic` (`policies::lower`).
-    pub(in crate::code_rule_dsl) fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
+    pub fn with_logic(clauses: &[Clause], logic: super::policies::Logic, backend: ExecutionBackend) -> StoreResult<Self> {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         if matches!(backend, ExecutionBackend::MetalInterpreter | ExecutionBackend::MetalJit | ExecutionBackend::MetalBackground) {
             LoweredWave::warm_metal();
@@ -220,7 +220,7 @@ impl Wave {
     /// The wave as `rir` (list step 18, `rerail engine dump`), its kinds and fields named by
     /// its grammar: the lowered wave (`LoweredWave::dump`; with `fused` its plan, packs and
     /// groups), and with `setplan` its candidates' set plan (`prefilter::sets::dump`).
-    pub(in crate::code_rule_dsl) fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
+    pub fn dump(&self, fused: bool, setplan: bool) -> StoreResult<String> {
         let grammar = crate::code_rule_dsl::transducer::packed::rir::Names::of(GrammarDialect::Python);
         let mut out = self.lowered.dump(&self.names, Some(&grammar), fused).map_err(invalid)?;
         if setplan {
@@ -239,7 +239,7 @@ impl Wave {
 
     /// The wave program of a warm run: `program`'s, with each relation also holding the kept rows
     /// of the documents it does not evaluate (`KEPT_MATCH`, `KEPT_SPAN`).
-    pub(in crate::code_rule_dsl) fn kept_program(&self, store: &ContentStore) -> StoreResult<Program> {
+    pub fn kept_program(&self, store: &ContentStore) -> StoreResult<Program> {
         self.emit(store, true)
     }
 
@@ -374,7 +374,7 @@ impl Wave {
     /// The chunk's batch: its documents' stored tapes, in order, labelled by every clause's
     /// passes, and each clause's root program anchored at its prefilter candidates of its root's
     /// kinds.
-    pub(in crate::code_rule_dsl) fn demand(
+    pub fn demand(
         &mut self,
         lease: &Lease<'_>,
         graph: &(impl Graph + ?Sized),
@@ -560,7 +560,7 @@ impl Wave {
 
     /// Each clause family's row estimate in `fact_stats`, and the terminal relation's (their
     /// most), replacing the last run's: the demand relations read `max(rows)` per table.
-    pub(in crate::code_rule_dsl) fn statistics(&self, lease: &Lease<'_>, scope: &str) -> StoreResult<()> {
+    pub fn statistics(&self, lease: &Lease<'_>, scope: &str) -> StoreResult<()> {
         let mut most = 0_i64;
         for (part, name) in self.names.iter().enumerate() {
             let (rows, documents): (i64, i64) = lease.query_row(
@@ -583,7 +583,7 @@ impl Wave {
     }
 }
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::families::stored_documents as documents;
+pub use crate::code_rule_dsl::facts::families::stored_documents as documents;
 
 /// The tapes labelled on Metal, all at once or, where their label levels outgrow a workspace
 /// (06 S7: 250 files in one chunk) or the evaluation's launch bound, each half on its own: a file's labels read only that file.

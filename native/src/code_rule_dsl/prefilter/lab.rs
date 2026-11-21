@@ -11,7 +11,7 @@
 //!     the tape through `nera_tree`)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 //!
-//! From Pulling-it-all-together's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
+//! From PIAT's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
 //! capture is a store holding one batch's prefilter rows (`capture`), opened as a `ContentStore`,
 //! statements are lowered with the capture's statistics (`stats::inputs`) and run on its
 //! connection. Gone with decoding: clearing `decoded_*` tables and the structural fill.
@@ -48,11 +48,7 @@ fn anchor_lab() {
 fn run(policy: &str) {
     let captures = std::env::var("RERAIL_LAB_CAPTURES").expect("RERAIL_LAB_CAPTURES");
     let limit = std::env::var("RERAIL_LAB_LIMIT").map_or(usize::MAX, |n| n.parse().unwrap());
-    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-        std::fs::read_to_string(policy).unwrap(),
-        "json".to_owned(),
-        crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(policy).unwrap(), "json", crate::code_rule_dsl::rule_api::CAPABILITIES)
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let plans = super::plans::plans([compiled.inner.as_ref()]);
     // One statement per language and batch, lowered with the capture's statistics and run on its
@@ -324,7 +320,7 @@ fn capture_lab_corpus() {
         .iter()
         .map(|name| (name.clone(), super::tests::put(&store, &std::fs::read_to_string(corpus.join(name)).unwrap(), GrammarDialect::Python).0))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python");
+    let pack = crate::source_tree::native().join("../packs/python");
     let mut documents = Vec::new();
     for dir in [pack.join("rules"), pack.join("candidates/rules")] {
         documents.extend(std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "json")));
@@ -333,7 +329,7 @@ fn capture_lab_corpus() {
     let compiled = documents
         .iter()
         .filter_map(|path| {
-            crate::code_rule_dsl::CodeRuleDslRuntime::compile(std::fs::read_to_string(path).unwrap(), "json".to_owned(), crate::code_rule_dsl::test_support::CAPABILITIES.to_owned()).ok()
+            crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(path).unwrap(), "json", crate::code_rule_dsl::rule_api::CAPABILITIES).ok()
         })
         .collect::<Vec<_>>();
     let plans = super::plans::plans(compiled.iter().map(|c| c.inner.as_ref()));

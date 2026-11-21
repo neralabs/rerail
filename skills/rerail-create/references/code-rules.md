@@ -48,12 +48,16 @@ example on this page is a complete draft for `rerail rules test`, and Rerail's t
 |---|---|---|
 | `regex` over `file.content` | the thing is a token, an import line, a path, or a comment marker, in any text file, named by suffix or not (`Justfile`, `LICENSE`, `*.lock`) | cheapest; it can match inside strings and comments |
 | `regex` over `file.path`, or `{ "file": {} }` | the file itself is wrong: its name or place (`*.orig` left behind), or, with `file`, every file the scope holds should not exist | never reads the file; a match is the file's path, with no line, so no `fix` and no `capture.*` anchor |
-| `ast` with `pattern` | a call, an expression or a statement in Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++ or Go | needs the file to parse; ignores strings and comments |
+| `ast` with `pattern` | a call, an expression or a statement in Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++, C# or Go, or a node of an HTML, CSS, Markdown or JSON file | needs the file to parse; ignores strings and comments |
 | `ast` with `inside` / `has` / `not` | the thing is wrong only in some context: inside an `async def`, a loop, or a component | as above; the clearest way to state an exception |
 
 Rerail parses Python, JavaScript (`.js`, `.jsx`, `.mjs`, `.cjs`), TypeScript (`.ts`, `.tsx`), PHP, Blade, Rust, SQL, Vue,
-Java, C (`.c`), C++ (`.cpp`, `.cc`, `.h` and the like) and Go. It reads every other text file, whatever its name, for
-`regex` and `file` clauses only, and never reads a binary file (one holding a NUL byte).
+Java, C (`.c`), C++ (`.cpp`, `.cc`, `.h` and the like), C# (`.cs`), Go, HTML (`.html`, `.htm`), CSS, Markdown (`.md`,
+`.markdown`) and JSON. For Java, C, C++, C#, Go, HTML, CSS, Markdown and JSON it reads syntax only, so leave
+`resolves`, `binds`, `value`, `compare`, `arguments`, `calls` and `formatArgs` out of a rule for them:
+`rerail rules test` refuses such a draft (`language-not-supported`, or an invalid rule for JSON). It reads every other
+text file, whatever its name, for `regex` and `file` clauses only, and never reads a binary file (one holding a NUL
+byte).
 
 ### Regex
 
@@ -68,10 +72,14 @@ Patterns use the Rust `regex` dialect. In JSON, write every backslash twice.
 ### Syntax (ast)
 
 The `ast` query is an [ast-grep](https://ast-grep.github.io) rule with `language` set to `python`, `javascript`, `typescript`,
-`php`, `blade`, `rust`, `sql`, `vue`, `java`, `c`, `cpp` or `go`.
+`php`, `blade`, `rust`, `sql`, `vue`, `java`, `c`, `cpp`, `csharp`, `go`, `html`, `css`, `markdown` or `json`.
 
 - **`pattern`** is code with metavariables. `$X` matches one node and `$$$ARGS` matches any number of them:
   `console.log($$$A)`, `requests.get($URL, $$$REST)`.
+- **A call in C or C++:** a pattern parses as a whole file, where a bare `gets($A)` or `std::atoi($A)` reads as a
+  declaration, so `rules test` refuses it. Write the call inside a function body and select it:
+  `{ "context": "void f() { gets($A); }", "selector": "call_expression" }`. A macro's type is written the same way:
+  `{ "context": "STACK_OF($T) *x;", "selector": "macro_type_specifier" }`.
 - **`kind`** is a tree-sitter node kind: `function_definition`, `call_expression`, `import_statement`.
 - **`regex`** inside a rule tests the node's source text: `{ "kind": "function_definition", "regex": "^async\\s" }`.
 - **`inside`, `has`, `not`, `all`, `any`** combine rules. `inside` and `has` look only at the parent or direct children unless

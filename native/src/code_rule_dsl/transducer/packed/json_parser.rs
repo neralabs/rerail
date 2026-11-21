@@ -7,8 +7,9 @@
 //! JSON's tape tag; supertype memberships are in its codes. A file the grammar refuses (invalid JSON,
 //! an empty file, a comment holding a quote) goes to tree-sitter-json.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_cpu_stream::native_cpu_stream;
 
 /// The grammar: JSONC.
 const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");

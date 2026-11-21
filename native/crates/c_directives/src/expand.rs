@@ -230,9 +230,9 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
         return pp_words::run(program, files, env, bounds);
     }
     thread_local! {
-        static JIT: std::cell::OnceCell<Option<rerail_compiler::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
+        static JIT: std::cell::OnceCell<Option<rerail_cpu_pp::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
     }
-    JIT.with(|j| match j.get_or_init(|| rerail_compiler::native_cpu_pp::compile(program).ok()) {
+    JIT.with(|j| match j.get_or_init(|| rerail_cpu_pp::native_cpu_pp::compile(program).ok()) {
         Some(c) => c.run(program, files, env, bounds),
         None => pp_words::run(program, files, env, bounds),
     })
@@ -242,7 +242,7 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
 /// process: the device runs the same IR as the CPU.
 pub fn ukl() -> Result<&'static str, String> {
     static UKL: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    UKL.get_or_init(|| rerail_compiler::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
+    UKL.get_or_init(|| rerail_cpu_pp::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
 }
 
 /// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).

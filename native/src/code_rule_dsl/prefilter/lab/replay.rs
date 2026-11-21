@@ -3,7 +3,7 @@
 //!
 //! RERAIL_LAB_CAPTURES=<dir> cargo test --release --lib -- --ignored candidate_replay --nocapture
 //!
-//! From Pulling-it-all-together's `matcher/anchors/sql/replay.rs`. P also replayed each capture
+//! From PIAT's `matcher/anchors/sql/replay.rs`. P also replayed each capture
 //! under three layouts of retained (file, pre) relations (`lab_node`, `lab_ready`,
 //! `lab_revision`) for `retention_spikes.rs`; those relations were decoded ones, which
 //! transducers now produce, so that experiment, its schema and its modes are not kept.

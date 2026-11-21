@@ -148,7 +148,11 @@ fn case(family: &'static str, head: &'static str, rule: String, must: bool) -> C
 type Rows = Vec<(String, String)>;
 
 /// The stratum run once: its rows (by name for a symbol column), its counts per step, and the device's report.
-fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String, Option<super::Report>), String> {
+/// Per rule, its steps' (in, out) counts (`step_counts`), and by step whether the CPU's probe read a range there
+/// (`step_ranged`).
+type Counts = (Vec<Vec<(i64, i64)>>, Vec<Vec<bool>>);
+
+fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, Counts, Option<super::Report>), String> {
     let db = &fx.db;
     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
     let name = format!("par_{id}_{}", u8::from(device));
@@ -167,8 +171,8 @@ fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String,
     let tails = super::super::step_tails(db, &name).unwrap_or_default();
     let counts = super::super::step_counts(db, &name)
         .map(|c| c.into_iter().zip(tails.iter().copied().chain(std::iter::repeat(usize::MAX))).map(|(mut c, t)| { c.truncate(t); c }).collect::<Vec<_>>())
-        .map(|c| format!("{c:?}"))
         .unwrap_or_default();
+    let counts = (counts, super::super::step_ranged(db, &name).unwrap_or_default());
     super::super::close(db, &name).map_err(|e| format!("close: {e}"))?;
     ran?;
     let col = |k: usize| if c.head.as_bytes()[k] == b's' { format!("sym_text(c{k})") } else { format!("CAST(c{k} AS TEXT)") };
@@ -191,12 +195,37 @@ struct Tally {
     refused: BTreeMap<String, usize>,
 }
 
-/// Runs every case on the device and on the CPU; the failures (rows or counts that differ, a refused `must` case, an
-/// error), and the summary by family.
-fn check(fx: &Fixture, cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
+/// Runs every case on the device and on the CPU, the cases split over threads, each with a fixture of its own (a
+/// connection runs one case at a time: 1,200 random cases one after another took 13 s): the failures (rows or counts
+/// that differ, a refused `must` case, an error), in the cases' order, and the summary by family.
+fn check(cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+    let share = cases.len().div_ceil(threads).max(1);
+    let parts: Vec<(Vec<String>, BTreeMap<&'static str, Tally>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = cases.chunks(share).enumerate().map(|(i, part)| s.spawn(move || check_on(&fixture(), part, i * share))).collect();
+        handles.into_iter().map(|h| h.join().expect("a share of the cases")).collect()
+    });
+    let (mut failures, mut tally) = (Vec::new(), BTreeMap::<&'static str, Tally>::new());
+    for (f, t) in parts {
+        failures.extend(f);
+        for (family, part) in t {
+            let all = tally.entry(family).or_default();
+            all.cases += part.cases;
+            all.on_device += part.on_device;
+            all.rows += part.rows;
+            for (why, n) in part.refused {
+                *all.refused.entry(why).or_default() += n;
+            }
+        }
+    }
+    (failures, tally)
+}
+
+/// `check` of `cases` on `fx`, the first numbered `first` (a case's relations are named by its number).
+fn check_on(fx: &Fixture, cases: &[Case], first: usize) -> (Vec<String>, BTreeMap<&'static str, Tally>) {
     let mut failures = Vec::new();
     let mut tally: BTreeMap<&'static str, Tally> = BTreeMap::new();
-    for (id, c) in cases.iter().enumerate() {
+    for (id, c) in cases.iter().enumerate().map(|(i, c)| (first + i, c)) {
         let t = tally.entry(c.family).or_default();
         t.cases += 1;
         let what = || format!("[{} #{id}] seeds {:?} joins {:?}", c.family, c.seeds, c.joins);
@@ -235,10 +264,10 @@ fn check(fx: &Fixture, cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, T
             let only_d: Vec<_> = drows.iter().filter(|r| !crows.contains(r)).take(3).collect();
             let only_c: Vec<_> = crows.iter().filter(|r| !drows.contains(r)).take(3).collect();
             failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}", what(), drows.len(), crows.len()));
-        } else if dcounts != ccounts && c.joins.is_empty() {
+        } else if let (Err(e), true) = (super::tests::counts_agree(&ccounts.0, &dcounts.0, &ccounts.1), c.joins.is_empty()) {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.
-            failures.push(format!("{}: counts per step differ: device {dcounts}, CPU {ccounts}; report {report:?}", what()));
+            failures.push(format!("{}: counts per step differ: {e} (the CPU's against the device's); report {report:?}", what()));
         }
     }
     (failures, tally)
@@ -798,10 +827,9 @@ macro_rules! parity_test {
             if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
                 return;
             }
-            let fx = fixture();
             let r = rels();
             let cases: Vec<Case> = $cases(&r);
-            let (failures, tally) = check(&fx, &cases);
+            let (failures, tally) = check(&cases);
             report($what, &failures, &tally);
         }
     };

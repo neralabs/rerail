@@ -339,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    crate::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -595,7 +595,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
-    for (name, source) in syntax::sources(&store, syntax::tests::documents()).unwrap() {
+    for (name, source) in syntax::sources(&store, syntax::fixtures::documents()).unwrap() {
         modules.bind(&db, name, source).unwrap();
     }
     let t = Connection::open_in_memory().unwrap();
@@ -649,7 +649,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::content_store::Binding;
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
-    let docs = syntax::tests::documents();
+    let docs = syntax::fixtures::documents();
     store.bind_names(&docs.iter().map(|d| Binding { name: d.core.clone(), digest: d.digest }).collect::<Vec<_>>()).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -742,7 +742,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+            for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
                 if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -786,7 +786,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+        for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -3794,4 +3794,34 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
     let (with, without) = (last(true), last(false));
     assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
     eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
+}
+
+/// Past a bound head the search passes on one witness a binding only for a step joined by a bound variable, as the
+/// greedy `step` does: a cross product reads its rows until one passes the rest (Q240). A dict's keys and values
+/// unwrapped, `h(t) :- tgt(t), child(t, k0, i), child(t, v0, j), unparen(k0, k), unparen(v0, v)`, was led from the
+/// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
+/// 100 s on 300 files; probed by `child` first, a target reads a few rows.
+#[test]
+fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
+    let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("tgt", 233.0, vec![233.0]), ("child", 69_650.0, vec![23_217.0, 69_650.0, 103.0]), ("unparen", 69_690.0, vec![69_690.0, 69_690.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    // Each `unparen` after the `child` that binds its node: probed, never scanned.
+    let first = |rel: &str| order.iter().position(|r| *r == rel).unwrap();
+    assert_eq!(order[0], "tgt", "{order:?}, work={work}");
+    assert!(first("child") < first("unparen"), "{order:?}, work={work}");
+    assert!(work < 1e4, "{order:?}: {work}");
 }

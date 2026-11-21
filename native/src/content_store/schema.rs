@@ -681,7 +681,7 @@ CREATE TABLE IF NOT EXISTS push_pending (
 -- Collection keeps pages some binding names (tree_pages.rs).
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 
--- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
+-- Per-directory result pages (tree_pages.rs), keyed by what the
 -- directory's result depends on; `digest` is the page derivation's output digest. Each page's bytes are in a
 -- segment of `<store>.objects/`, as they are (decision 0450 step 2: floor 8).
 CREATE TABLE IF NOT EXISTS tree_pages (
@@ -704,7 +704,7 @@ CREATE TABLE IF NOT EXISTS tree_pages_pending (
     pid INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 
--- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
+-- The prefilter's per-tape access paths (prefilter.rs, from PIAT's anchor
 -- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
 -- tape and dying with it. Kinds are atoms (tape tag * 1024 + kind code). Postings are delta-varint
 -- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
@@ -844,7 +844,7 @@ CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings B
     DELETE FROM term_kind_freq WHERE kind=OLD.kind AND n<=0;
 END;
 
--- The prefilter's regex vocabulary (vocabulary.rs, from Pulling-it-all-together's
+-- The prefilter's regex vocabulary (vocabulary.rs, from PIAT's
 -- `vocabulary.sql`): each registered predicate's matching terms, filled in SQL when a candidate
 -- statement first names it and kept current by the terms each publication adds. A term that
 -- leaves `term_freq` leaves every predicate's set by cascade.

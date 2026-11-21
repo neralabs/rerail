@@ -1,4 +1,4 @@
-//! Pure-SQL tape decoding on the bundled SQLite (ast-index-spike `index_spike_sqlite_puresql.py`
+//! Pure-SQL tape decoding on the bundled SQLite (SQL index prototype `index_spike_sqlite_puresql.py`
 //! technique: fixed-stride `substr` over per-file blobs, rows from `generate_series`, structure by
 //! subtree size and parent delta). No registered function: a byte is
 //! `instr(X'000102..FF', substr(col, pos, 1)) - 1`.

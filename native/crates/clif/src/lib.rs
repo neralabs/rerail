@@ -22,7 +22,9 @@ pub mod ids;
 pub mod id_reads;
 #[cfg(feature = "ir")]
 pub mod inline;
-#[cfg(feature = "ir")]
+// The browser build has no JIT (`wasm/README.md`), so no JIT of the reads either: the manifest
+// leaves cranelift-jit out there.
+#[cfg(all(feature = "ir", not(target_family = "wasm")))]
 pub mod jit;
 /// The text tests' verdicts in the rolling cache (decision 0478 step 2d).
 #[cfg(feature = "ir")]

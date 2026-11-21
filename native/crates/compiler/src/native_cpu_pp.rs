@@ -13,6 +13,8 @@
 //! `native_cpu_shape` refuses any other loop, and any call.
 
 use crate::Error;
+// The refusals' reasons, the words' (`pp_words`), under the name this tier's callers read.
+pub use crate::pp_words::REASONS;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
@@ -38,44 +40,6 @@ macro_rules! em {
     };
 }
 
-/// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
-/// each the interpreter's reason.
-pub const REASONS: &[&str] = &[
-    "the compiled words refuse",
-    "the program stopped",
-    "past the calls' bound",
-    "a return with no call",
-    "past the output's bound",
-    "a directive with no file",
-    "a directive's line not in a file",
-    "past the arena's bound",
-    "past the macro table's bound",
-    "past the frames' bound",
-    "an argument with no frame",
-    "past the sources' bound",
-    "no level open",
-    "a level's source not on top",
-    "a level with no frame",
-    "an expansion with no frame",
-    "past the parameters' bound",
-    "past the definitions' bound",
-    "a __VA_OPT__ inside a __VA_OPT__",
-    "past the scratch bytes' bound",
-    "a substitution with no frame",
-    "past the expansions' bound",
-    "an argument substituted before its expansion",
-    "a raw string's prefix pasted",
-    "past the conditionals' bound",
-    "a line's source not on top",
-    "past the expression's bound",
-    "no value",
-    "no operator",
-    "no precedence",
-    "past the wanted files' bound",
-    "past push_macro's bound",
-    "past the unanswered features' bound",
-    "a _Pragma's text the token grammar refuses",
-];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
 const R_NO_CALL: u64 = 3;
@@ -6730,7 +6694,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let mut disasm = Vec::new();
     let mut code_kept = Vec::new();
     pp_words::validate(program)?;
-    let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let mut builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[("opt_level", "speed")]), default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
     builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));

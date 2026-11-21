@@ -399,7 +399,7 @@ fn the_compiled_words_are_the_interpreters() {
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
     {
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         // One compiled program; the dialect is the run's.
         for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
@@ -462,7 +462,7 @@ fn the_device_words_are_the_interpreters() {
 #[test]
 #[ignore = "a report (Q184)"]
 fn the_compiled_words_code_counted() {
-    let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::disassemble(program().unwrap()).unwrap();
     let text = &c.disasm[0];
     let insts: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
     let count = |f: &dyn Fn(&str) -> bool| insts.iter().filter(|l| f(l)).count();
@@ -492,7 +492,7 @@ fn the_corpus_compiled_is_the_interpreters() {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         for p in paths {
             let src = std::fs::read(&p).unwrap();
@@ -529,7 +529,7 @@ fn the_corpus_compiled_is_the_interpreters() {
 fn the_compiled_words_have_their_shape() {
     use rerail_compiler::native_cpu_shape::Step;
     let p = program().unwrap();
-    let c = rerail_compiler::native_cpu_pp::compile(p).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(p).unwrap();
     eprintln!("code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
     let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
     by.sort_unstable_by(|a, b| b.cmp(a));
@@ -552,7 +552,7 @@ fn the_compiled_words_have_their_shape() {
     assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"));
     // No speculation barrier in Cranelift's code (`csdb`, which its Arm jump tables carry):
     // its tables are trees of compares (`native_cpu_codegen::switch_trees`).
-    let kept = rerail_compiler::native_cpu_pp::disassemble(p).unwrap();
+    let kept = rerail_cpu_pp::native_cpu_pp::disassemble(p).unwrap();
     let csdb = kept.code.iter().flat_map(|f| f.as_chunks::<4>().0).filter(|w| u32::from_le_bytes(**w) == 0xd503_229f).count();
     assert!(kept.code.len() == c.code_bytes.len() && kept.code.iter().all(|f| !f.is_empty()));
     if cfg!(target_arch = "aarch64") {
@@ -603,7 +603,7 @@ fn the_corpus_timed() {
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
         let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
-        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
         for pass in 0..2 {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
@@ -710,7 +710,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
     ];
     let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
     let mut unlexed = Vec::new();
-    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     for cpp in [false, true] {
         let mut differ = Vec::new();
         for case in CASES {
@@ -774,7 +774,7 @@ fn the_device_words_time_against_the_jit() {
     let translate = t0.elapsed();
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let ns = [1usize, 32, 64, 128];
-    let jit = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let jit = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     let cpu = std::cell::Cell::new(0f64);
     let gpu = std::cell::RefCell::new([0f64; 4]);
     let calls = std::cell::Cell::new(0usize);
@@ -836,7 +836,7 @@ fn the_device_words_time_against_the_jit() {
 fn the_corpus_through_the_rungs() {
     use pp_words::RUNGS;
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
-    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let c = rerail_cpu_pp::native_cpu_pp::compile(program().unwrap()).unwrap();
     let by_buffer = std::cell::RefCell::new(Vec::<usize>::new());
     let bytes_at = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
         let (mut n, mut k) = (0usize, 0usize);

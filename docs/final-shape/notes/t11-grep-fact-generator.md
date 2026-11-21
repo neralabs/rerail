@@ -2,7 +2,7 @@
 
 ## 1. Intro
 
-The data-layer policy `plan-composition-architecture` checks one file, `l2070_batching/semantic_plan.py`. Five
+The data-layer policy `plan-composition-architecture` checks one file, the batching package's semantic plan module. Five
 of its checks read the file's syntax tree, and they already run. Two more do not read the source at all. They
 come from the Python linter running the plan builder and watching what it does:
 
@@ -61,7 +61,7 @@ So both probes test **behaviour**:
 
 - SPC-012 tests that the whole path is deterministic: `freeze`, `_semantic_fingerprint`, each step's
   `planning_fingerprint()` (here `StaticValueAfterDepsStep`'s, from
-  `impl/common/l2070_server_plan/steps/collect_results.py` or a base class), and `str()` of every value
+  the server plan's result-collecting step or a base class), and `str()` of every value
   `default=str` reaches.
 - SPC-005 tests that the allocator never hands out a ref twice.
 

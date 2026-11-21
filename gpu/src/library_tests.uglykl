@@ -194,8 +194,17 @@ DEFINE_KERNEL2(tests, t_lz4,
 }
 
 // ukl/workqueue.h: a persistent dispatch walking the binary tree of `w` nodes from node 0, each node pushing its
-// children; `visits` counts each node's visits. A worker stops after `n` empty polls in a row. `t_workqueue` takes a
-// thread at a time, `t_workqueue_sg` a SIMD group at a time.
+// children; `visits` counts each node's visits. A worker stops after `n` empty polls in a row, or once it has taken
+// `b` items in the launch (0: no budget). `t_workqueue` takes a thread at a time, `t_workqueue_sg` a SIMD group at a
+// time.
+typedef struct QueueArgs {
+    uint32_t n;
+    uint32_t w;
+    uint32_t b;
+    uint32_t pad;
+} QueueArgs;
+UKL_REFLECT_STRUCT(QueueArgs, n, w, b, pad)
+
 UKL_INLINE void visit(UklWorkQueue q, UKL_GLOBAL uint32_t* visits, uint32_t nodes, uint32_t item)
 {
     ukl_atomic_add(&visits[item], 1u);
@@ -205,30 +214,32 @@ UKL_INLINE void visit(UklWorkQueue q, UKL_GLOBAL uint32_t* visits, uint32_t node
     ukl_wq_done(q);
 }
 
-UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* control, uint32_t nodes)
+UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* control, QueueArgs args)
 {
     UklWorkQueue q;
     q.slots = slots;
     q.control = control;
-    q.capacity = 4u * nodes;
+    q.capacity = 4u * args.w;
     q.ring = 0u;
+    q.budget = args.b;
     return q;
 }
 
 DEFINE_KERNEL2(tests, t_workqueue,
-               ARGS,     TestArgs, args,    ,
+               ARGS,     QueueArgs, args,   ,
                RWBUFFER, uint32_t, slots,   "[4 * w]",
                RWBUFFER, uint32_t, control, "[4]",
                RWBUFFER, uint32_t, visits,  "[w]",
                GID0,     uint32_t, i,       )
 {
-    UklWorkQueue q = test_queue(slots, control, args.w);
-    uint32_t polls = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    UklWorkQueue q = test_queue(slots, control, args);
+    uint32_t polls = 0u, taken = 0u;
+    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         if (ukl_wq_take(q, &item)) {
             visit(q, visits, args.w, item);
             polls = 0u;
+            taken++;
         } else if (ukl_wq_idle(q, &polls, args.n)) {
             break;
         }
@@ -236,72 +247,84 @@ DEFINE_KERNEL2(tests, t_workqueue,
 }
 
 DEFINE_KERNEL2(tests, t_workqueue_sg,
-               ARGS,     TestArgs, args,    ,
+               ARGS,     QueueArgs, args,   ,
                RWBUFFER, uint32_t, slots,   "[4 * w]",
                RWBUFFER, uint32_t, control, "[4]",
                RWBUFFER, uint32_t, visits,  "[w]",
                LANE,     uint16_t, lane,    )
 {
-    UklWorkQueue q = test_queue(slots, control, args.w);
-    uint32_t polls = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    UklWorkQueue q = test_queue(slots, control, args);
+    uint32_t polls = 0u, taken = 0u;
+    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
         if (got)
             visit(q, visits, args.w, item);
+        // The group's takes that got any item: the same count in every lane.
+        taken += ukl_sg_count(got __UKL_ARGS) != 0u ? 1u : 0u;
         if (ukl_wq_idle_sg(q, got, &polls, args.n __UKL_ARGS))
             break;
     }
 }
 
-// ukl/grid.h's barrier: `n` rounds, two barriers each. In a round each thread writes its slot, waits, reads the slot of
-// the thread a group ahead (another group's, a coherent read), and counts it wrong unless it is that thread's write
-// of this round; then waits again before the next round's writes. `out[group]` is the group's wrong reads.
+// The grid of a test's dispatch: the groups that are running (`ukl_grid_join`); false in a group that is not its.
+UKL_INLINE bool test_grid(UKL_PRIVATE UklGrid* g, UKL_GLOBAL uint32_t* ctl, uint32_t gsz, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* words)
+{
+    g->ctl = ctl; g->groups = 0u; g->group = 0u; g->lid = lid; g->lsz = lsz;
+    return ukl_grid_join(g, gsz / lsz, words);
+}
+
+// ukl/grid.h's barrier: `n` rounds, two barriers each. In a round each thread of the grid writes its slot, waits,
+// reads the slot of the thread a group ahead (another group's, a coherent read), and counts it wrong unless it is
+// that thread's write of this round; then waits again before the next round's writes. `out[group]` is the group's
+// wrong reads, by its ticket.
 DEFINE_KERNEL2(tests, t_grid_barrier,
                ARGS,     TestArgs, args,  ,
-               RWBUFFER, uint32_t, ctl,   "[3]",
+               RWBUFFER, uint32_t, ctl,   "[4]",
                RWBUFFER, uint32_t, slots, "[w * 256]",
                RWBUFFER, uint32_t, out,   "[w]",
                SHARED,   uint32_t, flag,  1,
-               GID0,     uint32_t, i,     ,
+               SHARED,   uint32_t, words, 2,
                GSZ0,     uint32_t, gsz,   ,
-               TGID0,    uint32_t, group, ,
                LID0,     uint32_t, lid,   ,
                LSZ0,     uint32_t, lsz,   )
 {
     UklGrid g;
-    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
+    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
+        return;
     UKL_COHERENT uint32_t* s = (UKL_COHERENT uint32_t*)slots;
-    uint32_t wrong = 0u, other = (i + lsz) % gsz;
+    uint32_t n = g.groups * lsz, i = g.group * lsz + lid;
+    uint32_t wrong = 0u, other = (i + lsz) % n;
     for (uint32_t r = 0u; r < args.n; r++) {
-        s[i] = r * gsz + i;
+        s[i] = r * n + i;
         if (!ukl_grid_barrier(g, flag))
             break;
-        wrong += s[other] != r * gsz + other ? 1u : 0u;
+        wrong += s[other] != r * n + other ? 1u : 0u;
         if (!ukl_grid_barrier(g, flag))
             break;
     }
     if (wrong != 0u)
-        ukl_atomic_add(&out[group], wrong);
+        ukl_atomic_add(&out[g.group], wrong);
 }
 
 // ukl/grid.h's scan: the exclusive scan of `in`'s first `count[0]` values, as the grid's phases.
 DEFINE_KERNEL2(tests, t_grid_scan,
                ARGS,     TestArgs, args,    ,
-               RWBUFFER, uint32_t, ctl,     "[3]",
+               RWBUFFER, uint32_t, ctl,     "[4]",
                ROBUFFER, uint32_t, count,   "[1]",
                RWBUFFER, uint32_t, in,      "[n]",
                RWBUFFER, uint32_t, out,     "[n + 1]",
                RWBUFFER, uint32_t, sums,    "[w + 1]",
                SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
                SHARED,   uint32_t, flag,    1,
+               SHARED,   uint32_t, words,   2,
                GSZ0,     uint32_t, gsz,     ,
-               TGID0,    uint32_t, group,   ,
                LID0,     uint32_t, lid,     ,
                LSZ0,     uint32_t, lsz,     )
 {
     UklGrid g;
-    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
+    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
+        return;
     ukl_grid_scan_exclusive_u32(g, count, (UKL_COHERENT const uint32_t*)in, (UKL_COHERENT uint32_t*)out,
                                 (UKL_COHERENT uint32_t*)sums, scratch, flag __UKL_ARGS);
 }
@@ -309,7 +332,7 @@ DEFINE_KERNEL2(tests, t_grid_scan,
 // ukl/grid.h's segmented scan: `op` (`w >> 16`) over `in`'s first `count[0]` values, cut at `heads`.
 DEFINE_KERNEL2(tests, t_grid_seg,
                ARGS,     TestArgs, args,  ,
-               RWBUFFER, uint32_t, ctl,   "[3]",
+               RWBUFFER, uint32_t, ctl,   "[4]",
                ROBUFFER, uint32_t, count, "[1]",
                RWBUFFER, uint32_t, in,    "[n]",
                RWBUFFER, uint32_t, heads, "[n]",
@@ -318,13 +341,14 @@ DEFINE_KERNEL2(tests, t_grid_seg,
                SHARED,   uint32_t, sv,    1024,
                SHARED,   uint32_t, sf,    1024,
                SHARED,   uint32_t, flag,  1,
+               SHARED,   uint32_t, words, 2,
                GSZ0,     uint32_t, gsz,   ,
-               TGID0,    uint32_t, group, ,
                LID0,     uint32_t, lid,   ,
                LSZ0,     uint32_t, lsz,   )
 {
     UklGrid g;
-    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
+    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
+        return;
     ukl_grid_seg_scan_n(g, args.w >> 16, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), (UKL_COHERENT const uint32_t*)in,
                         (UKL_COHERENT const uint32_t*)heads, (UKL_COHERENT uint32_t*)out, (UKL_COHERENT uint32_t*)sums, sv, sf, flag __UKL_ARGS);
 }
@@ -334,7 +358,7 @@ DEFINE_KERNEL2(tests, t_grid_seg,
 // order already, the values their indexes before it.
 DEFINE_KERNEL2(tests, t_grid_sort,
                ARGS,     TestArgs, args,    ,
-               RWBUFFER, uint32_t, ctl,     "[3]",
+               RWBUFFER, uint32_t, ctl,     "[4]",
                ROBUFFER, uint32_t, count,   "[1]",
                RWBUFFER, uint64_t, keys,    "[n]",
                RWBUFFER, uint32_t, values,  "[n]",
@@ -350,13 +374,14 @@ DEFINE_KERNEL2(tests, t_grid_sort,
                SHARED,   uint32_t, tile,    UKL_GRID_SORT_TILE_WORDS,
                SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
                SHARED,   uint32_t, flag,    1,
+               SHARED,   uint32_t, words,   2,
                GSZ0,     uint32_t, gsz,     ,
-               TGID0,    uint32_t, group,   ,
                LID0,     uint32_t, lid,     ,
                LSZ0,     uint32_t, lsz,     )
 {
     UklGrid g;
-    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
+    if (!test_grid(&g, ctl, gsz, lid, lsz, words))
+        return;
     UklGridSortLocal l;
     l.h = h; l.counts = counts; l.before = before; l.base = base; l.digits = digits; l.tile = tile;
     ukl_grid_sort_u64_from(g, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), args.w >> 24, (args.w >> 16) & 0xffu, true, (UKL_COHERENT uint64_t*)keys,

@@ -1,6 +1,6 @@
 # 0553: The loop's empty container is one leaf, and the root's closer is checked first
 
-Status: done by the implementer. These are 0545's and 0549's items (the user's, 2026-11-20) redone in the form 0551
+Status: done by the implementer. These are 0545's and 0579's items (the user's, 2026-11-20) redone in the form 0551
 writes; the user asked for them in that form (2026-11-21). How they are done is the implementer's choice. Follows
 0552. Page 40, step 56.
 

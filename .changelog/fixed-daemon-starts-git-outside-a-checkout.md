@@ -1,1 +1,0 @@
-The daemon no longer starts Git on every hook event of a session that works in a folder outside any Git checkout, such as your home folder. Where starting a process is slow, as on a busy Windows machine, each of those starts kept the daemon from answering every session's hooks for up to seconds at a time.

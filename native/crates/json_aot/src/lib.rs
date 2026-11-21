@@ -1,7 +1,7 @@
 //! JSON's parser in simdjson's structure as Rust (`json_parser/json-simdjson.bitlex`), written by the Bitlex
 //! compiler from the grammar, never by hand: tier 1 (`tier1.rs`) from its lexer statements
-//! (`rerail_compiler::bitlex_lex_rust`, simdjson's stage 1: each token's first byte), tier 2 (`tier2.rs`) from its
-//! tree rules in one loop (`rerail_compiler::bitlex_rust::tier2_loop`, simdjson's stage 2), writing format 16.
+//! (`rerail_bitlex::bitlex_lex_rust`, simdjson's stage 1: each token's first byte), tier 2 (`tier2.rs`) from its
+//! tree rules in one loop (`rerail_bitlex::bitlex_rust::tier2_loop`, simdjson's stage 2), writing format 16.
 //! `rerail-parser-tests`' `json_rust_is_current` checks they are the compiler's output, and writes them again with
 //! `RERAIL_BLESS=1`; its tests check the tapes against the JIT's.
 

@@ -1,26 +1,31 @@
 #!/usr/bin/env node
-// Which pack versions a promotion points `latest` at (promotionRequest and planPromotions in packs.mjs). Packs publish
-// under `latest`, so this is for putting one back, or for a version a publish left under `next`. With no pack id,
-// every published pack whose package.json version is released (its `<name>@<version>` tag exists) and is not `latest` yet, less
-// any pack held at its `latest` (put back on purpose). With an id, that pack alone, at the version given or else its
-// package.json one; naming an older version holds the pack there. Writes `promote` (a JSON list
-// for packs-promote.mjs) to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY when they are set, so the run shows
-// what the promote job will move before anyone approves it.
+// Which pack versions a promotion points `latest` at (promotionRequest, releasedRequest and planPromotions in
+// packs.mjs). Packs publish under `next`, and a release run then starts a promotion of exactly what it published:
+// $RELEASED, as the publish job names it, whatever `main` holds by the time it is approved, less any pack held at its
+// `latest` (put back on purpose). Run by hand with no pack id, every published pack whose package.json version is
+// released (its `<name>@<version>` tag exists) and is not `latest` yet, less any held. With an id, that pack alone, at
+// the version given or else its package.json one; naming an older version holds the pack there. Writes `promote` (a
+// JSON list for packs-promote.mjs) to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY when they are set, so the run
+// shows what the promote job will move before anyone approves it. Whether the core on `latest` loads each pack, and
+// whether a newer version reached `latest` meanwhile, the promote job checks once approved (promotePacks).
 //
 // Exits non-zero, after writing both, when a named version was never released or a pack's dist-tags could not be
 // read: the others are still listed and promoted.
 //
 // The packs are restricted, so reading their dist-tags needs an npm login, or NODE_AUTH_TOKEN with a read token.
 //
-//   node scripts/release/packs-promote-plan.mjs [<id> [<version>]]   (an empty argument is no value; GH_REPO or the
-//   checkout's remote names the repository)
+//   [RELEASED="<name>@<version>[:<dist-tag>] ..."] node scripts/release/packs-promote-plan.mjs [<id> [<version>]]
+//   (an empty argument is no value; RELEASED leaves no room for an id; GH_REPO or the checkout's remote names the
+//   repository)
 import { appendFileSync } from "node:fs";
 import { readDistTags } from "./dist-tags.mjs";
-import { HOLD_TAG, planPromotions, promotionRequest, publishedPacks, releaseTag, releaseTags } from "./packs.mjs";
+import { HOLD_TAG, planPromotions, promotionRequest, publishedPacks, releasedRequest, releaseTag, releaseTags } from "./packs.mjs";
 
-// The workflow passes both inputs, empty when not given: read them by position.
+// The workflow passes every input, empty when not given: read them by position.
 const [id, version] = process.argv.slice(2, 4).map((argument) => (argument === "" ? undefined : argument));
-const request = promotionRequest(publishedPacks(), id, version);
+const fromRelease = (process.env.RELEASED ?? "").trim();
+if (fromRelease !== "" && (id !== undefined || version !== undefined)) throw new Error("released names the versions to promote: leave pack and version empty");
+const request = fromRelease === "" ? promotionRequest(publishedPacks(), id, version) : releasedRequest(publishedPacks(), fromRelease);
 const tags = releaseTags();
 const released = request.packs.filter((pack) => tags.includes(releaseTag(pack.name, pack.version)));
 const distTags = await readDistTags(released.map((pack) => pack.name));
@@ -48,6 +53,7 @@ if (process.env.GITHUB_STEP_SUMMARY !== undefined) {
   if (plan.unreadable.length > 0) lines.push("", `Could not be read from npm, so not promoted: ${plan.unreadable.map((pack) => pack.id).join(", ")}.`);
   appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join("\n")}\n`);
 }
-const promotions = plan.promote.map(({ id: packId, version: packVersion, hold, release }) => ({ id: packId, version: packVersion, hold, release }));
+// A sweep's pack is checked for a hold again once approved: someone can put it back while the promotion waits.
+const promotions = plan.promote.map(({ id: packId, version: packVersion, hold }) => ({ id: packId, version: packVersion, hold, sweep: !request.named }));
 if (process.env.GITHUB_OUTPUT !== undefined) appendFileSync(process.env.GITHUB_OUTPUT, `promote=${promotions.length === 0 ? "" : JSON.stringify(promotions)}\n`);
 if (plan.unreadable.length > 0 || (request.named && plan.unreleased.length > 0)) process.exitCode = 1;

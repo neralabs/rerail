@@ -1,4 +1,4 @@
-//! Batch admission's measurements, from Pulling-it-all-together: process residency samples
+//! Batch admission's measurements, from PIAT: process residency samples
 //! (`profile/memory.rs`), and P's payload census (`workspace/memory/census.rs`) over W's JSON
 //! projections. The relational module also provides the compatibility contract for recorded
 //! data-layer policies. It uses the production matcher and does not restore the retired anchor corpus.

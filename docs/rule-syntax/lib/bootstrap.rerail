@@ -66,7 +66,8 @@ p0_from(f, at, n) :- p0_names(_, f, at, n).
 // The candidates, in order: the library, then (for a module) the file's own directory.
 .decl p0_cand(from: symbol, at: number, name: symbol, rank: number, path: symbol)
 p0_cand(f, at, n, 1, c) :- p0_from(f, at, n), p0_lib(l), c = cat(l, "/", n).
-p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>.*)/[^/]*", f), c = cat(dir, "/", n).
+// A module's path is the engine's, so its directory ends at either separator (Windows names it with `\`).
+p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>.*)[/\\\\][^/\\\\]*", f), c = cat(dir, "/", n).
 
 // Each candidate's directory is listed, asked by the directory alone (`rr::lower`'s world demand).
 .decl p0_split(c: symbol, dir: symbol, base: symbol)

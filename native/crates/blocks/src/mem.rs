@@ -28,12 +28,13 @@ pub fn reserve(len: usize) -> *mut u8 {
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };
-        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}), {} reserved", std::io::Error::last_os_error(), reserved());
+        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}): {} GiB reserved and not released, this one with them", std::io::Error::last_os_error(), reserved() >> 30);
         p.cast()
     }
     #[cfg(windows)]
     {
-        crate::windows::anon(len).unwrap_or_else(|e| panic!("VirtualAlloc of {len} bytes failed: {e}"))
+        // Address space only, as on Unix: what is written is committed as it is allocated (`commit`).
+        crate::windows::reserve(len).unwrap_or_else(|e| panic!("VirtualAlloc of {len} bytes failed: {e}"))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -60,14 +61,25 @@ pub(crate) unsafe fn release(p: *mut u8, len: usize) {
         libc::munmap(p.cast(), len);
     }
     #[cfg(windows)]
-    {
-        let _ = len;
-        crate::windows::release(p);
-    }
+    crate::windows::release(p, len);
     #[cfg(not(any(unix, windows)))]
     unsafe {
         std::alloc::dealloc(p, std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation"));
     }
+}
+
+/// Makes `len` bytes at `p` of a reservation memory that may be written: on Windows its pages committed (`MEM_COMMIT`;
+/// pages committed already stay as they are). Elsewhere nothing: Unix commits a page on its first touch.
+///
+/// # Safety
+/// `p` and `len` lie in a reservation of `reserve`'s.
+// Its callers outside the tests commit on Windows only (`Block::commit_to`, `Scratch::take`).
+#[cfg(any(windows, test))]
+pub(crate) unsafe fn commit(p: *mut u8, len: usize) {
+    #[cfg(windows)]
+    crate::windows::commit(p, len).unwrap_or_else(|e| panic!("committing {len} bytes of a reservation: {e}"));
+    #[cfg(not(windows))]
+    let _ = (p, len);
 }
 
 /// Makes a reservation read-only, so a write after freeze faults (Unix, Windows); elsewhere nothing.

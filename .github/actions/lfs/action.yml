@@ -3,15 +3,10 @@ description: >-
   Replaces the checkout's Git LFS pointers (the embedding model, the engine's Unicode names table) with their content.
   The objects come from a cache keyed on their ids (`git lfs ls-files -l`), so a run downloads them from LFS only
   when one of them changes. Use it right after `actions/checkout`, which leaves the pointers when `lfs` is false. The
-  cache is saved by an explicit step straight after the pull, never in the post-job step: by the end of a job that
-  derives pack test data, upstream's code may have run, which could have rewritten .git/lfs.
-
-inputs:
-  save:
-    description: >-
-      Save the objects to the cache on a miss. A job that runs a pull request's code under pull_request_target sets it
-      to false: it would save into the base branch's scope, which every workflow on main restores.
-    default: "true"
+  cache is saved by a push to main alone, into main's scope, which every branch and pull request restores; a pull
+  request that changes an object pulls it from LFS in each job until main has saved it. The save is an explicit step
+  straight after the pull, never the post-job step: by the end of a job that derives pack test data, upstream's code
+  may have run, which could have rewritten .git/lfs.
 
 runs:
   using: composite
@@ -41,7 +36,7 @@ runs:
 
     # Saved here, before any later step of the job runs, so what lands in the cache is what LFS served.
     - name: Save the LFS objects
-      if: steps.restored.outputs.cache-hit != 'true' && inputs.save == 'true'
+      if: steps.restored.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: .git/lfs

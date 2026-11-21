@@ -17,6 +17,11 @@
 //! `n` starts needs `per_token * (n + 2)`.
 
 use crate::Error;
+// The front end's: the calls' depth (`stream`), the region reads (`byte_needs`), the JIT's tables and switch trees
+// (`native_cpu_codegen`), under the names this tier's callers read.
+pub use crate::byte_needs::{Seq, sequential};
+pub use crate::native_cpu_codegen::{TABLES, TABLES_DATA, dispatch, table_address};
+pub use crate::stream::DEPTH;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
@@ -523,10 +528,6 @@ pub const RETURNED: u64 = 0;
 /// The top bit, flipped in the run's end values inside the clusters' functions (`RETURNED`).
 pub const ENDED: u64 = 1 << 63;
 
-/// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
-/// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
-/// on `.rerail`: some 360 KB at the most.
-pub const DEPTH: i64 = 1024;
 
 /// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
 /// takes, about `DEPTH` calls of `.rerail`'s largest frames. Past it, a rule function refuses the
@@ -799,165 +800,6 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 /// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
 pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
 
-/// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
-/// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
-/// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
-/// the other runs alone (the cases), split at the middle, each side knowing the range its value
-/// is in; a case is one test at its leaf (an equality, a bound, or a range), and a value in no
-/// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
-/// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
-/// mask a target.
-pub(crate) fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
-    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
-    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
-    // The default: the target with the most runs (the first such).
-    let mut count: Vec<(Block, usize)> = Vec::new();
-    for &(_, _, b) in &spans {
-        match count.iter_mut().find(|(x, _)| *x == b) {
-            Some(c) => c.1 += 1,
-            None => count.push((b, 1)),
-        }
-    }
-    let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
-    let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
-    let clusters = clusters(&cases);
-    cases_tree(f, x, 0, end, &clusters, default);
-}
-
-/// A leaf of `dispatch`'s tree: the values `a..b`, to one target (`Range`), or tested by bits
-/// (`Bits`: each target with its mask over `x - a`; a value in none goes to the default).
-enum Cluster {
-    Range(u64, u64, Block),
-    Bits(u64, u64, Vec<(Block, u64)>),
-}
-
-impl Cluster {
-    fn start(&self) -> u64 {
-        match *self {
-            Cluster::Range(a, ..) | Cluster::Bits(a, ..) => a,
-        }
-    }
-}
-
-/// `cases` (rising, apart) as clusters: from each case on, the longest run of cases within 64
-/// values and of at most three targets, as bit tests where LLVM finds them worth it (one
-/// target and 3 compares saved, two and 5, three and 6: a range counting two), else the case.
-fn clusters(cases: &[(u64, u64, Block)]) -> Vec<Cluster> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < cases.len() {
-        let mut best = None;
-        let (mut dests, mut cmps): (Vec<Block>, usize) = (Vec::new(), 0);
-        for j in i..cases.len() {
-            let (a, b, t) = cases[j];
-            if b - cases[i].0 > 64 || b == u64::MAX {
-                break;
-            }
-            if !dests.contains(&t) {
-                if dests.len() == 3 {
-                    break;
-                }
-                dests.push(t);
-            }
-            cmps += if b == a + 1 { 1 } else { 2 };
-            let worth = match dests.len() {
-                1 => cmps >= 3,
-                2 => cmps >= 5,
-                _ => cmps >= 6,
-            };
-            if worth {
-                best = Some(j);
-            }
-        }
-        match best {
-            Some(j) => {
-                let base = cases[i].0;
-                let mut masks: Vec<(Block, u64)> = Vec::new();
-                for &(a, b, t) in &cases[i..=j] {
-                    let m = (a..b).fold(0u64, |m, v| m | 1 << (v - base));
-                    match masks.iter_mut().find(|(x, _)| *x == t) {
-                        Some(x) => x.1 |= m,
-                        None => masks.push((t, m)),
-                    }
-                }
-                // The target with the most values first, as LLVM orders them.
-                masks.sort_by_key(|&(_, m)| std::cmp::Reverse(m.count_ones()));
-                out.push(Cluster::Bits(base, cases[j].1, masks));
-                i = j + 1;
-            }
-            None => {
-                let (a, b, t) = cases[i];
-                out.push(Cluster::Range(a, b, t));
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-/// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
-fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[Cluster], default: Block) {
-    match cases {
-        [] => {
-            f.ins().jump(default, &[]);
-        }
-        [Cluster::Range(a, b, to)] => {
-            let (a, b, to) = (*a, *b, *to);
-            let inside = if a <= lo && b >= hi {
-                f.ins().jump(to, &[]);
-                return;
-            } else if a <= lo {
-                f.ins().icmp_imm(IntCC::UnsignedLessThan, x, b as i64)
-            } else if b >= hi {
-                f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, a as i64)
-            } else if b == a + 1 {
-                f.ins().icmp_imm(IntCC::Equal, x, a as i64)
-            } else {
-                let d = f.ins().iadd_imm(x, -(a as i64));
-                f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64)
-            };
-            f.ins().brif(inside, to, &[], default, &[]);
-        }
-        [Cluster::Bits(a, b, masks)] => {
-            let (a, b) = (*a, *b);
-            let d = if a == 0 { x } else { f.ins().iadd_imm(x, -(a as i64)) };
-            if a > lo || b < hi {
-                let tests = f.create_block();
-                let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64);
-                f.ins().brif(inside, tests, &[], default, &[]);
-                f.switch_to_block(tests);
-            }
-            let one = f.ins().iconst(types::I64, 1);
-            let bit = f.ins().ishl(one, d);
-            // Every value of the cluster some target's: the last target needs no test.
-            let full = (a.max(lo)..b.min(hi)).all(|v| masks.iter().any(|&(_, m)| m >> (v - a) & 1 != 0));
-            for (k, &(to, m)) in masks.iter().enumerate() {
-                if full && k + 1 == masks.len() {
-                    f.ins().jump(to, &[]);
-                    return;
-                }
-                let next = if k + 1 == masks.len() { default } else { f.create_block() };
-                let t = f.ins().band_imm(bit, m as i64);
-                f.ins().brif(t, to, &[], next, &[]);
-                if next != default {
-                    f.switch_to_block(next);
-                }
-            }
-        }
-        _ => {
-            let mid = cases.len() / 2;
-            let pivot = cases[mid].start();
-            let (low, high) = (f.create_block(), f.create_block());
-            let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
-            f.ins().brif(below, low, &[], high, &[]);
-            f.switch_to_block(low);
-            cases_tree(f, x, lo, pivot, &cases[..mid], default);
-            f.switch_to_block(high);
-            cases_tree(f, x, pivot, hi, &cases[mid..], default);
-        }
-    }
-}
-
 /// `dispatch` weighted by a profile: a run with half the weight or more is tested first (one
 /// range compare), else the runs split at their weighted middle. `ends` are the runs' ends
 /// (the next run's first byte; the last's, past every byte).
@@ -1147,26 +989,6 @@ enum WordFn {
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
 /// or in a function of its own that each place of the word calls.
-/// The name of the symbol a table's address is read from (`table_address`): placed at address 0, so that its
-/// relocation, `0 + addend`, writes the table's address itself.
-const TABLES: &str = "rerail_tier2_tables";
-/// `TABLES`'s data, the first the module declares.
-const TABLES_DATA: u32 = 0;
-
-/// A table's address, as a symbol's (`TABLES`, the table's address its offset): one instruction of the same form
-/// wherever the table is. An address as a constant is moved in as many instructions as it has halfwords not zero, so
-/// the code, and regalloc2's choices round it, changed with where the heap put the table.
-pub(crate) fn table_address<T>(f: &mut FunctionBuilder<'_>, at: *const T) -> Value {
-    let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(1, TABLES_DATA));
-    let gv = f.create_global_value(cranelift_codegen::ir::GlobalValueData::Symbol {
-        name: cranelift_codegen::ir::ExternalName::user(name),
-        offset: cranelift_codegen::ir::immediates::Imm64::new(at as i64),
-        colocated: false,
-        tls: false,
-    });
-    f.ins().symbol_value(types::I64, gv)
-}
-
 struct WordEnv<'a> {
     get: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem) -> Value,
     set: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem, Value),
@@ -2534,84 +2356,6 @@ pub(crate) struct SplitParts {
     /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
     /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
     pub(crate) seq: Option<Seq>,
-}
-
-/// A region read in parts whose next token, from a clean place, is decided by the first byte of
-/// two classes (`sequential`): `x`, the closer's, and `e`, the part's first.
-#[derive(Clone)]
-pub(crate) struct Seq {
-    pub(crate) x: usize,
-    pub(crate) e: usize,
-    /// The bytes of `X` (the closer's), and of `X` or `E` (where the scan stops): a closer's
-    /// first byte is in the first, a content token's in neither.
-    pub(crate) xs: [u64; 4],
-    pub(crate) stops: [u64; 4],
-    /// Where `E` is one byte: a part's code by its second byte (`records::pass` of the two
-    /// bytes), as simdjson's `escape_map[escape_char]`.
-    pub(crate) codes2: Option<Box<[u32; 256]>>,
-}
-
-/// Whether a region read in parts needs no escape carry in tier 2, as simdjson's `parse_string`
-/// needs none: its closer `X &~ escaped(E)`, its one part `(E & R) &~ escaped(E)` of two bytes
-/// (`X`, `E` disjoint byte classes), its opener the closer's output, `R` the region's inside
-/// (`toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and the file's own bytes), no
-/// closer at the file's end refused. Then, from a clean place (after the opener, whose byte is
-/// not `E`, or after a part), no `E` lies before the first byte of `X` or `E`, so it is not
-/// escaped: an `X` there is the closer, an `E` a part, the bytes before it content. A part's
-/// two bytes end a run of `E` of even length (its first not escaped), so the place after it is
-/// clean again. `R` holds at every byte between the opener and the closer, as `T` holds at
-/// neither's inside.
-pub(crate) fn sequential(block: &crate::block_native::BlockNative, a: &crate::records::ReadArm, parts: &[(u16, u8)]) -> Option<Seq> {
-    use crate::block_native::BlockInst as I;
-    let class = |x: usize| crate::native_cpu_bytes::exact_at(block, x).filter(|n| n.lo == 0 && n.hi == 0).map(|n| n.set);
-    let at = |o: u16| usize::from(block.outputs[usize::from(o)]);
-    if a.opener != a.closer || a.off != 0 || a.none != crate::records::ReadNone::Refuse || block.output_delays[usize::from(a.closer)] != 0 {
-        return None;
-    }
-    let &[(part, 2)] = parts else { return None };
-    if block.output_delays[usize::from(part)] != 0 {
-        return None;
-    }
-    let c = at(a.closer);
-    let I::AndNot(x, esc) = block.insts[c] else { return None };
-    let I::Escaped(e) = block.insts[usize::from(esc)] else { return None };
-    let (x, e) = (usize::from(x), usize::from(e));
-    let (xs, es) = (class(x)?, class(e)?);
-    if xs.iter().zip(es).any(|(p, q)| p & q != 0) {
-        return None;
-    }
-    // The part: `(E & R) &~ escaped(E)`, `R` the region's inside.
-    let I::AndNot(pe, pesc) = block.insts[at(part)] else { return None };
-    let I::Escaped(e2) = block.insts[usize::from(pesc)] else { return None };
-    if class(usize::from(e2))? != es {
-        return None;
-    }
-    let I::And(u, v) = block.insts[usize::from(pe)] else { return None };
-    let (u, v) = (usize::from(u), usize::from(v));
-    let r = match (class(u), class(v)) {
-        (Some(s), _) if s == es => v,
-        (_, Some(s)) if s == es => u,
-        _ => return None,
-    };
-    // `R = toggle(T) &~ (T &~ prev(toggle(T), 1))`, `T` the closer and a mask that holds at
-    // every byte of the stream (`file_only`): `Within(0)`, an `&` of such, or one less a test
-    // that never holds in the stream (the prefix's bytes, before it; a zero).
-    fn file_only(b: &crate::block_native::BlockNative, x: usize) -> bool {
-        match b.insts[x] {
-            I::Within(0) => true,
-            I::And(a, c) => file_only(b, usize::from(a)) && file_only(b, usize::from(c)),
-            I::AndNot(a, c) => file_only(b, usize::from(a)) && matches!(b.insts[usize::from(c)], I::Prefix(..) | I::Const(0)),
-            _ => false,
-        }
-    }
-    let I::AndNot(tg, opener) = block.insts[r] else { return None };
-    let I::Toggle(t) = block.insts[usize::from(tg)] else { return None };
-    let t = usize::from(t);
-    let closer_and_file = t == c || matches!(block.insts[t], I::And(p, q) if (usize::from(p) == c && file_only(block, usize::from(q))) || (usize::from(q) == c && file_only(block, usize::from(p))));
-    let I::AndNot(t2, pt) = block.insts[usize::from(opener)] else { return None };
-    let I::Prev(tg2, 1) = block.insts[usize::from(pt)] else { return None };
-    let I::Toggle(t3) = block.insts[usize::from(tg2)] else { return None };
-    (closer_and_file && usize::from(t2) == t && usize::from(t3) == t).then_some(Seq { x, e, xs, stops: std::array::from_fn(|k| xs[k] | es[k]), codes2: None })
 }
 
 /// The region tier 2 splits (`SplitParts`), where a reader says so; refused where its parts'
@@ -4945,17 +4689,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if pinned_ctx || pin_one {
         flags.push(("enable_pinned_reg", "true"));
     }
-    // The passed fields come back with a function's result: more results than registers go
-    // through a return area.
-    if clustered && !cut.pass.is_empty() {
-        flags.push(("enable_multi_ret_implicit_sret", "true"));
-    }
-    // A word of another cluster is a tail call of it (`return_call`), which Cranelift's x64
-    // backend emits only with frame pointers kept (its `emit` asserts it); AArch64's frames
-    // keep them already.
-    if clustered && cfg!(target_arch = "x86_64") {
-        flags.push(("preserve_frame_pointers", "true"));
-    }
+    // The host's (`rerail_clif::jit::flags`): more results than registers through a return area (any function's
+    // results past the target's registers, and the passed fields that come back with a function's result), and
+    // x86-64's frame pointers.
+    let flags = rerail_clif::jit::flags(&flags);
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {
@@ -5012,7 +4749,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // The node words' rare loops, outlined (`TableFns`).
     let classes = supertype_classes(native)?;
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
-    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near)?;
+    // A format 16 module is one arena (above), so its ops call each other directly.
+    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near || sixteen)?;
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).

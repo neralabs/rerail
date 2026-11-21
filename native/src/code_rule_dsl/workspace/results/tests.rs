@@ -1,7 +1,6 @@
     use super::super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
     use super::super::storage::StorageContext;
-    use super::super::tests::{WORKSPACE_TEST_SLOT, result_page};
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
+    use super::super::fixtures::{WORKSPACE_TEST_SLOT, result_page};
     use crate::code_rule_dsl::tape::formats::stored_version;
     use crate::code_rule_dsl::test_support::{CAPABILITIES, violation};
     use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -47,7 +46,7 @@
             _maintenance: None,
         });
         let compiled =
-            CodeRuleDslRuntime::compile(code_rule.to_owned(), "json".into(), CAPABILITIES.into())
+            crate::code_rule_dsl::rule_api::compile(code_rule, "json", CAPABILITIES)
                 .unwrap();
         workspace.add_code_rule(&compiled, None).unwrap();
         workspace
@@ -69,9 +68,10 @@
     fn coverage_reports_a_broken_files_partial_clause_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
         let directory = std::env::temp_dir().join(format!(
-            "rerail-coverage-{}-{:?}",
+            "rerail-coverage-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
+            // Its nanoseconds, not `SystemTime`'s `Debug` (`SystemTime { intervals: … }`: no file name on Windows).
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
@@ -127,9 +127,10 @@
     fn blind_files_are_reported_by_reason_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
         let directory = std::env::temp_dir().join(format!(
-            "rerail-blind-{}-{:?}",
+            "rerail-blind-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
+            // Its nanoseconds, not `SystemTime`'s `Debug` (`SystemTime { intervals: … }`: no file name on Windows).
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
@@ -205,7 +206,7 @@
         })
         .to_string();
         let compiled =
-            CodeRuleDslRuntime::compile(code_rule, "json".into(), CAPABILITIES.into()).unwrap();
+            crate::code_rule_dsl::rule_api::compile(&code_rule, "json", CAPABILITIES).unwrap();
         let file = |path: &str, source: &str| json!({ "path": path, "language": "python", "source": source });
         let files = [
             file("b.py", "print(1)\nf()\n"),

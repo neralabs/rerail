@@ -30,5 +30,5 @@ Kotlin's are gone (rust_block, kotlin_aot's IR build): Kotlin is the direct gene
 - The JIT shares analyses with `rust_stream` that are not a lowering: `WordForm`, `word_form`, `marks`,
   `direct_keys` and `open_bound` (the last two from `rust_stream`'s facts of a program). Before the modules
   go they move to `native_cpu_direct`, the JIT's own: after Parser-generators' merge, which still changes
-  them (0541-0548).
+  them (0541-0546, 0577, 0578).
 - Each deprecated module says so in its first line, with this record's number.

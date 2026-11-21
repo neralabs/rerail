@@ -1,0 +1,30 @@
+[package]
+name = "rerail-cpu-pp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The C preprocessor's words on the CPU: the pp program lowered to Cranelift, and its IR as UKL."
+# The vendored Cranelift's cfgs (`cranelift_clmul`, `cranelift_preserve_most`), set as for the compiler's front end.
+build = "../compiler/build.rs"
+
+[features]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-clif/test-hooks"]
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+# The host's flags for the words' JIT (`rerail_clif::jit::flags`).
+rerail-clif = { path = "../clif" }
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build: a page has no executable memory (the engine's `wasm/README.md`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-cpu-pp = { path = ".", features = ["test-hooks"] }

@@ -363,9 +363,9 @@ pub struct Outcome {
     pub findings: Vec<String>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Outcome {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
@@ -628,10 +628,10 @@ fn sample(rows: &[crate::code_rule_dsl::logic::plan::output::Row<'_>]) -> String
 
 // ---------------------------------------------------------------- printing
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);
@@ -726,8 +726,17 @@ pub fn may_hold_tests(text: &str) -> bool {
     text.lines().any(|l| l.trim_start().starts_with(".test "))
 }
 
-/// Each test of each `.rerail` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
-/// "pass" | "fail", failures, findings}]`.
+/// The files `report` reads: each path named outright, tests or none, so one that is not there or does not parse is an
+/// error; and each of a directory's `.rerail` files that may hold a test.
+fn files_to_read(paths: &[PathBuf]) -> Vec<PathBuf> {
+    rule_files(paths)
+        .into_iter()
+        .filter(|file| paths.contains(file) || std::fs::read_to_string(file).is_ok_and(|t| may_hold_tests(&t)))
+        .collect()
+}
+
+/// Each test of each `.rerail` file under `paths` (`files_to_read`) whose `<file>::<name>` contains `filter`: `[{file,
+/// test, line, status: "pass" | "fail", failures, findings}]`.
 pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Value, String> {
     // A store of testing mode's own (in the engine's tests, each test's: decision 0118).
     let _store = (cfg!(not(any(test, feature = "test-hooks"))) && std::env::var_os("RERAIL_TAPE_CACHE").is_none())
@@ -735,10 +744,8 @@ pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Val
     // The store the runs keep their roots in (`in_work`).
     let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path();
     let mut rows = Vec::new();
-    for file in rule_files(paths) {
-        if std::fs::read_to_string(&file).is_ok_and(|t| may_hold_tests(&t)) {
-            rows.extend(file_rows(&file, filter, store.as_deref())?);
-        }
+    for file in files_to_read(paths) {
+        rows.extend(file_rows(&file, filter, store.as_deref())?);
     }
     Ok(serde_json::Value::Array(rows))
 }
@@ -768,7 +775,7 @@ fn test_row(file: &Path, test: &Test, store: Option<&Path>) -> serde_json::Value
 }
 
 /// Runs `f` in `test`'s directory of `file` (`$TMPDIR/rerail-test-rr-work/<work_name>`), removed after.
-pub(super) fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
+pub fn in_work<T>(store: Option<&Path>, file: &Path, test: &str, f: impl FnOnce(&Path) -> T) -> Result<T, String> {
     let work = work_base()?.join(work_name(store, file, test)?);
     let out = f(&work);
     let _ = std::fs::remove_dir_all(&work);
