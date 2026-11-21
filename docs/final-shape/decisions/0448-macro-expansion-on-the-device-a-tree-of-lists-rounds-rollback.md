@@ -124,6 +124,10 @@ per-level form they replaced:
 | S7 sort rows by (key, position) | row | the visibility table |
 | S8 stretches | (instance, directive gap) | each active stretch, compacted by a scan: its first token and its position. These are the round-0 lists, whose tokens are tape leaves (refs, not copies) |
 
+**Since 0523, the queue is rounds:** the items a round makes run in the next, on the whole grid,
+and each item kind's 32-lane body becomes grid phases, a thread an element. What follows is the
+queue it replaced.
+
 **The launch bound decided the execution's shape** (0460 §4 since makes every evaluation 4
 launches, whatever its size). An evaluation has at most 200 launches
 (`KERNEL_LAUNCH_LIMIT`, the user's, 2026-11-03). Rounds as launches would need about 40 a

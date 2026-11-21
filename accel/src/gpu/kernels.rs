@@ -294,13 +294,17 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
 fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Function>, String> {
     type Cache = HashMap<([u8; 32], Option<u32>), Arc<Function>>;
     static MADE: OnceLock<Mutex<Cache>> = OnceLock::new();
-    let key = (Key::of(source, name, constant).pipeline, constant);
+    let k = Key::of(source, name, constant);
+    let key = (k.pipeline, constant);
     if let Some(f) = MADE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
         return Ok(Arc::clone(f));
     }
     let value = constant.map(|c| format!("{c}u"));
     let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
-    let program = rerail_gpu::kernels::program_with(&format!("{name}.ukl"), source, &defines)?;
+    // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
+    // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
+    // the CPU, three for the preprocessor's first evaluation).
+    let program = rerail_gpu::kernels::program_with(&format!("{}.ukl", &hex(&k.library)[..16]), source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
     MADE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).insert(key, Arc::clone(&f));

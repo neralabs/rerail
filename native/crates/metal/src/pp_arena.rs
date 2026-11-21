@@ -275,12 +275,17 @@ pub const GROUPS_MOST: u64 = 32;
 /// The groups of the persistent grid (decision 0460 §4): the device's resident count at the grid
 /// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
 /// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
-/// with no count. A run
+/// with no count; 1 on the CPU. A run
 /// whose barrier fails runs again with half as many.
 pub fn groups() -> u64 {
     static G: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *G.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
+        // The CPU runs a launch's groups as coroutines on one host thread: past one group, a group
+        // adds work to no core, only its threads' switches at every barrier.
+        if matches!(device, lane::Device::Cpu(_)) {
+            return 1;
+        }
         let local = kernel("pp_setup").threadgroup_bytes();
         device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })

@@ -1231,7 +1231,8 @@ impl Exp {
             lists: zeroed(lists * (LIST_WORDS + 1) + POOL_HEADS)?,
             tokens: zeroed(tok * 5 + POOL_HEADS)?,
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
-            slots: zeroed(q)?,
+            // A round's items and the next's (decision 0523).
+            slots: zeroed(2 * q)?,
             qctl: zeroed(5)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
@@ -1291,15 +1292,15 @@ impl Exp {
     /// out: a top only grows) and its capacity.
     pub fn room(&self) -> [(u32, u32); ROOMS] {
         // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
-        // `qctl` the queue's (its tail past its ring's base the items queued since its last pause,
-        // past the room where it ran out).
+        // `qctl` the rounds' (the next round's items, past the room where it ran out; `ctl` 13 each
+        // round's high water).
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
             // The queue's ring: its positions past its base (decision 0478 §10).
             let qc = self.qctl.host().cast::<u32>();
-            let q = ((*qc.add(1)).wrapping_sub(*qc.add(4)).max(*ctl.add(13)), self.q_cap);
+            let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
             [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
