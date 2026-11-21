@@ -77,6 +77,22 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      (a SIMD group's turn outlasts several turns of the cache, and after the first failure a pending lookup does
      not wait); on CUDA a few do. A batch's cache is sized for its blocks (`Spec::sized`), so it thrashes only past
      its budget, where its batch is refused (0463).
-2. The persistent grid: `ukl_grid_join` (point 3) in `<ukl/grid.h>`, its tests in `gpu`'s library tests.
+2. **Done (2026-11-20): the persistent grid.**
+   - `ukl_grid_join` (point 3) in `<ukl/grid.h>`: a fourth control word holds the tickets, and `UKL_GRID_CLOSED`
+     once the first group closes the count, after `UKL_GRID_WINDOW` (2,048) polls with no new join, or all joined.
+     A longer window only slows a dispatch past residency: at 65,536 polls, 843 ms on a GB10 against 30 ms. The CPU
+     backend runs a dispatch's groups one at a time, so its grid is one group.
+   - **A wait reads by polls** (`ukl_atomic_poll`, on every backend; a read-modify-write that changes nothing on
+     Metal). The barrier's tests failed at 8 groups on the M1 Max (Q367), and on the Mac mini too. A trace of each
+     group's view showed why: at the first barrier the last group stepped the generation, and every other group
+     polled it a million times and saw it unchanged, while their compare-and-swaps after found it stepped. That is
+     Q123, the M1 Max's stale polls, which the block kernels' look-backs already poll around (`BLOCK_POLL_RMW`).
+     The grid's words are read only by polls now, and so are the 16z cache's words where a stale copy breaks its
+     protocol (a writer's stamp check, a clear's writers, a promotion's source) and in a wait's turns.
+   - `a_grid_past_residency_fails_its_barrier` is `a_grid_past_residency_is_the_groups_that_run`: 4,096 groups of
+     1,024 dispatched, 24 took part on the Mac mini (in 9.8 ms), 48 on a GB10, 1 on the CPU, and every barrier passed.
+   - The barrier, scan, segmented scan and sort tests pass on the Mac mini's Metal, spark1's CUDA and a Linux CPU.
+     They stay ignored (Q367) until the M3 and the M1 Max pass them (step 5).
 3. The budget: the work queue's workers (`label_passes`, `lattice`, `pp_expand`) end after their launch's share.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
+5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.

@@ -66,6 +66,12 @@ UKL_INLINE void ukl_tg_barrier_device() { threadgroup_barrier(mem_flags::mem_dev
 
 // Relaxed atomics on a device word, and a device-wide fence.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_load_explicit((device atomic_uint*)p, memory_order_relaxed); }
+// A poll: the read of a word another threadgroup writes and this thread waits for, again and again (decision 0540).
+// On Apple's GPUs a relaxed load in a loop may keep reading the polling core's copy and never see the store (the
+// M1 Max, Q123; the Mac mini too: a grid barrier's waiters polled its generation a million times each and saw it
+// unchanged, while their compare-and-swaps after found it stepped). A read-modify-write that changes nothing reads
+// the coherent copy.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return atomic_fetch_or_explicit((device atomic_uint*)p, 0u, memory_order_relaxed); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { atomic_store_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_sub_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
@@ -140,6 +146,8 @@ UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }
+// A poll (Metal's, above): a volatile load reads the coherent copy on CUDA.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicSub(p, v); }
@@ -211,6 +219,8 @@ UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
 UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+// A poll (Metal's, above): an atomic load is coherent on the CPU.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_sub(p, v, __ATOMIC_RELAXED); }
@@ -327,6 +337,8 @@ UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_ME
 // reached (Apple's). So an atomic load is an atomic read-modify-write that changes nothing, an atomic store an
 // exchange, and a coherent load (`ukl_ldc_*`, ukl/memory.h) reads its words' halves so.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_or((volatile __global uint32_t*)p, 0u); }
+// A poll (Metal's, above): OpenCL's atomic load is a read-modify-write already.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return atomic_or((volatile __global uint32_t*)p, 0u); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { (void)atomic_xchg((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint64_t __ukl_cl_coherent_load64(volatile __global const uint64_t* p)
 {

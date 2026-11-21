@@ -635,13 +635,19 @@ fn hash_tables_build_and_probe() {
 
 /// A grid's control words, zero (`ukl/grid.h`).
 fn grid_ctl() -> crate::device::Buffer {
-    buffer_of(&[0u32; 3]).unwrap()
+    buffer_of(&[0u32; 4]).unwrap()
+}
+
+/// The groups that took part in a grid (`ukl_grid_join`: its tickets, the count closed).
+fn grid_joined(c: &[u32]) -> u32 {
+    assert_ne!(c[3] & 0x8000_0000, 0, "{}: the grid's count was closed", crate::device::backend());
+    c[3] & 0x7fff_ffff
 }
 
 /// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367, decision 0540: passes on the Mac mini's Metal, CUDA and the CPU since the grid polls its words; ignored until the M3 and the M1 Max pass it (--ignored)"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
@@ -656,40 +662,47 @@ fn grid_barriers_see_every_groups_writes() {
             .run(&[groups as u64], &[lsz as u64])
             .unwrap();
         q.flush().await_().unwrap();
-        let c: Vec<u32> = read(&ctl, 3);
+        let c: Vec<u32> = read(&ctl, 4);
         let wrong: Vec<u32> = read(&out, groups as usize);
+        eprintln!("{}: {groups} groups dispatched, {} took part; arrived {}, generation {} (barrier {}), failed {}", crate::device::backend(), c[3] & 0x7fff_ffff, c[0], c[1], c[1] / 2, c[2]);
         assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed", crate::device::backend());
+        grid_joined(&c);
         assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
 }
 
-/// R6: a grid past what the device holds at once fails its barrier (the failure word set), never hangs: the groups
-/// that run wait their bound, and those that start after see the failure and end.
+/// R6, decision 0540 §3: a dispatch past what the device holds at once is a grid of the groups that run: they join,
+/// the rest end at once, and its barriers pass, each round's reads seeing every grid group's writes.
 #[test]
-fn a_grid_past_residency_fails_its_barrier() {
+fn a_grid_past_residency_is_the_groups_that_run() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 1024u32.min(crate::device::max_threadgroup());
     let groups = 4096u32;
     let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
     let start = std::time::Instant::now();
     launch(&q, p.function("t_grid_barrier").unwrap())
-        .value("args", &TestArgs { n: 1, w: groups })
+        .value("args", &TestArgs { n: 4, w: groups })
         .buffer("ctl", &ctl)
         .buffer("slots", &slots)
         .buffer("out", &out)
         .run(&[groups as u64], &[lsz as u64])
         .unwrap();
     q.flush().await_().unwrap();
-    let c: Vec<u32> = read(&ctl, 3);
-    eprintln!("{}: {groups} groups of {lsz}: failed {} after {:?}", crate::device::backend(), c[2], start.elapsed());
-    assert_eq!(c[2], 1, "{}: a grid of {groups} groups of {lsz} met its barrier", crate::device::backend());
+    let c: Vec<u32> = read(&ctl, 4);
+    let joined = grid_joined(&c);
+    let wrong: Vec<u32> = read(&out, groups as usize);
+    eprintln!("{}: {groups} groups of {lsz}: {joined} took part, failed {}, after {:?}", crate::device::backend(), c[2], start.elapsed());
+    assert_eq!(c[2], 0, "{}: a grid of {joined} of {groups} groups of {lsz} failed a barrier", crate::device::backend());
+    assert!((1..=groups).contains(&joined), "{}: {joined} groups of {groups}", crate::device::backend());
+    assert_eq!(c[1], 4 * 4, "{}: the barriers' generation (two a barrier)", crate::device::backend());
+    assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
 }
 
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups, its count read on the device.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367, decision 0540: passes on the Mac mini's Metal, CUDA and the CPU since the grid polls its words; ignored until the M3 and the M1 Max pass it (--ignored)"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
@@ -728,7 +741,7 @@ fn the_grid_scan_equals_the_host() {
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
 /// 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367, decision 0540: passes on the Mac mini's Metal, CUDA and the CPU since the grid polls its words; ignored until the M3 and the M1 Max pass it (--ignored)"]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
@@ -765,7 +778,7 @@ fn the_grid_segmented_scans_equal_the_host() {
 
 /// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
+#[ignore = "Q367, decision 0540: passes on the Mac mini's Metal, CUDA and the CPU since the grid polls its words; ignored until the M3 and the M1 Max pass it (--ignored)"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {

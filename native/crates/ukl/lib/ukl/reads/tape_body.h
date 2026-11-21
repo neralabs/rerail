@@ -503,6 +503,11 @@ UKL_INLINE uint64_t clif_tz_key(CLIF_VIEW_SPACE const uint32_t* v, uint32_t bloc
 
 // A cache's u32 word at `a`, read and written by any thread.
 UKL_INLINE uint32_t clif_tc_load(UKL_GLOBAL const uint8_t* t, uint64_t a) { return ukl_atomic_load_at(t, a); }
+// A word read where a stale copy would break the cache's protocol, or read again by a wait: a poll (decision 0540;
+// on Apple's GPUs a relaxed load may keep reading the core's copy, Q123). A lookup's first turn reads by loads: a
+// stale word there is caught by a compare-and-swap or a stamp, or makes a wait whose turns poll.
+UKL_INLINE uint32_t clif_tc_poll(UKL_GLOBAL const uint8_t* t, uint64_t a) { return ukl_atomic_poll_at(t, a); }
+UKL_INLINE uint32_t clif_tc_read(UKL_GLOBAL const uint8_t* t, uint64_t a, uint32_t fresh) { return fresh != 0u ? clif_tc_poll(t, a) : clif_tc_load(t, a); }
 UKL_INLINE void clif_tc_store(UKL_GLOBAL const uint8_t* t, uint64_t a, uint32_t x) { ukl_atomic_store_at(t, a, x); }
 UKL_INLINE uint32_t clif_tc_add(UKL_GLOBAL const uint8_t* t, uint64_t a, uint32_t x) { return ukl_atomic_add_at(t, a, x); }
 UKL_INLINE uint32_t clif_tc_cas(UKL_GLOBAL const uint8_t* t, uint64_t a, uint32_t e, uint32_t n) { return ukl_atomic_cas_at(t, a, e, n); }
@@ -554,7 +559,7 @@ UKL_INLINE uint64_t clif_tc_slot(ClifTCache c, uint64_t gen, uint32_t h, uint32_
 // head clears it.
 UKL_INLINE void clif_tc_clear(UKL_GLOBAL const uint8_t* t, ClifTCache c, uint64_t gen, uint32_t stamp)
 {
-    if (clif_tc_load(t, gen + CLIF_T_G_WRITERS) != 0u)
+    if (clif_tc_poll(t, gen + CLIF_T_G_WRITERS) != 0u)
         return;
     if (clif_tc_cas(t, gen + CLIF_T_G_STAMP, 0u, CLIF_T_C_CLEARING) != 0u)
         return;
@@ -573,7 +578,7 @@ UKL_INLINE void clif_tc_full(UKL_GLOBAL const uint8_t* t, ClifTCache c, uint32_t
 {
     uint32_t next = epoch + 1u;
     uint64_t spare = clif_tc_gen(c, next);
-    uint32_t ready = clif_tc_load(t, spare + CLIF_T_G_STAMP);
+    uint32_t ready = clif_tc_poll(t, spare + CLIF_T_G_STAMP);
     if (ready != next) {
         if (ready == 0u)
             clif_tc_clear(t, c, spare, next);
@@ -767,7 +772,7 @@ UKL_INLINE uint32_t clif_tc_copy(UKL_GLOBAL const uint8_t* t, uint64_t from, uin
     for (uint64_t at = CLIF_T_E_PAYLOAD; at < (uint64_t)len; at += 8u)
         ukl_stc_u64(clif_written(t), e + at, ukl_ldc_u64(clif_coherent(t), from + at));
     ukl_fence_device();
-    return clif_tc_load(t, from + CLIF_T_E_READY) == stamp ? 1u : 0u;
+    return clif_tc_poll(t, from + CLIF_T_E_READY) == stamp ? 1u : 0u;
 }
 
 // An entry of `size` bytes of the head at `epoch` taken for `key` from the head's arena, filled, completed and
@@ -811,7 +816,7 @@ UKL_INLINE uint64_t clif_tc_take(CLIF_T_ARGS, ClifTCache c, uint32_t epoch, uint
     if (won != 0u) {
         clif_tc_add(t, head + CLIF_T_G_WRITERS, 1u);
         ukl_fence_device();
-        if (clif_tc_load(t, head + CLIF_T_G_STAMP) != epoch) {
+        if (clif_tc_poll(t, head + CLIF_T_G_STAMP) != epoch) {
             clif_tc_store(t, slot, 0u);
             clif_tc_add(t, head + CLIF_T_G_WRITERS, ~0u);
             won = 0u;
@@ -881,12 +886,12 @@ UKL_INLINE uint64_t clif_tc_take(CLIF_T_ARGS, ClifTCache c, uint32_t epoch, uint
 // pending; else not here (an empty slot, or every probe, ends the generation). A key may have two entries (a
 // lookup's wait for one ran out: `clif_tc_get`), so a pending one does not end the probes: a complete one may lie
 // past it. A probe never waits: the lookup waits, a turn at a time.
-UKL_INLINE uint32_t clif_tc_probe(UKL_GLOBAL const uint8_t* t, ClifTCache c, uint64_t gen, uint32_t stamp, uint64_t key, uint32_t h, uint32_t tag, UKL_PRIVATE uint64_t* e)
+UKL_INLINE uint32_t clif_tc_probe(UKL_GLOBAL const uint8_t* t, ClifTCache c, uint64_t gen, uint32_t stamp, uint64_t key, uint32_t h, uint32_t tag, uint32_t fresh, UKL_PRIVATE uint64_t* e)
 {
     uint32_t found = CLIF_T_C_NOT_HERE;
     uint32_t looking = 1u;
     for (uint32_t p = 0u; looking != 0u && p < CLIF_T_C_PROBES; p++) {
-        uint32_t x = clif_tc_load(t, clif_tc_slot(c, gen, h, p));
+        uint32_t x = clif_tc_read(t, clif_tc_slot(c, gen, h, p), fresh);
         // An empty slot ends the generation; another key's tag, on; the key's tag with no entry yet, pending.
         if (x == 0u) {
             looking = 0u;
@@ -896,7 +901,7 @@ UKL_INLINE uint32_t clif_tc_probe(UKL_GLOBAL const uint8_t* t, ClifTCache c, uin
             } else {
                 uint64_t entry = clif_tc_entry(t, c, gen, (x & CLIF_T_C_NUMBER) - 1u);
                 if (ukl_ldc_u64(clif_coherent(t), entry + CLIF_T_E_KEY) == key) {
-                    uint32_t ready = clif_tc_load(t, entry + CLIF_T_E_READY);
+                    uint32_t ready = clif_tc_read(t, entry + CLIF_T_E_READY, fresh);
                     if (ready == stamp) {
                         clif_tc_stat(t, c.at, CLIF_T_C_HITS);
                         *e = entry;
@@ -941,7 +946,9 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
     uint32_t tries = 0u, waits = 0u, waited = 0u;
     uint64_t got = 0u;
     for (uint32_t done = 0u; done == 0u;) {
-        uint32_t epoch = clif_tc_load(t, cache + CLIF_T_C_EPOCH);
+        // A turn after a wait polls what it reads again.
+        uint32_t fresh = waits != 0u ? 1u : 0u;
+        uint32_t epoch = clif_tc_read(t, cache + CLIF_T_C_EPOCH, fresh);
         uint32_t found = CLIF_T_C_NOT_HERE;
         uint64_t e = 0u;
         // The generation it was found in (`k`), and its stamp.
@@ -949,9 +956,9 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
         for (uint32_t j = 0u; found == CLIF_T_C_NOT_HERE && j < live; j++) {
             uint32_t want = epoch - j;
             uint64_t gen = clif_tc_gen(c, want);
-            uint32_t s = clif_tc_load(t, gen + CLIF_T_G_STAMP);
+            uint32_t s = clif_tc_read(t, gen + CLIF_T_G_STAMP, fresh);
             if (s == want) {
-                found = clif_tc_probe(t, c, gen, s, key, h, tag, &e);
+                found = clif_tc_probe(t, c, gen, s, key, h, tag, fresh, &e);
                 k = j;
                 stamp = s;
             }
@@ -961,7 +968,7 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
         // gains nothing, and a launch whose lookups go wrong ends in a few turns of each, not in SPIN turns of every
         // lane. (Left pending, it is neither found nor taken below: the lookup fails.)
         uint32_t own = 0u;
-        if (found == CLIF_T_C_PENDING && clif_tc_load(t, cache + CLIF_T_C_FAILED) != 0u) {
+        if (found == CLIF_T_C_PENDING && clif_tc_poll(t, cache + CLIF_T_C_FAILED) != 0u) {
             done = 1u;
         } else if (found == CLIF_T_C_PENDING) {
             waited = 1u;

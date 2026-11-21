@@ -7872,6 +7872,11 @@ on an M3 or M5:
   `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
+  - **Found (2026-11-20, decision 0540)**: Q123's stale polls. Traced on the Mac mini's Metal (it fails the same):
+    at the first barrier the last group stepped the generation, and every other group polled it a million times and
+    saw it unchanged, while their compare-and-swaps after found it stepped. The grid now reads its words by polls
+    (`ukl_atomic_poll`, a read-modify-write on Metal), and its four tests pass on the Mac mini's Metal, spark1's
+    CUDA and a Linux CPU. They stay ignored until the M3 and the M1 Max pass them.
 - **The AOT words**: `the_aot_words_are_the_interpreters` and `the_words_translate_to_rust` overflow the test
   thread's 2 MB stack in `rust_source`.
 - **Done when**: each passes on the M1 Max, or a test states what the M1 Max cannot do (a grid's residency), and
