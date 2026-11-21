@@ -6,8 +6,8 @@
 //
 // Launches, the same for every unit:
 // - `pp_setup`: the front passes, the definitions, then P1's iterations (decision 0467) with the
-//   text pass inside them once they hold (decision 0475): the top level, the queue's two phases
-//   and the places, to the output;
+//   text pass inside them once they hold (decision 0475): the top level, the rounds (decision
+//   0523) and the places, to the output;
 // - `pp_check`: the refusals.
 //
 // The kernels bind the arena (`arena`: every store at its offset, `lay` the offsets by slot,
@@ -447,8 +447,8 @@
         SEG(UKL_SEG_MAX, nx_, XAT, XFLAG, XCOVER);                                                     \
     }
 
-// The top level's rollback, its sizes and places, over a top of `nt_` tokens (after the queue's
-// first phase).
+// The top level's rollback, its sizes and places, over a top of `nt_` tokens (after the rounds,
+// when every list is final).
 #define PX_PLACES(T, TOKS, nt_)                                                                      \
     EACH(s, nt_) px_top_xflag(AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(const PxList, LISTS), TOKS, AT(uint32_t, XFLAG), s); \
     BARRIER();                                                                                         \
@@ -472,7 +472,7 @@
     EACH(i, ukl_min(N(OPTOTAL), W(OUT_CAP))) px_out_run(AT(uint32_t, OUT), W(OUT_CAP), AT(const uint32_t, OPTOTAL), AT(const uint32_t, VTOTAL), i); \
     BARRIER()
 
-// The queue made ready for another top: the slots of its ring's positions past its base emptied, the arena's tops back to the file literals' (`CTL` 6 and 7 keep
+// The rounds made ready for another top: their items' counts emptied, the arena's tops back to the file literals' (`CTL` 6 and 7 keep
 // them). The refusals stay.
 #define PX_RESET()                                                                                     \
     ONE(x) {                                                                                           \
@@ -640,7 +640,7 @@ typedef struct PpTg {
     uint32_t big[PP_TG_BIG];
 } PpTg;
 
-// The stage word of `GRID` (after the barrier's three): 0 the queue's first phase, 1 its second,
+// The stage word of `GRID` (after the barrier's three): 0 the rounds, 1 the places' rounds,
 // 2 done.
 #define PG_STAGE (3u)
 // Set where P1 ends the round before the expansion (requests, or a refusal: decision 0467 §1).
@@ -1015,7 +1015,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         EACH(s, nt) px_top_lists(AT(const uint32_t, LOOKUPS), AT(const uint32_t, CEND), AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(const uint32_t, GTOTAL), AT(const uint32_t, SSLOT), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), 1u, AT(PxList, LISTS), AT(uint32_t, SLOTS), AT(uint32_t, CTL), AT(const PpDef, DEFS), W(LIST_CAP), s);
         ONE(i) px_seed(AT(const uint32_t, OTOTAL), AT(uint32_t, QCTL), AT(uint32_t, CTL), W(LIST_CAP), i);
         BARRIER();
-        // The queue's first phase, the top level's rollback, sizes and places, its second phase.
+        // The rounds, the top level's rollback, sizes and places, the places' rounds.
         PX_DRAIN(TEXT, closes);
         PX_PLACES(TEXT, AT(const uint32_t, GTOTAL), nt);
         PX_DRAIN(TEXT, closes);
@@ -1050,7 +1050,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     ONE(x) AT(uint32_t, GRID)[PG_STAGE] = 2u;
 }
 
-// The refusals, one thread: the queue's (work left, or it overflowed), the output's room, and a
+// The refusals, one thread: the rounds' (work left, or their bound reached: `X_QUEUE`), the
+// output's room, and a
 // failed barrier (the grid was not resident together: the host runs it again with fewer groups).
 DEFINE_KERNEL2(pp, pp_check,
                RWBUFFER, uint8_t,  arena, "[arena]",

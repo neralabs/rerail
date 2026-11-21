@@ -52,8 +52,8 @@ fn the_evaluator_copies_no_tape() {
 }
 
 /// §5 of decision 0460: the evaluator is UKL, launched through the lane: its source has no MSL
-/// (no Metal kernel, attribute, address space or SIMD function of its own), takes UKL's work queue
-/// and grid, and the preprocessor's MSL work queue is gone.
+/// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
+/// It runs in rounds (decision 0523), so it takes no work queue.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -61,7 +61,8 @@ fn the_evaluator_is_ukl() {
         let code: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(msl)).take(3).collect();
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
-    assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("#include <ukl/grid.h>"), "UKL's queue and grid");
+    assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
+    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue: the rounds (decision 0523)");
     assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");

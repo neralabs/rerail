@@ -633,7 +633,8 @@ UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint
 // The top level is the active stretches' tokens, one thread a token (a "top token" `s`, the
 // lookups' index), read in place through `text_nodes`. Its outermost calls are lists. A list is a
 // macro's expansion, or an argument read in isolation (fenced); its tokens are refs (to tape
-// nodes) with flags, in the arena. The queue's workers are SIMD groups:
+// nodes) with flags, in the arena. A round's items (decision 0523), a thread each, add to its
+// phases' sets:
 // - CALL finds a call's arguments and makes a list for each parameter used expanded;
 // - an argument list's SCAN, then (once final) its flatten: PLACE items writing its tree's
 //   tokens into the arena, counted down;
@@ -1095,7 +1096,7 @@ UKL_INLINE void px_seed(UKL_GLOBAL const uint32_t* n_calls, UKL_GLOBAL uint32_t*
     ukl_atomic_store(&ctl[1], n);
 }
 
-// --- The queue's items ---------------------------------------------------------------------------
+// --- The rounds' items ---------------------------------------------------------------------------
 
 // The arena, as every item reads it.
 typedef struct Ar {
@@ -2852,7 +2853,6 @@ UKL_INLINE void px_sb_finish(Ux u, Ar a, Sb s, uint32_t i) {
     px_scan_later(a, l);
 }
 
-// The queue's workers: a SIMD group each, lane 0 taking an item and the 32 lanes doing it.
 // The arena and the unit as a round's items and phases read them.
 UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* tline, UKL_GLOBAL const uint32_t* tlinen, Scope sc, Tf tf, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
                           UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat,
@@ -3369,7 +3369,7 @@ UKL_INLINE void px_wk_end(Ar a, Wk w, uint32_t i) {
 }
 
 // --- The tokens given back (decision 0478 §10) ------------------------------------------------------
-// Between the queue's runs, with no item running, the blocks of tokens no item reads again go to
+// Between rounds, with no item running, the blocks of tokens no item reads again go to
 // the tokens' pool (`<ukl/pool.h>`), and the items after take from it before the tokens' front.
 // A live list's pieces of what no item reads again leave its array, the pieces after them moved down
 // (decision 0520 §4: its readers search the places, which stay in order). Dead: an argument's list whose call has read
@@ -3651,7 +3651,6 @@ UKL_INLINE void px_top_place(UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const 
     }
 }
 
-// After the queue's launches: items left is a refusal; the output's length past its room too.
 // Each top token's pieces of the output (decision 0520 §3): 1 where a run of tokens no call covers
 // begins (a `P_TOP` piece, its length found once every piece is placed: `px_out_run`), its list's
 // pieces and its exits' chain's for an outermost call's name, 0 else.
@@ -3671,6 +3670,7 @@ UKL_INLINE void px_out_run(UKL_GLOBAL uint32_t* out, uint32_t cap, UKL_GLOBAL co
     out[cap + i] = (out[cap + i] & ~(PF_RUN | PN_LEN)) | (end - out[3u * cap + i]);
 }
 
+// After the rounds: items left is a refusal; the output's length past its room too.
 UKL_INLINE void px_check(UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL const uint32_t* n_out, UKL_GLOBAL uint32_t* ctl, uint32_t out_cap, uint32_t i) {
     if (i != 0u) return;
     if (ukl_atomic_load(&qctl[3]) != 0u) px_refuse(ctl, X_ROOM);

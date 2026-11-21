@@ -1057,8 +1057,8 @@ const K_LITERAL: u32 = 30;
 /// - by top token (`top`): its stretch head, depth change and depth, its `)` flag and place, the
 ///   close table and its sort, its call's end, the reach's max scan, its state, the outermost
 ///   flags and their scan, its piece of the output and that piece's place;
-/// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the queue (two
-///   items a list);
+/// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the rounds'
+///   items (decision 0523);
 /// - the output (refs), and the control words (the arena's tops, the refusals).
 pub struct Exp {
     list_cap: u32,
@@ -1304,8 +1304,8 @@ impl Exp {
 
     /// The expansion's slots of the layout: the top level's passes (`pp_setup`'s last phases:
     /// its depth, a segmented scan by stretch; the close table, a scan and a 40-bit sort; the
-    /// calls; the outermost, a max scan of the reach and a scan; the lists and the queue's seed),
-    /// the queue and the top level's rollback and places (in `pp_setup`), and the check.
+    /// calls; the outermost, a max scan of the reach and a scan; the lists and the rounds' seed),
+    /// the rounds and the top level's rollback and places (in `pp_setup`), and the check.
     pub fn lay(&self, l: &mut Lay) {
         l.at("THEADS", &self.theads).at("DELTA", &self.delta).at("DEPTH", &self.depth).at("CLOSE", &self.close).at("CLOSE_AT", &self.close_at);
         l.at("CLOSE_TOTAL", &self.close_scan.total).at("CLOSE_KEYS", &self.close_keys);
@@ -1362,7 +1362,7 @@ impl Exp {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            // The queue's ring: its positions past its base (decision 0478 §10).
+            // The rounds' items: a round's most (decision 0523).
             let qc = self.qctl.host().cast::<u32>();
             let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
