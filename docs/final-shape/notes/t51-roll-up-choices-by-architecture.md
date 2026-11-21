@@ -437,6 +437,52 @@ guests when the batch is built.
 - The partial-hit tests.
 - `a_warm_edit_makes_the_changed_documents_rows_alone` over a corpus with a `.rerail` host file.
 
+**Done.** The tests showed the two paths had made different documents, not only made them at different times. Three
+faults, all fixed:
+
+1. **The cold corpus batch held host files unsplit.** A chunk split a host file into text and tree for its own
+   projection. It handed the corpus batch `kept_docs`, a clone taken before that split, plus the programs, whose host
+   is the tree's key. So the batch held each file under its own key with the tree's nodes, and no host for its
+   programs. The split now happens once, where `Builder::take` files a document into its chunk (`Builder::split`). The
+   chunk, its projection and the corpus batch hold the same text and tree, and the projection's second split is gone.
+   Visible in the rows: a fresh run reported a script's call at the script's line (`foo` at 1), not the file's (3).
+   0512 says the file's.
+2. **A warm run made no host file's programs.** Theirs' `hit_document` and ours' `doc_of` both made the text and
+   tree. Nothing made the programs, so a warm run's rows lost every call in a host file. This failed on HEAD too.
+   `hit_document` now makes a host file's whole set: the text, the tree, and the tree's programs (`Guests::programs`,
+   seeing what the chunk sees). It is the one maker for the eager hits, the pending hits and an edit's old documents.
+   `doc_of` is one call of it, and its host branch is gone.
+3. **A host file was never pending.** It is now pending as its text, its tree and its programs, each its own
+   `syntax::Pending`, all made by one shared make on the first read of any. The batch knows each guest's host, file
+   and kind before any is made. `GuestOf`, what the batch reads of a guest, is a made one's `Guest` or a pending one's
+   `Hosted` (`Pending::with_guest`). Its place is read only from the made document.
+
+   Those three come from the documents' table, not the memo entry, which this item's plan named. The table already
+   keeps every document's digest and size by key. Its row now keeps, for a host file's guest, the host, the file,
+   whether it is the tree, and its tape tag (`retain::KeptGuest`, the content word 3). A table without them (an older
+   store) leaves the host file eager.
+
+Fixed on the way: `Batch::ensure` found the documents a read needs under one lock and claimed them under a second. Two
+reads side by side could both find a document unclaimed, and the second made it again and set its group aside.
+`reads_side_by_side_make_each_document_once` failed 13 times in 30. It now claims under the lock it found them
+under, and passes 30 of 30.
+
+Tests (spark2, `RERAIL_GPU=cpu`):
+
+- New: `a_warm_run_builds_no_unchanged_host_files_documents`. A JavaScript run over three HTML hosts and a script: the
+  warm run builds and parses none, and its rows are a fresh run's, at the files' lines.
+- New: `a_warm_edit_of_a_host_file_reads_as_a_cold_run`. The edit's rows are a fresh run's, the edit's call at its
+  file's line.
+- The warm tier: 18 of 18.
+- 0512's, the guests' and the partial hits' tests: 50 of 50.
+- `plan::corpus`, `vtab::syntax` and `rr::tests`: 422 of 422.
+- Clippy over the engine is clean.
+
+Found, not fixed: the warm edit still makes the unchanged host files when it plans, for the statistics of `kind`, a
+view of `node` held in place (`InPlaceView`). `node`'s statistics are patched by the edit, 74 rows to 78. The kind
+totals (`Own`, from the hits' kept rows and the 0096 keeper's arithmetic) still sum to 74. `view_stats_held` needs them
+to agree, so it counts the view off every document. The Python warm edit tests do not hit this.
+
 **The identity file** (`repository-identity.ts`) is theirs' whole now (0497: "a bare repository is a folder"). Ours
 had no decision against it, and theirs' tests are the catalog's. Its one call of `runGit(..., { output: "bytes" })`
 is ours' `runGitBytes`. On the M3, after it, `outside-git.test.ts` has one failure left, "a plain folder while

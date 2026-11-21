@@ -554,8 +554,37 @@ pub struct Guest {
 impl Guest {
     /// The key `node`'s and `docof`'s document column gives a node of document `key` that is this guest (decision
     /// 0431 §4): a program's file, in either shape; any other guest's own key, for it is no file's.
-    pub fn file_key(guest: Option<&Guest>, key: u32) -> u32 {
+    pub fn file_key(guest: Option<GuestOf<'_>>, key: u32) -> u32 {
         guest.filter(|g| matches!(g.made, Made::Host | Made::File) && g.file != 0).map_or(key, |g| g.file)
+    }
+
+    /// What its batch reads of it before its document is made (`GuestOf`).
+    pub fn of(&self) -> GuestOf<'_> {
+        GuestOf { host: self.host, file: self.file, made: &self.made }
+    }
+}
+
+/// A guest as its batch reads it before its document is made (`Input::guest`): its host, its file (`Guest::file`) and
+/// what made it. Its place is its document's, read once it is made.
+#[derive(Clone, Copy, Debug)]
+pub struct GuestOf<'a> {
+    pub host: u32,
+    pub file: u32,
+    pub made: &'a Made,
+}
+
+/// A pending guest's `GuestOf`, given ahead (`Pending::with_guest`): a host file's tree (`Made::File`) or one of its
+/// programs (`Made::Host`), as the documents' table keeps them (`retain::BaseCount::guest`, decision 0512).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hosted {
+    pub host: u32,
+    pub file: u32,
+    pub made: Made,
+}
+
+impl Hosted {
+    pub fn of(&self) -> GuestOf<'_> {
+        GuestOf { host: self.host, file: self.file, made: &self.made }
     }
 }
 
@@ -777,7 +806,9 @@ fn block_bytes(size: FactsSize) -> usize {
 /// hit's, whose key, path, tag, digest and facts' size the documents' table keeps (`retain::BaseCounts`, of the
 /// content the file has now). Its facts and tape are built by `make` (from its kept tape, or parsed) on its first read,
 /// once, whichever batch reads it first; it is shared with the batches it grows into and the session's next run.
-/// A document made whose key or digest is not the table's fails its batch, named (`Docs::input`).
+/// A document made whose key or digest is not the table's fails its batch, named (`Docs::input`). A host file's tree
+/// (decision 0512) and its programs are pending too, each one's host and file given ahead (`with_guest`), so the batch
+/// knows each host's guests before any is made (`Batch::guests_of`).
 pub struct Pending {
     key: u32,
     path: String,
@@ -786,6 +817,8 @@ pub struct Pending {
     size: FactsSize,
     /// Its module as the corpus names it (`Document::module`), which a read of `doc` by module routes by.
     module: Option<Arc<str>>,
+    /// Its host and file, a guest's: a host file's tree (`Made::File`) or one of its programs (`Made::Host`).
+    guest: Option<Hosted>,
     make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>,
     made: OnceLock<Document>,
     failed: OnceLock<String>,
@@ -793,7 +826,22 @@ pub struct Pending {
 
 impl Pending {
     pub fn new(key: u32, path: String, tag: u8, digest: [u8; 32], size: FactsSize, module: Option<Arc<str>>, make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>) -> Self {
-        Self { key, path, tag, digest, size, module, make, made: OnceLock::new(), failed: OnceLock::new() }
+        Self { key, path, tag, digest, size, module, guest: None, make, made: OnceLock::new(), failed: OnceLock::new() }
+    }
+
+    /// The same, a guest of `guest`'s host and file: what it is made as must be.
+    pub fn with_guest(mut self, guest: Hosted) -> Self {
+        self.guest = Some(guest);
+        self
+    }
+
+    /// Whether `made`, a guest as made, is of the host and file given ahead (`with_guest`).
+    fn stands_as_given(&self, made: Option<&Guest>) -> bool {
+        match (made, self.guest.as_ref()) {
+            (None, None) => true,
+            (Some(m), Some(g)) => m.host == g.host && m.file == g.file && m.made == g.made,
+            _ => false,
+        }
     }
 
     /// The document, made if it is not. One that fails to be made is a text with no node, its failure kept
@@ -804,7 +852,7 @@ impl Pending {
                 eprintln!("RERAIL_PARSE_TRACE pending {}:\n{}", self.path, std::backtrace::Backtrace::force_capture());
             }
             let made = (self.make)().and_then(|d| {
-                if d.key == self.key && d.digest == self.digest && d.guest.is_none() && d.module == self.module {
+                if d.key == self.key && d.digest == self.digest && self.stands_as_given(d.guest.as_deref()) && d.module == self.module {
                     Ok(d)
                 } else {
                     Err(format!("{}: made when first read, it is not the document the documents' table keeps (key {} for {}, its digest another, Q332)", self.path, d.key, self.key))
@@ -867,11 +915,11 @@ impl Input {
             Input::Pending(p) => p.module.as_deref(),
         }
     }
-    /// Its place in its host, a guest's; a pending document is a file's own tree.
-    pub fn guest(&self) -> Option<&Arc<Guest>> {
+    /// Its host and file, a guest's: a pending one's as given ahead (`Pending::with_guest`).
+    pub fn guest(&self) -> Option<GuestOf<'_>> {
         match self {
-            Input::Made(d) => d.guest.as_ref(),
-            Input::Pending(_) => None,
+            Input::Made(d) => d.guest.as_deref().map(Guest::of),
+            Input::Pending(p) => p.guest.as_ref().map(Hosted::of),
         }
     }
     pub fn size(&self) -> FactsSize {
@@ -1512,7 +1560,7 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
-        let file = Guest::file_key(guest.as_ref().map(|(g, _)| *g), key);
+        let file = Guest::file_key(guest.as_ref().map(|(g, _)| g.of()), key);
         let mut p = Projected {
             module: None,
             key,
@@ -2963,7 +3011,7 @@ impl Batch {
     /// Document `doc`'s file (decision 0431 §4): a program's is its file's, any other document's its own key. Read
     /// from its input, so no document is made for it.
     fn file(&self, doc: usize) -> u32 {
-        Guest::file_key(self.docs.guest(doc).map(|g| &**g).filter(|_| self.shape == Shape::Core), self.docs.key(doc))
+        Guest::file_key(self.docs.guest(doc).filter(|_| self.shape == Shape::Core), self.docs.key(doc))
     }
 
     /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0494), whose
@@ -2993,7 +3041,7 @@ impl Batch {
     /// given counts.
     pub fn kept_counts(&self) -> Vec<made::Kept> {
         (0..self.docs.len())
-            .map(|i| made::Kept { key: self.docs.key(i), path: self.docs.path(i).to_owned(), digest: self.docs.digest(i), counts: self.docs.counts(i), size: self.docs.size(i), file: self.docs.guest(i).is_none() })
+            .map(|i| made::Kept { key: self.docs.key(i), path: self.docs.path(i).to_owned(), digest: self.docs.digest(i), counts: self.docs.counts(i), size: self.docs.size(i), file: self.docs.guest(i).is_none(), guest: self.docs.guest(i).filter(|g| matches!(g.made, Made::Host | Made::File)).map(|g| (Hosted { host: g.host, file: g.file, made: g.made.clone() }, self.docs.tag(i))) })
             .collect()
     }
 
@@ -3134,7 +3182,7 @@ impl Batch {
         }
         // The programs among the documents, by file (decision 0431 §4): a program's file is its guest's (`Guest::file`).
         let mut programs: Vec<(u32, usize)> = (0..n).filter_map(|i| {
-            let file = Guest::file_key(docs.guest(i).map(|g| &**g).filter(|_| shape == Shape::Core), docs.key(i));
+            let file = Guest::file_key(docs.guest(i).filter(|_| shape == Shape::Core), docs.key(i));
             (file != docs.key(i)).then_some((file, i))
         }).collect();
         programs.sort_unstable();
@@ -3218,7 +3266,7 @@ impl Batch {
             }
         }
         for i in 0..batch.docs.len() {
-            if let Some(Made::Tape { places }) = batch.docs.guest(i).map(|g| &g.made) {
+            if let Some(Made::Tape { places }) = batch.docs.guest(i).map(|g| g.made) {
                 grown.values.insert(batch.docs.key(i), (Arc::clone(&batch), places.len(), batch.docs.made(i).withheld));
             }
         }

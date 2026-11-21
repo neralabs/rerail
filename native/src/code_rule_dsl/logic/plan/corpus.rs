@@ -6130,9 +6130,8 @@ fn run_observed_within(
                 Some(wanted) => guests::guests_seen(&Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted)))).version),
                 None => local_seen,
             };
-            // A file read for its programs is its text's document and its tree, a guest of it (decision 0512).
-            if docs.iter().any(|d| guests::unsplit_host(d, &host)) {
-                docs = docs.into_iter().flat_map(|d| if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] }).collect();
+            // A host file's text and tree were taken one after the other (`Builder::split`): the batch is in key order.
+            if !docs.is_sorted_by_key(|d| d.key) {
                 docs.sort_by_key(|d| d.key);
             }
             let programs = if keep_docs {
@@ -6247,6 +6246,9 @@ fn run_observed_within(
         /// The chunks' sizes, by their order (Q314): a cut waits for its size.
         schedule: &'a parking_lot::Mutex<sizing::Schedule>,
         keep_docs: bool,
+        /// A built document as the documents it is (decision 0512): a file read for its programs is its text and its
+        /// tree, split as it is taken, so its chunk, the chunk's projection and the corpus batch hold the same two.
+        split: &'a (dyn Fn(syntax::Document) -> Vec<syntax::Document> + Sync),
         doing: &'a crate::code_rule_dsl::logic::profile::Activity,
         /// Signals progress to the outer sequencer, which begins and files the chunks in order.
         bell: rerail_accel::exec::Bell,
@@ -6521,9 +6523,11 @@ fn run_observed_within(
                     if let Some(content) = source_id {
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
-                    c.pending_nodes += doc.facts.len();
                     c.pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64, doc.facts.source.len(), digest));
-                    c.pending.push(doc);
+                    for doc in (self.split)(doc) {
+                        c.pending_nodes += doc.facts.len();
+                        c.pending.push(doc);
+                    }
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -6622,6 +6626,8 @@ fn run_observed_within(
     // headroom took a cold run at 300 files to 2.3 GB.
     let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
     let builders = crate::threads::max().max(2);
+    // A file read for its programs is its text's document and its tree, a guest of it (decision 0512).
+    let split_host = |d: syntax::Document| if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] };
     let builder = Builder {
         cut: parking_lot::Mutex::new(Cut {
             docs_in,
@@ -6659,6 +6665,7 @@ fn run_observed_within(
         run_docs,
         schedule: &schedule,
         keep_docs,
+        split: &split_host,
         doing: &worker_doing,
         bell: Default::default(),
     };
@@ -8487,34 +8494,11 @@ fn run_observed_within(
     // chunk reads its own. The evaluated chunks handed theirs on; a memo hit's is made from its stored tape (parsed
     // again, in memory, where the store has none), its guests from the requests its entry kept. Nothing is read from
     // SQL here (decision 0104): the tapes were read with the misses'.
-    // The documents of `source` made from its tape `frame` (parsed in memory where there is none): a file's
-    // (`hit_document`), or a host file read for its programs' text and tree (decision 0512); none for a text file
-    // that is not UTF-8, which is no document.
+    // The documents of `source` made from its tape `frame` (parsed in memory where there is none, `hit_document`):
+    // a file's, or a host file's text and tree (decision 0512); none for a text file that is not UTF-8.
     let doc_of = |key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>| -> Result<Vec<syntax::Document>> {
-        if !host(path) {
-            let how = HitBuild { root, label, tapes: tapes.as_ref(), keep_tapes, unpackaged: unpackaged.contains(path) };
-            return Ok(hit_document(&how, key, path, module, source, frame)?.into_iter().collect());
-        }
-        let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
-        let document = |facts: Arc<core::Facts>, tape| {
-            let digest = core::digest(&facts);
-            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
-        };
-        // A host file: its own language's tree, a guest of the file read for its programs' text.
-        let own = crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label);
-        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
-        let built = match (&tapes, frame) {
-            (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, keep_tapes),
-            _ => core::build_with_tape(&file, keep_tapes),
-        };
-        let (built, tape) = built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-        let facts = match built {
-            Built::Facts(f) => Arc::new(f),
-            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
-        };
-        let tape = tape.filter(|_| keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
-        let d = document(facts, tape);
-        Ok(if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] })
+        let how = HitBuild { root, label, tapes: tapes.as_ref(), keep_tapes, unpackaged: unpackaged.contains(path), split: host(path).then_some((&guest_keys, projection.shape, local_seen)) };
+        hit_document(&how, key, path, module, source, frame)
     };
     // The tape values the chunks' fixpoints admitted (`memo::VALUES`), in the order answered, as `Guests::admit` and
     // `Guests::admit_value` made them: each tape found by its text among the root's last runs' and its source named
@@ -8621,40 +8605,67 @@ fn run_observed_within(
         };
         let run_tape_tag = run_tag.and_then(|t| u8::try_from(t).ok());
         // A measurement aid: `RERAIL_PARSE_TRACE` names why each hit is made now.
-        let eager = |h: &CorpusHit, why: &dyn Fn() -> String| -> Option<syntax::Input> {
+        let eager = |h: &CorpusHit, why: &dyn Fn() -> String| -> Option<Vec<syntax::Input>> {
             if std::env::var_os("RERAIL_PARSE_TRACE").is_some() {
                 eprintln!("RERAIL_PARSE_TRACE eager {} (key {}, {} counts kept): {}", h.path, h.key, base_counts.len(), why());
             }
             None
         };
-        let pending_of = |h: &CorpusHit| -> Option<syntax::Input> {
+        // A file read for its programs (decision 0512) is its text, its tree and the tree's programs, all made by one
+        // parse (`hit_document`'s split, then `Guests::programs`), when any is first read. The documents' table keeps
+        // each guest's host and file (`retain::KeptGuest`), so the batch knows them before any is made.
+        let mut kept_guests: HashMap<u32, Vec<(u32, retain::BaseCount, retain::KeptGuest)>> = HashMap::new();
+        for (&k, c) in &base_counts {
+            if let Some(g) = c.guest {
+                kept_guests.entry(g.file).or_default().push((k, *c, g));
+            }
+        }
+        let pending_of = |h: &CorpusHit| -> Option<Vec<syntax::Input>> {
             let Ok(key) = u32::try_from(h.key) else { return eager(h, &|| "its key is no document's".into()) };
             if hosts.contains(&key) {
                 return eager(h, &|| "it hosts guests".into());
-            }
-            // A file read for its programs' text and tree (decision 0512) is split as it is made (`doc_of`).
-            if host(&h.path) {
-                return eager(h, &|| "a host file (decision 0512)".into());
             }
             let Some((content, now_key)) = now_docs.get(&h.path) else { return eager(h, &|| "not among the run's documents".into()) };
             let Some(kept) = base_counts.get(&key).filter(|c| *now_key == h.key && c.content.is_some_and(|kept| same_content(kept, *content))) else {
                 return eager(h, &|| format!("its counts are not of its content now: {:?} kept, {content:?} under key {now_key} now", base_counts.get(&key).map(|c| c.content)));
             };
             let Some(tag) = (if text_document(root, &h.path, label) { Some(core::TEXT) } else { run_tape_tag }) else { return eager(h, &|| "the run's grammar has no tape tag".into()) };
-            let (root, label, path, module, frame, built) = (root.to_owned(), label.to_owned(), h.path.clone(), h.module.clone(), tapes_of.get(&h.path).cloned(), Arc::clone(&hit_docs_built));
-            let (unpackaged, keep_tapes, at) = (unpackaged.contains(&h.path), keep_tapes, h.key);
-            let make = move || -> std::result::Result<syntax::Document, String> {
+            // A host file's tree and programs, as the table keeps them.
+            let split = host(&h.path);
+            let guests: &[(u32, retain::BaseCount, retain::KeptGuest)] = if split { kept_guests.get(&key).map_or(&[], Vec::as_slice) } else { &[] };
+            if split && !guests.iter().any(|(_, _, g)| g.tree && g.host == key) {
+                return eager(h, &|| "its tree is not among the documents' table's (decision 0512)".into());
+            }
+            let (root, path, module, frame, built) = (root.to_owned(), h.path.clone(), h.module.clone(), tapes_of.get(&h.path).cloned(), Arc::clone(&hit_docs_built));
+            let (unpackaged, keep_tapes, at, keys, shape) = (unpackaged.contains(&h.path), keep_tapes, h.key, Arc::clone(&guest_keys), projection.shape);
+            let seen = local_seen;
+            // The file's documents, made once on the first read of any.
+            let made: Arc<std::sync::OnceLock<std::result::Result<Vec<syntax::Document>, String>>> = Arc::new(std::sync::OnceLock::new());
+            let make_all = Arc::new(move || -> std::result::Result<Vec<syntax::Document>, String> {
                 let source = crate::git_workspace::snapshot::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
                 if frame.is_some() { &built.0 } else { &built.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let how = HitBuild { root: &root, label: &label, tapes: None, keep_tapes, unpackaged };
-                hit_document(&how, at, &path, module.clone(), source, frame.as_ref()).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path}: no document (not UTF-8)"))
+                let how = HitBuild { root: &root, label, tapes: None, keep_tapes, unpackaged, split: split.then_some((&keys, shape, seen)) };
+                hit_document(&how, at, &path, module.clone(), source, frame.as_ref()).map_err(|e| e.to_string())
+            });
+            let of = |want: u32| -> Box<dyn Fn() -> std::result::Result<syntax::Document, String> + Send + Sync> {
+                let (made, make_all, path) = (Arc::clone(&made), Arc::clone(&make_all), h.path.clone());
+                Box::new(move || {
+                    let docs = made.get_or_init(|| make_all()).as_ref().map_err(Clone::clone)?;
+                    docs.iter().find(|d| d.key == want).cloned().ok_or_else(|| format!("{path}: no document under key {want} (not UTF-8, or not as the documents' table keeps it)"))
+                })
             };
-            Some(syntax::Input::Pending(Arc::new(syntax::Pending::new(key, h.path.clone(), tag, kept.digest, kept.size, h.module.clone(), Box::new(make)))))
+            let file = syntax::Pending::new(key, h.path.clone(), tag, kept.digest, kept.size, h.module.clone(), of(key));
+            let mut inputs = vec![syntax::Input::Pending(Arc::new(file))];
+            for &(k, c, g) in guests {
+                let guest = syntax::Pending::new(k, h.path.clone(), g.tag, c.digest, c.size, h.module.clone(), of(k)).with_guest(g.hosted());
+                inputs.push(syntax::Input::Pending(Arc::new(guest)));
+            }
+            Some(inputs)
         };
         let (mut pending, mut eager): (Vec<syntax::Input>, Vec<CorpusHit>) = (Vec::new(), Vec::new());
         for h in hits {
             match pending_of(&h) {
-                Some(p) => pending.push(p),
+                Some(p) => pending.extend(p),
                 None => eager.push(h),
             }
         }
@@ -11533,28 +11544,35 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 
 
 /// What a memo hit's document is built with (`hit_document`): the run's root and grammar, the tapes' store (none for a
-/// document made when first read, `syntax::Pending`, which holds its tape's frame), whether its tape is kept, and
-/// whether its file is one no regular package holds.
+/// document made when first read, `syntax::Pending`, which holds its tape's frame), whether its tape is kept,
+/// whether its file is one no regular package holds, and, for a file the run reads for its programs (decision 0512),
+/// the keys its tree and programs take, the batch's shape and the guests the program sees (`guests::file_and_tree`,
+/// `Guests::programs`, as its chunk makes them).
 struct HitBuild<'a> {
     root: &'a Path,
-    label: &'a str,
+    label: &'static str,
     tapes: Option<&'a crate::content_store::ContentStore>,
     keep_tapes: bool,
     unpackaged: bool,
+    split: Option<(&'a Arc<crate::content_store::guest_keys::GuestKeys>, syntax::Shape, guests::Seen)>,
 }
 
-/// A memo hit's document of `source` (decision 0458), made from its tape `frame` (parsed in memory where there is
-/// none); `None` for a text file that is not UTF-8, which is no document.
-fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>) -> Result<Option<syntax::Document>> {
+/// A memo hit's documents of `source` (decision 0458), made from its tape `frame` (parsed in memory where there is
+/// none): its file's, or a host file's (`HitBuild::split`): its text, its own language's tree, and the tree's programs,
+/// as its chunk makes them.
+fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>) -> Result<Vec<syntax::Document>> {
     let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
     let document = |facts: Arc<core::Facts>, tape| {
         let digest = core::digest(&facts);
         syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: how.unpackaged }
     };
-    if text_document(how.root, path, how.label) {
-        return Ok(Some(document(Arc::new(core::text(Arc::new(source))), None)));
-    }
-    let file = core::Source { language: how.label.to_owned(), source: Arc::new(source) };
+    // A host file's tree is in its own language; any other file of another grammar is text alone.
+    let language = match how.split {
+        Some(_) => crate::code_rule_dsl::language::label_of_path(path).unwrap_or(how.label),
+        None if text_document(how.root, path, how.label) => return Ok(vec![document(Arc::new(core::text(Arc::new(source))), None)]),
+        None => how.label,
+    };
+    let file = core::Source { language: language.to_owned(), source: Arc::new(source) };
     let built = match (how.tapes, frame) {
         (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, how.keep_tapes),
         (None, Some(frame)) if cfg!(feature = "tape-cache") => core::build_with_frame(&file, frame, how.keep_tapes),
@@ -11566,7 +11584,11 @@ fn hit_document(how: &HitBuild<'_>, key: i64, path: &str, module: Option<Arc<str
         Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
     };
     let tape = tape.filter(|_| how.keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
-    Ok(Some(document(facts, tape)))
+    let d = document(facts, tape);
+    let Some((keys, shape, seen)) = how.split.filter(|_| core::facts_tag(&d.facts) != core::TEXT) else { return Ok(vec![d]) };
+    let [text, tree] = guests::file_and_tree(d, keys);
+    let programs = guests::Guests::new(how.label, shape, Arc::clone(keys)).seeing(seen).programs(std::slice::from_ref(&tree)).map_err(Error::Plan)?;
+    Ok([text, tree].into_iter().chain(programs).collect())
 }
 
 /// Whether two contents are one: the same stored source, or the same digest (a content the store does not hold yet,

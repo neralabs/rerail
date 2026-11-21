@@ -2080,14 +2080,34 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
 
 /// A document's row of the counts kept beside the documents' table (decision 0494): its digest (`Document::digest`),
 /// views' counts and facts' size as the corpus batch made or was given them, and the content they were counted of (a
-/// file's own tree; none for a guest, or a content held in memory alone). Of the content a file has now, its document
-/// is made when first read (`syntax::Pending`, Q332): its digest and size are these.
+/// file's own tree; none for a guest, or a content held in memory alone), and a host file's tree's or program's host and
+/// file (decision 0512). Of the content a file has now, its documents are made when first read (`syntax::Pending`,
+/// Q332): their digests and sizes are these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct BaseCount {
     pub(in crate::code_rule_dsl) digest: [u8; 32],
     pub(in crate::code_rule_dsl) counts: crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts,
     pub(in crate::code_rule_dsl) size: crate::code_rule_dsl::facts::vtab::syntax::FactsSize,
     pub(in crate::code_rule_dsl) content: Option<super::memo::Content>,
+    pub(in crate::code_rule_dsl) guest: Option<KeptGuest>,
+}
+
+/// A host file's guest as the documents' table keeps it (decision 0512): its host and file, whether it is the file's
+/// tree (`Made::File`) or a program of it (`Made::Host`), and its tape tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct KeptGuest {
+    pub(in crate::code_rule_dsl) host: u32,
+    pub(in crate::code_rule_dsl) file: u32,
+    pub(in crate::code_rule_dsl) tree: bool,
+    pub(in crate::code_rule_dsl) tag: u8,
+}
+
+impl KeptGuest {
+    /// Its host and file as a pending guest is given them (`syntax::Pending::with_guest`).
+    pub(in crate::code_rule_dsl) fn hosted(self) -> crate::code_rule_dsl::facts::vtab::syntax::Hosted {
+        use crate::code_rule_dsl::facts::vtab::syntax::Made;
+        crate::code_rule_dsl::facts::vtab::syntax::Hosted { host: self.host, file: self.file, made: if self.tree { Made::File } else { Made::Host } }
+    }
 }
 
 /// The counts kept beside the documents' table, by document key.
@@ -2096,7 +2116,7 @@ pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, BaseCount>;
 const BASE_COUNTS: &str = "#base-counts";
 
 /// A counts row's words: key, digest (4), views' counts (4), facts' size (2), content (its kind, then 4 words: as the
-/// documents' table's, 2 for none).
+/// documents' table's; 2 for none; 3 for a host file's guest, then its host, file, 1 for its tree and its tape tag).
 const COUNTS_WIDTH: usize = 16;
 
 /// The counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept (or kept in
@@ -2128,7 +2148,11 @@ pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32
             }
             _ => None,
         };
-        out.insert(key, BaseCount { digest, counts: [a, b, c, d], size: [nodes, codes], content });
+        let guest = (r[11] == 3).then(|| (small(r[12]), small(r[13]), u8::try_from(r[15]).ok())).and_then(|g| match g {
+            (Some(host), Some(file), Some(tag)) => Some(KeptGuest { host, file, tree: r[14] == 1, tag }),
+            _ => None,
+        });
+        out.insert(key, BaseCount { digest, counts: [a, b, c, d], size: [nodes, codes], content, guest });
     }
     Ok(out)
 }
@@ -2156,7 +2180,10 @@ pub(in crate::code_rule_dsl) fn put_base_counts(
                 rows.push(1);
                 rows.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
             }
-            None => rows.extend([2, 0, 0, 0, 0]),
+            None => match &k.guest {
+                Some((g, tag)) => rows.extend([3, i64::from(g.host), i64::from(g.file), i64::from(g.made == crate::code_rule_dsl::facts::vtab::syntax::Made::File), i64::from(*tag)]),
+                None => rows.extend([2, 0, 0, 0, 0]),
+            },
         }
     }
     let name = KeptRel { name: BASE_COUNTS.to_owned(), ident: base_documents_ident(&binds) };
