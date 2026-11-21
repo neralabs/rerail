@@ -194,9 +194,9 @@ pub const TG: u64 = 256;
 /// The threads of a group on the process's device: `TG` on a GPU; 32 on the CPU (decision 0527
 /// §3), where each of a group's threads is a coroutine that every barrier switches, so a phase
 /// costs its group's width in switches (the radix sort's tiles run 8 of their threads a thread).
+/// Read from the device each time: the device layer holds the device, so no copy of its kind is kept.
 pub fn tg() -> u64 {
-    static T: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
+    if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG }
 }
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
