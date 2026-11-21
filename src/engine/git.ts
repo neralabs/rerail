@@ -11,8 +11,8 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-guard/filter-drivers.js";
 import {
-  nameDiff, outsideSubmodules, repositoryConfig, UNASKED, withChangedSubmodules, type DiffRepository, type GitFailure, type GuardedRepository,
-  type Places, type SubmoduleOpener,
+  GITLINK_LISTING, nameDiff, outsideSubmodules, recordsNoSubmodule, repositoryConfig, UNASKED, withChangedSubmodules, type DiffRepository,
+  type GitFailure, type GuardedRepository, type Places, type SubmoduleOpener,
 } from "./git-guard/submodule-state.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -1203,8 +1203,11 @@ interface GuardedCall {
   readonly options: RunGitOptions;
 }
 
+/** Stdout of a question asked in a repository, or how it failed. */
+type Ask = (args: readonly string[]) => Promise<string | GitFailure>;
+
 /** Stdout of each question `git -C <cwd> <args>` with `env` set, or how it failed. */
-function asker(git: LaterGit, cwd: string, env: GitVariables): (args: readonly string[]) => Promise<string | GitFailure> {
+function asker(git: LaterGit, cwd: string, env: GitVariables): Ask {
   return async args => {
     const answer = await git(cwd, args, { env, maxBuffer: MAX_LISTING_BYTES });
     return answer.status === 0 && answer.error === undefined ? answer.stdout : answer;
@@ -1218,7 +1221,7 @@ function diffRepository(git: LaterGit, cwd: string, guarded: Guarded): DiffRepos
 }
 
 /** The top of the worktree a question runs in, and its folder below that top; how asking failed instead. */
-async function places(ask: (args: readonly string[]) => Promise<string | GitFailure>): Promise<Places | GitFailure> {
+async function places(ask: Ask): Promise<Places | GitFailure> {
   const answer = await ask(["rev-parse", "--show-toplevel", "--show-prefix"]);
   if (typeof answer !== "string") return answer;
   const [top = "", prefix = ""] = answer.split("\n");
@@ -1248,9 +1251,20 @@ function submoduleOpener(git: LaterGit, env: GitVariables = {}): SubmoduleOpener
     const guarded = await guardedLater(git, folder, opened);
     if (!("entries" in guarded)) return guarded;
     if (!guarded.entries.some(entry => entry.scope === "local") && !(await holdsNoEntry(git, folder, gitFolder))) return UNASKED;
-    const repository: GuardedRepository = { entries: guarded.entries, ask: asker(git, folder, guarded.env), places: { top: folder, prefix: "" } };
+    const ask = submoduleAsker(asker(git, folder, guarded.env), gitFolder);
+    const repository: GuardedRepository = { entries: guarded.entries, ask, places: { top: folder, prefix: "" } };
     return repository;
   };
+}
+
+/**
+ * The questions of the submodule whose Git folder is `gitFolder`, each asked with `ask` but its index's submodules
+ * ({@link GITLINK_LISTING}): those are answered as none, with no Git started, when its index records none
+ * ({@link recordsNoSubmodule}). Most submodules hold none, so each costs Rerail two Gits, its config listing and its
+ * status, where Git's own diff started one, its status.
+ */
+function submoduleAsker(ask: Ask, gitFolder: string): Ask {
+  return async args => args === GITLINK_LISTING && await recordsNoSubmodule(join(gitFolder, "index")) ? "" : await ask(args);
 }
 
 /**

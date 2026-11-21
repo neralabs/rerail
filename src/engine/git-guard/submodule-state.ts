@@ -14,6 +14,7 @@
  * (`is_submodule_modified`): any entry its status lists.
  */
 import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
 
@@ -120,6 +121,22 @@ export function outsideSubmodules(args: readonly string[]): string[] {
 
 /** The arguments that list a repository's whole index, each path from its top: `<mode> <object> <stage> TAB <path> NUL`. */
 export const GITLINK_LISTING = ["ls-files", "-z", "--stage", "--full-name", "--", ":/"] as const;
+
+/** A gitlink's mode, 0160000, as every entry of an index file stores its mode: one big-endian word. */
+const GITLINK_MODE = Buffer.from([0x00, 0x00, 0xe0, 0x00]);
+/** The signature of a split index's `link` extension: the index's other entries are in the shared file it names. */
+const SPLIT_INDEX_LINK = Buffer.from("link", "latin1");
+
+/**
+ * Whether the index file at `index` records no submodule, read in process so that no Git starts to list it: its bytes
+ * hold no gitlink's mode word ({@link GITLINK_MODE}), so none of its entries is one, and no split index's `link`
+ * signature. An index that holds those bytes anywhere, in a time, an object id or a path too, and one that cannot be
+ * read are left to Git's listing ({@link GITLINK_LISTING}), which then answers as before.
+ */
+export async function recordsNoSubmodule(index: string): Promise<boolean> {
+  const bytes = await readFile(index).catch(() => undefined);
+  return bytes !== undefined && !bytes.includes(GITLINK_MODE) && !bytes.includes(SPLIT_INDEX_LINK);
+}
 
 /** The submodules a repository's index records, each path from its top, and whether its `.gitmodules` is in conflict. */
 export interface Gitlinks {

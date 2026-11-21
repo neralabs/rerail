@@ -151,6 +151,47 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(listed(audit.stdout)).toEqual(["top.txt"]);
   }, 60_000);
 
+  it("and ask a clean checked-out submodule whose index records no submodule only its config and its status", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "top.txt"), "changed\n");
+    await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const trace = join(root, "trace");
+    await mkdir(trace);
+    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+
+    vi.stubEnv("GIT_TRACE2_EVENT", undefined);
+    // The checkout's config listing, its diff, its index's submodules, its `.gitmodules` and its top folder; then the
+    // submodule's config listing and its status, and no listing of the submodule's own index.
+    expect(readdirSync(trace)).toHaveLength(7);
+    expect(audit.stdout).toBe(git(work, ...AUDIT_DIFF));
+  }, 60_000);
+
+  it("and ask the submodules inside a submodule whose split index keeps them in its shared file", async () => {
+    const root = await folder();
+    const leaf = await repository(root, "leaf", { "leaf.txt": "one\n" });
+    const middle = await repository(root, "middle", { "middle.txt": "one\n" });
+    git(middle, "submodule", "add", "--quiet", leaf, "leaf");
+    git(middle, "commit", "--quiet", "-m", "leaf");
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", middle, "sub");
+    git(work, "submodule", "update", "--quiet", "--init", "--recursive");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    // Every entry moves to the shared file, and the index itself holds only the `link` extension that names it.
+    git(join(work, "sub"), "update-index", "--split-index");
+    await writeFile(join(work, "sub", "leaf", "leaf.txt"), "changed\n");
+
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([["sub"], ["sub"]]);
+    expect(answers.map(answer => answer.stdout)).toEqual([git(work, ...AUDIT_DIFF), git(work, ...SCAN_DIFF)]);
+  }, 60_000);
+
   it("and start one Git for a call that reads no worktree file, and fail one that prints past its limit as Git's start does", async () => {
     const root = await folder();
     const work = await repository(root, "work", { "top.txt": "top\n" });
