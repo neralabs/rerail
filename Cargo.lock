@@ -4323,11 +4323,9 @@ name = "rerail-parser-tests"
 version = "0.1.0"
 dependencies = [
  "bitlex",
- "libc",
  "rerail-compiler",
  "rerail-context",
  "rerail-json-aot",
- "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",

@@ -593,6 +593,15 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
+
+`simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.
+`simdjson_forms_rust_trees_are_the_jits` and `aot_tests`, the tests of `rust_stream`'s output named in the steps
+above, are removed; `json_rusts_tapes_are_the_jits` compares with the JIT in their place. On the M3: `twitter.json`
+77.9 instructions a byte (tier 1 36.3, tier 2 41.2) against simdjson's 5.8, 24.8 times its time; `numbers.json` 69.7
+against 14.3, 5.5 times. The benchmark found that tier 1 refused UTF-8: an error read a name (`high`) the grammar
+defines again after it.
+
 ## Step 57, done: the cells at constant widths (decision 0554)
 
 The generated parser names its language's widths (`WIDTHS`) and calls the writer's open, leaf and close at them as

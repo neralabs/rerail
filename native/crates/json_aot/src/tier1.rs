@@ -153,7 +153,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     // mask unicode = esc_last & u
     let m_unicode: Vec<u64> = (0..nw).map(|i| m_esc_last[i] & m_u[i]).collect();
     // mask high = (unicode & next(dee, 1)) & next(high_2, 2)
-    let m_high: Vec<u64> = (0..nw).map(|i| m_unicode[i] & next(&m_dee, i, 1) & next(&m_high_2, i, 2)).collect();
+    let m_high_1: Vec<u64> = (0..nw).map(|i| m_unicode[i] & next(&m_dee, i, 1) & next(&m_high_2, i, 2)).collect();
     // mask low = (unicode & next(dee, 1)) & next(low_2, 2)
     let m_low: Vec<u64> = (0..nw).map(|i| m_unicode[i] & next(&m_dee, i, 1) & next(&m_low_2, i, 2)).collect();
     // mask code = ~hidden & ~o_str
@@ -162,47 +162,47 @@ pub fn lex(src: &[u8]) -> Lexed {
     let m_wordbyte: Vec<u64> = (0..nw).map(|i| !((m_ws[i] | m_op[i]) | m_quote[i]) & lv[i]).collect();
     // mask word = code & wordbyte
     let m_word: Vec<u64> = (0..nw).map(|i| m_code[i] & m_wordbyte[i]).collect();
-    let t1: Vec<u64> = (0..nw).map(|i| ((((((((prev(&m_c0c1, i, 1) & m_cont[i] | prev(&m_f5ff, i, 1) & m_cont[i]) | prev(&m_lead, i, 1) & m_not_cont[i]) | m_cont[i] & (!prev(&m_high, i, 1) & lv[i])) | prev(&m_e0, i, 1) & m_below_a0[i]) | prev(&m_ed, i, 1) & m_from_a0[i]) | prev(&m_f0, i, 1) & m_below_90[i]) | prev(&m_f4, i, 1) & m_from_90[i]) | (prev(&m_cont, i, 1) & m_cont[i] ^ (prev(&m_third, i, 2) | prev(&m_fourth, i, 3))))).collect();
-    let t2: Vec<u64> = (0..nw).map(|i| ((m_lead[i] & m_last_byte[i] | (m_lead3[i] | m_lead4[i]) & next(&m_last_byte, i, 1)) | m_lead4[i] & next(&m_last_byte, i, 2))).collect();
-    let t3: Vec<u64> = (0..nw).map(|i| m_body[i] & m_control[i]).collect();
-    let t4: Vec<u64> = (0..nw).map(|i| m_unicode[i] & (!(next(&m_hex, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4)) & lv[i])).collect();
-    let t5: Vec<u64> = (0..nw).map(|i| m_high[i] & (!(next(&m_backslash, i, 5) & next(&m_u, i, 6) & next(&m_dee, i, 7) & next(&m_low_2, i, 8)) & lv[i])).collect();
-    let t6: Vec<u64> = (0..nw).map(|i| m_low[i] & (!prev(&m_high, i, 6) & lv[i])).collect();
-    let t7: Vec<u64> = (0..nw).map(|i| m_f_str[i] & m_last_byte[i]).collect();
+    let t2: Vec<u64> = (0..nw).map(|i| ((((((((prev(&m_c0c1, i, 1) & m_cont[i] | prev(&m_f5ff, i, 1) & m_cont[i]) | prev(&m_lead, i, 1) & m_not_cont[i]) | m_cont[i] & (!prev(&m_high, i, 1) & lv[i])) | prev(&m_e0, i, 1) & m_below_a0[i]) | prev(&m_ed, i, 1) & m_from_a0[i]) | prev(&m_f0, i, 1) & m_below_90[i]) | prev(&m_f4, i, 1) & m_from_90[i]) | (prev(&m_cont, i, 1) & m_cont[i] ^ (prev(&m_third, i, 2) | prev(&m_fourth, i, 3))))).collect();
+    let t3: Vec<u64> = (0..nw).map(|i| ((m_lead[i] & m_last_byte[i] | (m_lead3[i] | m_lead4[i]) & next(&m_last_byte, i, 1)) | m_lead4[i] & next(&m_last_byte, i, 2))).collect();
+    let t4: Vec<u64> = (0..nw).map(|i| m_body[i] & m_control[i]).collect();
+    let t5: Vec<u64> = (0..nw).map(|i| m_unicode[i] & (!(next(&m_hex, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4)) & lv[i])).collect();
+    let t6: Vec<u64> = (0..nw).map(|i| m_high_1[i] & (!(next(&m_backslash, i, 5) & next(&m_u, i, 6) & next(&m_dee, i, 7) & next(&m_low_2, i, 8)) & lv[i])).collect();
+    let t7: Vec<u64> = (0..nw).map(|i| m_low[i] & (!prev(&m_high_1, i, 6) & lv[i])).collect();
+    let t8: Vec<u64> = (0..nw).map(|i| m_f_str[i] & m_last_byte[i]).collect();
     let mut refused = false;
     // invalid UTF-8
-    refused |= any(&t1);
-    // UTF-8 cut short at the end
     refused |= any(&t2);
-    // a control byte in a string
+    // UTF-8 cut short at the end
     refused |= any(&t3);
-    // \u without four hex digits
+    // a control byte in a string
     refused |= any(&t4);
-    // a lone high surrogate
+    // \u without four hex digits
     refused |= any(&t5);
-    // a lone low surrogate
+    // a lone high surrogate
     refused |= any(&t6);
-    // a string open at the end of the file
+    // a lone low surrogate
     refused |= any(&t7);
-    let t8: Vec<u64> = (0..nw).map(|i| m_quote[i] & m_o_str[i]).collect();
-    let t9: Vec<u64> = (0..nw).map(|i| m_code[i] & m_op[i]).collect();
-    let t10: Vec<u64> = (0..nw).map(|i| m_word[i] & (!prev(&m_word, i, 1) & lv[i])).collect();
-    let t11: Vec<u64> = (0..nw).map(|i| ((m_quote[i] & m_o_str[i] | m_code[i] & m_op[i]) | m_word[i] & (!prev(&m_word, i, 1) & lv[i]))).collect();
+    // a string open at the end of the file
+    refused |= any(&t8);
+    let t9: Vec<u64> = (0..nw).map(|i| m_quote[i] & m_o_str[i]).collect();
+    let t10: Vec<u64> = (0..nw).map(|i| m_code[i] & m_op[i]).collect();
+    let t11: Vec<u64> = (0..nw).map(|i| m_word[i] & (!prev(&m_word, i, 1) & lv[i])).collect();
+    let t12: Vec<u64> = (0..nw).map(|i| ((m_quote[i] & m_o_str[i] | m_code[i] & m_op[i]) | m_word[i] & (!prev(&m_word, i, 1) & lv[i]))).collect();
     // The tokens: each bit of a row's start, in order, its kind its row's.
     let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
     let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);
-    for (q, &word) in t11.iter().enumerate() {
+    for (q, &word) in t12.iter().enumerate() {
         let mut bits = word;
         while bits != 0 {
             let s = 64 * q + bits.trailing_zeros() as usize;
             bits &= bits - 1;
-            let kind: u32 = if bit(&t8, s) {
+            let kind: u32 = if bit(&t9, s) {
                 // `"`
                 u32::from(KINDS[usize::from(src[s])])
-            } else if bit(&t9, s) {
+            } else if bit(&t10, s) {
                 // `punctuation`
                 u32::from(KINDS[usize::from(src[s])])
-            } else if bit(&t10, s) {
+            } else if bit(&t11, s) {
                 // `number`
                 u32::from(KINDS[usize::from(src[s])])
             } else {
@@ -218,7 +218,7 @@ pub fn lex(src: &[u8]) -> Lexed {
         masks: Masks {
             q: m_q,
             esc: m_esc,
-            rd0_open: t8,
+            rd0_open: t9,
             run_number: m_wordbyte,
         },
         refused,

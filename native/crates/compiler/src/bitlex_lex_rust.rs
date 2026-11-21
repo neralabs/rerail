@@ -239,6 +239,13 @@ pub fn stage1_ends(stmts: &[Stmt]) -> Result<Vec<(String, Expr)>, String> {
 
 impl Gen<'_> {
     /// A local holding `e`'s words.
+    /// `name` is `local` from here; a name defined again leaves no part made of its old self to be read as its new.
+    fn bind(&mut self, name: &str, local: String) {
+        if self.names.insert(name.to_owned(), local).is_some() {
+            self.temps.clear();
+        }
+    }
+
     fn val(&mut self, e: &Expr) -> Result<String, String> {
         if let Expr::Name(n) = e {
             return self.names.get(n).cloned().ok_or_else(|| format!("tier 1 as Rust: `{n}` is no mask before it"));
@@ -525,7 +532,7 @@ impl Gen<'_> {
         let mut marks: Vec<&Stmt> = Vec::new();
         let mut rows: Vec<(usize, &Stmt)> = Vec::new();
         let mut row = 0usize;
-        let mut escapes: Vec<(&str, &Expr)> = Vec::new();
+        let mut escapes: Vec<(&str, &Expr, HashMap<String, String>)> = Vec::new();
         let mut token_escapes: Vec<&Stmt> = Vec::new();
         for s in x.stmts {
             match s {
@@ -537,17 +544,26 @@ impl Gen<'_> {
                     match e {
                         Expr::Name(n) => {
                             let v = self.val(&Expr::Name(n.clone()))?;
-                            self.names.insert(name.clone(), v);
+                            self.bind(name, v);
                         }
                         _ => {
-                            let local = format!("m_{}", ident(name));
+                            // A name defined again (a class `high`, then a mask `high`) is a local of its own: what was
+                            // made of the first keeps reading it.
+                            let base = format!("m_{}", ident(name));
+                            let mut local = base.clone();
+                            // A local no name has (a class `high_2` is `m_high_2`).
+                            while self.names.values().any(|v| *v == local) || self.names.contains_key(local.trim_start_matches("m_")) {
+                                local = format!("{base}_{}", self.next);
+                                self.next += 1;
+                            }
                             self.make(&local, e)?;
-                            self.names.insert(name.clone(), local);
+                            self.bind(name, local);
                         }
                     }
                 }
                 Stmt::Rounds { regions: Some(rg), .. } => self.regions(rg)?,
-                Stmt::Escape(why, e) | Stmt::Error(why, e) => escapes.push((why, e)),
+                // Its names as they are here: a name defined again after it is not its.
+                Stmt::Escape(why, e) | Stmt::Error(why, e) => escapes.push((why, e, self.names.clone())),
                 Stmt::TokenEscape { .. } => token_escapes.push(s),
                 Stmt::Skip(e) => {
                     skip = Some(match skip.take() {
@@ -565,8 +581,19 @@ impl Gen<'_> {
         }
         // The escapes and errors: a bit of any sends the file to tree-sitter.
         let mut refuse = Vec::new();
-        for (why, e) in &escapes {
-            let v = self.val(e)?;
+        for (why, e, at) in &escapes {
+            // The names at the error's statement, over those made after it (as the grammar reads them: a name before
+            // it). Where one differs from the name's last, none of the parts made since is the error's.
+            let mut names = self.names.clone();
+            names.extend(at.iter().map(|(k, v)| (k.clone(), v.clone())));
+            let v = if names == self.names {
+                self.val(e)?
+            } else {
+                let (now, temps) = (std::mem::replace(&mut self.names, names), std::mem::take(&mut self.temps));
+                let v = self.val(e);
+                (self.names, self.temps) = (now, temps);
+                v?
+            };
             refuse.push(format!("    // {why}\n    refused |= any(&{v});\n"));
         }
         let _ = writeln!(self.body, "    let mut refused = false;");

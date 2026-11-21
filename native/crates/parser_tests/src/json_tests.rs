@@ -31,25 +31,6 @@ fn simdjson_form() -> Compiled {
     compile_step("json-simdjson", &source)
 }
 
-/// The language a format 16 source is generated for and its runs take (decision 0535): every key a direct run of the
-/// grammar writes (`rust_stream::direct_entries`), then every other key the files' format 15 tapes hold, as the
-/// engine's language holds its grammar's. One for every file, known before the Rust is written: its numbers are
-/// literals there, and no node word of the grammar is left without one.
-fn language_of(c: &Compiled, files: &[&[u8]]) -> rerail_tape_format::f16::Lang {
-    let (widths, tag) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    let mut keys: Vec<rerail_tape_format::tape::Entry> = rerail_compiler::rust_stream::direct_entries(&c.native, widths, tag).unwrap_or_default();
-    for f in files {
-        let Ok(image) = c.parser.image(f) else { continue };
-        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        for e in table.entries() {
-            if !keys.contains(e) {
-                keys.push(e.clone());
-            }
-        }
-    }
-    rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 1, 1], 1).expect("a language")
-}
-
 /// Page 40, stage 1: the simdjson form's tier 1 records a token where simdjson's stage 1 writes a
 /// structural index, and nowhere else: its starts are simdjson's indexes, by count and by hash
 /// (`fixtures/simdjson-stage1/expected.txt`, from `stage1_indexes.cpp`), on each file there.
@@ -189,36 +170,6 @@ fn deep_nests(depths: std::ops::Range<usize>) -> Vec<Vec<u8>> {
     out
 }
 
-/// `src` with each line's indent and its trailing spaces left out.
-fn flat(src: &str) -> String {
-    src.lines().map(str::trim).collect::<Vec<_>>().join("\n") + "\n"
-}
-
-/// Each dispatch's arm (`'X: loop { match d { … } }`, its top level) that is only `d = L::M;
-/// continue 'X;`, back into its own loop, in generated Rust whose comments hold no braces.
-#[cfg(target_arch = "aarch64")]
-fn dispatch_resets(src: &str) -> Vec<String> {
-    let lines: Vec<&str> = src.lines().map(str::trim).filter(|l| !l.starts_with("//")).collect();
-    let mut out = Vec::new();
-    for (i, l) in lines.iter().enumerate() {
-        let Some(b) = l.strip_prefix('\'').and_then(|r| r.strip_suffix(": loop {")) else { continue };
-        let Some(m) = lines[i + 1..].iter().position(|l| !(l.starts_with('\'') && l.ends_with(": {"))).map(|k| i + 1 + k).filter(|&k| lines[k] == "match d {") else { continue };
-        let own = format!("continue '{b}; }}");
-        let mut depth = 1i64;
-        for l in &lines[m + 1..] {
-            let arm = l.split_once(" => { d = ").filter(|(a, _)| a.starts_with("L::"));
-            if depth == 1 && arm.is_some_and(|(_, rest)| rest.split_once("; ").is_some_and(|(n, tail)| n.starts_with("L::") && tail == own)) {
-                out.push(format!("'{b}: {l}"));
-            }
-            depth += l.matches('{').count() as i64 - l.matches('}').count() as i64;
-            if depth <= 0 {
-                break;
-            }
-        }
-    }
-    out
-}
-
 /// The trees test's files: the made-up cases, then the corpus (`RERAIL_JSON_CORPUS`) where set.
 fn tree_inputs() -> Vec<Vec<u8>> {
     let mut inputs: Vec<Vec<u8>> = vec![
@@ -303,308 +254,15 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     inputs
 }
 
-/// The trees test's form: tier 2 as `rust_stream` writes it, compiled by rustc and run on the JIT's
-/// harness in place of Cranelift's code, gives the JIT's trees, file for file (page 40: the
-/// comparison with simdjson is made on this Rust).
-#[cfg(target_arch = "aarch64")]
-#[test]
-fn simdjson_forms_rust_trees_are_the_jits() {
-    let (jit, mut aot) = (simdjson_form(), simdjson_form());
-    let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
-    let (widths, tag) = aot.parser.tier2.widths_tag();
-    let source = rerail_compiler::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
-    // Its code read line by line, each line's indent left out (`flat`): the tests read the code, not its layout.
-    let src = flat(&source);
-    // A number is read once, as `parse_number` reads it: each arm of a number's first bytes calls one method, written
-    // once (`number`), which makes its end and its check from one read of its bytes (`run_R_check_C`).
-    let arms: Vec<&str> = src.split("0x2d | 0x30..=0x39 => {\n").skip(1).collect();
-    assert!(!arms.is_empty(), "the numbers' arms");
-    for arm in &arms {
-        let first = arm.lines().nth(1).unwrap_or("");
-        assert!(first.trim() == "s.number(st, t)?;", "a number's arm calls the number's method: {first}");
-    }
-    let number = src.split("fn number(&mut self, st: u32, t: &mut T) -> R {").nth(1).expect("the number's method");
-    assert!(src.matches("fn number(").count() == 1 && number.lines().take(3).any(|l| l.trim().starts_with("match s.run_") && l.contains("_check_")), "the number read once, in one method");
-    // Each word written once, a method each arm calls (decision 0518): one string loop (`string`, as the lean
-    // parser's), one atom test (`atom`), called from each place a value is read.
-    // The string is given the opener's place, as the lean parser's `string(v)`: no field the opener's arm sets.
-    for m in ["fn string(&mut self, mut at: u32, t: &mut T) -> R {", "fn atom(&self, st: u32) -> u32 {"] {
-        assert_eq!(src.matches(m).count(), 1, "one method: {m}");
-    }
-    assert!(src.matches("s.string(t.start + 1, t)?;").count() >= 3 && src.matches("s.atom(st)").count() >= 2, "the methods called from each place");
-    assert!(!src.contains("part_at"), "the place a string's next part is at is the method's own");
-    assert_eq!(src.matches("s.part_stop(").count(), 1, "one string loop");
-    // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
-    // place a loop was entered at (the array's first value goes to the one value switch), and a
-    // switch on the kind only where a call's return switches on its token again (`again`).
-    // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
-    // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
-    // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
-    let rules = src.match_indices("\nfn r").filter(|&(at, _)| src[at + 5..].starts_with(|c: char| c.is_ascii_digit())).count();
-    assert!(rules == 1 && src.contains("ret = s.taken_ret();"), "one function, an explicit stack");
-    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0548): the document's where the depth is 0,
-    // else the container's two places by one test of its number; no match, no refusal of a number, no number kept
-    // by the document's own calls.
-    let two_ways = |what: &str, code: &str| {
-        assert!(code.contains("s.depth -= 1;\nif s.depth == 0 {") && code.contains("} else {\nif ret == 1 {") && !code.contains("match ret {") && !code.contains("why::RETURN)") && !code.contains("s.keep_ret(0)"), "format {what}: a return two ways");
-    };
-    two_ways("15", &src);
-    // The token's state the one rule's local, as `walk`'s `next`, `v` and `end`: not the run's fields.
-    let state = src.split("\nstruct S {").nth(1).and_then(|s| s.split("\n}\n").next()).expect("the run's state");
-    assert!(src.contains("fn r0(s: &mut S) -> Result<bool, u32> {\nlet t = &mut T::NEW;") && !state.contains("start: u32") && !state.contains("rec_end") && !state.contains("last_end"), "the token's state a local of the rule");
-    // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
-    // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
-    // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
-    assert!(!src.contains("s.ret[") && src.contains("s.keep_ret(") && !src.contains("close::<true, false>") && !src.contains("close::<false, false>"), "one stack");
-    let again: std::collections::BTreeSet<usize> = native
-        .structural
-        .iter()
-        .filter_map(|w| if let rerail_compiler::native_ir::StructuralOperation::Push { target, .. } = w.operation { Some(usize::from(target) + 1) } else { None })
-        .filter(|&t| matches!(native.structural.get(t).map(|w| w.operation), Some(rerail_compiler::native_ir::StructuralOperation::Switch { .. })))
-        // A call's one after is a return's place only where a `RETURN` gives `again`.
-        .filter(|_| native.structural.iter().any(|w| matches!(w.operation, rerail_compiler::native_ir::StructuralOperation::Return { again: true })))
-        .collect();
-    let kind_paths = src.matches("if t.rec_end == 0 && !t.at_end {").count() + src.matches("if t.rec_end == 0 && !(t.start == s.len) {").count();
-    assert_eq!(kind_paths, again.len(), "the kind path only where a call returns: {again:?}");
-    // The `\u` checks only after a `u`, as simdjson's `\u` work: every call of them in the arm of
-    // the escape `\u`; every other escape goes past them.
-    let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
-    let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
-    let calls = src.matches("s.check_1(t)?;").count();
-    assert!(calls > 0 && src.matches(&format!("{u} => {{\ns.check_1(t)?;")).count() == calls, "the \\u checks in the \\u arm alone");
-    // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
-    // the last token, and the value switches refuse its byte, as simdjson's switch the index past
-    // its last. No `at_end` field is read.
-    assert!(!src.contains("t.at_end") && !src.contains("if (t.start == s.len) { return refuse("), "no end test where the switch refuses the end");
-    // No record field written that no word reads: no `live` (no marks), no `rec_end = 0` (no
-    // kind path), and the code only where the escapes' word `match` reads it; the atoms write
-    // their leaves with their kinds, as simdjson's `case 't'` its tape word.
-    let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("t.code = ")).collect();
-    assert!(code_writes.iter().all(|l| l.starts_with("t.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
-    assert!(!src.contains("live =") && !src.contains("rec_end = 0;") && !src.contains("s.word_kind()") && !src.contains("rec_end == 0"), "a field written that no word reads");
-    // A string as `copy_and_find`: 32 bytes a step, the stop's kind from the masks (no byte read
-    // again), a content part then its stop in the same pass, and no test of a one-byte token's
-    // length after it is set.
-    let parts = src.matches("let (i, closer) = s.part_stop(at)?;").count();
-    assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= t.rec_end"), "a string's stops as copy_and_find's");
-    // Each node's code written as it is made (`code_now`), no commit pass over the nodes after.
-    let made = src.matches("s.open(").count() + src.matches("s.leaf::<").count();
-    assert!(!src.contains("self.commit(") && src.matches("s.code_now(").count() == made, "each node's code as it is made");
-    // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
-    // The dispatches' values are named, as the lean parser's `Label`s: each the place it goes on to.
-    let numbered: Vec<&str> = src.lines().map(str::trim).filter(|l| l.split(['{', ';']).any(|st| st.trim().strip_prefix("d = ").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))).collect();
-    assert!(numbered.is_empty() && src.contains("enum L {") && src.contains("match d {"), "a dispatch's value a number: {numbered:?}");
-    // One dispatch, as the lean parser's one `match label`: the loops within it entered once each, a jump into
-    // another's header through the dispatch (`Shape::threaded`).
-    assert_eq!(src.matches("match d {").count(), 1, "one dispatch");
-    // Its values named by what their places do in the grammar, as the lean parser's (`rust_stream::meaning`).
-    let variants: Vec<&str> = src.split("enum L {\n").nth(1).and_then(|e| e.split('}').next()).unwrap_or_default().lines().map(|l| l.trim().trim_end_matches(',')).filter(|l| !l.is_empty()).collect();
-    assert_eq!(variants, ["ObjectBegin", "ArrayBegin", "ArrayValue", "End"], "the dispatch's values by their meaning");
-    let resets = dispatch_resets(&src);
-    assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
-    // No room check a token: the harness sizes the tape from the input once, as simdjson's.
-    assert!(!aot.parser.tier2.room_checked() && !src.contains("room()?"), "no room check a token");
-    let entry = aot_entry(&source);
-    // SAFETY: the source is this program's tier 2 (from its own native IR), reading and writing
-    // `Ctx` as the JIT's does; it counts its calls open itself.
-    unsafe { aot.parser.tier2.set_entry(entry, 4) };
-    let inputs = tree_inputs();
-    let (mut parsed, mut refused) = (0, 0);
-    for (k, f) in inputs.iter().enumerate() {
-        let show = || String::from_utf8_lossy(&f[..f.len().min(80)]).into_owned();
-        let want = ours(&jit, f);
-        assert_eq!(ours(&aot, f), want, "file {k} ({:?}): the Rust's nodes", show());
-        // The tape's bytes alike too: each code, its supertypes' classes, the columns.
-        if want.is_some() {
-            assert!(aot.parser.image(f).ok() == jit.parser.image(f).ok(), "file {k} ({:?}): the Rust's tape image", show());
-        }
-        if want.is_some() { parsed += 1 } else { refused += 1 }
-    }
-    eprintln!("{} files: {parsed} parsed, {refused} refused, by the Rust and the JIT alike, tape bytes and all", inputs.len());
-    // Format 16 (decision 0434): the Rust passes each node to the writer's ops at its word, as it is
-    // made (`rust_source_16`), and writes the JIT's format 16 run's bytes, 16 and 16z: the ops' calls
-    // are `native_cpu_tape::pass`'s, with no rows passed again.
-    let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    // The JIT's run in the simdjson form passes each node to the ops at its word (`direct`), as the Rust: no working
-    // row, so no step on the rows is called.
-    let s16 = jit.parser.sixteen().expect("a format 16 tier 2");
-    assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
-    assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
-    let lang = language_of(&jit, &inputs.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
-    if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
-        std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
-    }
-    let made16 = src16.matches("s.open16(").count() + src16.matches("s.leaf16(").count();
-    // No working row: the rule touches neither rows nor supertype records, only the stack of open
-    // nodes (a call's number in each) and the ops.
-    let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
-    // Each node's number a literal at its word, as the lean parser's kind constants (decision 0535): no table read.
-    assert!(!src16.contains("fn number16(") && src16.contains("pub const LANG: u64"), "a direct run's numbers are the language's literals");
-    let reads: Vec<&str> = rule16.split("\n}\n").next().unwrap_or_default().lines().filter(|l| l.contains("numbers")).collect();
-    assert!(reads.is_empty(), "a direct run's rule reads the numbers: {reads:?}");
-    assert!(!rule16.contains("s.row(") && !rule16.contains("s.open(") && !rule16.contains("s.leaf::<") && !rule16.contains("s.node_super("), "no row in a format 16 run");
-    // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
-    // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
-    let flat16 = flat(&src16);
-    two_ways("16", &flat16);
-    assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32, t: &mut T) -> R {"), "a direct run's string is given the opener's place");
-    assert_eq!(src16.matches("match d {").count(), 1, "a direct run's one dispatch");
-    for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
-        let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
-        assert!(!arms.is_empty(), "the arms of {byte}");
-        for arm in arms {
-            // The last token's end kept first where a close after reads it (`rust_stream::last_ends`).
-            let own = arm.strip_prefix("t.last_end = t.rec_end;\n").unwrap_or(arm);
-            assert_eq!(own.starts_with("t.rec_end = t.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
-            assert!(made || !arm.starts_with("t.last_end"), "{byte}'s arm keeps no end it does not make again");
-        }
-    }
-    // A token taken as the lean parser's `take!()`: one load and one add, the stream ended in two entries of the
-    // file's length (`Batch::end_streams`), and no copy of the last token's end (`rust_stream::last_ends`): a close
-    // of it reads `rec_end` where no arm made it again, and `last_end` where the arm before it kept it.
-    let take = src16.split("fn token_all(&mut self, t: &mut T) -> R {").nth(1).and_then(|r| r.split("\n    }\n").next()).expect("the token's step");
-    assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
-    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end);\n"), "a `,` closes the value by the end it left");
-    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end);\n"), "a `}}` keeps the value's end before it makes its own");
-    // A close cannot fail (`rust_stream::sure_closes`, decision 0547): no result, no `?`, the writer's close asserts.
-    assert!(src16.contains("    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n") && !src16.lines().any(|l| l.contains("s.close::<") && l.contains(")?;")), "a close returns nothing");
-    assert!(src16.contains("debug_assert!(self.open_len != 0, \"a close of an open node\");") && !src16.contains("self.fail(w::fail::NO_OPEN"), "the writer's close cannot fail");
-    // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
-    // number (`rust_stream::UNNUMBERED`).
-    let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();
-    assert_eq!(unnumbered, 0, "node words with no number in the language");
-    // An empty object or array one leaf (`rust_stream::empties`, decision 0545), as the lean parser's `empty!`: each
-    // opener's arm looks at the next token first, and where it is the closer writes a leaf, takes the closer and goes
-    // on past the container; else it opens the container. Each such arm writes one more node call than format 15's.
-    let empty = |closer: &str| format!("\nif s.byte(unsafe {{ *s.starts.add(t.next as usize * s.rs) }}) == {closer} {{\nif s.depth == DEPTH {{ return refuse(why::DEPTH); }}\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(");
-    for (opener, closer) in [("0x5b", "0x5d"), ("0x7b", "0x7d")] {
-        let arms: Vec<&str> = flat16.split(&format!("\n{opener} => {{")).skip(1).collect();
-        assert!(!arms.is_empty(), "the arms of {opener}");
-        for arm in arms {
-            // Its enclosing nodes opened first (the document's, at the top, with its closer checked: 0549).
-            let at = arm.find(&empty(closer));
-            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(") || l.starts_with("if s.n == 0 || s.byte(unsafe { *s.starts.add((s.n - 1) * s.rs) })")));
-            assert!(first, "{opener}'s arm looks for its closer first: {}", &arm[..arm.len().min(160)]);
-        }
-    }
-    // The end tested once, after the root's value, by the stream's count (`rust_stream::counted_end`, decision 0546),
-    // as the lean parser's `next == index + count`: no token taken for it, no other word tests it, `ACCEPT` neither.
-    assert!(!src16.contains("t.start == s.len") && !src16.contains("t.start == self.len") && !src16.contains("t.at_end"), "the end tested once, by the count");
-    assert!(flat16.contains("\nif (t.next as usize == s.n) {\n") && src16.contains("    fn accept(&mut self, t: &T) -> R {\n        if self.wr.open_len != 1 {"), "the end the stream's count, `ACCEPT` past it");
-    // The document's container closed by the stream's last token, checked before the walk as the lean parser's
-    // `last != '}'` (`rust_stream::last_closers`, decision 0549): in the `{` and `[` arms, once each.
-    for closer in ["0x7d", "0x5d"] {
-        let check = format!("if s.n == 0 || s.byte(unsafe {{ *s.starts.add((s.n - 1) * s.rs) }}) != {closer} {{ return refuse(why::BYTE); }}\n");
-        assert_eq!(flat16.matches(&check).count(), 1, "the document's closer {closer} the last token, checked before the walk");
-    }
-    let empties = flat16.matches("\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(").count();
-    assert!(empties > 0 && made16 == made + empties && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
-    // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
-    // (The edits' methods, which no word of this program calls, keep theirs.)
-    let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
-    for name in ["    fn open16(", "    fn leaf16(", "    fn close<", "    fn accept(", "    fn keep_ret(", "    fn taken_ret("] {
-        let b = body(name);
-        assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add(") && !b.contains("self.row("), "no format 15 cells or rows in a format 16 run's {name}");
-    }
-    // The writer's room reserved once (`rust_stream::reserved`, decision 0544), as the lean parser's columns: a node's
-    // `OPEN` and `LEAF` cannot fail, and no node's call is followed by `?`; no deferred extras (`pending`) in a direct
-    // run; the nodes' count checked once, where the run starts.
-    assert!(src16.contains("    fn open16(&mut self, number: u32, start: u32) {\n") && src16.contains("    fn leaf16(&mut self, number: u32, start: u32, end: u32) {\n"), "a node's ops return nothing");
-    assert!(!src16.contains("unsafe fn open_node(&mut self, number: u32, start: u64, push: bool) -> Option<u32>") && src16.contains("unsafe fn open(&mut self, number: u32, start: u64) {\n"), "the writer's node ops cannot fail");
-    let fails: Vec<&str> = src16.lines().filter(|l| (l.contains("s.open16(") || l.contains("s.leaf16(")) && l.trim_end().ends_with(")?;")).collect();
-    assert!(fails.is_empty(), "a node's call that can refuse: {fails:?}");
-    for name in ["    fn open16(", "    fn leaf16(", "    fn close<"] {
-        assert!(!body(name).contains("self.pending"), "no deferred extras in a direct run's {name}");
-    }
-    assert!(src16.contains("if !unsafe { s.wr.fits(c.room_nodes) } {"), "the nodes' count checked once");
-    let entry16 = aot_entry(&src16);
-    // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
-    unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };
-    // The tape's home: the tape, then its presence (the document's and each block's), which the
-    // ops make as they write.
-    let bytes_of = |w: &rerail_tape_format::f16::Written| {
-        assert!(w.presence_bytes().is_some(), "a format 16 run's presence");
-        w.extent().to_vec()
-    };
-    let mut written = 0;
-    for (k, f) in inputs.iter().enumerate() {
-        let Ok(image) = jit.parser.image(f) else { continue };
-        let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-        // The reference: format 15's tape written in format 16 by the writer (`f16::write_from_with_presence`), apart
-        // from either run's passes; both runs pass each node at its word (`rust_stream::direct_keys`).
-        let (columns, _) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
-        let t = rerail_tape_format::tape::F15::new(&image, columns, &table).expect("reads");
-        let number = rerail_tape_format::f16::numbers(&lang, &table).expect("numbers");
-        for z in [false, true] {
-            let reference = rerail_tape_format::f16::write_from_with_presence(&lang, &t, &number, f, tag16, z).expect("the writer's tape").tape;
-            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            assert!(want.is_ok(), "file {k}: the JIT's format 16 run: {want:?}");
-            assert!(want.as_ref().ok() == Some(&reference.extent().to_vec()), "file {k} (16z {z}): the JIT's format 16 home is not the writer's of its format 15 tape");
-            if got != want {
-                let (g, w) = (got.clone().unwrap_or_default(), want.clone().unwrap_or_default());
-                let first = (0..g.len().min(w.len())).find(|&i| g[i] != w[i]);
-                panic!("file {k} (16z {z}): the Rust's format 16 tape: {:?}, lengths {} and {}, first differing at {first:?}\n  rust {:?}\n  jit  {:?}", got.as_ref().err(), g.len(), w.len(), &g[..g.len().min(160)], &w[..w.len().min(160)]);
-            }
-        }
-        written += 1;
-    }
-    assert_eq!(written, parsed, "every parsed file written in format 16");
-    eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
-    // Each refusal names its reason (`native_cpu_stream::refusal`, decision 0537): a file the JIT refuses, the Rust
-    // refuses for the reason its word has.
-    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-    let deep = deep_nests(1025..1026);
-    let cases: [(&[u8], &str); 10] = [
-        (b"[1 2]", "BYTE"),
-        (b"{\"a\" 1}", "BYTE"),
-        (b"[tru]", "BYTE"),
-        (b"[01]", "CHECK"),
-        (b"[\"\\q\"]", "BYTE"),
-        // The region left open: tier 1's total of open regions, tested by the rule's first word (`EMPTY`).
-        (b"\"open", "EMPTY"),
-        // An escape at the file's end: the region is open too, and `EMPTY` refuses it first (`STRING` is not reached).
-        (b"[\"\\", "EMPTY"),
-        (&deep[0], "DEPTH"),
-        (&deep[1], "DEPTH"),
-        (&deep[2], "DEPTH"),
-    ];
-    for (f, why) in cases {
-        let text = rerail_compiler::native_cpu_stream::refusal::NAMES.iter().find(|n| n.0 == why).expect("a reason").1;
-        assert!(jit.parser.image(f).is_err(), "{:?}: the JIT refuses it", String::from_utf8_lossy(&f[..f.len().min(20)]));
-        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
-        assert!(got.as_ref().err().is_some_and(|e| e.contains(text)), "{:?}: refused for {why} ({text}): {got:?}", String::from_utf8_lossy(&f[..f.len().min(20)]));
-    }
-    // Empty containers, at the top, in arrays, as values in objects and at the depth's edge: the Rust's tapes the JIT's.
-    for f in [&b"[]"[..], b"{}", b"[[]]", b"[{}]", b"{\"a\":[]}", b"{\"a\":{}}", b"[[],{},[[]],{\"b\":[]}]", b"{\"a\":[],\"b\":{},\"c\":1}", b"[ ]", b"{ }"] {
-        for z in [false, true] {
-            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
-            assert!(want.is_ok() && got == want, "{:?} (16z {z}): the Rust's tape is the JIT's", String::from_utf8_lossy(f));
-        }
-    }
-    // A file cut off in a container, or with more after its value (the end the stream's count, decision 0546): its
-    // tokens taken past the stream's count read the two entries there
-    // (`Batch::end_streams`), the file's length, as the unclamped `TOKEN` takes them (decision 0543): the Rust refuses
-    // each, as the JIT does (whose refusal names its word, not the reason). Ends of 0, as before, would read the
-    // file's first byte as the next token's.
-    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}", b"[1}", b"{\"a\":1]", b"[{}", b"{\"a\":[]", b"[1] ]", b"{} }", b"[1,2]}"] {
-        let want = jit.parser.image16(f, &lang, &numbers, false).map(|_| ());
-        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
-        assert!(want.is_err() && got.is_err(), "{:?}: the Rust refuses it as the JIT does: {got:?}, {want:?}", String::from_utf8_lossy(f));
-    }
-}
-
 /// Page 40, order item 4: the simdjson form end to end against simdjson, on simdjson's own inputs (`RERAIL_JSON_FILES`,
-/// `:`-separated; `twitter.json` and `numbers.json`). Ours: tier 1 on Cranelift, tier 2 the generated Rust (rustc,
-/// `-C opt-level=3`) writing format 16 (`image16`), the tape's home and presence. simdjson's: its DOM parser, stage 1
-/// and stage 2 to its tape, from a padded copy of the bytes (`structurals`). Per file: the instructions retired a byte
-/// and the time a byte (each the median of `RERAIL_ITERS` runs), single-threaded.
+/// `:`-separated; `twitter.json` and `numbers.json`). Ours: the Rust the Bitlex compiler writes from the grammar
+/// (`rerail-json-aot`, decision 0551), tier 1 and tier 2, writing format 16 with the tape's home and presence, as
+/// built here (`--profile profiling`: optimized). simdjson's: its DOM parser, stage 1 and stage 2 to its tape, from a
+/// padded copy of the bytes (`structurals`). Per file: the instructions retired a byte and the time a byte (each the
+/// median of `RERAIL_ITERS` runs), single-threaded.
 #[cfg(target_arch = "aarch64")]
 #[test]
-#[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture"]
+#[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture, in an optimized build"]
 fn simdjson_form_against_simdjson() {
     let files: Vec<(String, Vec<u8>)> = std::env::var("RERAIL_JSON_FILES")
         .expect("RERAIL_JSON_FILES")
@@ -612,13 +270,11 @@ fn simdjson_form_against_simdjson() {
         .map(|p| (base(Path::new(p)), std::fs::read(p).expect("reads")))
         .collect();
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
-    let (jit, mut aot) = (simdjson_form(), simdjson_form());
-    let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
-    let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    let lang = language_of(&jit, &files.iter().map(|(_, f)| f.as_slice()).collect::<Vec<_>>());
-    let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
-    // SAFETY: the Rust of this program's tier 2 in format 16, on the format 16 run's harness.
-    unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(aot_entry(&src16), 4) };
+    let jit = simdjson_form();
+    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     // The process's instructions retired (`native_cpu_codegen::retired`: macOS's count, zero elsewhere).
     let retired = || rerail_compiler::native_cpu_codegen::retired().0 as f64;
     // The median of each run's instructions and time.
@@ -636,15 +292,19 @@ fn simdjson_form_against_simdjson() {
     println!("simdjson's implementation: {}", rerail_simdjson_native::implementation());
     println!("file\tbytes\tours_ins_per_byte\tsimdjson_ins_per_byte\tours_GB_s\tsimdjson_GB_s\tins_ratio\ttime_ratio");
     for (name, f) in &files {
-        jit.parser.image(f).unwrap_or_else(|e| panic!("{name}: the simdjson form refuses it: {e:?}"));
-        let numbers = aot.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-        let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).expect("the JIT's format 16 run");
-        assert_eq!(aot.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).ok(), Some(want), "{name}: the Rust's tape is the JIT's");
+        let nodes = f.len() / 2 + 16;
+        // Ours writes the JIT's tape.
+        let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e:?}"));
+        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, false, true, nodes);
+        rerail_json_aot::parse(f, &mut w).unwrap_or_else(|b| panic!("{name}: the Rust refuses it at byte {b}"));
+        assert!(w.finish().expect("finishes").tape.extent() == &want[..], "{name}: the Rust's tape is the JIT's");
         // Ours as simdjson's caller runs simdjson: one writer, kept from one document to the next (simdjson's parser is
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
-            let t = aot.parser.image16_in(&mut w, f, &lang, &numbers, false).expect("parses");
+            w.begin(&lang, f, tag, false, true, nodes);
+            rerail_json_aot::parse(f, &mut w).expect("parses");
+            let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
         };
         // `RERAIL_SPIN`: ours alone, for that many seconds, for a profiler (the process's id printed first).
@@ -657,58 +317,24 @@ fn simdjson_form_against_simdjson() {
             return;
         }
         let (oi, on) = measure(&mut ours);
-        // And with a writer made for each document, as `image16` makes one.
-        let (fi, _) = measure(&mut || {
-            std::hint::black_box(aot.parser.image16(f, &lang, &numbers, false).expect("parses"));
-        });
         let (si, sn) = measure(&mut || {
             std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("simdjson parses it"));
         });
-        // Of ours, tier 1 alone, on a batch made once (its padded copy of the bytes outside the count), and with the
-        // batch made each run.
-        let mut batch = native_cpu_block::Batch::new(&aot.parser.tier1, &[f]);
-        let (t1i, t1n) = measure(&mut || batch.call(&aot.parser.tier1));
-        let (bi, bn) = measure(&mut || {
-            let mut b = native_cpu_block::Batch::new(&aot.parser.tier1, &[f]);
-            b.call(&aot.parser.tier1);
-            std::hint::black_box(&b);
+        // Of ours, tier 1 alone; and tier 2 alone, on tier 1's records made once, the writer kept.
+        let (t1i, t1n) = measure(&mut || {
+            std::hint::black_box(rerail_json_aot::lex(f));
+        });
+        let lexed = rerail_json_aot::lex(f);
+        let (t2i, t2n) = measure(&mut || {
+            w.begin(&lang, f, tag, false, true, nodes);
+            rerail_json_aot::parse_lexed(f, &lexed, &mut w).expect("parses");
+            let t = w.finish().expect("finishes").tape;
+            w.recycle(std::hint::black_box(t));
         });
         let b = f.len() as f64;
         println!("{name}\t{}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}", f.len(), oi / b, si / b, b / on, b / sn, oi / si, on / sn);
-        println!("  of ours, ins a byte: a writer made for each document {:.2}", fi / b);
-        println!("  of ours, ins a byte: tier 1 {:.2} ({:.2} ns), the batch made and tier 1 {:.2} ({:.2} ns), the rest {:.2} ({:.2} ns)", t1i / b, t1n / b, bi / b, bn / b, (oi - bi) / b, (on - bn) / b);
+        println!("  of ours, ins a byte: tier 1 {:.2} ({:.3} ns), tier 2 and the writer {:.2} ({:.3} ns)", t1i / b, t1n / b, t2i / b, t2n / b);
     }
-}
-
-/// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
-/// and loaded: its entry.
-#[cfg(target_arch = "aarch64")]
-fn aot_entry(src: &str) -> rerail_compiler::native_cpu_stream::Entry {
-    // A directory a source: the loader gives back the library already loaded at a path, so two
-    // sources built at one path would both run the first.
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    std::hash::Hash::hash(src, &mut h);
-    let dir = std::env::temp_dir().join(format!("rerail-json-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
-    std::fs::create_dir_all(&dir).expect("a directory");
-    let (rs, lib) = (dir.join("tier2.rs"), dir.join("libtier2.dylib"));
-    std::fs::write(&rs, format!("{src}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry(ctx: u64) -> u64 {{\n    unsafe {{ tier2_entry(ctx) }}\n}}\n")).expect("writes");
-    let keep = std::env::var_os("RERAIL_KEEP_AOT").is_some();
-    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=3"]).args(if keep { &["-g"][..] } else { &[][..] }).arg("-o").arg(&lib).arg(&rs).output().expect("runs rustc");
-    assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr));
-    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
-    // SAFETY: a library rustc just built from the source above; kept loaded for the process.
-    let f = unsafe {
-        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
-        assert!(!h.is_null(), "dlopen");
-        let f = libc::dlsym(h, c"rerail_tier2_entry".as_ptr());
-        assert!(!f.is_null(), "dlsym");
-        std::mem::transmute::<*mut libc::c_void, rerail_compiler::native_cpu_stream::Entry>(f)
-    };
-    // Loaded: the files are no longer needed (`RERAIL_KEEP_AOT`: kept, for a profiler to name the functions).
-    if !keep {
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-    f
 }
 
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
@@ -996,14 +622,11 @@ fn json_bench() {
 
 /// JSON's tier 2 as written, for reading it next to simdjson's stage 2: each word's operation,
 /// a switch's targets by byte (runs of bytes to one target), and the code (CLIF, machine code,
-/// each word's byte ranges in it). Into `RERAIL_DUMP_TIER2`; `RERAIL_FORM`.
+/// each word's byte ranges in it, and the simdjson form's Rust). Into `RERAIL_DUMP_TIER2`; `RERAIL_FORM`.
 #[test]
 #[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
 fn json_tier2_by_word() {
     let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "json-rfc".to_owned());
-    // Each function's IR kept, for its Rust (`rerail_clif::rust`): the run's option (decision 0442).
-    let _run = rerail_context::test_run();
-    rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
     let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
     let dir = std::env::var("RERAIL_DUMP_TIER2").expect("RERAIL_DUMP_TIER2");
@@ -1040,13 +663,11 @@ fn json_tier2_by_word() {
         }
     }
     std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
-    // Tier 2 as generated Rust, to read beside simdjson's stage 2: the structured backend's
-    // (`rust_stream`), and the compiler's own IR as Rust (`rerail_clif::rust`).
-    let rust = rerail_compiler::rust_stream::rust_source(&native).unwrap_or_else(|e| format!("// not generated: {e}\n"));
-    std::fs::write(format!("{dir}/{name}.rs"), rust).expect("writes");
-    let t2 = &c.parser.tier2;
-    let ir = rerail_compiler::clif_rust::translate(&t2.ir, &[(t2.entry_id, "tier2")], &[]).unwrap_or_else(|e| format!("// not translated: {e}\n"));
-    std::fs::write(format!("{dir}/{name}.ir.rs"), ir).expect("writes");
+    // The simdjson form's tier 2 as the Bitlex compiler writes it from the grammar (`rerail-json-aot`, decision 0551),
+    // to read beside simdjson's stage 2.
+    if name == "simdjson" {
+        std::fs::write(format!("{dir}/{name}.rs"), json_rust().1).expect("writes");
+    }
 }
 
 /// Cranelift's optimizer on JSON (doc 28): `json-rfc` compiled four ways (optimizer off, on tier
@@ -1532,6 +1153,14 @@ fn json_rusts_tapes_are_the_jits() {
     inputs.extend(deep_nests(1023..1026));
     // Empty containers (one leaf each, decision 0553), and files whose last record is not the root's closer.
     for f in [&b"[]"[..], b"{}", b"[[]]", b"[{}]", b"{\"a\":[]}", b"{\"a\":{}}", b"[[],{},[[]],{\"b\":[]}]", b"{\"a\":[],\"b\":{},\"c\":1}", b"[ ]", b"{ }", b" [] ", b"[1] 2", b"{} {}", b"[]]", b"{}}", b"[1]]", b"{\"a\":1}]", b"[1", b"{", b"[", b"[]["] {
+        inputs.push(f.to_vec());
+    }
+    // UTF-8 in strings, two to four bytes a character, and each kind of invalid UTF-8 (tier 1's errors, which read the
+    // class `high` where the grammar defines a mask of that name after them).
+    for f in ["[\"é\"]", "{\"日本\": \"語\"}", "[\"😀 x 😀\", \"\\u00e9\"]", "\"ü\""] {
+        inputs.push(f.as_bytes().to_vec());
+    }
+    for f in [&b"[\"\xc3\"]"[..], b"[\"\x80\"]", b"[\"\xc0\xaf\"]", b"[\"\xed\xa0\x80\"]", b"[\"\xf5\x80\x80\x80\"]", b"[\"\xe6\x97\"]", b"[\"a\"]\xc3"] {
         inputs.push(f.to_vec());
     }
     let (mut same, mut refused) = (0, 0);
