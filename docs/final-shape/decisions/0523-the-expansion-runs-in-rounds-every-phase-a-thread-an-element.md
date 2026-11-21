@@ -109,7 +109,7 @@ SIMD-group operation switches each thread of the group.
 |---|---|---|
 | R1 | Every evaluation test finishes within 1 s, under cargo on the CPU backend | `cargo nextest run -p rerail-c-directives --lib --profile second` (stops each test at 1 s) |
 | R2 | The expansion's tests give the serial pass's tokens | the eval tests (0448 R5–R8, 0475, 0478, 0520) |
-| R3 | A round's items run a thread an item over the grid; nothing polls | `px_item` takes an item by index, with no queue; `px_worker` takes the SIMD groups' share of what is left to one by index |
+| R3 | A round's items run a thread an item over the grid; nothing polls | `px_item` takes an item by index, with no queue; `_Pragma`, the built-ins and the configuration's tests included (no SIMD group's items) |
 
 ## Steps
 

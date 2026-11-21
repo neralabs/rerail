@@ -2145,11 +2145,11 @@ UKL_INLINE bool pc_live(Ar a, uint32_t i) {
 }
 
 // --- A round's calls (decision 0523 §2) ----------------------------------------------------------------
-// Every call the round's items give (a definition's: `_Pragma` and the configuration's tests stay
-// their SIMD group's), a thread an element of each phase: a call's raw tokens between its
-// parentheses, their depth a segmented scan by call; the depth's commas, their ranks a scan (a
-// variadic call's past its last parameter's split nothing); a thread a call: its arguments'
-// count (a wrong count leaves the name alone, painted) and entries; a thread a splitting comma:
+// Every call the round's items give (a definition's), a thread an element of each phase: a
+// call's raw tokens between its parentheses, their depth a segmented scan by call; the depth's
+// commas, their ranks a scan (a variadic call's past its last parameter's split nothing); a
+// thread a call: its arguments' count (a wrong count leaves the name alone, painted) and
+// entries; a thread a splitting comma:
 // the ranges either side. Then the parameters the body uses plain, a thread a body item; whether
 // each such argument expands to itself (`ARG_FLAT`: no name in it a macro's, a built-in's or a
 // call's), a thread a token of each; each other one's list, a thread an argument, scanned in the

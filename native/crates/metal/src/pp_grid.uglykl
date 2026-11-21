@@ -795,7 +795,6 @@ typedef struct PpTg {
 #define PP_GRID_BEGIN                                                                                  \
     UklGrid g;                                                                                         \
     g.ctl = AT(uint32_t, GRID); g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;      \
-    uint32_t lane = lid % UKL_SIMD_WIDTH;                                                              \
     UklGridSortLocal sl;                                                                               \
     sl.counts = tg->big; sl.h = tg->big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;                           \
     sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = tg->big;     \
@@ -803,7 +802,7 @@ typedef struct PpTg {
     uint32_t nf = W(N_FILES);                                                                              \
     uint32_t stop = 0u, phase = 0u;                                                                        \
     UklScanJob jobs[UKL_GRID_SCANS];                                                                   \
-    (void)lane; (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
+    (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
 
 DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
 {
