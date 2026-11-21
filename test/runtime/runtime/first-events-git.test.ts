@@ -103,6 +103,27 @@ describe("a repository's first events in a daemon", () => {
     });
   });
 
+  it("leaves none of its placement's Git running in the checkout when the session's open fails", async () => {
+    const { checkouts, databasePath } = startedRepository(2);
+    const checkout = checkouts[0]!;
+    // Session records kept in the checkout, where a committed .gitignore folder makes the open fail.
+    const storageRoot = join(checkout, ".rerail", "sessions");
+    mkdirSync(join(storageRoot, ".gitignore"), { recursive: true });
+    writeFileSync(join(storageRoot, ".gitignore", "README"), "committed\n");
+    const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: checkout, autostart: false, embedder: testEmbedder });
+    const spawn = vi.mocked(childProcess.spawn);
+    const before = spawn.mock.calls.length;
+    try {
+      await expect(runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "fails", cwd: checkout } })).rejects.toThrow();
+      const started = spawn.mock.calls.slice(before).map((call, i) => ({ call, child: spawn.mock.results[before + i]?.value as childProcess.ChildProcess }));
+      const running = started.filter(({ call, child }) => isGit(call) && child.exitCode === null && child.signalCode === null);
+      expect(started.filter(({ call }) => isGit(call)).length).toBeGreaterThan(0);
+      expect(running.map(({ call }) => call[1])).toEqual([]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("starts no Git once it is disposed while a session's checkout is being placed", async () => {
     const { root, checkouts, databasePath } = startedRepository(12);
     // Git reads each worktree's own config once this is set, so placing the worktrees asks Git for each.
