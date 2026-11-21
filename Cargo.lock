@@ -4513,12 +4513,8 @@ dependencies = [
 name = "rerail-rr-aot"
 version = "0.1.0"
 dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-context",
  "rerail-rr-aot",
- "rerail-rr-parser",
- "rerail-rr-syntax",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -4532,6 +4528,7 @@ dependencies = [
  "rerail-context",
  "rerail-metal",
  "rerail-prof",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",

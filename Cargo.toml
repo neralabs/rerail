@@ -146,8 +146,9 @@ overflow-checks = false
 incremental = true
 codegen-units = 256
 
-# The parser's generated code (`rerail-rr-aot`) nests blocks deeper than LLVM's debug info
-# walks without overflowing its stack; its code is the same without.
+# The parsers' generated code (`rerail-rr-aot`, written from the grammar): no debug info, as
+# its earlier lowering of the IR, whose nesting overflowed LLVM's debug info walk, needed; its
+# code is the same without.
 [profile.profiling.package.rerail-rr-aot]
 debug = false
 

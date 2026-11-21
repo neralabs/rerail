@@ -505,6 +505,14 @@ impl Gen<'_> {
                     let code = format!("{{\n        const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;\n        let bs = {a};\n        let potential = bs & !c_{name};\n        let series = ((potential << 1) | ODD).wrapping_sub(potential);\n        let escape_and_terminal = series ^ ODD;\n        let escaped = escape_and_terminal ^ (bs | c_{name});\n        c_{name} = (escape_and_terminal & bs) >> 63;\n        escaped & lv\n    }}");
                     return Ok(self.push_node(key, name, what, code, lag, true));
                 }
+                "toggle" => {
+                    let a = self.node(ea(0)?)?;
+                    let lag = self.nodes[a].lag;
+                    let a = self.ring(a, "q");
+                    // Each byte's parity of `a`'s bits up to it, the block before's carried (simdjson's `prefix_xor`).
+                    let code = format!("{{\n        let mut x = {a};\n        x ^= x << 1;\n        x ^= x << 2;\n        x ^= x << 4;\n        x ^= x << 8;\n        x ^= x << 16;\n        x ^= x << 32;\n        let x = x ^ 0u64.wrapping_sub(c_{name});\n        c_{name} = x >> 63;\n        x & lv\n    }}");
+                    return Ok(self.push_node(key, name, what, code, lag, true));
+                }
                 "text" => {
                     let Some(Arg::S(t)) = args.first() else { return Err("tier 1 as Rust: `text` needs a string".into()) };
                     // Its first byte here, each later one `k` bytes on.
@@ -576,7 +584,7 @@ impl Gen<'_> {
                 // A `prev` takes bits from the block before, so past the file's end it holds there too.
                 if f == "prev" { (format!("{} & lv", self.shifted(id, f, k)), l) } else { (self.shifted(id, f, k), l + 1) }
             }
-            Expr::Call(f, _) if matches!(f.as_str(), "fill" | "escaped" | "text") => {
+            Expr::Call(f, _) if matches!(f.as_str(), "fill" | "escaped" | "text" | "toggle") => {
                 let id = self.node(e)?;
                 (self.ring(id, "q"), self.nodes[id].lag)
             }
@@ -701,6 +709,11 @@ impl Gen<'_> {
                 "escaped" => {
                     let a = self.val(ea(0)?)?;
                     let _ = writeln!(self.body, "    let {name} = escaped(&{a});");
+                    return Ok(());
+                }
+                "toggle" => {
+                    let a = self.val(ea(0)?)?;
+                    let _ = writeln!(self.body, "    let {name} = toggle(&{a});");
                     return Ok(());
                 }
                 _ => {}
@@ -1092,6 +1105,9 @@ impl Gen<'_> {
             "    // The tokens: each bit of a row's start, in order, its kind its row's.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    for (q, &word) in {all}.iter().enumerate() {{\n        let mut bits = word;\n        while bits != 0 {{\n            let s = 64 * q + bits.trailing_zeros() as usize;\n            bits &= bits - 1;\n            let kind: u32 = {chain}else {{\n                0\n            }};\n            starts.push(s as u32);\n            codes.push(kind);\n        }}\n    }}\n    Lexed {{\n        starts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n"
         );
         out.push_str(HELPERS);
+        if self.body.contains("toggle(&") {
+            out.push_str(TOGGLE);
+        }
         Ok(out)
     }
 
@@ -1114,6 +1130,8 @@ impl Gen<'_> {
         let mut rows: Vec<(usize, &Stmt)> = Vec::new();
         let mut row = 0usize;
         let mut escapes: Vec<(&str, &Expr, Scope)> = Vec::new();
+        // The counts (`scan N = count(up, down) max M`), each an error past its bound.
+        let mut counts: Vec<(&str, &Expr, &Expr, u32, Scope)> = Vec::new();
         let mut token_escapes: Vec<&Stmt> = Vec::new();
         for s in x.stmts {
             match s {
@@ -1159,6 +1177,12 @@ impl Gen<'_> {
                 // Its names as they are here: a name defined again after it is not its.
                 Stmt::Escape(why, e) | Stmt::Error(why, e) => escapes.push((why, e, self.scope())),
                 Stmt::TokenEscape { .. } => token_escapes.push(s),
+                Stmt::Count { name, up, down, reset: None, max } => {
+                    if x.stmts.iter().any(|t| matches!(t, Stmt::Mask(_, e) | Stmt::Escape(_, e) | Stmt::Error(_, e) | Stmt::Skip(e) if { let mut v = Vec::new(); names_in(e, &mut v); v.contains(name) })) {
+                        return Err(format!("tier 1 as Rust: count {name} read as a mask is not written yet"));
+                    }
+                    counts.push((name, up, down, *max, self.scope()));
+                }
                 Stmt::Skip(e) => {
                     skip = Some(match skip.take() {
                         Some(k) => Expr::Or(Box::new(k), Box::new(e.clone())),
@@ -1213,6 +1237,18 @@ impl Gen<'_> {
         for r in &refuse {
             self.body.push_str(r);
         }
+        // A count: its bits in order, as the token loop reads the starts, up one at `up` (where both hold, `up`'s),
+        // down one at `down` and never below 0; past its bound, the file goes to tree-sitter.
+        for (name, up, down, max, at) in &counts {
+            let both = Expr::Or(Box::new((*up).clone()), Box::new((*down).clone()));
+            let (u, b) = self.in_scope(at, &both, |g| Ok((g.val(up)?, g.val(&both)?)))?;
+            let _ = write!(
+                self.body,
+                "    // scan {name} = count({}, {}) max {max}\n    {{\n        let mut c = 0u32;\n        'count: for (q, &word) in {b}.iter().enumerate() {{\n            let mut bits = word;\n            while bits != 0 {{\n                let i = bits.trailing_zeros();\n                bits &= bits - 1;\n                if {u}[q] >> i & 1 == 1 {{\n                    c += 1;\n                    if c > {max} {{\n                        refused = true;\n                        break 'count;\n                    }}\n                }} else {{\n                    c = c.saturating_sub(1);\n                }}\n            }}\n        }}\n    }}\n",
+                show(up),
+                show(down)
+            );
+        }
         // The gap marks: a mark of the code, its mask's bits since the grammar token before.
         struct Gap {
             bit: u8,
@@ -1221,18 +1257,24 @@ impl Gen<'_> {
             name: String,
         }
         let mut gaps: Vec<Gap> = Vec::new();
+        let mut unplaced_code = String::new();
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
         let mut tests: Vec<(String, bool, TokenTest, String, u32, u8)> = Vec::new();
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
-            if unplaced.is_some() {
-                return Err(format!("tier 1 as Rust: mark {kind}'s `else escape` is not written yet"));
-            }
             let mask = match at {
                 Expr::Empty => None,
                 e => Some(self.val(e)?),
             };
+            // `else escape`: a bit of it with no grammar token at or after it refuses, at the file's end.
+            if let Some(why) = unplaced {
+                let left = match &mask {
+                    Some(m) => format!("pending >> {bit} & 1 == 1 || any_in(&{m}, from, n)"),
+                    None => format!("pending >> {bit} & 1 == 1"),
+                };
+                let _ = write!(unplaced_code, "    // `{kind}`, else escape: {why}\n    if {left} {{\n        refused = true;\n    }}\n");
+            }
             let unless = unless
                 .iter()
                 .map(|w| x.words.iter().position(|x| x == w).map(|i| i as u32 + 1).ok_or_else(|| format!("tier 1 as Rust: mark {kind}: `unless after` a word no code names")))
@@ -1296,9 +1338,18 @@ impl Gen<'_> {
                 Some(TokenRule::Read(rs)) => {
                     let mut code = String::new();
                     for (i, r) in rs.iter().enumerate() {
+                        // A region with `else E bytes M`: its opener with no closer after it is `E`'s, a token of `M` bytes
+                        // (the records' reader's `ReadNone::Bytes`).
                         let o = match self.opens.as_ref().and_then(|v| v.iter().position(|(k, _, _)| *k == r.kind)) {
                             Some(k) => format!("open == {k}"),
-                            None => format!("bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?),
+                            None => match &r.empty {
+                                Some((e, _)) => format!("bit(&{}, s) || bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?, self.val(&Expr::Name(e.clone()))?),
+                                None => format!("bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?),
+                            },
+                        };
+                        let none = match &r.empty {
+                            Some((_, m)) => format!("s + {},", m.saturating_sub(1)),
+                            None => "{\n                    refused = true;\n                    break;\n                }".to_owned(),
                         };
                         let c = self.val(&r.closers())?;
                         let tests = self.region_tests(&r.kind);
@@ -1312,7 +1363,7 @@ impl Gen<'_> {
                         } else {
                             let found = self.closer_last(r, &[])?;
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
-                            format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
+                            format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {none}\n            }}")
                         };
                         if rs.len() == 1 {
                             code = one;
@@ -1468,11 +1519,14 @@ impl Gen<'_> {
         out.push_str(&self.body);
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}    while let Some(s) = first_clear(&{skip}, at, n) {{\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches}else {{\n            // A byte no token begins with.\n            refused = true;\n            break;\n        }};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n    }}\n    let _ = (from, from_record, before, pending);\n    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}    while let Some(s) = first_clear(&{skip}, at, n) {{\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches}else {{\n            // A byte no token begins with.\n            refused = true;\n            break;\n        }};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n    }}\n{unplaced_code}    let _ = (from, from_record, before, pending);\n    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = if self.opens.is_some() { "    // The region opened last of the kinds with no `after`.\n    let mut plain = usize::MAX;\n" } else { "" },
         );
         out.push_str(HELPERS);
+        if self.body.contains("toggle(&") {
+            out.push_str(TOGGLE);
+        }
         Ok(out)
     }
 }
@@ -1696,6 +1750,28 @@ fn set(v: &mut [u64], a: usize, b: usize) {
         v[q] |= (if k == 64 { !0 } else { (1u64 << k) - 1 }) << r;
         i += k;
     }
+}
+"#;
+
+/// `toggle` over the file's words, where a mask made of the regions is one.
+const TOGGLE: &str = r#"
+/// Each byte's parity of `x`'s bits up to it (`toggle`), a word at a time, the word before's carried.
+fn toggle(x: &[u64]) -> Vec<u64> {
+    let mut carry = 0u64;
+    x.iter()
+        .map(|&w| {
+            let mut v = w;
+            v ^= v << 1;
+            v ^= v << 2;
+            v ^= v << 4;
+            v ^= v << 8;
+            v ^= v << 16;
+            v ^= v << 32;
+            let v = v ^ 0u64.wrapping_sub(carry);
+            carry = v >> 63;
+            v
+        })
+        .collect()
 }
 "#;
 
