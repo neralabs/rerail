@@ -5,8 +5,8 @@
 //! batch's global nodes. Passes run a dependency level at a time, so the launches grow with the
 //! depth of the label graph, not its size (the evaluation's launch budget, `metal_launch_budget`):
 //! one interpreter `run_batch` with every program of the level on one shared workspace (its
-//! scheduler image copied in by a blit), `label_sink` turning their results into scratch bits or
-//! counts, the clause's pattern kernel (`patterns`), and `label_settle` writing each target:
+//! scheduler image copied in by a blit), each program marking its results' scratch bits or counts
+//! as it publishes them, the clause's pattern kernel (`patterns`), and `label_settle` writing each target:
 //! from scratch, or as a complement or count bound computed per word. A recursive group's rounds
 //! are encoded too and skipped on the GPU once settled (`label_round`), so a clause is one
 //! command buffer. A group of programs alone runs as sweeps instead (`label_sweep`): one launch
@@ -18,7 +18,6 @@ pub mod patterns;
 
 use super::super::PackedPattern;
 use super::super::metal_batch_abi::MetalSupertype;
-use super::super::native_ir::ArenaKind;
 use super::*;
 use super::super::metal_batch_abi::MetalEvaluation;
 use rerail_metal::lane::{self, Buffer, HostMapped};
@@ -311,7 +310,7 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
 
 /// The root walks' kernel in `KERNELS`, for 8 and 32 frames (`ROOT_FRAMES`, its shape's `frames`), and its tiers'
 /// names, which their dispatches and the profile keep.
-const ROOT_KERNEL: usize = 5;
+const ROOT_KERNEL: usize = 4;
 const ROOT_FRAMES: [u32; 2] = [8, 32];
 const ROOT_NAMES: [&str; 2] = ["root_records_8", "root_records_32"];
 /// Words of a root record (`root_records_*`).
@@ -940,13 +939,13 @@ impl LabelKernel {
 /// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
 /// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
 /// 8–10 s each for format 16 (work queue Q181).
-const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
+const KERNELS: [&str; 8] = ["label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
 /// `label_leaves` in `KERNELS` (decision 0365).
-const LEAVES_KERNEL: usize = 6;
+const LEAVES_KERNEL: usize = 5;
 /// `label_phase` (decisions 0474, 0475, 0540 step 6): a level's formulas, every phase in one launch, a thread a (word, formula).
-const PHASE_KERNEL: usize = 7;
+const PHASE_KERNEL: usize = 6;
 /// `label_parents` (0475): the batch's parents once, for `label_phase`.
-const PARENTS_KERNEL: usize = 8;
+const PARENTS_KERNEL: usize = 7;
 /// A formula compiled for `label_phase` (decision 0474): its instructions (`[code, dst, src, extra]`, the kernel's
 /// `PHASE_*`), its phases, the slot of its set, and its slots.
 #[derive(Debug, PartialEq)]
@@ -1213,7 +1212,7 @@ const FORMULA_SCRATCH_BYTES: usize = 32 << 20;
 const LEAVES_WIDTH: u64 = 128;
 /// The fused group kernel in `KERNELS` (`Runner::group`), for 8, 32, 64, 128 and 256 frames a walk (`GROUP_FRAMES`),
 /// and its tiers' names, which their dispatches and the profile keep.
-const GROUP_KERNEL: usize = 4;
+const GROUP_KERNEL: usize = 3;
 const GROUP_NAMES: [&str; 5] = ["label_group_8", "label_group_32", "label_group_64", "label_group_128", "label_group_256"];
 /// The frames of each fused group kernel (`GROUP_KERNELS`). A walk takes the fewest that hold its
 /// static depth, at most the loop tier's 64, which a loop walk (no static depth) takes, as
@@ -1246,7 +1245,7 @@ fn tier(walk: &Micro) -> usize {
 }
 
 /// The micro walks' kernel in `KERNELS`, every tier's, and each tier's name, which its dispatches and the profile keep.
-const MICRO_KERNEL: usize = 3;
+const MICRO_KERNEL: usize = 2;
 const TIER_NAMES: [&str; 3] = ["label_micro_8", "label_micro_32", "label_micro"];
 
 /// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 64-frame stack
@@ -1473,20 +1472,18 @@ struct Tapes {
 struct Prepared {
     tasks: Arc<HostMapped>,
     header: HostMapped,
-    routes: HostMapped,
     program: Arc<ProgramBuffers>,
     arenas: MetalGlobalArenas,
     evaluations: Vec<MetalEvaluation>,
     lanes: Vec<MetalEvaluation>,
     task_count: usize,
-    result_capacity: usize,
     /// Per program of the batch: its pass's label, its predicted steps per node (`evaluation_costs::per_node`) and its
     /// digest, to name and price an unfinished evaluation (`Runner::unfinished`).
     passes: Vec<(u32, u64, String)>,
 }
 
 /// A level's micro walks (`label_micro`): per pass {word start, word count, scratch label or
-/// count slot, mode (as `label_sink`'s routes), item start, item count, first text slot, first
+/// count slot, mode (as a marking program's, `packed_batch::MARKS`), item start, item count, first text slot, first
 /// thread}, the passes' words, and their starts
 /// (global nodes).
 struct Walks {
@@ -1679,11 +1676,12 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         // Every phase in one launch (decision 0540 step 6), after the level's leaves where the run's are not read once.
         phases.map_or(0, |_| if run_leaves { 1 } else { 2 })
     };
-    // A level's launches: the programs' dispatch and sink, the derived labels, the settle, its formulas.
+    // A level's launches: the programs' dispatch (each program marks as it publishes: no sink, 0540 step 7), the
+    // derived labels, the settle, its formulas.
     let launches = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
         let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
         let patterns = level.iter().any(kernel_pass);
-        2 * usize::from(programs) + usize::from(patterns) + 1 + formulas(level, seen)
+        usize::from(programs) + usize::from(patterns) + 1 + formulas(level, seen)
     };
     // The batch's parents, once where a level has formulas (`label_parents`, 0475).
     let parents = plan.steps.iter().flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
@@ -2441,7 +2439,7 @@ impl Runner<'_> {
             finish: 1,
             ..self.shape()
         };
-        self.kernel(2, KERNELS[2], &[(&flags, 0), (&head, 0)], shape, 1);
+        self.kernel(1, KERNELS[1], &[(&flags, 0), (&head, 0)], shape, 1);
     }
 
     /// Every level's batch, built once, and one workspace for all of them, sized before anything
@@ -2755,8 +2753,6 @@ impl Runner<'_> {
                 None => seen,
                 Some(old) => (old.0.widest(seen.0), old.1.max(seen.1), old.2.max(seen.2), old.3.max(seen.3)),
             });
-            // Marking programs publish no results, so `label_sink` routes none.
-            let routes = [[0_u32; 2]];
             // In the tasks' place: the run's root rules, a sweep's table.
             let tasks = match &sweep_table {
                 Some(table) => Arc::new(HostMapped::from_slice(table)?),
@@ -2780,11 +2776,9 @@ impl Runner<'_> {
                 passes: reported,
                 tasks,
                 header: HostMapped::from_slice(&[batch.header])?,
-                routes: HostMapped::from_slice(&routes)?,
                 program: crate::code_rule_dsl::prof::time("size.program_buffers", || self.engine.program_buffers(&batch))?,
                 arenas: batch.global_arenas,
                 task_count,
-                result_capacity: batch.global_arenas.arenas[ArenaKind::Result as usize].capacity as usize,
                 evaluations: std::mem::take(&mut batch.evaluations),
                 lanes: std::mem::take(&mut batch.evaluation_lanes),
             };
@@ -3234,8 +3228,9 @@ impl Runner<'_> {
         if round.is_none() && (!programs.is_empty() || passes.iter().any(|pass| matches!(pass, Pass::Formula { .. }))) {
             self.anchors(passes)?;
         }
+        // The lanes whose statuses the settle folds (`label_settle`): the level's programs', where they ran.
+        let lanes = if programs.is_empty() { None } else { self.programs(passes.as_ptr() as usize)? };
         if !programs.is_empty() {
-            self.programs(passes.as_ptr() as usize)?;
             self.walk(passes.as_ptr() as usize)?;
         }
         let labels = self.tapes.supertypes.buffer().clone();
@@ -3279,17 +3274,20 @@ impl Runner<'_> {
         let settles = self.upload(&settles)?;
         let shape = Shape {
             target_count: target_count as u32,
+            task_count: lanes.as_ref().map_or(0, |(count, _)| *count as u32),
             round: round.map_or(0, |(round, _)| round as u32),
             recursive: u32::from(round.is_some()),
             last_level: u32::from(round.is_some_and(|(_, last)| last)),
             ..self.shape()
         };
+        let statuses = lanes.as_ref().map_or_else(|| self.flags.buffer().clone(), |(_, statuses)| statuses.clone());
+        let lane_count = lanes.map_or(0, |(count, _)| count);
         self.kernel(
-            1,
-            KERNELS[1],
-            &[(&labels, 0), scratch, (&flags, 0), (&settles, 0), counts],
+            0,
+            KERNELS[0],
+            &[(&labels, 0), scratch, (&flags, 0), (&settles, 0), counts, (&statuses, 0)],
             shape,
-            target_count * self.words,
+            (target_count * self.words).max(lane_count),
         );
         if self.segment_bytes > SEGMENT_BYTES {
             self.outcome.waits[2] += 1;
@@ -3799,7 +3797,7 @@ impl Runner<'_> {
     }
 
     /// The level's micro walks (`label_micro`), one thread per (pass, start), marking scratch as
-    /// `label_sink` marks the tasks' results.
+    /// the level's programs mark theirs (`packed_batch::MARKS`).
     fn walk(&mut self, level: usize) -> Result<(), Error> {
         let Some(walks) = self.walks.get(&level) else { return Ok(()) };
         let words = walks.words.buffer().clone();
@@ -3869,15 +3867,15 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// The level's prepared batch, then `label_sink` routing each result by its task's program.
-    fn programs(&mut self, level: usize) -> Result<(), Error> {
+    /// The level's prepared batch: each program marks its results as it publishes them (`packed_batch::MARKS`), so no
+    /// launch follows it; its lanes' count and statuses, for the settle to fold (`label_settle`), where it ran.
+    fn programs(&mut self, level: usize) -> Result<Option<(usize, Buffer)>, Error> {
         let Some(Some(prepared)) = self.prepared.get(&level) else {
-            return Ok(());
+            return Ok(None);
         };
-        let (lanes_count, capacity) = (prepared.lanes.len(), prepared.result_capacity);
+        let lanes_count = prepared.lanes.len();
         self.stage(level)?;
         let prepared = self.prepared.get(&level).and_then(Option::as_ref).expect("prepared");
-        let routes = prepared.routes.buffer().clone();
         let buffers = self.bound(prepared);
         crate::code_rule_dsl::prof::count(concat!("kernel.", "Rerail label pass programs"), 1);
         let kernel = LabelKernel { kernel: self.engine.kernel().clone(), chunk: None, stats: None, spill: [None; 3], queue: None };
@@ -3888,37 +3886,9 @@ impl Runner<'_> {
         // A thread a lane, exactly: `run_batch` reads its lane by its thread.
         launch.threads_exact(lanes_count as u64, SIMD_WIDTH as u64);
         self.report(level)?;
-        let lease = &self.workspace.as_ref().expect("a workspace").lease;
-        let (scheduler, results, captures, statuses) = (
-            lease.scheduler.buffer().clone(),
-            lease.results.buffer().clone(),
-            lease.final_captures.buffer().clone(),
-            lease.statuses.buffer().clone(),
-        );
+        let statuses = self.workspace.as_ref().expect("a workspace").lease.statuses.buffer().clone();
         self.split("programs");
-        let (state, flags) = (self.tapes.supertypes.buffer().clone(), self.flags.buffer().clone());
-        let shape = Shape {
-            result_arena: ArenaKind::Result as u32,
-            task_count: lanes_count as u32,
-            ..self.shape()
-        };
-        self.kernel(
-            0,
-            KERNELS[0],
-            &[
-                (&scheduler, 0),
-                (&results, 0),
-                (&captures, 0),
-                (&statuses, 0),
-                (&routes, 0),
-                (&state, self.tapes.scratch_at),
-                (&state, self.tapes.counts_at),
-                (&flags, 0),
-            ],
-            shape,
-            capacity.max(lanes_count),
-        );
-        Ok(())
+        Ok(Some((lanes_count, statuses)))
     }
 }
 
@@ -3970,7 +3940,7 @@ mod lanes_tests {
     }
 }
 
-/// A level's programs: (program, roots per file, sink mode, scratch label or count slot).
+/// A level's programs: (program, roots per file, marking mode, scratch label or count slot).
 /// A level's programs: (program, roots, mode, slot), the slot a program's scratch row
 /// (`scratch_rows`) where `rows`, else its label (a sweep's, `label_sweep`), or a count's slot.
 fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p std::sync::Arc<Roots>, u32, u32)> {

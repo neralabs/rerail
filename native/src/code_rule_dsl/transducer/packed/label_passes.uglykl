@@ -36,44 +36,20 @@ UKL_INLINE void mark(UKL_GLOBAL uint32_t* bits,uint32_t node){ukl_atomic_or(&bit
 // A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch.
 #define MARK_WINDOW(row,b,out) {uint32_t window_b=(b);uint64_t window_out=(out);if(NODE_OK(window_b)){uint32_t w0=(uint32_t)(window_out),w1=(uint32_t)(window_out>>32u);if(w0!=0u)ukl_atomic_or(&(row)[window_b/32u],w0);if(w1!=0u)ukl_atomic_or(&(row)[window_b/32u+1u],w1);}else NODE_PAST}
 
-DEFINE_KERNEL2(label_passes, label_sink,
-               ROBUFFER, Arena,        arenas,   "[arenas]",
-               ROBUFFER, Result,       results,  "[results]",
-               ROBUFFER, FinalCapture, captures, "[captures]",
-               ROBUFFER, Status,       statuses, "[shape.taskCount]",
-               ROBUFFER, Route,        routes,   "[tasks]",
-               RWBUFFER, uint32_t,     scratch,  "[rows * shape.words]",
-               RWBUFFER, uint32_t,     counts,   "[slots * shape.nodeCount]",
-               RWBUFFER, uint32_t,     flags,    "[6]",
-               ARGS,     Shape,        shape,    ,
-               GID0,     uint32_t,     tid,      )
-{
-  if(ukl_atomic_load(&flags[2])!=0u)return;
-  // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
-  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a
-  // tally of a node past the batch's, not written (decision 0463): `NODE_PAST`'s flags.
-  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint32_t error=statuses[tid].error;ukl_atomic_or(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u);}
-  Arena arena=arenas[shape.resultArena];
-  if(tid>=arena.cursor)return;
-  Result result=results[arena.start+tid];
-  Route route=routes[result.taskOrdinal];
-  UKL_GLOBAL uint32_t* bits=scratch+route.slot*shape.words;
-  UKL_GLOBAL uint32_t* tally=counts+route.slot*shape.nodeCount;
-  if(route.mode==0u){MARK(bits,result.start);return;}
-  if(route.mode==2u){TALLY(tally,result.start);return;}
-  for(uint32_t at=0u;at<result.captureCount;at++){uint32_t node=captures[result.captureStart+at].node;if(route.mode==1u)MARK(bits,node)else TALLY(tally,node)}
-}
-
 // Each of the level's targets takes its new bits: a complement's or a count's computed here (per
-// word), the others' from scratch. A change sets flags[1]; scratch is cleared.
+// word), the others' from scratch. A change sets flags[1]; scratch is cleared. The level's programs
+// marked scratch and the tallies as they ran (`packed_batch::MARKS`, `run_task_in`); their lanes'
+// statuses (`shape.taskCount` of them, none at a level without programs) are folded into flags[0]
+// here, so the programs need no launch of their own after them (decision 0540 step 7).
 DEFINE_KERNEL2(label_passes, label_settle,
-               RWBUFFER, uint32_t, head,    "[2 + labels * shape.words]",
-               RWBUFFER, uint32_t, scratch, "[rows * shape.words]",
-               RWBUFFER, uint32_t, flags,   "[6]",
-               ROBUFFER, Op,       ops,     "[shape.targetCount]",
-               RWBUFFER, uint32_t, counts,  "[slots * shape.nodeCount]",
-               ARGS,     Shape,    shape,   ,
-               GID0,     uint32_t, tid,     )
+               RWBUFFER, uint32_t, head,     "[2 + labels * shape.words]",
+               RWBUFFER, uint32_t, scratch,  "[rows * shape.words]",
+               RWBUFFER, uint32_t, flags,    "[6]",
+               ROBUFFER, Op,       ops,      "[shape.targetCount]",
+               RWBUFFER, uint32_t, counts,   "[slots * shape.nodeCount]",
+               ROBUFFER, Status,   statuses, "[shape.taskCount]",
+               ARGS,     Shape,    shape,    ,
+               GID0,     uint32_t, tid,      )
 {
   // The labels after the prefix's head (bound whole: OpenCL binds a region at 4,096 bytes).
   UKL_GLOBAL uint32_t* labels=head+2;
@@ -89,6 +65,11 @@ DEFINE_KERNEL2(label_passes, label_settle,
     if(ukl_atomic_load(&flags[previous])==0u){ukl_atomic_store(&flags[2],own);ukl_atomic_or(&head[0],0x80000000u);}
     ukl_atomic_store(&flags[previous],0u);
   }
+  // A lane's first error (it ran this round: a settled round's programs return at once, as this settle does). Bit 1:
+  // a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a task
+  // stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a tally of
+  // a node past the batch's, not written (decision 0463): `NODE_PAST`'s flags.
+  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint32_t error=statuses[tid].error;ukl_atomic_or(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u);}
   if(tid>=shape.targetCount*shape.words)return;
   Op op=ops[tid/shape.words];uint32_t index=tid%shape.words;
   uint32_t at=op.target*shape.words+index,row=op.row*shape.words+index;
@@ -593,7 +574,7 @@ UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* hea
         case 48u:{if(depth==FRAMES)MICRO_FAIL MicroFrame frame=path;frame.pc=arg;frame.resume=0u;stack[depth++]=frame;}break;
         case 49u:path.pc=arg;continue;
         case 64u:
-          // As label_sink routes: 0 the start (once), 1 the captured nodes, 2 a tally by start,
+          // As a program marks (`packed_batch::MARKS`): 0 the start (once), 1 the captured nodes, 2 a tally by start,
           // 3 a tally by captured node, one each path.
           // A pack (bit 2, `fusion::Fused`): the emit's row, by its label, follows the emit count
           // after the words; the walk ends once every emit marked its start.

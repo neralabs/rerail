@@ -298,7 +298,7 @@ DEFINE_KERNEL2(batch_runtime, run_batch,
   return;
  }
 #ifdef RERAIL_RESIDENT
- // A lane's status is its own, reused by its tasks; it keeps their first error (`label_sink`).
+ // A lane's status is its own, reused by its tasks; it keeps their first error (`label_settle` folds it).
  UKL_GLOBAL const uint8_t* chunk=nodes;
  UKL_GLOBAL Status* status=&statuses[tid];
  uint32_t firstError=0u;

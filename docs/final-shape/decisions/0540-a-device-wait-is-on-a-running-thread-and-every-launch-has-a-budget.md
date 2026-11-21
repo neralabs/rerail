@@ -332,6 +332,12 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      run the forward carry, in segments of 3 blocks (a short file speculates and runs again) and of tier 1's 29;
      those that tested the look-back itself (its fallback launches, its one kernel, its strategies' times) are gone.
      `block_program.rs` keeps what the forward carry shares: the head, the file table, `emit` and its forms.
+   - **Done: a level's programs need no sink.** The label sweep's programs had already marked their results' bits
+     and tallies as they published them (`packed_batch::MARKS`, `run_task_in`), and they kept no results. So
+     `label_sink`, a launch after every level's programs, routed nothing; all it did was fold each lane's status into
+     `flags[0]`. The level's settle (`label_settle`) does that fold now. It skips exactly when the sink skipped, since
+     a settled round's programs return at once too. `label_sink` is gone, and a level plans one launch for its
+     programs, not two.
    - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
      MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
      another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"
