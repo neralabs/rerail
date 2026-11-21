@@ -1,0 +1,55 @@
+#!/usr/bin/python3
+"""The farm's guests (guest.py; README, "Guests"): VMs started when a command needs one and stopped
+once idle.
+
+    guests                 each guest: its machine, state, size, and when it stops
+    guests start NAME      start it (sized from its machine's memory now) and wait until it answers
+    guests stop NAME       stop it, if nothing of the farm's runs there
+    guests watch           stop each guest once idle; run by this Mac's LaunchAgent (setup)
+"""
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+import guest  # noqa: E402
+
+
+def show():
+    now = time.time()
+    rows = guest.guests()
+    if not rows:
+        print("no guests in the farm's configuration")
+        return
+    for base in rows:
+        g, r = base["guest"], guest.record(base["name"])
+        st = r.get("state", "unknown")
+        size = f"{r['cpus']} CPUs, {r['memory_gb']} GB" if r.get("cpus") else "not sized yet"
+        when = ""
+        if st == "running":
+            when = "in use" if r.get("busy") else (f"stops in {max(0, round((r['stop_at'] - now) / 60))} min" if r.get("stop_at") else "")
+        elif r.get("since"):
+            when = f"since {time.strftime('%H:%M', time.localtime(r['since']))}"
+        print(f"  {base['name']}: {st} ({g['kind']} on {g['on']}; {size}){' · ' + when if when else ''}"
+              f"{' · ' + r['why'] if r.get('why') and st != 'running' else ''}")
+
+
+def main(argv):
+    if not argv:
+        return show()
+    if argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if argv[0] == "watch":
+        return guest.watch()
+    if argv[0] in ("start", "stop") and len(argv) == 2:
+        why = guest.start(argv[1], "asked for") if argv[0] == "start" else guest.stop(argv[1], "asked for")
+        if why:
+            sys.exit(f"guests: {argv[1]}: {why}")
+        return 0
+    sys.exit(__doc__.strip())
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
