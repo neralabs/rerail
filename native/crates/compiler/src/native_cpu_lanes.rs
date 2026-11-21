@@ -27,8 +27,8 @@ use crate::block_native::{BlockInst, BlockNative};
 use cranelift_codegen::ir::{ConstantData, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
 
-/// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
-/// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
+/// The backend tests a vector's bits against a mask in one instruction (NEON's `cmtst`, the vendored Cranelift's
+/// aarch64 lowering since 0381): a
 /// class's lane is then the test itself, not its complement. On by default where the vendored
 /// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
 pub const BIT_TEST_DEFAULT: bool = cfg!(all(cranelift_clmul, target_arch = "aarch64"));

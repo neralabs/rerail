@@ -47,7 +47,6 @@ pub mod native_cpu_clusters;
 pub mod native_cpu_shape;
 pub mod clif_ukl;
 // Deprecated (decision 0550): Rust from the JIT's IR and from the native IR. No new use.
-pub mod clif_rust;
 mod native_cpu_facts;
 pub mod native_cpu_stream;
 pub mod native_cpu_pp;

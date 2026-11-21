@@ -1,7 +1,7 @@
-//! Cranelift IR as UKL (decisions 0348 stage 5, 0440 step D): the same functions the JIT runs and `clif_rust` prints
+//! Cranelift IR as UKL (decisions 0348 stage 5, 0440 step D): the same functions the JIT runs
 //! as Rust, printed as UKL's C, so every GPU (Metal, CUDA, OpenCL, the CPU's backend) runs the same code.
 //!
-//! - **Values:** each a local of its type's unsigned C type, declared once (as `clif_rust`'s). Arithmetic is on the
+//! - **Values:** each a local of its type's unsigned C type, declared once. Arithmetic is on the
 //!   type's width (32 bits below it: no promotion to `int`), its shifts' counts masked as Cranelift's are. Casts are
 //!   C casts (OpenCL C 1.2 has no other).
 //! - **Memory:** an address is the device's address of a byte of the batch's one arena, and each access is the
@@ -18,16 +18,23 @@
 //! - **The context** (each function's first parameter) is a column of the batch's table: a field is its 8-byte slot's
 //!   row (0408, L2), `cs` bytes a row, so a SIMD group's lanes read one field as adjacent words. The context is only
 //!   ever a field's base (`context_uses`).
-//! - **Control:** `clif_rust::Shape`'s structure, printed as C without labels (`Shape::c`).
+//! - **Control:** the graph structured (`shape::Shape`), printed as C without labels.
 //! - **Calls:** each function `UKL_CALLED`, called directly, the compiler inlining as it chooses; the graph has no
 //!   recursion (no GPU language has it), which the translation checks.
 //!
 //! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
 //! one result.
 
-use crate::clif_rust::{Shape, absorbed, returned_call, successors};
+mod shape;
+
+use shape::{Shape, returned_call, successors};
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
+
+/// A fingerprint of a text (FNV-1a): a translation's own, which it ends with (`native_cpu_pp::ukl_source`).
+pub fn fingerprint(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
+}
 
 /// A type's unsigned and signed C names and its bits.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str, u32), String> {
@@ -124,10 +131,6 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("{} a{}", ty(dfg.value_type(v))?.0, v.as_u32()))).collect::<Result<_, String>>()?;
     writeln!(out, "UKL_CALLED {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb, uint64_t cs{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
-    let absorbed = absorbed(f);
-    if !absorbed.is_empty() {
-        return Err("a vector test".into());
-    }
     let mut declared = std::collections::BTreeMap::new();
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b) {
@@ -151,8 +154,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
     let first: Vec<Vec<usize>> = blocks.iter().map(|&b| successors(f, b).iter().map(|t| node_of[t]).collect()).collect();
     let sizes: Vec<usize> = blocks.iter().map(|&b| f.layout.block_insts(b).count()).collect();
     match Shape::of(first, &sizes) {
-        Some(mut shape) => {
-            shape.c = true;
+        Some(shape) => {
             let emit = |node: usize, jump: &dyn Fn(usize) -> Result<String, String>| -> Result<String, String> {
                 let mut s = String::new();
                 for inst in f.layout.block_insts(blocks[node]) {

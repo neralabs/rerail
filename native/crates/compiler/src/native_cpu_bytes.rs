@@ -136,8 +136,8 @@ impl<'a> Bytewise<'a> {
     }
 
     /// Output `o`'s window (`word`) as a function of its own, user name `u0:id`: `(bytes, len,
-    /// p)` to its bits for the file's bytes `p .. p + 64`. For a backend that is given functions
-    /// (`clif_rust`): tier 2's ahead-of-time source reads a mask so.
+    /// p)` to its bits for the file's bytes `p .. p + 64`: the window's code alone, for its tests to read.
+    #[cfg(test)]
     pub fn window_function(&self, o: u16, id: u32) -> cranelift_codegen::ir::Function {
         use cranelift_codegen::ir::{AbiParam, Signature, UserFuncName};
         let mut sig = Signature::new(cranelift_codegen::isa::CallConv::SystemV);

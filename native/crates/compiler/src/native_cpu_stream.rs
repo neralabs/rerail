@@ -354,10 +354,6 @@ pub struct CompiledStream {
     pub word_bytes: Vec<u32>,
     /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
     pub word_ranges: Vec<(u32, u32, u32)>,
-    /// With `Options::keep_ir`: each function's IR as Cranelift was given it (its `FuncId`), and the
-    /// entry's id.
-    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
-    pub entry_id: u32,
 }
 
 /// Each word's phases (`stream::phases`), over the lowered words: `TAKEN` after a `SPAN`,
@@ -7748,7 +7744,6 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -7802,7 +7797,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::native_cpu_facts::open_bound(native) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::native_cpu_facts::open_bound(native) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
