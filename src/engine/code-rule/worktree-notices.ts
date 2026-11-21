@@ -770,7 +770,9 @@ export class SessionNotices {
   #seen: WorktreeRead | undefined;
   /** Whether the next pass reads the whole folder. */
   #whole = true;
-  /** What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass began (`ended`). */
+  /**
+   * What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass that knew it began (`ended`).
+   */
   #ignores: string | undefined;
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
@@ -839,12 +841,13 @@ export class SessionNotices {
   }
 
   /**
-   * Whether `ignores` is not what the last whole pass began with (`WorktreeLook.ignores`: `info/exclude`,
-   * `core.excludesFile` and the configuration naming it), since no notice in the folder tells of a change to those;
-   * undefined, Git did not name them now. Before a whole pass ended with them known, nothing has moved.
+   * Whether `ignores` is not what the last whole pass that knew them began with (`WorktreeLook.ignores`:
+   * `info/exclude`, `core.excludesFile` and the configuration naming it), since no notice in the folder tells of a change
+   * to those; undefined, Git did not name them now. Once Git names them after no whole pass knew them (its read failed,
+   * or the folder was in no repository), they moved: none can vouch for what they were.
    */
   #ignoresMoved(ignores: string | undefined): boolean {
-    return this.#ignores !== undefined && ignores !== this.#ignores;
+    return ignores !== this.#ignores;
   }
 
   /**
@@ -889,14 +892,15 @@ export class SessionNotices {
    * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
    * (on Linux the watch follows its folders) and the period runs from as it began, one that read only noticed paths with
    * nothing. `found`: the files with another name it found, and how many files it looked at. `ignores`: what told Git
-   * to ignore beyond the folder's `.gitignore` files as it began (`begin`).
+   * to ignore beyond the folder's `.gitignore` files as it began (`begin`); undefined, Git did not name them then, which
+   * keeps what the last whole pass that knew them began with, so the next pass weighs them against that.
    */
   ended(seen: WorktreeRead | undefined, found: SessionFound, ignores?: string): void {
     if (seen === undefined) {
       this.#endedNoticed(found.linked);
       return;
     }
-    this.#ignores = ignores;
+    if (ignores !== undefined) this.#ignores = ignores;
     this.#walkedAt = this.#began;
     this.#looks = found.files + seen.folders.size;
     this.#linked = found.linked.keep(this.#looks);

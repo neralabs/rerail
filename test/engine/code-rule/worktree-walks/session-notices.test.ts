@@ -145,6 +145,23 @@ function checked(audits: readonly CodeRuleEditBatch[]): string[][] {
   return audits.map(batch => batch.edits.map(edit => edit.path));
 }
 
+/**
+ * The notices of `root` on Windows (one watch of the whole tree), and a pass of them as the bridge runs one: `ignores`
+ * is what Git named that tells it what to ignore beyond the folder's `.gitignore` files, undefined when it named none.
+ * Says whether the pass read the whole folder.
+ */
+function ignorePasses(root: string): { notices: SessionNotices; pass: (ignores: string | undefined, whole?: boolean) => boolean } {
+  const notices = new SessionNotices(root, { platform: "win32", fullWalkMs: WORKTREE_FULL_WALK_MS, now: () => 0 });
+  notices.use(new StampTreeWatch());
+  const seen = { folders: new Set(["", "src"]), leftOut: new Set<string>() };
+  const pass = (ignores: string | undefined, whole = false): boolean => {
+    const reads = notices.begin(whole, whole ? undefined : ignores);
+    notices.ended(reads.whole ? seen : undefined, { linked: reads.linked, files: 3 }, ignores);
+    return reads.whole;
+  };
+  return { notices, pass };
+}
+
 describe("a shell command's result reads the session folder by its change notices", () => {
   it("watches the session folder through the engine watch the repository's walk shares, and not without one", async () => {
     const root = await workspace();
@@ -605,6 +622,31 @@ describe("a shell command's result reads the session folder by its change notice
     // A turn's end walks whole, and the ten minutes run from it.
     end(pass(1_500_000, true));
     expect(pass(1_802_000).whole).toBe(false);
+    notices.close();
+  });
+
+  it("weighs what Git ignores beyond the .gitignore files against the last whole pass that knew it, through a pass whose Git read failed", async () => {
+    const { notices, pass } = ignorePasses(await workspace());
+    pass("gen/", true);
+    expect(pass("gen/")).toBe(false);
+    // Git failed or ran past its time limit: nothing vouches for the files, so the pass reads whole.
+    expect(pass(undefined)).toBe(true);
+    expect(pass("gen/")).toBe(false);
+    // Before, the failed pass forgot what the last one knew, and a command's change to info/exclude after it waited for
+    // the turn's end.
+    expect(pass("")).toBe(true);
+    notices.close();
+  });
+
+  it("reads the whole folder once Git names what it ignores beyond the .gitignore files after no whole pass could, and by notices while it names none", async () => {
+    const { notices, pass } = ignorePasses(await workspace());
+    // The first whole pass's Git read failed, or the folder is in no repository.
+    pass(undefined, true);
+    expect(pass(undefined)).toBe(false);
+    // Before, nothing had moved until a whole pass knew the files: a change made before this pass waited for the turn's
+    // end.
+    expect(pass("gen/")).toBe(true);
+    expect(pass("gen/")).toBe(false);
     notices.close();
   });
 
