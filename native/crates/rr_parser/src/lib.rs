@@ -72,6 +72,8 @@ pub struct Compiled {
     /// Tier 1 as Rust, written by the Bitlex compiler from the grammar in this compile (`bitlex_lex_rust`), so its
     /// codes are the JIT's, or why it is not written (`rerail-rr-aot` holds it).
     pub lexer_rust: Result<String, String>,
+    /// Tier 2 as Rust, from the tree rules in this compile (`bitlex_rust`), or why it is not written.
+    pub rust: Result<String, String>,
 }
 
 // SAFETY: nothing changes a compiled parser once it is made. Its JIT module holds finished code
@@ -140,7 +142,7 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
         rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())) })
+    Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program, lexer_rust: compiled.lexer_rust.clone().unwrap_or_else(|| Err("no tree section".into())), rust: compiled.rust.clone().unwrap_or_else(|| Err("no tree section".into())) })
 }
 
 /// `src`'s tape, the engine's bytes (decision 0140): from the compiled grammar, or, for a file

@@ -4,17 +4,72 @@
 
 use crate::{Compiled, SAMPLES, compiled};
 
-/// `rerail_rr_aot`'s `tier1.rs` is the Bitlex compiler's output for the grammar, in the compile `compiled` makes
-/// (its codes are the JIT's); `RERAIL_BLESS=1` writes it again.
+/// `rerail_rr_aot`'s `tier1.rs` and `tier2.rs` are the Bitlex compiler's output for the grammar, in the compile
+/// `compiled` makes (its codes and ids are the JIT's); `RERAIL_BLESS=1` writes them again.
 #[test]
 fn rust_is_current() {
     let c = compiled().expect("the grammar compiles");
     let tier1 = c.lexer_rust.clone().unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
-    let path = format!("{}/../rr_aot/src/tier1.rs", env!("CARGO_MANIFEST_DIR"));
-    if std::env::var_os("RERAIL_BLESS").is_some() {
-        std::fs::write(&path, &tier1).expect("writes");
+    let tier2 = c.rust.clone().unwrap_or_else(|e| panic!("tier 2 as Rust: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../rr_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "rr_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
-    assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == tier1), "rr_aot's tier1.rs is not the compiler's: RERAIL_BLESS=1");
+}
+
+/// A tape's nodes, in order: each one's key (its kind, field, flags and supertype classes), start, end and size.
+type Nodes = Vec<(u32, u32, u32, usize)>;
+
+/// The JIT's image's nodes.
+fn image_nodes(image: &[u8]) -> Nodes {
+    let v = rerail_tape_format::View::new(image).expect("an image");
+    (0..v.len()).map(|i| (v.key(i), v.start(i), v.end(i), v.size(i))).collect()
+}
+
+/// The parser as Rust's tape's nodes (`rerail_rr_aot::parse`), as `image_nodes` reads an image's.
+fn columns_nodes(t: &rerail_tape_format::Columns) -> Nodes {
+    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
+        let w = usize::from(width & 0x7f);
+        let b = &column[i * w..i * w + w];
+        match w {
+            1 => u32::from(b[0]),
+            2 => u32::from(u16::from_le_bytes([b[0], b[1]])),
+            _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        }
+    };
+    let start = |i: usize| {
+        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
+        u32::from_le_bytes(t.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&t.off, t.widths[1], i)
+    };
+    (0..t.code.len() / 2)
+        .map(|i| {
+            let code = u16::from_le_bytes([t.code[2 * i], t.code[2 * i + 1]]);
+            let size = cell(&t.size, t.widths[0], i) as usize;
+            let s = start(i);
+            let from = if t.widths[2] & rerail_tape_format::TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
+            (t.keys[usize::from(code)], s, from + cell(&t.tail, t.widths[2], i), size)
+        })
+        .collect()
+}
+
+/// Where the parser as Rust's tape is not the JIT's: whether it refuses the file, and where neither does, the first
+/// node that differs.
+fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
+    let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
+    let ours = rerail_rr_aot::parse(text.as_bytes()).ok().map(|t| columns_nodes(&t));
+    match (theirs, ours) {
+        (None, None) => None,
+        (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
+        (None, Some(_)) => Some("the parser as Rust parses it, the JIT refuses it".into()),
+        (Some(a), Some(b)) => {
+            let k = (0..a.len().max(b.len())).find(|&k| a.get(k) != b.get(k))?;
+            let at = |n: Option<&(u32, u32, u32, usize)>| n.map_or(String::new(), |n| text[n.1 as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
+            Some(format!("node {k} of {}/{}: the JIT {:x?} `{}`, the parser as Rust {:x?} `{}`", a.len(), b.len(), a.get(k), at(a.get(k)), b.get(k), at(b.get(k))))
+        }
+    }
 }
 
 /// The mark bits of the hidden marks only refused (`refuse M in L`): the lowering checks their local token tests in
@@ -99,6 +154,15 @@ fn cases() -> Vec<String> {
         "a(1234567890123456789).\n",
         "a(123456789012345678).\n",
         "\u{0c}a(1).\n",
+        // A string's escapes a JSON document refuses (`json_bad`, refused in its levels only): in a clause, and in a
+        // policy's document.
+        "a(\"\\q\", 1).\n",
+        "a(\"\\u12\", 1).\n",
+        "a(\"\\u{1F600}\").\n",
+        ".policy {\"a\": \"\\q\"}\n",
+        ".policy {\"a\": \"\\u{1F600}\"}\n",
+        ".policy {\"a\": \"x\", \"b\": [1, {\"c\": \"\\q\"}]}\n",
+        ".policy {\"a\": \"x\"}\na(\"\\q\").\n",
         // `else e_t2 bytes 2`: two backticks with no closer after them, a token of their two bytes.
         "a(b) :- r(c, ``).\n",
         "a(b) :- r(o, ` `), r(c, ``), r(d, ``x``).\n",
@@ -122,6 +186,20 @@ fn tier1s_records_are_the_interpreters() {
     assert!(same > 0 && refused > 0);
 }
 
+#[test]
+fn tapes_are_the_jits() {
+    let c = compiled().expect("the grammar compiles");
+    let (mut same, mut refused) = (0, 0);
+    for (k, t) in cases().iter().enumerate() {
+        if let Some(d) = tape_differs(c, t) {
+            panic!("case {k} ({:?}): {d}", &t[..t.len().min(60)]);
+        }
+        if c.parser.image(t.as_bytes()).is_ok() { same += 1 } else { refused += 1 }
+    }
+    eprintln!("{same} tapes the JIT's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
+}
+
 /// `tier1s_records_are_the_interpreters` over the repository's `.rerail` files.
 #[test]
 #[ignore = "the corpus: run by name"]
@@ -139,3 +217,22 @@ fn corpus_tier1s_records_are_the_interpreters() {
     eprintln!("{} files", files.len());
 }
 
+/// `tapes_are_the_jits` over the repository's `.rerail` files. `RERAIL_RR_DIFFERS=<dir>`: the first file that
+/// differs written there.
+#[test]
+#[ignore = "the corpus: run by name"]
+fn corpus_tapes_are_the_jits() {
+    let c = compiled().expect("the grammar compiles");
+    let files = crate::tests::corpus();
+    let mut parsed = 0;
+    for (k, t) in files.iter().enumerate() {
+        if let Some(d) = tape_differs(c, t) {
+            if let Ok(dir) = std::env::var("RERAIL_RR_DIFFERS") {
+                std::fs::write(format!("{dir}/differs.rerail"), t).expect("writes");
+            }
+            panic!("file {k}: {d}");
+        }
+        parsed += usize::from(c.parser.image(t.as_bytes()).is_ok());
+    }
+    eprintln!("{} files, {parsed} parsed", files.len());
+}

@@ -955,14 +955,15 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: from its first token or comment, or the file's start (`whole`).
+    /// The root closed at the end of the file: the whole file (`whole`, from byte 0, as the machine opens it), or
+    /// from its first token or comment to its last token's end.
     fn close_root(&mut self, whole: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
-        // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
-        let first = if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        // From byte 0 (`whole`), else its first token or comment (none: the file's end).
+        let first = if whole { 0 } else if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);
