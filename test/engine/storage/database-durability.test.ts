@@ -56,4 +56,16 @@ describe("what the store keeps through a power cut", () => {
       client.close();
     }
   });
+
+  // Inside a transaction the write would commit with it, without waiting for the disk.
+  it("refuses a durable commit inside an open transaction", async () => {
+    const database = openRerailDatabase(await databasePath());
+    const client = database.$client;
+    try {
+      expect(() => client.transaction(() => commitDurably(client, () => 1))()).toThrow("commitDurably must be called outside a transaction");
+      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+    } finally {
+      client.close();
+    }
+  });
 });

@@ -81,8 +81,11 @@ function prepareWriter(database: RerailDatabase, path: string): void {
  * Runs `write` in one transaction of `client` whose commit waits for the disk (`synchronous = FULL` for it alone), and
  * gives the connection back its own setting however `write` ends: for the rare commit a power cut must not take, on a
  * connection whose other commits do not wait. A FULL commit in WAL mode also syncs every frame the log holds before it.
+ * Call it outside a transaction: inside one, `write` would commit with the open transaction, which does not wait for
+ * the disk, and SQLite refuses to change `synchronous` there, so it throws before `write` runs.
  */
 export function commitDurably<T>(client: Database.Database, write: () => T): T {
+  if (client.inTransaction) throw new Error("commitDurably must be called outside a transaction: inside one, its commit would not wait for the disk");
   const own = client.pragma("synchronous", { simple: true }) as number;
   client.pragma("synchronous = FULL");
   try {
