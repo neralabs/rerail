@@ -7710,8 +7710,13 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Q337's runs under it** (a profiling build, an M3 of the farm, format 16 (the default), cold hogql, each its own
   store, load 9-10): 16 of 16 gave 1,629 findings, 66-78 B instructions, 3.1-35 s (the first a cold launch; runs 6-10
   10-14 s), one device budget refusal in all, no panic. The host's link then dropped (it went unreachable), before the
-  last four. It had restarted (its boot time is when the link dropped): the Metal runs likely brought it down, as
-  they did this Mac twice. The last four wait until the cause is found; no Metal load runs until then.
+  last four. It had restarted (its boot time is when the link dropped): GPU processes with infinite loops brought
+  it down (the user, 2026-11-20), not these runs.
+- **Validated again, then finished** (2026-11-20, cf497c6219's engine, each run capped at 120 s): on the M1 Max,
+  rerail-blocks 69, rerail-accel 90, rerail-metal 21, the engine's 22 GPU, residency and slab tests and
+  rerail-device-metal's 30 setfix-device and Metal-join tests pass; cold hogql on Metal, 4 runs on the M1 Max and 3
+  on the M1 mini, 1,629 findings each, 64-73 B instructions, 3.9-6.6 s after the first launch, no refusal or panic.
+  Then the last four on the M3: 1,629 findings each, 65.8-68.0 B, 2.5-6.1 s. Q337's runs: 20 of 20.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
