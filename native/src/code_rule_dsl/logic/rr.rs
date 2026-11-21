@@ -636,7 +636,10 @@ fn closed_program(files: &SharedFiles, own: &[Stmt]) -> Result<(), Error> {
 fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&crate::content_store::ContentStore>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
     let core = library().join("core.rerail").canonical().ok();
-    let at = |p: &Path| paths.iter().position(|q| q == p);
+    // An include is found by its canonical path, so the run's files are compared canonical too: on Windows a path
+    // through a link, or with `/` past a `\`-joined root, names the same file another way.
+    let canonical: Vec<PathBuf> = paths.iter().map(|p| p.canonical().unwrap_or_else(|_| p.clone())).collect();
+    let at = |p: &Path| canonical.iter().position(|q| q == p);
     let n = paths.len();
     // Each file's direct includes, by position: the library's file, else the one beside it (`#include`).
     let mut direct: Vec<BTreeSet<usize>> = Vec::with_capacity(n);

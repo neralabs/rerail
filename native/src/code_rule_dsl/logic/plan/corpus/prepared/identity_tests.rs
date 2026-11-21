@@ -14,8 +14,7 @@ fn fresh_and_restored_programs_have_identical_relation_identities() {
     std::fs::write(typeshed.join("builtins.pyi"), "class object: ...\nclass int(object): ...\n").unwrap();
     let mut snapshots = Vec::new();
     for phase in ["fresh", "restored", "restored-again"] {
-        let output = std::process::Command::new("nice").args(["-n", "19"])
-            .arg(std::env::current_exe().unwrap())
+        let output = crate::code_rule_dsl::test_support::niced_self()
             .args(["prepared_identity_child", "--ignored", "--nocapture", "--test-threads=1"])
             .env("RERAIL_PREPARED_IDENTITY_ROOT", root)
             .env("RERAIL_PREPARED_IDENTITY_PHASE", phase)

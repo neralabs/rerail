@@ -73,6 +73,8 @@ pub(crate) unsafe fn release(p: *mut u8, len: usize) {
 ///
 /// # Safety
 /// `p` and `len` lie in a reservation of `reserve`'s.
+// Its callers outside the tests commit on Windows only (`Block::commit_to`, `Scratch::take`).
+#[cfg(any(windows, test))]
 pub(crate) unsafe fn commit(p: *mut u8, len: usize) {
     #[cfg(windows)]
     crate::windows::commit(p, len).unwrap_or_else(|e| panic!("committing {len} bytes of a reservation: {e}"));
