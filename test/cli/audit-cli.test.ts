@@ -245,6 +245,25 @@ describe("rerail scan and settings CLI", () => {
     expect(request).toMatchObject({ status: "failed", auditIds: [], error: expect.stringMatching(/no changed files/i) });
   });
 
+  it("reports a Git diff it cannot read, as for a config Git cannot parse, without starting an audit", async () => {
+    const { root, home } = await fixture();
+    await writeFile(join(root, "api/clean.py"), "value = 43\n");
+    const config = join(root, ".git", "config");
+    const kept = await readFile(config, "utf8");
+    await writeFile(config, `${kept}\n[unclosed\n`);
+    let output = "";
+    try {
+      const code = await runAuditCommand("scan", ["--session", "s1", "--scope", "git-diff", "--wait", "--json"], {
+        home, stdout: { write: text => { output += text; return true; } },
+      });
+      expect(code).toBe(1);
+    } finally {
+      await writeFile(config, kept);
+    }
+    const request = auditRequestSchema.parse(JSON.parse(output));
+    expect(request).toMatchObject({ status: "failed", auditIds: [], error: expect.stringMatching(/^Could not read git diff: /u) });
+  });
+
   it("interrupts audits and closes the session store despite undiscovered source edits", async () => {
     const { root, database, runtime, daemon } = await fixture();
     const controls = new SqliteAuditControlStore(database);
