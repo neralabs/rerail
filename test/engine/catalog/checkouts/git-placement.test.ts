@@ -23,6 +23,8 @@ import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/c
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { declaredSubmodulePaths } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import {
+  learnRemoteAddress,
+  learnWorktreeRegistry,
   placeWithoutBlocking,
   readRemoteAddress,
   repositoryIdentityLocation,
@@ -354,6 +356,51 @@ describe("a placement asked without blocking the caller's thread", () => {
 
     await placeWithoutBlocking(main, { signal: stopped.signal });
     expect(expectGitsAnswers(main, main)).toBe(1);
+  });
+
+  it("keeps Git's acceptance of a folder its files cannot describe, so the worktree registry after it places nothing again", async () => {
+    const root = await temporaryRoot();
+    const folder = join(repository(join(root, "main")), "src");
+
+    expect(await placeWithoutBlocking(folder)).toEqual(gitsAnswer(folder));
+    const before = locateCalls(folder);
+    expect(worktreeRegistry(folder)?.worktrees).toEqual([join(root, "main")]);
+    expect(locateCalls(folder) - before).toBe(0);
+  });
+
+  it("stores no list Git gave of another repository's registry, and the registry after it asks Git", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const other = repository(join(root, "other"));
+    expect(repositoryIdentityLocation(main).git).toBe(true);
+    // As a list of another registry arrives where an answer outlived the folder's: Git names another main worktree.
+    vi.mocked(runGitAsync).mockResolvedValueOnce({ status: 0, stdout: `worktree ${other}\nHEAD ${"0".repeat(40)}\nbranch refs/heads/main\n\n`, stderr: "" });
+
+    expect(await learnWorktreeRegistry(main)).toBeUndefined();
+    expect(worktreeRegistry(main)?.worktrees).toEqual([main]);
+  });
+});
+
+describe("a clone's remote, kept while the files Git reads it from read the same", () => {
+  it("keeps no answer from a Git that failed, and asks Git again at the next call", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "remote", "add", "origin", "https://example.invalid/team/main.git");
+    const failed = { status: null, stdout: "", stderr: "", error: new Error("Git ran past its time limit") };
+    vi.mocked(runGit).mockReturnValueOnce(failed).mockReturnValueOnce(failed);
+
+    expect(readRemoteAddress(main)).toBeUndefined();
+    expect(readRemoteAddress(main)).toEqual({ name: "origin", url: "https://example.invalid/team/main.git" });
+  });
+
+  it("asks Git nothing ahead for a remote it keeps", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    expect(readRemoteAddress(main)).toBeUndefined();
+    const waiting = vi.mocked(runGitAsync).mock.calls.length;
+
+    await learnRemoteAddress(main);
+    expect(vi.mocked(runGitAsync).mock.calls.length - waiting).toBe(0);
   });
 });
 
