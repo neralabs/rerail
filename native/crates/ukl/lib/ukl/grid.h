@@ -483,13 +483,13 @@ UKL_INLINE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint
         UKL_COHERENT uint32_t* vi = passes % 2u == 0u ? values : values2;
         UKL_COHERENT uint32_t* vo = passes % 2u == 0u ? values2 : values;
         for (uint32_t tile = first; tile < end; tile++)
-            ukl_radix_hist_tile_u64_grid(ki, hist, args, l.h, tile, g.lid);
+            ukl_radix_hist_tile_u64_grid(ki, hist, args, l.h, tile, g.lid, g.lsz);
         if (!ukl_grid_barrier(g, flag))
             return false;
         if (!ukl_grid_scan_n(g, UKL_RADIX_DIGITS * tiles, hist, hist, hist + UKL_RADIX_DIGITS * tiles, sums, scratch, flag __UKL_ARGS))
             return false;
         for (uint32_t tile = first; tile < end; tile++)
-            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, tile, g.lid __UKL_ARGS);
+            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, tile, g.lid, g.lsz __UKL_ARGS);
         if (!ukl_grid_barrier(g, flag))
             return false;
         passes++;

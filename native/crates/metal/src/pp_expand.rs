@@ -1689,7 +1689,7 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
     let n = texts.len() as u32;
     let args = crate::pp_arena::ProbeArgs([n, options, 0, 0]);
     crate::pp_eval::run(|enc| {
-        enc.run("pd_relex_test", &[("bytes", &b), ("offsets", &o), ("out", &out)], Some(args), u64::from(n).div_ceil(crate::pp_arena::TG));
+        enc.run("pd_relex_test", &[("bytes", &b), ("offsets", &o), ("out", &out)], Some(args), u64::from(n).div_ceil(crate::pp_arena::tg()));
         Ok(())
     })?;
     // SAFETY: the device finished writing `out`.

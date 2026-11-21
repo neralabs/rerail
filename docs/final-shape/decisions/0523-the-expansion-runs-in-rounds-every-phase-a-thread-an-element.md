@@ -72,9 +72,12 @@ The CPU backend runs a launch's groups as coroutines on one host thread. Every b
 SIMD-group operation switches each thread of the group.
 - **One group** on the CPU (`pp_arena::groups`): past one, a group adds no core, only its
   threads' switches at every barrier.
-- **256 threads a group,** as on a GPU: the radix sort's tiles are written for
-  `UKL_RADIX_THREADS`. A 32-thread group cut a small unit's time from 10 to 3 ms, but its sorts of
-  more than 32 keys took the tile path and faulted.
+- **32 threads a group** (`pp_arena::tg`; 256 on a GPU). A phase costs the CPU its group's width
+  in switches. The radix sort's tiles are written for `UKL_RADIX_THREADS`, so on the CPU each
+  thread runs 8 of a tile's threads (`UKL_RADIX_VT_MAX`), each block between two barriers looping
+  over its own, a SIMD-group operation each in turn. A GPU's code is unchanged. A 150-level
+  chain's device time went from 188 to 53 ms, and with an argument scanned at each level from 540
+  to 136 ms.
 - **A SIMD-group operation is one wait.** The CPU had no native reductions or scans: each was five
   shuffles of two waits, so a sum suspended all 256 coroutines ten times, and the small sort's 32
   sums a SIMD group were most of a round. Now a reduction, a scan, a segmented scan, a shuffle and

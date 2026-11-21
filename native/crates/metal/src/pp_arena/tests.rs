@@ -51,7 +51,7 @@ fn search_and_expand_equal_the_host() {
         sorted.sort_unstable();
         let queries: Vec<u64> = (0..n.max(1) * 2).map(|_| r.next() % 5100).collect();
         let (sb, qb, out, counts) = (buf(&sorted), buf(&queries), zeroed::<u32>(queries.len()), buf(&[n as u32, queries.len() as u32]));
-        run(|e| e.run("pb_search", &[("sorted", &sb), ("ns", &counts), ("queries", &qb), ("nq", &counts), ("out", &out)], Some(ProbeArgs([0, 1, 0, 0])), (queries.len() as u64).div_ceil(TG)));
+        run(|e| e.run("pb_search", &[("sorted", &sb), ("ns", &counts), ("queries", &qb), ("nq", &counts), ("out", &out)], Some(ProbeArgs([0, 1, 0, 0])), (queries.len() as u64).div_ceil(tg())));
         let want: Vec<u32> = queries.iter().map(|&q| sorted.partition_point(|&s| s < q) as u32).collect();
         assert_eq!(read::<u32>(&out, queries.len()), want, "search, n = {n}");
         // Expand: items with counts 0 to 3, their offsets an exclusive scan.
@@ -61,7 +61,7 @@ fn search_and_expand_equal_the_host() {
         let total = acc as usize;
         let (ob, nb, tb) = (buf(&offsets), buf(&[n as u32]), buf(&[acc]));
         let (item, rank) = (zeroed::<u32>(total), zeroed::<u32>(total));
-        run(|e| e.run("pb_expand", &[("offsets", &ob), ("n", &nb), ("total", &tb), ("item", &item), ("rank", &rank)], Some(ProbeArgs::default()), (total as u64).div_ceil(TG)));
+        run(|e| e.run("pb_expand", &[("offsets", &ob), ("n", &nb), ("total", &tb), ("item", &item), ("rank", &rank)], Some(ProbeArgs::default()), (total as u64).div_ceil(tg())));
         let mut want = Vec::new();
         for (k, &c) in item_counts.iter().enumerate() {
             for j in 0..c {
@@ -156,7 +156,7 @@ fn the_pool_gives_each_block_once() {
         for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
     }
     let groups = 8u64;
-    let threads = groups as usize * TG as usize;
+    let threads = groups as usize * tg() as usize;
     let per = 4usize;
     // Classes the pieces have, so the takers ask for more than some hold and less than others.
     let have: Vec<u32> = supply.keys().copied().collect();
@@ -216,7 +216,7 @@ fn the_pool_splits_a_larger_block() {
         for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
     }
     let groups = 8u64;
-    let threads = groups as usize * TG as usize;
+    let threads = groups as usize * tg() as usize;
     let per = 4usize;
     for c in [0u32, 1, 3] {
         let room: usize = pieces.iter().filter(|&&k| k >= c).map(|&k| 1usize << (k - c)).sum();
@@ -317,7 +317,7 @@ fn the_grid_is_the_devices_resident_count() {
     match device.gpu_cores() {
         Some(cores) => {
             eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            let resident = device.resident_groups(TG as u32, local).unwrap();
+            let resident = device.resident_groups(tg() as u32, local).unwrap();
             assert_eq!(groups(), resident.min(GROUPS_MOST), "the resident count, capped");
             assert!(resident >= cores as u64, "a core holds a group at least");
         }

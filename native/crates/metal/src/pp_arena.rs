@@ -176,8 +176,16 @@ pub fn kernel(name: &str) -> &'static lane::Kernel {
     made.entry(name.to_owned()).or_insert_with(|| Box::leak(Box::new(lane::kernel_fixed(source(), name, None))))
 }
 
-/// The threads of a group.
+/// The threads of a group on a GPU.
 pub const TG: u64 = 256;
+
+/// The threads of a group on the process's device: `TG` on a GPU; 32 on the CPU (decision 0523
+/// §3), where each of a group's threads is a coroutine that every barrier switches, so a phase
+/// costs its group's width in switches (the radix sort's tiles run 8 of their threads a thread).
+pub fn tg() -> u64 {
+    static T: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
+}
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
 #[repr(C)]
@@ -207,7 +215,7 @@ impl<'a> Enc<'a> {
         if let Some(a) = args {
             launch = launch.value("args", &a);
         }
-        launch.groups([groups.max(1), 1, 1], [TG, 1, 1]);
+        launch.groups([groups.max(1), 1, 1], [tg(), 1, 1]);
     }
 
     /// The launches it holds (those within the budget).
@@ -287,7 +295,7 @@ pub fn groups() -> u64 {
             return 1;
         }
         let local = kernel("pp_setup").threadgroup_bytes();
-        device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
+        device.resident_groups(tg() as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })
 }
 
