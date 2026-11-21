@@ -103,6 +103,18 @@ struct Facts<'a> {
     ends: Option<LastEnds>,
     /// A direct format 16 run whose writer's room is reserved once (`reserved`): its `OPEN` and `LEAF` cannot fail.
     reserved: bool,
+    /// The containers written as one leaf where they are empty (`empties`), by their `OPEN`.
+    empties: HashMap<usize, EmptyAt>,
+}
+
+/// A container's `OPEN` whose call's first switch closes it on one byte at once (`empties`): where the next token is
+/// that byte, the container is one leaf, as the lean parser's `empty!` writes `{}` and `[]`, and the walk goes on at
+/// the call's return place (`after`). `table` and `q` are the switch whose arm takes the closer, and that arm's place.
+struct EmptyAt {
+    after: usize,
+    byte: u8,
+    table: usize,
+    q: usize,
 }
 
 /// The last token's end without a copy a token (`last_ends`), as the lean parser passes the `end` it holds: a `TOKEN`
@@ -168,6 +180,77 @@ fn sentinel(x: &Facts<'_>) -> bool {
         work.extend(plain_succ(x, pc));
     }
     true
+}
+
+/// The containers a direct run writes as one leaf where they are empty (`EmptyAt`), as the lean parser's `empty!`:
+/// an `OPEN` (its key's words after it) whose next word is a call, the call's first words a `TOKEN` that takes and a
+/// byte switch on it, and that switch's arm (its own, or the other switch's it takes on: `delegate_of`) of exactly
+/// one byte a one-byte token whose code no word reads, going straight to its container's `CLOSE` of its own end and
+/// the `RETURN`. Only in a direct format 16 sentinel run of
+/// one function with its stack (`OneFn::stacked`).
+fn empties(x: &Facts<'_>) -> HashMap<usize, EmptyAt> {
+    use crate::records::EndRule;
+    let mut out = HashMap::new();
+    let (Some(fx), Some(one)) = (x.fetch.as_ref(), x.one.as_ref()) else { return out };
+    if !(x.sixteen && x.coded && x.sentinel && !x.flagged && one.stacked) {
+        return out;
+    }
+    let words = &x.native.structural;
+    let op = |p: usize| words.get(p).map(|w| w.operation);
+    for pc in 0..words.len() {
+        if !matches!(op(pc), Some(Op::Open { .. })) {
+            continue;
+        }
+        let mut p = if field_after(x, pc).is_some() { pc + 2 } else { pc + 1 };
+        while matches!(op(p), Some(Op::NodeSuper { .. })) {
+            p += 1;
+        }
+        if !matches!(op(p), Some(Op::Push { .. })) {
+            continue;
+        }
+        let Some(&[after]) = one.after.get(&p).map(Vec::as_slice) else { continue };
+        let c = crate::native_cpu_stream::callee(x.native, p);
+        if !matches!(op(c), Some(Op::Token { any: None, extras: false, .. })) || x.phase[c] != crate::stream::TAKEN || fx.part_at(x, c) {
+            continue;
+        }
+        let Some(Op::Switch { table }) = op(c + 1) else { continue };
+        let sw = &x.native.switches[usize::from(table)];
+        if !(on_kinds(x, sw) && fresh(x, sw)) {
+            continue;
+        }
+        let ft = &fx.ft;
+        let delegate = delegate_of(x, fx, sw);
+        let closers: Vec<(u8, usize, usize)> = (0..256usize)
+            .filter_map(|b| {
+                if matches!(ft.rules.get(usize::from(ft.ends[b])), Some(&EndRule::Run(_) | &EndRule::Read(_))) {
+                    return None;
+                }
+                // A byte the other switch's arm takes (`delegate_of`) goes to that arm's place.
+                let by = match delegate {
+                    Some((_, other)) if byte_sig(x, fx, other, b) == byte_sig(x, fx, sw, b) => other,
+                    _ => sw,
+                };
+                let t = kind_target(x, fx, by, ft.codes1[b]);
+                if t == REFUSE {
+                    return None;
+                }
+                let q = past_span(x, t, 1);
+                if !code_set(x, &[q], ft.codes1[b]).is_empty() {
+                    return None;
+                }
+                let mut r = usize::from(q);
+                while matches!(op(r), Some(Op::Span { last: true, .. })) {
+                    r += 1;
+                }
+                let owner = x.native.switches.iter().position(|o| std::ptr::eq(o, by)).unwrap_or(usize::from(table));
+                (matches!(op(r), Some(Op::Close { this: true })) && matches!(op(r + 1), Some(Op::Return { .. }))).then_some((b as u8, usize::from(q), owner))
+            })
+            .collect();
+        if let [(byte, q, table)] = closers[..] {
+            out.insert(pc, EmptyAt { after, byte, table, q });
+        }
+    }
+    out
 }
 
 /// Whether a direct format 16 run has no deferred extras (`pending`): its leaves are never deferred (a deferred or
@@ -245,6 +328,9 @@ fn last_ends(x: &Facts<'_>) -> Option<LastEnds> {
                 work.extend(succ(x, pc).into_iter().map(|q| (q, REC)));
             } else if part(pc) {
                 work.extend(succ(x, pc).into_iter().map(|q| (q, 0)));
+            } else if let Some(e) = x.empties.get(&pc) {
+                // The empty container's leaf takes its closer and makes its end: to the return place, neither held.
+                work.extend(succ(x, pc).into_iter().map(|q| (q, if q == e.after { 0 } else { st })));
             } else if let Some(a) = arms.get(&pc) {
                 let kept = if copy(pc) { if st & REC != 0 { LAST } else { 0 } } else { st & LAST };
                 for &(q, after_keep, made, left) in a {
@@ -714,7 +800,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default(), ends: None, reserved: false };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default(), ends: None, reserved: false, empties: HashMap::new() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -762,6 +848,7 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, lang:
     if facts.part_arg {
         strings = string_methods(&facts);
     }
+    facts.empties = empties(&facts);
     facts.ends = last_ends(&facts);
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
@@ -2950,6 +3037,8 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
         }
     }
     let v = match x.native.structural[pc].operation {
+        // An empty container's leaf (`empties`): on at its call's return place too.
+        Op::Open { .. } if x.empties.contains_key(&pc) => vec![if field_after(x, pc).is_some() { pc + 2 } else { pc + 1 }, x.empties[&pc].after],
         // A node's field set by the next word, stored with its kind: on past that word.
         Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
         Op::Goto { target } => vec![usize::from(target)],
@@ -3209,6 +3298,22 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                     // The node is the ops' alone: no row, its container's slot on the stack. Its number the
                     // language's, a literal; a key the table lacks refuses the file (the JIT's `fail::NUMBER`).
                     let Some(number) = x.number(kf, classes) else { return Ok(UNNUMBERED.into()) };
+                    // Empty, its closer the next token (`empties`): one leaf, the closer taken as its call's switch
+                    // takes it (the depth counted, as the call's; its end kept where that arm keeps it), then on at
+                    // the call's return place.
+                    if let Some(e) = x.empties.get(&pc) {
+                        let keep = x.ends.as_ref().is_some_and(|en| en.copies.contains(&e.table)) && end_read_from(x, e.q, true);
+                        return Ok(format!(
+                            "if s.byte(unsafe {{ *s.starts.add(t.next as usize * s.rs) }}) == {:#04x} {{\nif s.depth == DEPTH {{ return refuse(why::DEPTH); }}\nlet st = t.start;\ns.{}(t)?;\n{}t.rec_end = t.start + 1;\ns.leaf16({number}, st, t.rec_end){};\n{}\n}} else {{\ns.open16({number}, t.start){};\n{}\n}}",
+                            e.byte,
+                            token_name(None, false),
+                            if keep { "t.last_end = t.rec_end;\n" } else { "" },
+                            x.may_fail(),
+                            jump(1)?,
+                            x.may_fail(),
+                            jump(0)?
+                        ));
+                    }
                     return Ok(format!("s.open16({number}, t.start){};\n{}", x.may_fail(), jump(0)?));
                 }
                 format!("s.code_now({kf}, {classes:#x});\n")

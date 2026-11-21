@@ -463,7 +463,22 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // number (`rust_stream::UNNUMBERED`).
     let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();
     assert_eq!(unnumbered, 0, "node words with no number in the language");
-    assert!(made16 == made && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
+    // An empty object or array one leaf (`rust_stream::empties`, decision 0545), as the lean parser's `empty!`: each
+    // opener's arm looks at the next token first, and where it is the closer writes a leaf, takes the closer and goes
+    // on past the container; else it opens the container. Each such arm writes one more node call than format 15's.
+    let empty = |closer: &str| format!("\nif s.byte(unsafe {{ *s.starts.add(t.next as usize * s.rs) }}) == {closer} {{\nif s.depth == DEPTH {{ return refuse(why::DEPTH); }}\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(");
+    for (opener, closer) in [("0x5b", "0x5d"), ("0x7b", "0x7d")] {
+        let arms: Vec<&str> = flat16.split(&format!("\n{opener} => {{")).skip(1).collect();
+        assert!(!arms.is_empty(), "the arms of {opener}");
+        for arm in arms {
+            // Its enclosing nodes opened first (the document's, at the top).
+            let at = arm.find(&empty(closer));
+            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(")));
+            assert!(first, "{opener}'s arm looks for its closer first: {}", &arm[..arm.len().min(160)]);
+        }
+    }
+    let empties = flat16.matches("\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(").count();
+    assert!(empties > 0 && made16 == made + empties && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
     // (The edits' methods, which no word of this program calls, keep theirs.)
     let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
@@ -540,6 +555,14 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         assert!(jit.parser.image(f).is_err(), "{:?}: the JIT refuses it", String::from_utf8_lossy(&f[..f.len().min(20)]));
         let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
         assert!(got.as_ref().err().is_some_and(|e| e.contains(text)), "{:?}: refused for {why} ({text}): {got:?}", String::from_utf8_lossy(&f[..f.len().min(20)]));
+    }
+    // Empty containers, at the top, in arrays, as values in objects and at the depth's edge: the Rust's tapes the JIT's.
+    for f in [&b"[]"[..], b"{}", b"[[]]", b"[{}]", b"{\"a\":[]}", b"{\"a\":{}}", b"[[],{},[[]],{\"b\":[]}]", b"{\"a\":[],\"b\":{},\"c\":1}", b"[ ]", b"{ }"] {
+        for z in [false, true] {
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            let got = aot.parser.image16(f, &lang, &numbers, z).map(|w| bytes_of(&w));
+            assert!(want.is_ok() && got == want, "{:?} (16z {z}): the Rust's tape is the JIT's", String::from_utf8_lossy(f));
+        }
     }
     // A file cut off in a container: its tokens taken past the stream's count read the two entries there
     // (`Batch::end_streams`), the file's length, as the unclamped `TOKEN` takes them (decision 0543): the Rust refuses
