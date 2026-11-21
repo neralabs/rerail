@@ -8,6 +8,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
 import type { AdapterEvent, CodeRuleAuditor } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { addRemote } from "../../../src/runtime/remote-config.js";
+import { RemoteOutbox } from "../../../src/runtime/remote-outbox.js";
+import { withExperiments } from "../../support/environment/experiments.js";
+import { startFakeSink, storedRecords, type FakeSink } from "../../support/fake-sink.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { cutPower, latestCommitWhere } from "../../support/engine/power-cut.js";
@@ -24,6 +28,7 @@ const IDLE_MS = 60_000;
 const roots: string[] = [];
 const services: EngineService[] = [];
 const children: ChildProcess[] = [];
+const sinks: FakeSink[] = [];
 
 function ended(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
@@ -35,6 +40,7 @@ function ended(child: ChildProcess): Promise<void> {
 afterEach(async () => {
   await Promise.all(children.splice(0).map(ended));
   await Promise.allSettled(services.splice(0).map(service => service.close()));
+  await Promise.all(sinks.splice(0).map(sink => sink.close()));
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
@@ -148,6 +154,19 @@ function stillRunning(databasePath: string, sessionId: string): void {
   }
 }
 
+/** Every event row the store holds, in order, read through a connection of its own. */
+function storedEvents(databasePath: string): Array<{ sequence: number; eventId: string }> {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare("SELECT sequence, event_id AS eventId FROM events ORDER BY sequence").all() as Array<{ sequence: number; eventId: string }>;
+  } finally {
+    database.close();
+  }
+}
+
+const hasEvent = (database: Database.Database, eventId: string): boolean =>
+  database.prepare("SELECT 1 FROM events WHERE event_id = ?").get(eventId) !== undefined;
+
 const runningChecks = (sessionId: string) => (database: Database.Database): boolean =>
   (database.prepare("SELECT count(*) AS n FROM audits WHERE session_id = ? AND status = 'running'").get(sessionId) as { n: number }).n > 0;
 
@@ -187,5 +206,43 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       ((await dashboard(databasePath, `/api/audits?sessionId=${sessionId}`)) as { audits: Array<{ status: string }> }).audits.map(audit => audit.status);
     expect(await statuses("o")).toEqual(["running"]);
     expect(await statuses("s")).toEqual(["interrupted"]);
+  });
+
+  describe("sent to a remote", () => {
+    withExperiments("REMOTE_SINK");
+
+    // The remote took the events, then the cut took their rows: the store's counter went back with them, and the next
+    // events took numbers the remote's cursor had passed, so the outbox never sent them. Three rows go: the reopen's
+    // write of a row the session already has takes a number too (an AUTOINCREMENT insert that a conflict skips).
+    it("sends the events that came after the cut, each under a number no event the remote holds has", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const sink = await startFakeSink();
+      sinks.push(sink);
+      addRemote({ url: sink.url, token: "test-token", content: true }, root);
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three", "four", "five"]) await daemon.send(prompt("s", text));
+      const outbox = new RemoteOutbox({ home: root });
+      const sent = () => storedRecords(sink).filter(record => record.type === "event").map(record => ({ id: record.id, eventId: String(record.eventId) }));
+      expect((await outbox.sync({ force: true }))[0]?.error).toBeUndefined();
+      expect(sent().map(record => record.eventId)).toContain("s:five");
+      await daemon.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:two") && !hasEvent(database, "s:three")));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "six"));
+      expect((await outbox.sync({ force: true }))[0]?.error).toBeUndefined();
+      // Every id the remote received names one event: the lost ones it holds stay as they were.
+      const named = new Map<string, string>();
+      for (const record of sent()) {
+        expect(named.get(record.id) ?? record.eventId, record.id).toBe(record.eventId);
+        named.set(record.id, record.eventId);
+      }
+      // And it holds every event the store holds, each under the number the store gave it.
+      const machine = [...named.keys()][0]!.split(":")[0]!;
+      const stored = storedEvents(databasePath);
+      expect(stored.map(row => row.eventId)).toContain("s:six");
+      expect(stored.map(row => [row.eventId, named.get(`${machine}:${row.sequence}`)])).toEqual(stored.map(row => [row.eventId, row.eventId]));
+    });
   });
 });

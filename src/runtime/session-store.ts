@@ -15,6 +15,7 @@ import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { keepEventNumbersPastRemotes } from "./remote-cursors.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
@@ -404,6 +405,8 @@ export class SqliteSessionStore {
   /**
    * `onRowPutBack` is told the session's id each time a write finds the session's row gone and writes it again
    * (`append`), so the process that holds the session can write again what it recorded at the open beside the row.
+   * Before any event is written, the store's event numbers move past those a remote has taken
+   * (`keepEventNumbersPastRemotes`), which a power cut can have taken back.
    */
   constructor(path: string, { repositoryId, onRowPutBack }: {
     repositoryId?: string | undefined;
@@ -413,6 +416,7 @@ export class SqliteSessionStore {
     this.#repositoryId = repositoryId ?? null;
     this.#onRowPutBack = onRowPutBack;
     this.#database = openRerailDatabase(path);
+    keepEventNumbersPastRemotes(this.#database, path);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
