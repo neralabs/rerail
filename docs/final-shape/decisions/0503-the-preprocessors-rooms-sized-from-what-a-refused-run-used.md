@@ -123,7 +123,8 @@ On Boost.Preprocessor's tests that does not work:
       changes them: the grid split between two paths (found on the CPU backend, below). A giving
       marks the dead lists, gives each list's blocks, empties the ring's taken slots and moves
       the next mark a 32nd of the room past the front (`RERAIL_PP_GIVE_GAP` for tests), at most
-      `PX_GIVES` (192: 64 a store, twice each room's growth) times. A mark at half the room left,
+      a bound of times (`WORDS` 15, from each room over its gap and the ring's pauses within the
+      work bound; decision 0520 step 0 replaced the fixed `PX_GIVES`). A mark at half the room left,
       halving as the front neared its end, spent the givings on little. With the tokens' front
       alone the pauses were too few for the lists: 94% of the lists a pause saw were dead, while
       the lists' front ran out between pauses.
@@ -188,9 +189,9 @@ On Boost.Preprocessor's tests that does not work:
       thousands of times a line (`BOOST_PP_WHILE_ ## n`): the first 10 of `arithmetic.cxx`'s
       checks wrote 206k scratch bytes at rung 2, 81k after (the file literals and the `#line`
       rows' room, sized by the rung, are 74k of them).
-    - **A top's work is bounded** (`PX_FUEL`): past 4 times the queue's capacity in items taken,
-      the run is refused for room (`CTL` 13 keeps what it took) and runs again larger, so no
-      launch runs on without bound (a Metal command buffer of minutes stalls the window server and
+    - **A top's work is bounded**: past 4 times the queue's capacity in items taken, the run was
+      refused for room and ran again larger (`PX_FUEL`). Decision 0520 step 0 made the bound its
+      own (`WORDS` 14, refused as `X_WORK`, no rung grown), so no launch runs on without bound (a Metal command buffer of minutes stalls the window server and
       reboots the Mac: 2026-11-20, twice).
     - **The queue is a ring** (UKL's `ukl/workqueue.h`, `ring`): positions run on past the
       capacity, a position in slot `p % capacity`, and a push takes positions below the base
