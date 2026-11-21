@@ -49,6 +49,12 @@ fn interpreter_source(width: LaneWidth) -> std::sync::Arc<Interpreter> {
     made
 }
 
+/// The interpreter's kernel at `width` (a fixed source: shipped with the engine, and compiled ahead: `kernels_ahead`).
+pub fn interpreter_kernel(width: LaneWidth) -> lane::Kernel {
+    let source = interpreter_source(width);
+    lane::kernel_fixed(source.0[width.index()].get().map_or("", String::as_str), "block_batch", None)
+}
+
 /// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
 /// (`poll_rmw`), and the shared code. Every source starts with it, the interpreter's and each generated one.
 pub fn head(width: LaneWidth) -> String {
@@ -435,8 +441,7 @@ pub fn run_batch(
             for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
                 buffers.push((name, block.device_buffer().clone()));
             }
-            let source = interpreter_source(width);
-            ("block_batch", lane::kernel_fixed(source.0[width.index()].get().map_or("", String::as_str), "block_batch", None))
+            ("block_batch", interpreter_kernel(width))
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();

@@ -28,6 +28,8 @@ sha2 = "0.10"
 [target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # A slab's buffer: the device layer's (decision 0440 step C).
 rerail-device = { path = "../../../gpu/device" }
+# Kernels compiled ahead of their first use (`kernels_ahead`).
+rerail-gpu = { path = "../../../gpu" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 metal = "0.33.0"

@@ -1335,6 +1335,11 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Err
     Ok(LabelKernel::of(&lane::kernel_fixed(source, name, Some(format))))
 }
 
+/// The label kernels of tape format `format` compiled (`metal_program_backend::kernels_ahead`), as a wave asks for them.
+pub(in crate::code_rule_dsl) fn compile_labels(format: u32) -> Result<(), Error> {
+    pipelines(format).map(drop)
+}
+
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
     let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();

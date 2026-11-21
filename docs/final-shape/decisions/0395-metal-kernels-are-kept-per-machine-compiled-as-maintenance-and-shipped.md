@@ -116,6 +116,37 @@ The three tiers are:
 2. the interpreter's shipped kernels, always ready on a device they were shipped for;
 3. the CPU, while a generated kernel is missing.
 
+### 6. Every backend: fixed kernels compiled ahead (2026-11-21)
+
+The device layer's store (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) is
+the same tier for the other backends. What reaches it ahead of a test or a run:
+- **One list of the fixed kernels.** Each crate names its own as `rerail_gpu::kernels::Ahead` entries, each asking
+  for its kernel as its use does (so the same key): `rerail_accel::gpu::kernels_ahead` (the UKL library, the joins'
+  small path, sorts and gathers, the relational kernels), `rerail_metal::kernels_ahead` (the block interpreter at
+  each width, the preprocessor's passes), the device's (`MatcherDevice::kernels_ahead`: the join stages, the chunk
+  views, the set steps, the lattice, the nearest jumps, the interpreters and the label passes) and, with the tests'
+  hooks, the tape format's tests' kernels. The engine's `kernels_ahead` (`tools.rs`) joins them.
+- **`rerail-engine kernels compile`** compiles the list on every backend, `--threads` at a time (half the cores by
+  default), then (Metal) the wanted kernels as before. `--within <s>` bounds it: no compile starts after `s`, and
+  none is waited for past `s + 60`; the next call goes on from what the store kept. `kernels ship <dir>` copies the
+  entries the list's compiles looked up (`store::recording`) into `<dir>/<backend>/`, by the store's keys, and the
+  store reads a shipped form first (`RERAIL_SHIPPED_KERNELS`, else `rerail-kernels/` beside the engine).
+- **The tests.** nextest's setup script `kernels` (`.config/nextest.toml`) runs `kernels compile --within 120`
+  before the tests of the crates that launch kernels, on the run's device, with the tests' features.
+- **A run.** The GPU lane's prewarm (`join::prewarm`) compiles `rerail_accel::gpu::kernels_ahead` on the pool as the
+  lane is first asked for; the label passes keep their own warm-up (`label_passes::warm`).
+- **What is left out.** A fixed source a device's compiler does not compile in bounded time is not on that device's
+  list: the preprocessor's passes everywhere but the CPU (where they run: NVRTC grew past 90 GB resident on a DGX
+  Spark, Intel's OpenCL was still compiling at 90 s), and the label sweep on CUDA (NVRTC not done at 500 s). These
+  are compiler costs to fix in the sources, not settled.
+- **OpenCL: one program a kernel.** A driver builds every kernel of a program. Intel's (an Arc 140V) took 436 s over
+  the 21 join stages of one source, past the 240 s a test may take. On OpenCL each fixed kernel is now a program of
+  its own (`UKL_ONE_KERNEL`, `__UKL_ONLY_<name>`: every other kernel of the source is only its body, a static
+  function nothing calls): 157 s for all 21 at four at a time, 1.5–2 s for the kernels that read no view, and a run
+  compiles only the kernels it launches. The seven that read views (`vread`) still take 50–100 s each: the driver
+  inlines the view reads at every call despite `UKL_COLD`, and with `-cl-opt-disable` the same kernel builds in
+  1.9 s. Still open.
+
 ## Measured
 
 All runs on the M3 (t44, t45), on the 300-file, 317-rule shape with every thread. The machine was shared, with load

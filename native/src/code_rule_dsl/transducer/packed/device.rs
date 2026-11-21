@@ -30,8 +30,17 @@ pub enum ClauseRoots<'r> {
     Rule(&'r [Vec<bool>]),
 }
 
+/// A kernel the device compiles ahead of its first use: its name, and the call that asks for it as its use does
+/// (`rerail_gpu::kernels::Ahead`, which the engine makes of it).
+pub type KernelAhead = (String, Box<dyn Fn() -> Result<(), String> + Send + Sync>);
+
 /// What the transducer runs on a device.
 pub trait MatcherDevice: Send + Sync {
+    /// The device's fixed kernels (the same for every rule set), to compile ahead of their first use: the engine's
+    /// `kernels compile`, and its warm-up as a run starts.
+    fn kernels_ahead(&self) -> Vec<KernelAhead> {
+        Vec::new()
+    }
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
     /// The batch with each task held to `budget` (decision 0334).
     fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;

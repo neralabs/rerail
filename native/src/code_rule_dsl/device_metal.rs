@@ -200,6 +200,12 @@ pub mod matcher {
             matcher_metal::warm();
         }
 
+        fn kernels_ahead(&self) -> Vec<crate::code_rule_dsl::transducer::packed::device::KernelAhead> {
+            let mut v = crate::code_rule_dsl::transducer::packed::metal_join::kernels_ahead();
+            v.extend(programs::kernels_ahead());
+            v
+        }
+
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }

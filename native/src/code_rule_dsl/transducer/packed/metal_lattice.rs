@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     let stats = zeroed::<u32>(4)?;
     let made_in = super::metal_backend::launch::host_seconds() - begun;
     let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, pad: 0 };
-    let kernel = lane::kernel_fixed(SOURCE, "lattice_queue", None);
+    let kernel = kernel();
     let ran = super::work_queue::run(&kernel, &queue, groups, "Rerail lattice FIX", |launch| {
         let rows: [(&'static str, &super::blocks::Block); 14] = [
             ("state", &state),
@@ -217,4 +217,9 @@ mod tests {
         assert_eq!(solved.values, want, "on {}", lane::backend());
         assert!(solved.visits > 0);
     }
+}
+
+/// The lattice's kernel (a fixed source: compiled ahead, `metal_program_backend::kernels_ahead`).
+pub(in crate::code_rule_dsl) fn kernel() -> lane::Kernel {
+    lane::kernel_fixed(SOURCE, "lattice_queue", None)
 }

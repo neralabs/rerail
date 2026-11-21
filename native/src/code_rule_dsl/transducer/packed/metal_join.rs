@@ -293,6 +293,26 @@ fn chunk_views_source() -> String {
     )
 }
 
+/// The joins' kernels (`SOURCE`) and the chunk views' (`chunk_views_source`), to compile ahead of their first use
+/// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
+pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
+    const JOIN: [&str; 21] = [
+        "ix_bucket", "ix_place", "stage_count", "stage_scatter", "stage_map", "scan_count", "scan_scatter", "witness_count", "row_text", "row_scatter", "rows_copy",
+        "dedup_claim", "dedup_clear", "dedup_mark", "dedup_scatter", "lat_best", "lat_claim", "lat_clear", "lat_hclear", "lat_merge", "lat_rehash",
+    ];
+    let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = pipeline(variant, name, source).map(drop)))?;
+            made
+        };
+        (format!("{variant} {name}"), Box::new(make))
+    };
+    let mut v: Vec<_> = JOIN.into_iter().map(|name| made("join", name, || SOURCE.to_owned())).collect();
+    v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
+    v
+}
+
 /// Every join kernel's source (`join_stages.uglykl`): the relation's reads written once (`rerail_blocks::RELATION_READS`,
 /// decision 0325), which a stage reads a relation in its block with, and the views' reads (decision 0353 step 4d),
 /// which a stage reads a view in place with: the tape's, the numbering's and the views' own, each document's view read

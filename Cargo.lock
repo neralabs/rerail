@@ -4307,6 +4307,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-context",
  "rerail-device",
+ "rerail-gpu",
  "rerail-metal",
  "rerail-prof",
  "rerail-tape-format",

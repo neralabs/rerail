@@ -475,6 +475,13 @@ impl ClDevice {
         &self.0.name
     }
 
+    /// The device's extensions (`CL_DEVICE_EXTENSIONS`), and whether its buffers are synced at each submission's
+    /// edges (`synced`): what `kernels list` reports.
+    pub fn describe(&self) -> (String, bool) {
+        let ext = api().map(|a| device_info_string(a, self.0.device, CL_DEVICE_EXTENSIONS)).unwrap_or_default();
+        (ext, self.0.synced)
+    }
+
     /// The largest buffer the device makes.
     pub fn max_alloc(&self) -> u64 {
         self.0.max_alloc
@@ -730,8 +737,13 @@ impl ClComputeFunctionLibrary {
     pub fn compile_from_source(device: &ClDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = api()?;
         // OpenCL C 3.0 where the kernels use the device's sub-groups (its `sub_group_*` functions are 3.0's), else 1.2.
-        let options_text = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
-        let options = CString::new(options_text).unwrap();
+        let version = if device.subgroups() { "-cl-std=CL3.0" } else { "-cl-std=CL1.2" };
+        // `RERAIL_OPENCL_OPTIONS`: more of the driver's build options, a measurement aid (they are in the key).
+        let options_text = match std::env::var("RERAIL_OPENCL_OPTIONS") {
+            Ok(more) if !more.is_empty() => format!("{version} {more}"),
+            _ => version.to_owned(),
+        };
+        let options = CString::new(options_text.as_str()).unwrap();
         // The store's binary (`crate::store`), keyed by the device's name, version and driver beside the source.
         let driver = device_info_string(a, device.0.device, CL_DRIVER_VERSION);
         let key = crate::store::key(&[b"opencl", device.name().as_bytes(), driver.as_bytes(), options_text.as_bytes(), preprocessed_source.as_bytes()]);

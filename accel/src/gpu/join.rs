@@ -206,6 +206,12 @@ fn gather_pipe(width: Width) -> Result<Arc<Pipe>, String> {
     pipeline(&format!("sort {width:?}"), "gather", || sort_source(width))
 }
 
+/// A width's sort kernels and its gather, made (`kernels_ahead`).
+pub fn sort_and_gather(width: Width) -> Result<(), String> {
+    sort_pipes(width)?;
+    gather_pipe(width).map(drop)
+}
+
 /// One of the fixed kernels (`join.uglykl`).
 pub fn fixed(name: &str) -> Result<Arc<Pipe>, String> {
     pipeline("fixed", name, fixed_source)
@@ -1004,12 +1010,6 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
     Ok(())
 }
 
-/// The pairs' sort's kernels, compiled (`prewarm`).
-pub fn prewarm_pair_sort() -> Result<(), String> {
-    fixed("pair_keys")?;
-    Ok(())
-}
-
 /// A sort's results on the device: each sorted place's row (`perm`), the key's runs (each one's first place in
 /// `starts`, with the end after the last; its key in `rkeys`, in the sort's word `key`) and their count (`nruns`).
 pub struct SortParts {
@@ -1430,31 +1430,20 @@ impl Column {
 }
 
 
-/// Compiles every pipeline a batch's joins use ahead of their first use, as a job on the pool: the small path's,
-/// the scans', the radix sort's of each width with the gathers, and the tile pairs' sort. A job that needs one
-/// still being compiled waits for it (`pipeline wait`) rather than compiling it again. A panic leaves them to be
-/// compiled where they are needed (a job's panic would end the process).
+/// Compiles the lane's kernels ahead of their first use (`super::kernels_ahead`: the UKL library, the joins' small
+/// path, the scans', the radix sort's of each width with the gathers, the tile pairs' sort, and the relational
+/// kernels), as a job on the pool, one at a time. A job that needs one still being compiled waits for it rather than
+/// compiling it again. A kernel that fails is left to its use, which fails saying why (each entry catches its panic:
+/// a job's panic would end the process).
 pub fn prewarm() {
     crate::exec::configure();
     // In its caller's run (decision 0442): the pipelines are the caller's machine's, and the job's wall its run's
-    // (`as_job` reads it), so the run is entered first.
+    // (`as_job` reads it), so the run is entered first. Each entry carries the run too (`super::ahead`).
     let run = rerail_context::job_run();
+    let list = super::kernels_ahead();
     rerail_context::cores_spawn(move || {
         let _run = rerail_context::enter(run);
-        crate::exec::as_job("the GPU's prewarm", || {
-            let _ = std::panic::catch_unwind(|| super::released(|| {
-                if Fused::can() {
-                    let _ = fixed("sort_all");
-                    let _ = fixed("probe_all");
-                }
-                let _ = rerail_gpu::library::ready();
-                for w in [Width::W64, Width::W32, Width::W16] {
-                    let _ = sort_pipes(w);
-                    let _ = gather_pipe(w);
-                }
-                super::tile::prewarm();
-            }));
-        })
+        crate::exec::as_job("the GPU's prewarm", || _ = rerail_gpu::kernels::compile_ahead(list, 1, Default::default()));
     });
 }
 

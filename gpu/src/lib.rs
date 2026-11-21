@@ -7,7 +7,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 // The device layer, below the preprocessor (`rerail-device`): its paths are this crate's too.
-pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, os, shared, Pod};
+pub use rerail_device::{compute_kernel, compute_kernel_cpu, compute_kernel_grid, compute_kernel_opencl, device, os, shared, store, Pod};
 #[cfg(not(target_os = "macos"))]
 pub use rerail_device::compute_kernel_cuda;
 #[cfg(target_os = "macos")]

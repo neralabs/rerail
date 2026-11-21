@@ -574,6 +574,60 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
+/// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
+/// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
+/// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const DEVICE_KERNEL: &str = r#"
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include READS_HEADER
+
+typedef struct ReadArgs {
+    uint32_t n;
+    uint32_t pad;
+} ReadArgs;
+UKL_REFLECT_STRUCT(ReadArgs, n, pad)
+
+DEFINE_KERNEL2(tests, t_reads,
+               ARGS,     ReadArgs, args,      ,
+               RWBUFFER, uint8_t,  tape,      "[bytes]",
+               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, parentEnd, "[n]",
+               RWBUFFER, uint32_t, out,       "[n * 23]",
+               GID0,     uint32_t, i,         )
+{
+    if (i >= args.n)
+        return;
+    RWBUFFER(uint32_t) o = out + i * 23u;
+    o[0] = clif_tape_size(tape, view, i);
+    o[1] = clif_tape_end_of(tape, view, i);
+    o[2] = clif_tape_number(tape, view, i);
+    o[3] = clif_tape_start(tape, view, i);
+    o[4] = clif_tape_end(tape, view, i);
+    o[5] = clif_tape_parent(tape, view, i);
+    o[6] = clif_tape_next(tape, view, i);
+    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
+    o[8] = clif_tape_first_child(tape, view, i);
+    o[9] = clif_tape_child_count(tape, view, i);
+    for (uint32_t k = 0u; k <= 12u; k++)
+        o[10u + k] = clif_tape_child(tape, view, i, k);
+}
+"#;
+
+/// The reads' program over `header` (`tape.h`, or `tape_z.h`): its name and its text, as the device layer compiles it
+/// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn device_reads_kernel(header: &str) -> (String, String) {
+    (format!("tape_reads_{header}"), DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")))
+}
+
+/// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
+/// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn kernels() -> Vec<(String, String)> {
+    vec![(ops::REPLAY_NAME.to_owned(), ops::REPLAY.to_owned()), device_reads_kernel("tape.h"), device_reads_kernel("tape_z.h")]
+}
+
 /// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
@@ -2349,44 +2403,6 @@ mod tests {
         check(z.as_bytes().as_ptr(), reader.view(), z.len());
     }
 
-    /// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
-    /// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
-    /// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
-    const DEVICE_KERNEL: &str = r#"
-#define CLIF_VIEW_SPACE UKL_GLOBAL
-#include READS_HEADER
-
-typedef struct ReadArgs {
-    uint32_t n;
-    uint32_t pad;
-} ReadArgs;
-UKL_REFLECT_STRUCT(ReadArgs, n, pad)
-
-DEFINE_KERNEL2(tests, t_reads,
-               ARGS,     ReadArgs, args,      ,
-               RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[29]",
-               ROBUFFER, uint32_t, parentEnd, "[n]",
-               RWBUFFER, uint32_t, out,       "[n * 23]",
-               GID0,     uint32_t, i,         )
-{
-    if (i >= args.n)
-        return;
-    RWBUFFER(uint32_t) o = out + i * 23u;
-    o[0] = clif_tape_size(tape, view, i);
-    o[1] = clif_tape_end_of(tape, view, i);
-    o[2] = clif_tape_number(tape, view, i);
-    o[3] = clif_tape_start(tape, view, i);
-    o[4] = clif_tape_end(tape, view, i);
-    o[5] = clif_tape_parent(tape, view, i);
-    o[6] = clif_tape_next(tape, view, i);
-    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
-    o[8] = clif_tape_first_child(tape, view, i);
-    o[9] = clif_tape_child_count(tape, view, i);
-    for (uint32_t k = 0u; k <= 12u; k++)
-        o[10u + k] = clif_tape_child(tape, view, i, k);
-}
-"#;
     const DEVICE_READS: usize = 23;
 
     #[repr(C)]
@@ -2478,10 +2494,9 @@ DEFINE_KERNEL2(tests, t_reads,
             return;
         }
         let program = |header: &str| {
-            let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
-            let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
             let started = std::time::Instant::now();
-            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
+            let (name, text) = super::device_reads_kernel(header);
+            let p = rerail_gpu::kernels::program(&name, &text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
             eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
             p
         };

@@ -263,6 +263,13 @@ impl CpuComputeFunctionLibrary {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
         let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
+        // The shipped library (`crate::store::shipped`), of this compiler: loaded in place.
+        if let Some(shipped) = crate::store::shipped("cpu", &k, LIB_EXTENSION)
+            && let Ok(opened) = open_library(&shipped)
+        {
+            crate::store::count(true);
+            return Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() });
+        }
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {

@@ -637,6 +637,35 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     Ok(engine)
 }
 
+/// The program backend's fixed kernels, to compile ahead of their first use (`MatcherDevice::kernels_ahead`): the set
+/// steps', the lattice's and the nearest jumps' kernels, the interpreter over tapes and over resident tapes, the sweep,
+/// and the label passes' kernels of formats 15 and 16 (the formats a run places its tapes in: `label_passes::warm`).
+/// Each is asked for as its use asks for it, so its use finds it.
+pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
+    fn made(name: &str, make: impl Fn() -> Result<(), Error> + Send + Sync + 'static) -> super::device::KernelAhead {
+        let make = move || {
+            let mut made = Ok(());
+            rerail_accel::gpu::released(|| rerail_accel::gpu::caught(|| made = make().map_err(|e| format!("{e:?}"))))?;
+            made
+        };
+        (name.to_owned(), Box::new(make))
+    }
+    let mut v = vec![
+        made("set steps", || Ok(drop(set_steps::kernel()))),
+        made("lattice", || Ok(drop(lattice::kernel()))),
+        made("nearest jumps", || Ok(drop(nearest::kernel()))),
+        made("interpreter", || compile_interpreter().map(drop)),
+        made("resident interpreter", || compile_resident_interpreter_cached().map(drop)),
+        made("label passes 15", || label_passes::compile_labels(15)),
+        made("label passes 16", || label_passes::compile_labels(16)),
+    ];
+    // Not where NVRTC compiles (`rerail_metal::nvrtc_unbounded`).
+    if !rerail_metal::nvrtc_unbounded() {
+        v.push(made("label sweep", || compile_sweep_cached().map(drop)));
+    }
+    v
+}
+
 pub fn compile_interpreter() -> Result<Engine, Error> {
     lane::device()?;
     Ok(Engine::Interpreter {
