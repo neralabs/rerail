@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
 import { resetRepositoryHistory, type AdapterEvent, type CodeRuleAuditor } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
@@ -40,6 +40,7 @@ function ended(child: ChildProcess): Promise<void> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(children.splice(0).map(ended));
   await Promise.allSettled(services.splice(0).map(service => service.close()));
   await Promise.all(sinks.splice(0).map(sink => sink.close()));
@@ -363,6 +364,26 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       const next = await nextDaemon(root, databasePath);
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "three"));
       expect(await lostRecords(databasePath, "s")).toEqual([]);
+    });
+
+    // The record of lost events takes its times from the ledger, and `rerail status` reads the row's: one clock reading
+    // for both, whatever time passes between the row's write and the line's.
+    it("gives an event's row and its ledger line one time", async () => {
+      const { root, databasePath, checkout, storageRoot } = await records();
+      const { start, prompt } = events(checkout);
+      const next = await nextDaemon(root, databasePath);
+      let tick = Date.now();
+      vi.spyOn(Date, "now").mockImplementation(() => (tick += 7));
+      await next.ingest(start("s"));
+      await next.ingest(prompt("s", "one"));
+      vi.restoreAllMocks();
+      const database = new Database(databasePath, { readonly: true });
+      const row = database.prepare("SELECT observed_at AS at FROM events WHERE event_id = 's:one'").get() as { at: number };
+      database.close();
+      const { path } = await ledgerLinesFrom(storageRoot, "s", "s:one");
+      const line = (await readFile(path, "utf8")).split("\n").filter(Boolean).map(text => JSON.parse(text) as { type?: string; eventId?: string; observedAt?: number })
+        .find(entry => entry.type === "event" && entry.eventId === "s:one");
+      expect(line?.observedAt).toBe(row.at);
     });
 
     it("writes one record of a stretch however often the session opens before a later event's row", async () => {
