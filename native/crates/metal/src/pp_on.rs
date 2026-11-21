@@ -149,8 +149,8 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
         let slots = runnable.first().map_or(0, |p| p.ctx_bytes().len() / 8);
         let mut table = vec![0u64; slots * runnable.len()];
         for (k, p) in runnable.iter().enumerate() {
-            for (j, w) in p.ctx_bytes().as_chunks::<8>().0.iter().enumerate() {
-                table[j * runnable.len() + k] = u64::from_le_bytes(*w);
+            for (j, w) in p.ctx_bytes().chunks_exact(8).enumerate() {
+                table[j * runnable.len() + k] = u64::from_le_bytes(w.try_into().expect("8 bytes"));
             }
         }
         let bytes = table.len() * 8;

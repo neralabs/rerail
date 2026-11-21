@@ -346,7 +346,7 @@ impl Vis {
         let dir_total = &front.dir_total();
         let by_node = Grid::Indirect(&front.node_args(), 0);
         enc.run("pe_owner_in", None, &[u_files, u_data, &front.bases, total, &self.owner_in], &[n32], by_node)?;
-        self.owner_scan.encode(enc, SegOp::Max, total, 0, (&self.owner_in, &self.heads), &self.owner)?;
+        self.owner_scan.encode(enc, SegOp::Max, total, 0, &self.owner_in, &self.heads, &self.owner)?;
         enc.run("pe_text_flag", None, &[u_files, u_data, &front.bases, total, &self.owner, &self.tflag], &[n32], by_node)?;
         self.tscan.encode(enc, total, 0, &self.tflag, &self.trank)?;
         enc.run("pe_text_nodes", None, &[&self.tflag, &self.trank, total, &self.text_nodes], &[], by_node)?;
@@ -473,22 +473,10 @@ pub const X_SPLICE: u32 = 2048;
 
 /// The expansion's rungs: rung `k`'s arena holds `2^(k+1)` tokens a top token.
 pub const EXP_RUNGS: u32 = 5;
-/// The queue's persistent dispatch: its worker groups, of `TG / 32` workers (SIMD groups) each.
+/// The queue's persistent dispatch: worker groups, and its launches a phase (the first does the
+/// work; the others start where every worker exited with items left, and end at once if none).
 const WORKER_GROUPS: u64 = 64;
-const WORKERS: u32 = (WORKER_GROUPS * TG / 32) as u32;
-/// A worker's budget in a launch, in even shares of the queue's capacity (decision 0540).
-const SHARES: u32 = 4;
-
-/// A worker's items in a launch at most, for a queue of `q_cap` slots: `SHARES` even shares.
-fn work_budget(q_cap: u32) -> u32 {
-    SHARES * q_cap.div_ceil(WORKERS).max(1)
-}
-
-/// The queue's launches at most: a launch that leaves items had a worker that spent its budget,
-/// so each takes `budget` items at least, and the linear queue holds `q_cap`.
-fn work_launches(q_cap: u32, budget: u32) -> usize {
-    q_cap.div_ceil(budget.max(1)) as usize + 1
-}
+const WORK_LAUNCHES: usize = 3;
 /// The close table's keys: a biased depth (16 bits) above a position (24 bits).
 const CLOSE_BITS: u32 = 40;
 /// A string literal's tape kind.
@@ -544,8 +532,6 @@ pub struct Exp {
     args: Buf,
     slots: Buf,
     qctl: Buf,
-    /// A launch of the workers past the first: its groups (`px_next`), none once no item is active.
-    wargs: Buf,
     pub ctl: Buf,
     pub out: Buf,
 }
@@ -624,7 +610,6 @@ impl Exp {
             args: zeroed(args * ARG_WORDS)?,
             slots: zeroed(q)?,
             qctl: zeroed(4)?,
-            wargs: zeroed(3)?,
             ctl: arena.from_slice(&ctl)?,
             out: zeroed(out)?,
         })
@@ -644,7 +629,7 @@ impl Exp {
         let mut parens = top_in.to_vec();
         parens.extend([&self.theads as &dyn Bound, &self.delta, &self.close]);
         enc.run("px_top_parens", None, &parens, &[n32], by_top)?;
-        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, (&self.delta, &self.theads), &self.depth)?;
+        self.depth_scan.encode(enc, SegOp::Add, n_toks, 0, &self.delta, &self.theads, &self.depth)?;
         self.close_scan.encode(enc, n_toks, 0, &self.close, &self.close_at)?;
         enc.run("px_close_keys", None, &[&self.depth, &self.close, &self.close_at, n_toks, &self.close_keys, &self.ctl], &[], by_top)?;
         self.close_sort.encode(enc, &self.close_scan.total, 0, &self.close_keys, CLOSE_BITS)?;
@@ -672,7 +657,7 @@ impl Exp {
             &[n32],
             by_top,
         )?;
-        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, (&self.cend, &self.heads), &self.reach)?;
+        self.reach_scan.encode(enc, SegOp::Max, n_toks, 0, &self.cend, &self.heads, &self.reach)?;
         enc.run("px_top_outer", None, &[&self.cend, &self.reach, n_toks, &self.state, &self.oflag], &[], by_top)?;
         self.oscan.encode(enc, n_toks, 0, &self.oflag, &self.oid)?;
         enc.run(
@@ -717,16 +702,9 @@ impl Exp {
         enc.run("px_check", None, &[&self.qctl, &self.vscan.total, &self.ctl], &[self.out_cap], Grid::Groups(1))
     }
 
-    /// The queue's persistent dispatch: a launch of `WORKER_GROUPS`, then, within `work_launches`, a
-    /// launch while items are left (`px_next` writes its groups, none once the queue is done). Each
-    /// worker takes `work_budget` items in a launch at most, so no launch runs on without a bound;
-    /// items left after the last are refused (`px_check`).
+    /// The queue's persistent dispatch, `WORK_LAUNCHES` times.
     fn work(&self, enc: &Enc<'_>, unit: &Unit, front: &Front, defs: &Defs, vis: &Vis, closes: &dyn Bound) -> Result<(), Error> {
-        let budget = work_budget(self.q_cap);
-        for launch in 0..work_launches(self.q_cap, budget) {
-            if launch > 0 {
-                enc.run("px_next", None, &[&self.qctl, &self.wargs], &[WORKER_GROUPS as u32], Grid::Groups(1))?;
-            }
+        for _ in 0..WORK_LAUNCHES {
             enc.run(
                 "px_work",
                 None,
@@ -760,8 +738,8 @@ impl Exp {
                     closes,
                     &self.close_scan.total,
                 ],
-                &[budget],
-                if launch == 0 { Grid::Groups(WORKER_GROUPS) } else { Grid::Indirect(&self.wargs, 0) },
+                &[],
+                Grid::Groups(WORKER_GROUPS),
             )?;
         }
         Ok(())

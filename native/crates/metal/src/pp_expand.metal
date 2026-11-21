@@ -1852,7 +1852,7 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
                     device atomic_uint* qctl [[buffer(22)]], device atomic_uint* ctl [[buffer(23)]],
                     constant uint* words [[buffer(24)]], device PxScratch* scratch [[buffer(25)]],
                     device const ulong* closes [[buffer(26)]], device const uint* n_close [[buffer(27)]],
-                    constant uint& budget [[buffer(28)]], uint lane [[thread_index_in_simdgroup]]) {
+                    uint lane [[thread_index_in_simdgroup]]) {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -1873,11 +1873,8 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
     a.q.slots = slots; a.q.control = qctl; a.q.capacity = words[5];
     a.tok_cap = words[1]; a.list_cap = words[2]; a.arg_cap = words[3]; a.out_cap = words[4];
     a.sbytes = sbytes; a.stoks = stoks; a.sb_cap = words[8]; a.st_cap = words[9];
-    // A worker takes `budget` items in a launch at most (decision 0540), more than an even share where it finishes its
-    // items sooner, then ends: a launch's GPU time is bounded by the budget, not the work, and the next launch takes
-    // the items left (`px_next`).
-    uint polls = 0u, taken = 0u;
-    for (uint turn = 0u; turn < WQ_TURNS && taken < budget; turn++) {
+    uint polls = 0u;
+    for (uint turn = 0u; turn < WQ_TURNS; turn++) {
         uint item = 0u, got = 0u, stop = 0u;
         if (lane == 0u) {
             if (wq_take(a.q, item)) { got = 1u; polls = 0u; }
@@ -1889,7 +1886,6 @@ kernel void px_work(device const PpFile* files [[buffer(0)]], device const uchar
             continue;
         }
         item = simd_broadcast(item, 0);
-        taken++;
         px_fence();
         uint l = item & ~IT_KIND;
         switch (item & IT_KIND) {
@@ -2008,13 +2004,6 @@ kernel void px_top_place(device const uint* state [[buffer(0)]], device const ui
             c = x - 1u;
         }
     }
-}
-
-// Before a launch of the queue's workers past the first: its groups, `groups` while an item is active, else none.
-kernel void px_next(device atomic_uint* qctl [[buffer(0)]], device uint* args [[buffer(1)]],
-                    constant uint& groups [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if (i != 0u) return;
-    pb_set_args(args, 0u, atomic_fetch_or_explicit(&qctl[2], 0u, memory_order_relaxed) != 0u ? groups : 0u);
 }
 
 // After the queue's launches: items left is a refusal; the output's length past its room too.

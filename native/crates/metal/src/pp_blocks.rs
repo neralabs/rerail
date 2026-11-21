@@ -301,10 +301,8 @@ impl SegScan {
         Ok(SegScan { blocks: n1 as u64, plan: arena.zeroed::<u32>(20)?, seen0: arena.zeroed::<u32>(capacity)?, levels: [level(n1)?, level(n2)?], last: level(1)? })
     }
 
-    /// `out` = the inclusive scan of `input`'s first `n[at]` words, cut at `heads` (`segments`: the input and its
-    /// heads).
-    pub fn encode(&self, enc: &Enc<'_>, op: SegOp, n: &dyn Bound, at: u32, segments: (&dyn Bound, &dyn Bound), out: &dyn Bound) -> Result<(), Error> {
-        let (input, heads) = segments;
+    /// `out` = the inclusive scan of `input`'s first `n[at]` words, cut at `heads`.
+    pub fn encode(&self, enc: &Enc<'_>, op: SegOp, n: &dyn Bound, at: u32, input: &dyn Bound, heads: &dyn Bound, out: &dyn Bound) -> Result<(), Error> {
         let plan = &self.plan;
         let c = Some(op as u32);
         let ([(v1, f1, o1, s1), (v2, f2, o2, s2)], (v3, f3, _, _)) = (&self.levels, &self.last);
@@ -363,7 +361,7 @@ impl Sort {
     /// Where the sorted keys and payloads are after `bits`: in the input and `vals_a`, or in
     /// `keys_b` and `vals_b`.
     pub fn in_input(bits: u32) -> bool {
-        bits.div_ceil(8).is_multiple_of(2)
+        bits.div_ceil(8) % 2 == 0
     }
 }
 

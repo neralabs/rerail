@@ -79,12 +79,12 @@ fn the_segmented_scans_equal_the_host() {
     for &n in &SIZES {
         for (op, sparse) in [(SegOp::Add, 3u64), (SegOp::Max, 3), (SegOp::Add, 5000), (SegOp::Max, 100_000)] {
             let input: Vec<u32> = (0..n).map(|_| (r.next() % 1000) as u32).collect();
-            let heads: Vec<u32> = (0..n).map(|_| u32::from(r.next().is_multiple_of(sparse))).collect();
+            let heads: Vec<u32> = (0..n).map(|_| u32::from(r.next() % sparse == 0)).collect();
             let (inb, hb, out, count) = (buf(&input), buf(&heads), zeroed::<u32>(n), buf(&[n as u32]));
             let arena = Arena::new();
             let seg = SegScan::new(&arena, n).unwrap();
             arena.lease().unwrap();
-            run(|e| seg.encode(e, op, count.buffer(), 0, (inb.buffer(), hb.buffer()), out.buffer()));
+            run(|e| seg.encode(e, op, count.buffer(), 0, inb.buffer(), hb.buffer(), out.buffer()));
             let mut acc = 0u32;
             let want: Vec<u32> = input
                 .iter()
