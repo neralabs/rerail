@@ -112,9 +112,14 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
        spark1's CUDA and the Mac mini's Metal.
    - The label passes' spill queue needs no item budget: its frames are walks' pieces, and every walk is within
      its task's step budget (decision 0334), past which it stops and goes to W or runs again.
-   - **Still to do: `pp_expand`'s workers.** Its host already encodes a bounded number of work launches
-     (`WORK_LAUNCHES`) and refuses what is left (`px_check`). Its workers are Metal-only, and pp runs on Metal are
-     off until they are allowed again.
+   - **Written (2026-11-21), not yet run: `pp_expand`'s workers.** Its launches are encoded in one command buffer, so
+     the host cannot look between them. Each of its 512 workers (64 groups of 8 SIMD groups) takes `work_budget`
+     items in a launch at most, 4 even shares of the queue's capacity, then ends. The first launch is of 64 groups;
+     each one after it is indirect, its groups written by `px_next`: 64 while an item is active, none once the queue
+     is done, so a launch past the work costs a dispatch of nothing. The launches are at most `work_launches`, the
+     capacity over the budget and one more (129), in place of a fixed 3, and items left after them are refused
+     (`px_check`), as before. The source compiles (offline, Metal 4). Its workers are Metal-only, and pp runs on Metal
+     are off until they are allowed again, so it has not run.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
 5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.
    - **The M3 (2026-11-21):**
