@@ -18,6 +18,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedForm, storedPath } from "./checkout-control.js";
 import {
   filePlacementInputs,
+  fileText,
   forgetGoneConfigs,
   gitEntryFacts,
   linkedWorktreeFromFiles,
@@ -30,7 +31,7 @@ import {
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit, runGitAsync } from "../git.js";
+import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitResult } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -688,26 +689,118 @@ export interface RemoteAddress {
   url: string;
 }
 
-/** The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. */
+/**
+ * The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. Git's
+ * answer, "no remote" included, is kept while the configuration it comes from reads the same ({@link remoteSource}),
+ * so a remote added later is found, and recording every worktree of a clone with no remote asks Git once, not twice
+ * per worktree.
+ */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
-  const origin = originUrl(root);
-  return origin === undefined ? soleRemote(root) : { name: "origin", url: origin };
+  const source = remoteSource(root);
+  const kept = source === undefined ? undefined : keptRemotes.get(source.key);
+  if (kept !== undefined && kept.facts === source?.facts) return kept.remote;
+  const answers: GitResult[] = [];
+  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
+  return keepRemote(source, answers);
 }
 
-/** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
-function originUrl(root: string): string | undefined {
-  const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
-  return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
+/** A remote Git named, "none" included, and the facts it rested on. */
+interface KeptRemote {
+  readonly facts: string;
+  readonly remote: RemoteAddress | undefined;
 }
 
-function soleRemote(root: string): RemoteAddress | undefined {
-  const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
-  if (names.length !== 1) return undefined;
-  const [name] = names as [string];
-  const url = gitText(root, ["remote", "get-url", "--", name]);
-  return url === undefined || url === "" ? undefined : { name, url };
+/**
+ * Each clone's remote, by the Git folder its remotes are read from: the common one, which every worktree of the clone
+ * shares, or a worktree's own when it has a `config.worktree`.
+ */
+const keptRemotes = new Map<string, KeptRemote>();
+
+interface RemoteSource {
+  readonly key: string;
+  readonly facts: string;
 }
 
+/**
+ * Where `root`'s remotes come from, read now: the repository's `config`, the worktree's `config.worktree`, and the
+ * person's global files, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home ({@link gitHome}) and `git/config`
+ * in `XDG_CONFIG_HOME` or that home's `.config` (an `insteadOf` there rewrites an address), each by its text. The
+ * system file, which only an administrator writes, is left out, as for the excludes files Rerail reads. Undefined, so
+ * Git is asked each time, where Git's placement of `root` is not read from its files ({@link placementInputs}), where
+ * another account owns it (Git reads the repository's config only while a `safe.directory` entry trusts it, the
+ * system file's too), or where a file cannot be read or includes another.
+ */
+function remoteSource(root: string): RemoteSource | undefined {
+  const inputs = placementInputs(resolve(root));
+  if (inputs === undefined || !inputs.owned) return undefined;
+  const own = configText(join(inputs.gitFolder, "config.worktree"));
+  const files = [join(inputs.linkedCommon ?? inputs.gitFolder, "config"), ...globalConfigFiles()];
+  const texts = [own, ...files.map(configText)];
+  if (texts.some(text => text === undefined)) return undefined;
+  const key = own === NO_FILE ? inputs.realCommon : inputs.gitFolder;
+  return { key, facts: [...files, ...texts].join("\0") };
+}
+
+function globalConfigFiles(): string[] {
+  const named = process.env["GIT_CONFIG_GLOBAL"];
+  if (named !== undefined && named !== "") return [named];
+  const xdg = process.env["XDG_CONFIG_HOME"];
+  return [join(gitHome(), ".gitconfig"), join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "config")];
+}
+
+const NO_FILE = "\0none";
+/** A config section that reads another file, which this source does not follow. */
+const INCLUDE = /^\s*\[\s*include/imu;
+/**
+ * A config file's text, read now as Git reads it ({@link fileText}); {@link NO_FILE} when nothing is there; undefined
+ * when it is no regular file, cannot be read or includes another.
+ */
+function configText(path: string): string | undefined {
+  const read = fileText(path);
+  if (read === "none") return NO_FILE;
+  return read === undefined || INCLUDE.test(read.text) ? undefined : read.text;
+}
+
+/** The next Git question on the way to a checkout's remote, given the answers so far, or the remote they give. */
+type RemoteStep = { readonly ask: readonly string[] } | { readonly remote: RemoteAddress | undefined };
+
+/** Trimmed stdout of an answer Git gave, or undefined when it failed. */
+function textOf(answer: GitResult): string | undefined {
+  return answer.status === 0 ? answer.stdout.trim() : undefined;
+}
+
+/**
+ * `origin`'s address (`ls-remote --get-url` gives the name back when no remote has it), else the address of the only
+ * remote `git remote` lists.
+ */
+function remoteStep(answers: readonly GitResult[]): RemoteStep {
+  const [origin, names, url] = answers;
+  if (origin === undefined) return { ask: ["ls-remote", "--get-url", "origin"] };
+  const originUrl = textOf(origin);
+  if (originUrl !== undefined && originUrl !== "" && originUrl !== "origin") return { remote: { name: "origin", url: originUrl } };
+  if (names === undefined) return { ask: ["remote"] };
+  return soleRemoteStep(names, url);
+}
+
+function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteStep {
+  const remotes = (textOf(names) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
+  if (remotes.length !== 1) return { remote: undefined };
+  const [name] = remotes as [string];
+  if (url === undefined) return { ask: ["remote", "get-url", "--", name] };
+  const address = textOf(url);
+  return { remote: address === undefined || address === "" ? undefined : { name, url: address } };
+}
+
+/**
+ * The remote the answers give, kept under the source's facts only when Git answered every question: a Git that failed
+ * answers no remote, as before, and is asked again next time.
+ */
+function keepRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
+  const step = remoteStep(answers);
+  const remote = "remote" in step ? step.remote : undefined;
+  if (source !== undefined && answers.every(answer => answer.status === 0)) keptRemotes.set(source.key, { facts: source.facts, remote });
+  return remote;
+}
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;
 
