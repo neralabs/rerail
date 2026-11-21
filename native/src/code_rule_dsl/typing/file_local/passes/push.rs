@@ -245,6 +245,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, *l));
                     }
                 }
+                // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
+                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                for &j in &lits {
+                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
+                        outside.extend(lit_vars(v, rule, body[j]));
+                    }
+                }
                 let mut iface: Vec<String> = Vec::new();
                 for &j in &lits {
                     for x in lit_vars(v, rule, body[j]) {
