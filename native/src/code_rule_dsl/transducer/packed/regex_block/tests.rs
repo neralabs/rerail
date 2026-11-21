@@ -67,7 +67,7 @@
     }
 
     /// The program is the same on every executor of block programs: the CPU interpreter, Cranelift and, on a Mac,
-    /// Metal's interpreter and generated MSL.
+    /// Metal's forward carry.
     #[test]
     fn a_patterns_block_program_runs_alike_on_every_executor() {
         for re in ["SEC\\d+", "(?m)^class\\s+(?<c>\\w+)", "[\\p{Alphabetic}\\p{N}]+"] {

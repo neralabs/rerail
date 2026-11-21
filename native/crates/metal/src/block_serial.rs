@@ -1939,6 +1939,14 @@ const PREFIX_THREADS: usize = 256;
 /// Threads a threadgroup of the segment kernels.
 const THREADS: usize = 64;
 
+/// The forward carry's source for `programs` (each in its planes form), as a batch of them runs it: what the
+/// tests read of its lane code.
+pub fn source(programs: &[&BlockNative]) -> String {
+    let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
+    let refs: Vec<&BlockNative> = forms.iter().collect();
+    serial_source(&refs, None).1.to_string()
+}
+
 /// The cone pass's kernel: in lanes form or one thread a segment (`lanes_on`).
 fn cone_kernel() -> &'static str {
     if lanes_on() { "lanes_cone" } else { "serial_cone" }

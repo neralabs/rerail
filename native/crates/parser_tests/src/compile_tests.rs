@@ -196,15 +196,11 @@ fn every_total_is_one_flag_on_every_executor() {
     }
 }
 
-/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
+/// The Metal executor's runs of a batch: the forward carry in segments of three blocks and of tier 1's 29.
 #[cfg(target_os = "macos")]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    vec![
-        ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
-        ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
-    ]
+    [3, 29].into_iter().map(|blocks| (format!("metal forward carry, segments of {blocks}"), run_serial_split(&[native], batch, Segments { blocks, warm: 1 }).expect("runs").run.files)).collect()
 }
 
 /// No Metal executors off macOS.
@@ -444,53 +440,13 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     assert!(compared > 0 && rejected > 0);
 }
 
-/// All of `json.bitlex` as generated UKL: one kernel, a few lines per instruction (it was 0.7 to
-/// 1.1 MB of round kernels, each recomputing what came before it, and took Metal minutes). The lines
-/// counted are those generated for the program, after the head every source shares
-/// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
+/// A batch (decision 0066): files of several languages, interleaved, each under its own program.
+/// Every file's outputs and positions equal its program's CPU interpreter on that file alone, in
+/// the forward carry, in segments of three blocks and of tier 1's 29.
 #[test]
 #[cfg(target_os = "macos")]
-fn json_ukl_is_one_kernel() {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
-    let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
-    let kind = |name: &str| match grammar.id_for_node_kind(name, true) {
-        0 => Some(grammar.id_for_node_kind(name, false)).filter(|&id| id != 0),
-        id => Some(id),
-    };
-    let field = |name: &str| grammar.field_id_for_name(name).map(|f| f.get());
-    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let stmts = ::bitlex::syntax::parse(JSON).expect("parses");
-    let compiled = bitlex_compile::compile(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols)).expect("compiles");
-    let text = compiled.text();
-    let p = rir::assemble(&text).expect("assembles");
-    let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-    for width in LaneWidth::ALL {
-        for strategy in ClassStrategy::ALL {
-            let ukl = generate_with(&native, width, strategy);
-            assert_eq!(ukl.matches("DEFINE_KERNEL2(").count(), 1);
-            let generated = ukl.strip_prefix(&metal_program_backend::block_program::head(width)).expect("a source starts with the shared head");
-            let lines = generated.lines().count();
-            // Counted on the form generated: `Planes` writes each class out as the planes' logic.
-            let insts = match strategy {
-                ClassStrategy::Lookup => native.insts.len(),
-                ClassStrategy::Planes => native.planes_form().insts.len(),
-            };
-            // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
-            // instruction in each of three bodies (general, full group, ASCII full group).
-            assert!(lines < 200 + 15 * insts, "{}-byte {strategy:?}: {lines} lines for {insts} instructions", width.bytes());
-        }
-    }
-}
-
-/// A batch (decision 0066): files of several languages, interleaved, each under its own program,
-/// in one launch. Every file's outputs and positions equal its program's CPU interpreter on that
-/// file alone, on the Metal interpreter and on generated MSL at every lane width. With the
-/// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
-/// results are the same.
-#[test]
-#[cfg(target_os = "macos")]
-fn a_batch_of_files_and_programs_is_one_launch() {
-    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
+fn a_batch_of_files_and_programs_runs_in_the_forward_carry() {
+    use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     let programs = batch_programs();
     let blocks: Vec<&block::BlockProgram> = programs.iter().map(|p| &p.block_programs[0]).collect();
     let natives: Vec<block_native::BlockNative> = programs.iter().map(|p| native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0)).collect();
@@ -498,19 +454,12 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    for width in LaneWidth::ALL {
-        for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
-            for spins in [SPINS, 0] {
-                let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
-                if spins > 0 {
-                    assert_eq!(run.launches, 1, "{executor:?}, {}-byte lanes", width.bytes());
-                }
-                for (k, (got, want)) in run.files.iter().zip(&want).enumerate() {
-                    let what = format!("file {k} ({} bytes, program {}), {executor:?}, {}-byte lanes, {spins} polls", files[k].bytes.len(), files[k].program, width.bytes());
-                    assert_eq!(got.outputs, want.outputs, "{what}");
-                    assert_eq!(got.positions, want.positions, "{what}");
-                }
-            }
+    for blocks in [3, 29] {
+        let run = run_serial_split(&natives, &files, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("segments of {blocks}: {e:?}"));
+        for (k, (got, want)) in run.run.files.iter().zip(&want).enumerate() {
+            let what = format!("file {k} ({} bytes, program {}), segments of {blocks}", files[k].bytes.len(), files[k].program);
+            assert_eq!(got.outputs, want.outputs, "{what}");
+            assert_eq!(got.positions, want.positions, "{what}");
         }
     }
 }
@@ -592,8 +541,8 @@ fn the_cpu_executors_take_a_batch() {
 
 /// The batch's cost per 64-byte block on real files: JSON's program (masks, tree rows and the
 /// fallback) over every file listed in `RERAIL_JSON_FILES` (one path a line), in one batch.
-/// Generated MSL and the Metal interpreter at every lane width (GPU seconds, best of 3), and
-/// Cranelift's one call per program (thread CPU time, best of 3). Run by name: a measurement.
+/// The forward carry (GPU seconds, best of 3), and Cranelift's one call per program (thread CPU
+/// time, best of 3). Run by name: a measurement.
 #[test]
 #[ignore = "a measurement; run by name with RERAIL_JSON_FILES"]
 fn json_batch_cost_per_block() {
@@ -620,29 +569,15 @@ fn json_batch_cost_per_block() {
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
     #[cfg(target_os = "macos")]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
-        // The count is the run's (decision 0442).
-        let _run = rerail_context::test_run();
-        let repeated = rerail_context::local::<RepeatedLaunches>();
-        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
-        for executor in [Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes), Executor::Interpreter] {
-            for width in LaneWidth::ALL {
-                let (mut best, mut launches) = (f64::MAX, 0);
-                for _ in 0..3 {
-                    let run = run_split(&[&native], &files, width, executor, 64).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
-                    assert!(run.files == runs, "{executor:?} equals Cranelift");
-                    best = best.min(run.seconds);
-                    launches = run.launches;
-                }
-                println!(
-                    "{executor:?}, {:2}-byte lanes, {launches} launches: {:.3} ns per block, {:.2} GB/s (GPU time, best of 3)",
-                    width.bytes(),
-                    best / blocks as f64 * 1e9,
-                    total as f64 / best / 1e9
-                );
-            }
+        use metal_program_backend::block_program::serial::{Segments, run_serial_split};
+        let (mut best, mut launches) = (f64::MAX, 0);
+        for _ in 0..3 {
+            let run = run_serial_split(&[&native], &files, Segments { blocks: 29, warm: 1 }).unwrap_or_else(|e| panic!("forward carry: {e:?}"));
+            assert!(run.run.files.iter().zip(&runs).all(|(a, b)| a.outputs == b.outputs), "the forward carry equals Cranelift");
+            best = best.min(run.run.seconds);
+            launches = run.run.launches;
         }
-        println!("repeated launches: {}", repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before);
+        println!("forward carry, {launches} launches: {:.3} ns per block, {:.2} GB/s (GPU time, best of 3)", best / blocks as f64 * 1e9, total as f64 / best / 1e9);
     }
 }
 

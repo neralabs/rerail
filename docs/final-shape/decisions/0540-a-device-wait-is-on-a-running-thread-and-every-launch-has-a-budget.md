@@ -313,7 +313,8 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      group's summary at a level depends on the carries resolved at the levels before, so a group whose predecessor
      has not reached a level cannot go on (park) and can only wait. A summary free of the levels before would be
      the group's function of its whole carry-in state, and that state is too wide to enumerate: over the corpus
-     (`corpus_boundary_shapes`, `boundary_shape`: no device), the bits crossing a group's edge reach 192 and the
+     (`corpus_boundary_shapes` in commit bcfa0ea74a, removed with the look-back's plan it read), the bits crossing a
+     group's edge reach 192 and the
      widest cone 191 (halos of `prev`s by up to 63 bits); 14-json's cone is 7 bits (128 candidates a group), 15-jsonc's
      18. So the carries resolve level by level, and without a wait inside a launch, by the forward carry
      (`block_serial.rs`, doc 23): a level's pass gives each segment its table of each scan, a prefix over each file's
@@ -322,8 +323,15 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      already runs on it. Its last product user moves to it: code rules' span prefilters (`span_ends`,
      `device_metal.rs`), which ran the look-back executor with 64 polls. While a set's kernels compile on threads of
      their own (`serial::compiled`, each through `kernels::ready_behind_function`) the cores run the batch; the GPU's
-     interpreter, which covered that window, is the look-back's. The look-back executor (`run_batch`, its
-     interpreter `block_program.uglykl` and generated UKL's exchanges) is now the tests' and benchmarks' only.
+     interpreter, which covered that window, was the look-back's.
+   - **Done: the look-back is removed.** The user's: no look-back at all. Gone: the look-back executor
+     (`run_batch`, `run_split`, `Executor`, `ClassStrategy`, `SPINS`, `RepeatedLaunches`), its interpreter
+     (`block_program.uglykl`), generated UKL's exchanges (`Plan`, `levels`, `exchange_kinds`), and the protocol in
+     `block_common.uglykl` (`poll` and `BLOCK_POLL_RMW`, `look_back`, `halo_exchange`, `exchange_word`, `count_sink`)
+     with the helpers only they used. The tests that compared the look-back's lane widths and class strategies now
+     run the forward carry, in segments of 3 blocks (a short file speculates and runs again) and of tier 1's 29;
+     those that tested the look-back itself (its fallback launches, its one kernel, its strategies' times) are gone.
+     `block_program.rs` keeps what the forward carry shares: the head, the file table, `emit` and its forms.
    - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
      MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
      another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"

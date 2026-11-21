@@ -8,7 +8,7 @@
 #![cfg(target_os = "macos")]
 #![allow(clippy::missing_safety_doc)]
 
-/// Block programs on Metal (decision 0066): the interpreter and generated MSL, over a batch of
+/// Block programs on Metal (decision 0066): the forward carry's generated UKL, over a batch of
 /// files read in place from source slabs.
 pub mod block_program;
 pub mod buffer_observation;
