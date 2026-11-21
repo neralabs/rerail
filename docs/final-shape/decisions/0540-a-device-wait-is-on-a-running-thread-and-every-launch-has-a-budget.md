@@ -141,4 +141,20 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          probes while most of the head's slots were empty: the cache turned with 8 entries in it. A lookup's first
          turn reads the epoch and the take's stamp check by loads, which may be stale copies (Q123). With the stamp
          check a poll and every turn after a failed try polling, such claims were 57 to 2,673 a run, and the test
-         still failed. The cause is not found.
+         still failed.
+       - *A won claim is lost (2026-11-21, a log of every write to the cache's index, in the dead entry).* With one
+         read a node and the decode skipped, the 7 blocks' first claims are made at once, each by lane 0 of its own
+         SIMD group, into slots of one 128-byte line. Every run, the same 4 of them are lost: right after the claim
+         loop the claimant's slot reads 0, or (two blocks whose probes meet) the other block's tag, and no logged
+         write was made to it. Inside the loop a second compare-and-swap, of the tag for the tag, still finds the
+         tag. At that moment no generation's index holds the 4 losers' tags anywhere, while it holds the 3 others'.
+         Two claims of one slot both found it 0, by compare-and-swap and by `fetch_or`, which coherent atomics
+         cannot do. So the losers' atomics act on a copy of the line that no load sees, and that never reaches the
+         buffer. Every write of the cache's code to an index slot is logged, and none explains it.
+       - *What does not change it:* one lane of a SIMD group's swap at a time, every store an exchange, the cold
+         reads inlined, a claim by `fetch_or` in place of a swap, and the cache's atomics on `coherent(device)`
+         words. The counts are the same to a few in every run.
+       - *What differs:* the M3 Max runs macOS 15.7.7 (Metal 3). The Mac mini (an M1) runs macOS 27.2.1 and the
+         M1 Max macOS 26.2 (Metal 4), and both run the same instrumented kernel cleanly: 7 claims, 7 numbers. Metal
+         compiles the source on the device, so the M3's compiler and driver differ from theirs, as well as its GPU.
+         A runtime compile cannot turn Metal's optimizer off, so the M3 itself on macOS 26 is what separates the two.
