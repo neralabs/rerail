@@ -42,19 +42,9 @@ export function readGitInstallation(run: typeof runGit = runGit): GitInstallatio
   try {
     system = run(folder, SYSTEM_ASK, ASK);
   } catch (error) {
-    if (!(error instanceof GitUnavailableError)) throw error;
-    return { installation: {}, settled: true, problem: error.message };
+    return withoutGit(error);
   }
-  const listing = run(folder, LISTING_ASK, ASK);
-  // An absent answer is left out, not null: the addon takes a missing field as none and refuses a null.
-  const systemConfig = system.status === 0 ? system.stdout.trim() : "";
-  const installation = {
-    ...(systemConfig === "" ? {} : { systemConfig }),
-    ...(listing.status === 0 ? { configOrigins: listing.stdout } : {}),
-  };
-  const settled = [system, listing].every(result => result.status !== null && result.error === undefined);
-  const problem = systemConfig === "" && listing.status !== 0 ? (listing.error?.message ?? listing.stderr.trim()) || `exit ${listing.status}` : undefined;
-  return { installation, settled, ...(problem === undefined ? {} : { problem }) };
+  return installationReport(system, run(folder, LISTING_ASK, ASK));
 }
 
 /**
@@ -65,7 +55,31 @@ async function readGitInstallationWithoutBlocking(options: GitReadOptions): Prom
   const folder = tmpdir();
   const system = await runGitAsync(folder, SYSTEM_ASK, { ...ASK, ...options });
   const listing = await runGitAsync(folder, LISTING_ASK, { ...ASK, ...options });
-  return options.signal?.aborted === true ? undefined : readGitInstallation((_folder, args) => (args === SYSTEM_ASK ? system : listing));
+  return options.signal?.aborted === true ? undefined : installationReport(system, listing);
+}
+
+/** The report where no Git is installed: settled, with none named, and why; any other failure is thrown again. */
+function withoutGit(error: unknown): GitInstallationReport {
+  if (!(error instanceof GitUnavailableError)) throw error;
+  return { installation: {}, settled: true, problem: error.message };
+}
+
+/** What Git's answers to the two asks report ({@link readGitInstallation}). */
+function installationReport(system: GitResult, listing: GitResult): GitInstallationReport {
+  // An absent answer is left out, not null: the addon takes a missing field as none and refuses a null.
+  const systemConfig = system.status === 0 ? system.stdout.trim() : "";
+  const installation = {
+    ...(systemConfig === "" ? {} : { systemConfig }),
+    ...(listing.status === 0 ? { configOrigins: listing.stdout } : {}),
+  };
+  const settled = [system, listing].every(result => result.status !== null && result.error === undefined);
+  const problem = systemConfig === "" ? listingProblem(listing) : undefined;
+  return { installation, settled, ...(problem === undefined ? {} : { problem }) };
+}
+
+/** Why the listing named no file: undefined where it answered. */
+function listingProblem(listing: GitResult): string | undefined {
+  return listing.status === 0 ? undefined : (listing.error?.message ?? listing.stderr.trim()) || `exit ${listing.status}`;
 }
 
 /** One owner of the engine's Git reads and the answer it was made from, kept as {@link gitAccessOwner} says. */

@@ -816,13 +816,9 @@ export function readRemoteAddress(root: string): RemoteAddress | undefined {
   return keepRemote(source, answers);
 }
 
-/**
- * {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. The
- * engine's owner of its Git reads, which names the system files, is made first the same way ({@link learnGitAccess}).
- */
+/** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
 export async function learnRemoteAddress(root: string, options: GitReadOptions = {}): Promise<void> {
-  await learnGitAccess(options);
-  const source = remoteSource(root);
+  const source = await remoteSourceWithoutBlocking(root, options);
   if (source === undefined || keptRemotes.get(source.key)?.facts === source.facts) return;
   const answers: GitResult[] = [];
   // Each question depends on the answer before it.
@@ -856,6 +852,17 @@ interface RemoteSource {
  * the repository's config only while a `safe.directory` entry trusts it, the system file's too), or where a fact
  * cannot be read or named.
  */
+/**
+ * {@link remoteSource}; where it names none while no engine owner of its Git reads stands, the owner, which names the
+ * system files, is made first as Git processes no thread waits on ({@link learnGitAccess}), and the source read again.
+ */
+async function remoteSourceWithoutBlocking(root: string, options: GitReadOptions): Promise<RemoteSource | undefined> {
+  const source = remoteSource(root);
+  if (source !== undefined || standingGitAccess() !== undefined) return source;
+  await learnGitAccess(options);
+  return remoteSource(root);
+}
+
 function remoteSource(root: string): RemoteSource | undefined {
   const inputs = placementInputs(resolve(root));
   if (inputs === undefined || !inputs.owned) return undefined;

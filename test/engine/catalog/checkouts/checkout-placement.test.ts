@@ -277,8 +277,8 @@ describe("placeCheckout", () => {
       await new Promise(resolve => setTimeout(resolve, 200));
       expect({ running: running.length, startedAfter: spawn.mock.calls.length - placedAt }).toEqual({ running: 0, startedAfter: 0 });
     }, () => undefined);
-    // The top level and each of the four worktrees Git lists, the failing one among them.
-    expect(learnt).toBe(checkouts.length);
+    // The top level, then each checkout Git lists, the top level and the failing worktree among them.
+    expect(learnt).toBe(1 + checkouts.length);
   });
 
   it("starts no Git once its signal is aborted, and fails nothing for a folder that is gone or outside Git", async () => {

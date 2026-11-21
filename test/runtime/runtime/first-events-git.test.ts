@@ -49,16 +49,20 @@ function startedRepository(count: number): { root: string; checkouts: string[]; 
 
 const isGit = ([file]: readonly unknown[]): boolean => /^git(\.exe)?$/iu.test(basename(String(file)));
 
+/** The null device as Rerail names it to Git (`--git-dir`) to ask it outside any repository. */
+const NULL_DEVICE = process.platform === "win32" ? "nul" : "/dev/null";
+
 /**
- * The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran, Git asked outside any
- * repository (`--git-dir` the null device) among them: a process reads its Git's installation that way, the system
- * file the remote's facts name included.
+ * The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran. With `installation`
+ * false, Git asked outside any repository (`--git-dir` the null device) is left out: a process reads its Git's
+ * installation that way once, at its first engine read, and under GIT_CONFIG_NOSYSTEM the remote does not need it.
  */
-async function blockingGitStarts(act: () => Promise<unknown>): Promise<string[][]> {
+async function blockingGitStarts(act: () => Promise<unknown>, installation: boolean): Promise<string[][]> {
   const calls = vi.mocked(childProcess.spawnSync).mock.calls;
   const before = calls.length;
   await act();
-  return calls.slice(before).filter(isGit).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
+  const counted = (call: readonly unknown[]): boolean => isGit(call) && (installation || !(call[1] as string[]).includes(`--git-dir=${NULL_DEVICE}`));
+  return calls.slice(before).filter(counted).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
 }
 
 describe("a repository's first events in a daemon", () => {
@@ -96,7 +100,7 @@ describe("a repository's first events in a daemon", () => {
           ]);
           writeFileSync(file, "x = 1\n");
           await runtime.ingest({ kind: "result", eventId: `${sessionId}-result`, ...call, output: "" });
-        })));
+        })), noSystem === undefined);
         expect(blocking).toEqual([]);
         for (const { sessionId } of sessions) {
           const kinds = reader.events(sessionId).map(event => event.kind).filter(kind => ["session-start", "call", "result"].includes(kind));
