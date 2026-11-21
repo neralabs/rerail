@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::pp_arena::{Arena, Buf, Lay, Scan, Sort};
-use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, fewer, name_key, on_grid};
+use crate::pp_eval::{Front, TO_ALL, TO_DEFS, TO_VIS, Unit, name_key, on_grid};
 
 /// A definition (`PpDef` in the UKL): the unit's nodes of its name, its `params` node (0: none)
 /// and its body's first leaf; the leaves of each; its flags; its first parameter slot and item.
@@ -104,20 +104,15 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let mut groups = crate::pp_arena::groups();
-    let (front, defs) = loop {
-        let arena = Arena::new();
-        let front = Front::new(&arena, unit, false, groups)?;
-        let defs = Defs::new(&arena, unit, rung)?;
-        arena.lease()?;
-        let mut l = Lay::new();
-        front.lay(&mut l, TO_DEFS);
-        defs.lay(&mut l);
-        if on_grid(&arena, unit, &front, &l, groups)?.is_some() {
-            break (front, defs);
-        }
-        groups = fewer(groups)?;
-    };
+    let groups = crate::pp_arena::groups();
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, false, groups)?;
+    let defs = Defs::new(&arena, unit, rung)?;
+    arena.lease()?;
+    let mut l = Lay::new();
+    front.lay(&mut l, TO_DEFS);
+    defs.lay(&mut l);
+    on_grid(&arena, unit, &front, &l, groups)?;
     // SAFETY: the device finished writing `room`.
     if unsafe { *defs.room.host().cast::<u32>() } != 0 {
         if rung + 1 >= RUNGS {
@@ -1155,6 +1150,17 @@ pub struct Exp {
     /// level, `trie_lv` levels of 4 words a list.
     trie: Buf,
     trie_lv: u32,
+    /// The exits' calls by their parent and `)` (`px_hx_*`): `hx_mask + 1` slots, three words
+    /// each (the call + 1, its parent, its `)`), twice the lists' room at least.
+    hx: Buf,
+    hx_mask: u32,
+    /// The chains of a parent's calls (`px_ch_*`): nine stores a scanned token (the walks', the
+    /// pauses'), and nine a top token (the top level's places, `tch_cap` of them), and their
+    /// nexts' counts (the walks', the top's, the pauses').
+    ch: Buf,
+    tch: Buf,
+    tch_cap: u32,
+    chw: Buf,
 }
 
 /// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
@@ -1313,6 +1319,12 @@ impl Exp {
             sc_cap: x.sc as u32,
             trie: zeroed(lists * 4 * trie_lv as usize)?,
             trie_lv,
+            hx: zeroed(3 * (2 * lists).next_power_of_two())?,
+            hx_mask: ((2 * lists).next_power_of_two() - 1) as u32,
+            ch: zeroed(9 * x.sc.max(1))?,
+            tch: zeroed(9 * top.max(1))?,
+            tch_cap: top.max(1) as u32,
+            chw: zeroed(4)?,
         })
     }
 
@@ -1332,6 +1344,7 @@ impl Exp {
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
         l.at("TRIE", &self.trie).word("TRIE_LV", self.trie_lv);
+        l.at("HX", &self.hx).word("HX_MASK", self.hx_mask).at("CH", &self.ch).at("CHW", &self.chw).at("TCH", &self.tch).word("TCH_CAP", self.tch_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
@@ -1479,7 +1492,7 @@ pub struct Expanded {
     pub rung: u32,
     /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0468 §4, 0485 §1).
     pub launches: usize,
-    /// The groups of the grid it ran on, after any halving.
+    /// The groups of the grid it ran on: those of the dispatch's that joined it (`ukl_grid_join`).
     pub groups: u64,
     /// The command buffer's time on the GPU (its last run's), in seconds.
     pub gpu_seconds: f64,
@@ -1520,7 +1533,7 @@ pub fn expand_from(unit: &Unit, lay: &Layout, rung: u32) -> Result<Expanded, Err
     expand_at(unit, lay, rung, crate::pp_arena::groups())
 }
 
-/// `expand_from` on a grid of `groups` groups at first (halved after a failed barrier).
+/// `expand_from`, `groups` groups dispatched (the grid the groups of them that join it).
 pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Expanded, Error> {
     let mut sizes = Sizes::first(unit, lay);
     sizes.x = XCaps::at(sizes.p1.top, rung);
@@ -1531,7 +1544,7 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
 /// run settled at. Each room grows a bounded number of times a call.
 pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
     let Sizes { p1, x, defs: def_rung, .. } = *sizes;
-    let (mut def_rung, mut groups, mut p1, mut x) = (def_rung, groups, p1, x);
+    let (mut def_rung, mut p1, mut x) = (def_rung, p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
     // The last run refused for the expansion's room: its answer stands where the next run's
     // room is past the device's (the serial pass takes the unit).
@@ -1563,10 +1576,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             Err(Error::BackendCapacity) if short.is_some() => return Ok(short.take().unwrap()),
             Err(e) => return Err(e),
         }
-        let Some((launches, gpu_seconds)) = on_grid(&arena, unit, &front, &l, groups)? else {
-            groups = fewer(groups)?;
-            continue;
-        };
+        let (launches, gpu_seconds) = on_grid(&arena, unit, &front, &l, groups)?;
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
@@ -1594,7 +1604,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs);
@@ -1607,7 +1617,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1615,7 +1625,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups: front.joined(), gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
     }
 }
 
@@ -1643,7 +1653,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
 /// run settled at.
 pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
     let Sizes { p1, x, defs: rung, .. } = *sizes;
-    let (mut rung, mut groups, mut p1, mut x) = (rung, crate::pp_arena::groups(), p1, x);
+    let (mut rung, groups, mut p1, mut x) = (rung, crate::pp_arena::groups(), p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
     loop {
         x = x.fit(p1.top);
@@ -1661,10 +1671,7 @@ pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(cr
         exp.lay(&mut l);
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
-        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
-            groups = fewer(groups)?;
-            continue;
-        }
+        on_grid(&arena, unit, &front, &l, groups)?;
         *sizes = Sizes { p1, x, defs: rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
@@ -1732,19 +1739,19 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
 
 /// For measurements: the GPU time of a run over `unit` at `groups` groups that ends after stage
 /// `last` (`TO_FRONT`, `TO_DEFS`, `TO_VIS`; `TO_ALL` with the expansion; `TO_ALL + 1` the whole
-/// setup without it), in seconds; `None` where a barrier failed.
-pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u64) -> Result<Option<f64>, Error> {
+/// setup without it), in seconds; `BackendFailure` where a barrier failed.
+pub fn stage_seconds(unit: &Unit, lay: &Layout, last: u32, stop: u32, groups: u64) -> Result<f64, Error> {
     let caps = Caps::first(unit, lay);
     stage_run(unit, lay, (last, stop, 0), groups, (caps, XCaps::at(caps.top, 0), 0))
 }
 
 /// `stage_seconds` at the rooms the run `x` settled at, with P1's iterations bounded by `iters`
 /// (`P1_ITERS` where 0).
-pub fn stage_seconds_as(unit: &Unit, lay: &Layout, last: u32, stop: u32, iters: u32, x: &Expanded) -> Result<Option<f64>, Error> {
+pub fn stage_seconds_as(unit: &Unit, lay: &Layout, last: u32, stop: u32, iters: u32, x: &Expanded) -> Result<f64, Error> {
     stage_run(unit, lay, (last, stop, iters), x.groups, (x.caps, x.xcaps, x.def_rung))
 }
 
-fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), groups: u64, (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<Option<f64>, Error> {
+fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), groups: u64, (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<f64, Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
     let defs = Defs::new(&arena, unit, def_rung)?;
@@ -1760,7 +1767,7 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     if iters != 0 {
         l.word("P1_ITERS", iters);
     }
-    Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
+    Ok(on_grid(&arena, unit, &front, &l, groups)?.1)
 }
 
 /// One unit's answer from a batch (`rounds::run_many`, decision 0486 §7): the batch's expansion it ran in, its files

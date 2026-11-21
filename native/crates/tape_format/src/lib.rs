@@ -27,6 +27,7 @@ pub mod reads;
 pub mod writer16;
 
 
+/// **Deprecated** (decision 0550): only `rust_stream`, itself deprecated, reads it.
 /// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
 /// holds it as its module `w` (`rerail_compiler::rust_stream`).
 pub const WRITER_RUST: &str = include_str!("writer16.rs");

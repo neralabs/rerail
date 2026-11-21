@@ -27,6 +27,11 @@
 //!   where it may end there and its level is the mark's: a nested level's is where its call
 //!   returns to a place that takes the mark, or to one that may end and is the mark's itself
 //!   (tier 2's flag, the lean parser's `stmt`).
+//! - **A mark that refuses** (`mark … , refuses …`): where a level asks for it as for `loses`,
+//!   and its question holds at the next token (at the file's end, before the end), the file is
+//!   refused; `refuses taken …`, only where a level takes the mark. The lean lexer's `asi` reads
+//!   there what the grammar does not say yet (decision 0451). The root asks for its first marks
+//!   before any token, as the machine's first state does.
 //!
 //! - **A whole root** (`node K whole`) spans the file from byte 0 to its end, and may hold no
 //!   token: an empty file, or one of extras alone, is its root.
@@ -695,6 +700,10 @@ impl<'a> Parser<'a> {
         } else if t.settle.is_some() {
             self.settled.push(at);
         }
+        // `refuses taken`: a mark taken where its question holds refuses the file.
+        if t.refuse_taken {
+            self.fatal.get_or_insert_with(|| format!("mark {} taken where it refuses, at byte {}", t.kind, t.start));
+        }
         self.ask(at + 1, follow);
         self.past_marks(at + 1, follow)
     }
@@ -704,8 +713,19 @@ impl<'a> Parser<'a> {
     /// (`Token::lose`), that token goes in `settled`, as a mark taken does, and the extra before
     /// it is lost (`parse`).
     fn ask(&mut self, at: usize, follow: u128) {
-        let Some(j) = (at..self.tokens.len()).find(|&i| !self.tokens[i].mark) else { return };
         let here = follow & !END | if follow & END != 0 { self.asked } else { 0 };
+        // `refuses`: a mark asked here whose question holds refuses the file, as the machine
+        // does when it asks there. At the end, the marks put there carry the question.
+        let refusing = |t: &Token| t.refuse.iter().find(|k| here & self.look_bit(k) != 0).cloned();
+        let j = (at..self.tokens.len()).find(|&i| !self.tokens[i].mark);
+        let refused = match j {
+            Some(j) => refusing(&self.tokens[j]).map(|k| (k, self.tokens[j].start)),
+            None => self.tokens[at.min(self.tokens.len())..].iter().find_map(|t| refusing(t).map(|k| (k, t.start))),
+        };
+        if let Some((k, start)) = refused {
+            self.fatal.get_or_insert_with(|| format!("mark {k} refuses at byte {start}"));
+        }
+        let Some(j) = j else { return };
         let asked = self.tokens[j].lose.iter().any(|k| here & self.look_bit(k) != 0);
         if asked && self.settled.last() != Some(&j) {
             self.settled.push(j);
@@ -866,9 +886,13 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         let body = &decl.rules[0].2;
         p.out.push(Node { kind: root.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
         let first = p.first(body).0;
+        // The root asks for its first marks before any token, as the machine's first state.
+        p.ask(0, first);
         p.past_marks(0, first).and_then(|at| p.matches(body, at, 0))
     } else {
         let first = p.first(&root_sym).0;
+        // The root asks for its first marks before any token, as the machine's first state.
+        p.ask(0, first);
         match p.past_marks(0, first) {
             Some(at) => p.matches(&root_sym, at, 0),
             None => None,

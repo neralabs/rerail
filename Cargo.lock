@@ -3659,13 +3659,8 @@ dependencies = [
 name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-context",
  "rerail-kotlin-aot",
- "rerail-kotlin-lean",
- "rerail-kotlin-parser",
- "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3683,6 +3678,7 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "rerail-compiler",
+ "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",

@@ -649,10 +649,10 @@ static inline const uint64_t* __ukl_cpu_once(const uint64_t* g, M make)
     __ukl_cpu_thread* t = s->cur;
     uint64_t* r = s->res + (uint64_t)t->simd * UKL_SIMD_WIDTH;
     if (s->res_op[t->simd] != t->sgop) {
-        uint32_t live = 0;
+        uint64_t live = 0;
         for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
             if (__ukl_cpu_in(s, t, l))
-                live |= 1u << l;
+                live |= (uint64_t)1 << l;
         make(g, live, r);
         s->res_op[t->simd] = t->sgop;
     }
@@ -662,7 +662,7 @@ static inline const uint64_t* __ukl_cpu_once(const uint64_t* g, M make)
 // The lanes whose `b` holds, lane `l` at bit `l` (64 bits: the widest group).
 static inline uint64_t __ukl_cpu_ballot(bool b)
 {
-    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(b), [](const uint64_t* g, uint32_t live, uint64_t* r) {
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(b), [](const uint64_t* g, uint64_t live, uint64_t* r) {
         uint64_t m = 0;
         for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
             if ((live >> l & 1u) && g[l])
@@ -675,7 +675,7 @@ static inline uint64_t __ukl_cpu_ballot(bool b)
 // The SIMD group's reduction of its live lanes' `v` (`op` 0 sum, 1 minimum, 2 maximum), in one wait.
 static inline uint32_t __ukl_cpu_reduce(uint32_t v, uint32_t op)
 {
-    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [op](const uint64_t* g, uint32_t live, uint64_t* r) {
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [op](const uint64_t* g, uint64_t live, uint64_t* r) {
         uint32_t a = op == 0u ? 0u : op == 1u ? 0xffffffffu : 0u;
         for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
             if (!(live >> l & 1u))
@@ -692,7 +692,7 @@ static inline uint32_t __ukl_cpu_reduce(uint32_t v, uint32_t op)
 // wait.
 static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, bool inclusive, uint32_t* total)
 {
-    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [](const uint64_t* g, uint32_t live, uint64_t* r) {
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [](const uint64_t* g, uint64_t live, uint64_t* r) {
         uint32_t a = 0;
         for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
             r[l] = a;
@@ -718,7 +718,7 @@ static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, uint32_t* total) { ret
 // one wait.
 static inline uint32_t __ukl_cpu_seg_total(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* tv, uint32_t* tf)
 {
-    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(((uint64_t)(f != 0u) << 32) | v), [add](const uint64_t* g, uint32_t live, uint64_t* r) {
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(((uint64_t)(f != 0u) << 32) | v), [add](const uint64_t* g, uint64_t live, uint64_t* r) {
         uint32_t a = 0, h = 0;
         for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
             if (live >> l & 1u) {

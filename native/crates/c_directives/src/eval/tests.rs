@@ -813,11 +813,11 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (got, want, rung, launches)
 }
 
-/// A device run's outputs (`DeviceRun`) and the givings back it made.
-type GivingRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
+/// A `DeviceRun` and the givings back the run made (decision 0486 §10).
+type GivenRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
 
 /// `expanded_in`, and the givings back the run made (decision 0486 §10).
-fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivingRun {
+fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivenRun {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
@@ -838,8 +838,8 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
-/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+/// definitions, and one that runs again at a larger rung. A dispatch past the groups the device
+/// holds at once runs on the groups that join its grid (decision 0540 §3), to the same output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -864,10 +864,10 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let (unit, lay) = (&d.unit, &d.lay);
     let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the halved grid's refusals");
-    same(&wide.out, &narrow.out, "the halved grid's output");
-    eprintln!("past residency: ran again at {} groups", wide.groups);
+    assert!(wide.groups >= 1 && wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
+    same(wide.refused, 0, "the joined grid's refusals");
+    same(&wide.out, &narrow.out, "the joined grid's output");
+    eprintln!("past residency: {} groups joined", wide.groups);
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
@@ -1207,10 +1207,10 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
     let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
         .iter()
-        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap().unwrap_or(f64::NAN))))
+        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap_or(f64::NAN))))
         .collect();
     eprintln!("a batch of {} units (us, cumulative): {}", units.len(), t.join(", "));
-    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap().unwrap_or(f64::NAN))).collect();
+    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap_or(f64::NAN))).collect();
     let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
 }
@@ -1355,7 +1355,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             use rerail_metal::pp_expand::{expand_sized, stage_seconds_as};
             for (e, (unit, lay)) in entries.iter().zip(&units) {
                 let Ok(x) = expand_sized(unit, lay, &mut Sizes::first(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
-                let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).ok().flatten().unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
+                let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
                 let best = |last: u32| at(last, 0);
                 let name = e.path.rsplit('/').next().unwrap_or(e.path);
                 eprintln!(
@@ -1634,6 +1634,42 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
+/// Decision 0527 §2: a pause gives back a done call's span through its exits' chain, to the
+/// chain's last `)` (its exits' calls' sums by pointer doubling over the lists, not a walk). Each
+/// level of a chain has a done call beside its pending one whose exits chain two deep in the
+/// level's list (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments
+/// 31 pieces. A level adds 64 tokens (its expansion, which the output holds); stopping at the
+/// first exit's `)` would keep the last's arguments too (96 a level), so the bound is 80.
+#[test]
+fn a_done_calls_exits_are_given_back_to_their_last() {
+    // SAFETY: as `a_chains_use_is_flat_in_its_length`.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");
+    let chain = |levels: usize| {
+        let mut t = String::from("#define L0(s) [s]\n#define F2(x) x G2\n#define G2(x) x H2\n#define H2(x) x\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) F2(s)(s)({last}) a L{}(s) b\n", k - 1);
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
+    let uses: Vec<u32> = [16usize, 48]
+        .iter()
+        .map(|&n| {
+            let text = chain(n);
+            let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+            let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
+            same(show(&got), show(&want), "a chain of exits beside it");
+            room[tokens].0
+        })
+        .collect();
+    eprintln!("tokens: {} {}", uses[0], uses[1]);
+    assert!(uses[1] <= uses[0] + 80 * 32, "the tokens grow {} a level", (uses[1] - uses[0]) / 32);
+}
+
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
 /// pass's output; each room's use.
 type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);
@@ -1717,11 +1753,11 @@ fn where_an_evaluations_gpu_time_goes() {
         for g in [1u64, 32] {
             let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
                 .iter()
-                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap().unwrap_or(f64::NAN))))
+                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap_or(f64::NAN))))
                 .collect();
             eprintln!("{what}, {g} groups (us, cumulative): {}", t.join(", "));
             // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
-            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap().unwrap_or(f64::NAN))).collect();
+            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap_or(f64::NAN))).collect();
             let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
             eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
         }

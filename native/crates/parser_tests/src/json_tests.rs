@@ -341,7 +341,14 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
     // A rule's function is named by its rule (`rust_stream`'s `function`): counted by its signature.
-    assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("ret = s.taken_ret();"), "one function, an explicit stack");
+    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0558): the document's where the depth is 0,
+    // else the container's two places by one test of its number; no match, no refusal of a number, no number kept
+    // by the document's own calls.
+    let two_ways = |what: &str, code: &str| {
+        assert!(code.contains("s.depth -= 1;\nif s.depth == 0 {") && code.contains("} else {\nif ret == 1 {") && !code.contains("match ret {") && !code.contains("why::RETURN)") && !code.contains("s.keep_ret(0)"), "format {what}: a return two ways");
+    };
+    two_ways("15", &src);
     // The token's state the one rule's local, as `walk`'s `next`, `v` and `end`: not the run's fields.
     let state = src.split("\nstruct S {").nth(1).and_then(|s| s.split("\n}\n").next()).expect("the run's state");
     assert!(src.contains("(s: &mut S) -> Result<bool, u32> {\nlet t = &mut T::NEW;") && !state.contains("start: u32") && !state.contains("rec_end") && !state.contains("last_end"), "the token's state a local of the rule");
@@ -442,6 +449,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
     // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
     let flat16 = flat(&src16);
+    two_ways("16", &flat16);
     assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32, t: &mut T) -> R {"), "a direct run's string is given the opener's place");
     assert_eq!(src16.matches("match d {").count(), 1, "a direct run's one dispatch");
     for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
@@ -459,8 +467,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // of it reads `rec_end` where no arm made it again, and `last_end` where the arm before it kept it.
     let take = src16.split("fn token_all(&mut self, t: &mut T) -> R {").nth(1).and_then(|r| r.split("\n    }\n").next()).expect("the token's step");
     assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
-    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end)?;\n"), "a `,` closes the value by the end it left");
-    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end)?;\n"), "a `}}` keeps the value's end before it makes its own");
+    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end);\n"), "a `,` closes the value by the end it left");
+    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end);\n"), "a `}}` keeps the value's end before it makes its own");
+    // A close cannot fail (`rust_stream::sure_closes`, decision 0557): no result, no `?`, the writer's close asserts.
+    assert!(src16.contains("    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n") && !src16.lines().any(|l| l.contains("s.close::<") && l.contains(")?;")), "a close returns nothing");
+    assert!(src16.contains("debug_assert!(self.open_len != 0, \"a close of an open node\");") && !src16.contains("self.fail(w::fail::NO_OPEN"), "the writer's close cannot fail");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
     // number (`rust_stream::UNNUMBERED`).
     let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();

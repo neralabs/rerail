@@ -4012,6 +4012,10 @@ always a refusal.
   `jeremybarnes/build-and-test-loop-time`). The caller sends the `--extern` paths; the agent
   reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
   host again for them before each compile. Not installed: the farm owner merges and installs it.
+- **Seen again** (2026-11-20, merging Parser-generators-final-shape, whose vendored `cranelift-codegen` adds
+  patches; written as Q377 on Swift-Kotlin-Scala-support): a profiling build of `rerail-kotlin-aot` failed at
+  `rerail-clif` with E0463 for `cranelift_frontend`, its `.rmeta` present; the debug build never failed. A
+  rebuild with `SCCACHE_RECACHE=1` (`RERAIL_FARM_ANY_ENV=1`) went through.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
 
 ### Q123. (Done) An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)

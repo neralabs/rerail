@@ -260,7 +260,9 @@ with the unit, because each primitive's number of levels was chosen by its capac
     of those stages.
   - The groups' sums are sized by the run's groups. A failed barrier sets `X_BARRIER`. The
     host sees it in the grid's failure word and runs again at half the groups (`fewer`), down
-    to 1.
+    to 1. Superseded by 0540 §3 (2026-11-21): `pp_setup` joins its grid (`ukl_grid_join`), so
+    the grid is the dispatched groups that run, a barrier waits only for them, and a failed one
+    is `BackendFailure`. `fewer` is gone; `Expanded::groups` is the count that joined.
   - Tests:
     - `an_evaluation_is_a_fixed_handful_of_launches` (R7): an empty unit, a unit of 800
       definitions and uses, and a unit that runs again at a larger rung, all at 4 launches. A

@@ -305,8 +305,9 @@ pub const GROUPS_MOST: u64 = 32;
 /// The groups of the persistent grid (decision 0468 §4): the device's resident count at the grid
 /// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
 /// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
-/// with no count; 1 on the CPU. A run
-/// whose barrier fails runs again with half as many.
+/// with no count; 1 on the CPU. The groups dispatched: the grid is those of them that join it
+/// (`ukl_grid_join`, decision 0540 §3), so a count past residency costs groups that end at once,
+/// not a failed barrier.
 pub fn groups() -> u64 {
     *rerail_context::machine::<Groups>().0.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
@@ -347,7 +348,7 @@ pub const SLOTS: &[&str] = &[
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "SUBS", "CALLS", "SB_L", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
     "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
-    "TRIE", "TRIE_LV",
+    "TRIE", "TRIE_LV", "HX", "HX_MASK", "CH", "CHW", "TCH", "TCH_CAP",
 ];
 
 fn slot(name: &str) -> usize {
