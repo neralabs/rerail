@@ -6771,7 +6771,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let mut disasm = Vec::new();
     let mut code_kept = Vec::new();
     pp_words::validate(program)?;
-    let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let mut builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[("opt_level", "speed")]), default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
     builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));

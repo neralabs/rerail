@@ -4723,6 +4723,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if clustered && !cut.pass.is_empty() {
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
+    // The host's (`rerail_clif::jit::flags`): x86-64's frame pointers and return area.
+    let flags = rerail_clif::jit::flags(&flags);
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {
