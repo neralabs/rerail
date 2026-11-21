@@ -20,14 +20,16 @@ pub fn builder() -> Result<cranelift_jit::JITBuilder, String> {
     Ok(builder)
 }
 
-/// A JIT module's Cranelift flags: the caller's `own`, then the host's. On x86-64 Cranelift's tail calls need frame
-/// pointers kept (`emit_return_call_common_sequence` asserts it), and a function returns past its two integer return
-/// registers only through an implicit return area (else "too many return values to fit in registers"); AArch64 has
-/// eight, and the engine's code was written there. Every JIT module of the engine takes its flags from here.
+/// A JIT module's Cranelift flags: the caller's `own`, then the host's. A function returns past its integer return
+/// registers (x86-64's two, AArch64's eight) only through an implicit return area (else "too many return values to
+/// fit in registers"), on every host: it changes no function whose results fit. On x86-64 Cranelift's tail calls
+/// also need frame pointers kept (`emit_return_call_common_sequence` asserts it). Every JIT module of the engine
+/// takes its flags from here.
 pub fn flags<'a>(own: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
     let mut all = own.to_vec();
+    all.push(("enable_multi_ret_implicit_sret", "true"));
     if cfg!(target_arch = "x86_64") {
-        all.extend([("preserve_frame_pointers", "true"), ("enable_multi_ret_implicit_sret", "true")]);
+        all.push(("preserve_frame_pointers", "true"));
     }
     all
 }

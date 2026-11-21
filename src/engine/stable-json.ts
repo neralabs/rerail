@@ -58,9 +58,28 @@ export function stableJsonText(value: unknown): string | undefined {
   }
 }
 
+/**
+ * Each rule document's digest, by the document: a document is never changed once read, and the daemon's one rule
+ * catalog hands the same pack documents to every checkout's catalog, which digests each at every build.
+ */
+const documentDigests = new WeakMap<RuleDocument, string>();
+
 /** Content digest of a rule document; equal digests mean the engine would compile identical rules. */
 export function ruleDocumentDigest(document: RuleDocument): string {
+  const known = documentDigests.get(document);
+  if (known !== undefined) return known;
   const canonical = stableJsonText({ kind: document.kind, rule: document.rule });
   if (canonical === undefined) throw new TypeError(`rule ${document.rule.id} is not JSON representable`);
-  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+  const digest = `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
+  documentDigests.set(document, digest);
+  return digest;
+}
+
+/**
+ * {@link stableJsonText} of `rule` and the sha256 of that text; undefined when not JSON. Worked out at each build: each
+ * checkout's rule set hands the catalog a copy of every rule with its mode set, so no two builds share the object.
+ */
+export function ruleSourceText(rule: object): { readonly text: string; readonly digest: string } | undefined {
+  const text = stableJsonText(rule);
+  return text === undefined ? undefined : { text, digest: `sha256:${createHash("sha256").update(text).digest("hex")}` };
 }

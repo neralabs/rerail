@@ -77,9 +77,9 @@ per-process reading.
   file's program derives from its tape.
 - **Lessons ledger 25:** restoring a stored derivation beats redoing it (20 to 26x for tapes). A rule file's tape is
   restored like any other.
-- **ast-index-spike history index L919-920:** key by what a value is a function of, and make the language part of
+- **SQL index prototype history index L919-920:** key by what a value is a function of, and make the language part of
   the key. A rule file's tape is keyed by content, the `rr` tag and the grammar version, and the grammar version
   hashes the parser (decision 0061).
-- **ast-index-spike history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". Decision 0060's
+- **SQL index prototype history index L417 (DH L2185-2189):** "storing data in memory... is dishonest". Decision 0060's
   caches were per process; the store now holds the tape across runs.
 - **Decision 0061 §7:** names this step and leaves the stored lowered program to a later one.

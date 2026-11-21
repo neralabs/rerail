@@ -468,6 +468,10 @@ pub struct WorkspaceState {
     /// The folder on disk the workspace's paths are relative to (`setRoot`): resolution reads
     /// the files below it the workspace does not hold.
     import_root: Option<std::path::PathBuf>,
+    /// The Git revision the workspace's storage was attached from (`enableRevisionStorage`), pinned in the
+    /// workspace's shared object (decision 0442): its runs read the paths under the revision's root from it, and
+    /// another workspace's runs read that root's files.
+    pub git_source: Option<crate::git_workspace::snapshot::Pinned>,
     /// Counts the changes of what import target resolution reads that disk does not already
     /// show: held files that differ from disk below the root, and the root itself.
     import_generation: u64,

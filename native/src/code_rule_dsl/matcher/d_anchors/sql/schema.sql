@@ -1,4 +1,4 @@
--- ast-index-spike/bench/tape_store.py: contentless, positional FTS5 kind index.
+-- The SQL index prototype's bench/tape_store.py: contentless, positional FTS5 kind index.
 -- One bare token per preorder node. An instance offset is the node's preorder.
 CREATE VIRTUAL TABLE ftsk USING fts5(k, content='', contentless_delete=1, detail=full);
 CREATE VIRTUAL TABLE ftsk_inst USING fts5vocab('ftsk', 'instance');

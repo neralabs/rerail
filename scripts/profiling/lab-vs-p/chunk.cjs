@@ -1,6 +1,7 @@
 const m = require(process.env.P_ADDON); const fs = require("fs"); const glob = (d) => fs.readdirSync(d).filter((f) => f.endsWith(".json")).map((f) => `${d}/${f}`);
-const caps = fs.readFileSync("/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/native/src/code_rule_dsl/capabilities.json", "utf8");
-const pack = "/Users/jeremy/orca/workspaces/rerail/wolfeel/packs/python";
+const need = (name) => process.env[name] || (console.error(`set ${name} (see README.md)`), process.exit(2));
+const caps = fs.readFileSync(`${need("P_ROOT")}/native/src/code_rule_dsl/capabilities.json`, "utf8");
+const pack = need("PACK_DIR");
 const docs = [...glob(`${pack}/rules`), ...glob(`${pack}/candidates/rules`)].sort().map((f) => JSON.parse(fs.readFileSync(f, "utf8")));
 const doc = (clauses, i) => ({ format: "rerail.policy/v1", id: `lab-${i}`, revision: 1, mode: "steer", description: "Python pack clauses, for the anchor lab.", scope: { include: ["**/*"], exclude: [] }, clauses });
 const ok = (clauses) => { try { m.CodeRuleDslRuntime.compile(JSON.stringify(doc(clauses, 0)), "json", caps); return true; } catch { return false; } };

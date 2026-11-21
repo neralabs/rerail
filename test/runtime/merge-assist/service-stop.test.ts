@@ -44,7 +44,7 @@ function commitPeer(ws: Workspace, index: number, subject: string, file = "src/a
   const data = (text: string): string => `data ${Buffer.byteLength(text)}\n${text}\n`;
   const commit = [
     `commit refs/remotes/origin/peer-${index}`,
-    `committer Jo Barnes <jo@example.com> ${now} +0000`,
+    `committer Jo Smith <jo@example.com> ${now} +0000`,
     `${data(subject)}from refs/heads/main^0`,
     `M 100644 inline ${file}`,
     data(`export const orders = () => client.get("/v${index + 2}/orders");\n`),
@@ -107,7 +107,7 @@ function byConflict(heard: readonly Heard[]): Map<string, string[]> {
 function pullOf(sha: string, index: number): PullRequestSummary {
   return {
     number: index + 1, title: `Orders, take ${index}`, url: `https://github.com/acme/app/pull/${index + 1}`, headRefName: `peer-${index}`,
-    headCommit: sha, baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-18T00:00:00Z", crossRepository: false, headOwner: "acme",
+    headCommit: sha, baseRefName: "main", author: "jdoe", isDraft: false, updatedAt: "2026-11-18T00:00:00Z", crossRepository: false, headOwner: "acme",
   };
 }
 

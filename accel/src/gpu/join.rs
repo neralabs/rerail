@@ -339,6 +339,25 @@ const SCAN: usize = 5;
 /// The first slot free for other modules' scratch (the engine's device stages): past the scan's levels.
 pub const FREE: usize = 16;
 
+/// Gives this thread's scratch back (Q203): kept on the thread, the most each thread's sorts ever took stayed leased
+/// to the end, 276 MB of a 1 GB budget on the M3's bench. To Metal, not the pool: a command buffer still running may
+/// write it (returned to the pool, a sort still running wrote into the block the pool's next lease made of it: Q265's
+/// check, `metal_join`), and Metal frees it once every command buffer that holds it completed.
+pub fn scratch_return() -> usize {
+    let n = SCRATCH.with_borrow_mut(|sets| {
+        let mut n = 0;
+        for b in sets.iter_mut().flat_map(|s| s.drain(..)).flatten() {
+            n += b.length() as usize;
+            b.release();
+        }
+        n
+    });
+    if n > 0 {
+        shared::kept_change(shared::Kept::Scratch, -(n as isize));
+    }
+    n
+}
+
 /// Scratch slot `slot`, at least `bytes` long (grown to a power of two when it is shorter).
 pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
     let set = SET.with(Cell::get);
@@ -350,10 +369,15 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
         if s[slot].as_ref().is_none_or(|b| (b.length() as usize) < bytes) {
             // The shorter one goes to Metal, not the pool: callers hold its buffer by handle (`scratch` hands out
             // clones) and may bind it again, and Metal keeps it while one does. Its ledger holds it for the queued work.
-            if let Some(mut old) = s[slot].take() {
-                old.released();
+            if let Some(old) = s[slot].take() {
+                shared::kept_change(shared::Kept::Scratch, -(old.length() as isize));
+                old.release();
             }
-            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
+            // Not zeroed: every kernel writes its scratch before reading it (a slot was always reused with the last
+            // sort's contents), and a lease a stratum zeroed would cost a write of it all each stratum.
+            let new = shared::lease_for_join(bytes.max(64), false)?;
+            shared::kept_change(shared::Kept::Scratch, new.length() as isize);
+            s[slot] = Some(new);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
     })

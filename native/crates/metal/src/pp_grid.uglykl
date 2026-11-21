@@ -466,7 +466,7 @@
                 uint32_t left_ = 0u;                                                                   \
                 for (uint32_t si_ = 0u; si_ < MAX_CHAIN; si_++) {                                      \
                     ukl_tg_barrier_device();                                                           \
-                    uint32_t n_ = ukl_atomic_load(&wc_[0]);                                            \
+                    uint32_t n_ = ukl_atomic_poll(&wc_[0]);                                            \
                     if (n_ == 0u) break;                                                               \
                     if (n_ > ukl_min(W(Q_CAP), UKL_GRID_SMALL)) { left_ = 1u; break; }                 \
                     /* The next set's tokens: within a group's, or the grid's. */                      \
@@ -731,7 +731,7 @@
 // the bound on givings that each found little new). `CTL` 16 counts them.
 #define PX_GIVE()                                                                                      \
     {                                                                                                  \
-        PP_GLOBAL uint32_t* gv_c = AT(uint32_t, CTL);                                                   \
+        PP_GLOBAL uint32_t* gv_c = AT(uint32_t, CTL);                                                  \
         uint32_t gv_tc = AT(const uint32_t, WORDS)[1];                                                 \
         uint32_t gv_nl = ukl_min(ukl_atomic_poll(&gv_c[1]), W(LIST_CAP));                              \
         UklPool gv_p; gv_p.heads = (UKL_GLOBAL uint32_t*)(AT(uint32_t, TOKENS) + 5u * gv_tc); gv_p.next = (UKL_GLOBAL uint32_t*)AT(uint32_t, TOKENS); \

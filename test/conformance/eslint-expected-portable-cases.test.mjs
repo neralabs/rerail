@@ -31,7 +31,7 @@ describe("assertPortableCase", () => {
 
   it("accepts what the pinned working directory records, and paths that only share a prefix with the machine's", () => {
     expect(() => assertPortableCase("filename-case/143/work/project/src/FooBar/file.js", "/* Filename: /work/project/src/FooBar/file.js */", [SCRATCH])).not.toThrow();
-    expect(() => assertPortableCase("rule/valid-001/Users/jeffrey/app.js", "require('/Users/jeffrey/app')", ["Users/jeff"])).not.toThrow();
+    expect(() => assertPortableCase("rule/valid-001/Users/alexandra/app.js", "require('/Users/alexandra/app')", ["Users/alex"])).not.toThrow();
   });
 
   it("finds a Windows home directory in code written with a drive letter and backslashes", () => {

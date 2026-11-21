@@ -495,8 +495,12 @@ impl ContentStore {
         hash.update(&blob);
         let digest: [u8; 32] = hash.finalize().into();
         self.immediate_transaction(|tx| {
-            if let Some(owner) = owner && !owner.current(tx)? {
-                return Ok(false);
+            // A run's first write acquires (decision 0547): the manifest's, applied by the writer behind the run.
+            if let Some(owner) = owner {
+                owner.acquire(tx)?;
+                if !owner.current(tx)? {
+                    return Ok(false);
+                }
             }
             let scope = owner.map(|owner| owner.membership()).or(scope);
             tx.execute_cached("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;

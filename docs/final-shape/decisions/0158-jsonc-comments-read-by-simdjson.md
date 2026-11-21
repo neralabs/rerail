@@ -30,7 +30,7 @@ a JSON file -> the strict read (0134, 0148) -> the tape
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike had no JSON parser of its own to compare with.
+- **SQL index prototype indexes:** the spike had no JSON parser of its own to compare with.
 - **0134** (JSON is read with simdjson) and **0148** (parsers routed by what the host runs).
   **Extended:** the same kernel gains a JSONC path, and the router's choice is unchanged.
 - **Lessons ledger #10** (measure the code that runs). **Agrees:** the JSONC tapes are compared with

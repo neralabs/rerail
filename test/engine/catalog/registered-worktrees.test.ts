@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { pruneCheckouts, recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation, worktreeRegistry } from "../../../src/engine/catalog/repository-identity.js";
-import { runGitBytes } from "../../../src/engine/git.js";
+import { runGit } from "../../../src/engine/git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
@@ -15,7 +15,7 @@ import { removeFolder, removeFolderSync } from "../../support/platform/remove-fo
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGitBytes: vi.fn(actual.runGitBytes) };
+  return { ...actual, runGit: vi.fn(actual.runGit) };
 });
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,16 +54,16 @@ function caseInsensitiveFilesystem(): boolean {
   }
 }
 
-const worktreeLists = () => vi.mocked(runGitBytes).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+const worktreeLists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
 
 describe("recordStartedWorktree", () => {
   it.skipIf(process.platform === "win32").each([false, true])("registers and preserves a worktree with a newline (legacy Git: %s)", async legacy => {
     const { root, main, database } = await startedRepository();
     const path = join(root, "feature\nsecond line");
     git(main, "worktree", "add", "--quiet", "--detach", path);
-    const actual = (await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js")).runGitBytes;
-    await vi.mocked(runGitBytes).withImplementation((cwd, args, options) => legacy && args.includes("-z")
-      ? { status: 129, stdout: Buffer.alloc(0), stderr: "unknown switch" } : actual(cwd, args, options), async () => {
+    const actual = (await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js")).runGit;
+    await vi.mocked(runGit).withImplementation((cwd, args, options) => legacy && args.includes("-z")
+      ? { status: 129, stdout: "", stderr: "unknown switch" } : actual(cwd, args, options), async () => {
       expect(worktreeRegistry(main)?.worktrees).toEqual([main, path]);
       expect(recordStartedWorktree(database, path, repositoryIdentityLocation(path))).toBe(true);
       database.$client.prepare("INSERT INTO rule_settings(owner_kind,owner_id,folder,target_kind,target_id,\"on\",updated_at) VALUES ('checkout',?,'','rule','r',0,1)").run(path);

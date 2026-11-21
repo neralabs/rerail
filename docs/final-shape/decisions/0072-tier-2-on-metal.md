@@ -23,7 +23,7 @@ for JSON first, then generalised.
   ends with a threadgroup barrier. Nothing waits on another threadgroup.
 - **Lessons ledger:** no GPU parsing lessons. #28 (only CPU and GPU time count) holds: every
   choice the Bitlex file can set is measured.
-- **ast-index-spike indexes:** no GPU work.
+- **SQL index prototype indexes:** no GPU work.
 
 ## Decision
 

@@ -1,0 +1,80 @@
+.policy "rerail-pack-data-helper-copies" revision 2
+.description "Import the shared pack-data helpers in an upstream generator instead of defining a copy of one, and fake the upstream test working directory only through the shared helper."
+.language typescript
+.mode log
+.scope include "packs/*/upstream/**/*.mjs", "packs/*/upstream/**/*.js", "packs/*/upstream/**/*.cjs", "packs/*/upstream/**/*.ts"
+.scope exclude "packs/complexity/**", "**/tests/**", "**/fixtures/**", "**/publish/**", "**/samples/**", "**/*.test.*"
+// An upstream generator imports the shared helpers of scripts/pack-data/eslint-expected.mjs instead of defining its
+// own copy, and fakes the working directory upstream tests see only through withUpstreamTestCwd:
+//   function codePointColumn(lines, line, column) { … }      PACK_DATA_HELPER_COPY (a shared helper, redefined)
+//   const ECMA_EXTENSIONS = new Set([".js", ".mjs"]);        PACK_DATA_UNOWNED_HELPER_COPY (copied, none shared yet)
+//   process.chdir(fixtures);                                 PACK_DATA_OWN_CWD_PIN
+//   process.cwd = () => root;                                PACK_DATA_OWN_CWD_PIN
+//   Object.defineProperty(process, "cwd", { value: … });     PACK_DATA_OWN_CWD_PIN
+//   import { codePointColumn } from "…/eslint-expected.mjs"; not reported
+// The first two are text searches over the file, for a definition at a line's start (a finding where it starts);
+// their regexes are the JSON's, copied exactly. `.language typescript` runs on the .js, .mjs and .cjs files too; the
+// JSON's pattern clause is JavaScript's, so it leaves the .ts files out.
+
+.violation PACK_DATA_HELPER_COPY(at: span) "Import this from scripts/pack-data/eslint-expected.mjs and adapt each call to its parameters instead of defining it here; if it must work differently, rename it to say how."
+PACK_DATA_HELPER_COPY(m) :- source(_, sp), match_all("(?m)^(?:export[ \\t]+)?(?:async[ \\t]+)?(?:function\\*?|const|let|var)[ \\t]+(?:codePointColumn|withUpstreamTestCwd|UPSTREAM_TEST_CWD|assertKnownReportRules|assertPortableCase|machineDirectories|pinnedRequire|gitHead|assertCommit|findingsOf|writeExpectedFindings|unitKey|withOrigins|writeRenameVariants|isVariantPath|RENAMED_DIRECTORY)\\b", sp, m).
+
+.violation PACK_DATA_UNOWNED_HELPER_COPY(at: span) "Other generators define this same helper and none is shared yet; if you change it, change theirs too, or move one copy into scripts/pack-data/eslint-expected.mjs."
+PACK_DATA_UNOWNED_HELPER_COPY(m) :- source(_, sp), match_all("(?m)^(?:export[ \\t]+)?(?:const|let|var|function)[ \\t]+(?:ECMA_EXTENSIONS|splitLines)\\b", sp, m).
+
+// The JSON's patterns `process.chdir($$$A)`, `process.cwd = $V` and `Object.defineProperty(process, "cwd", $$$A)`.
+.violation PACK_DATA_OWN_CWD_PIN(at: node) "If this sets the working directory upstream tests see, use withUpstreamTestCwd from scripts/pack-data/eslint-expected.mjs; to run a command elsewhere, pass it a cwd option instead."
+PACK_DATA_OWN_CWD_PIN(c) :- callee(c, "process.chdir").
+PACK_DATA_OWN_CWD_PIN(a) :- kind(a, "assignment_expression"), field(a, "left", l), name(l, "process.cwd"), javascript(a).
+PACK_DATA_OWN_CWD_PIN(c) :- callee(c, "Object.defineProperty"), field(c, "arguments", args),
+    child(args, p, 0), kind(p, "identifier"), name(p, "process"), child(args, k, 1), node_text(k, "\"cwd\"").
+// callee(c, "a.b"): c, in a JavaScript file, calls the member chain a.b, as written.
+.decl callee(c: node, s: symbol)
+callee(c, s) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"), name(f, s),
+    javascript(c).
+.decl javascript(n: node)
+javascript(n) :- docof(n, d), file_name(d, f), !glob("*.ts", f).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_shared_helper_copy_is_reported exactly
+    .fixture "packs/javascript/upstream/generate.mjs" ```
+        function codePointColumn(lines, line, column) {
+          return [...lines[line - 1].slice(0, column - 1)].length + 1;
+        }
+        ```
+    .expect PACK_DATA_HELPER_COPY at "packs/javascript/upstream/generate.mjs":1
+.end
+
+.test unowned_copies_and_cwd_pins_are_reported exactly
+    .fixture "packs/react/upstream/eslint-plugin-react/generate.mjs" ```
+        export const ECMA_EXTENSIONS = new Set([".js", ".mjs"]);
+        export async function gitHead(dir) { return run("git", ["rev-parse", "HEAD"], dir); }
+        process.chdir(fixtures);
+        process.cwd = () => root;
+        Object.defineProperty(process, "cwd", { value: () => root });
+          function splitLines(text) { return text.split("\n"); }
+        ```
+    .expect PACK_DATA_UNOWNED_HELPER_COPY at "packs/react/upstream/eslint-plugin-react/generate.mjs":1
+    .expect PACK_DATA_HELPER_COPY at "packs/react/upstream/eslint-plugin-react/generate.mjs":2
+    .expect PACK_DATA_OWN_CWD_PIN at "packs/react/upstream/eslint-plugin-react/generate.mjs":3
+    .expect PACK_DATA_OWN_CWD_PIN at "packs/react/upstream/eslint-plugin-react/generate.mjs":4
+    .expect PACK_DATA_OWN_CWD_PIN at "packs/react/upstream/eslint-plugin-react/generate.mjs":5
+.end
+
+// The pack's passing example, a call that only reads the directory, a TypeScript file's pin (the JSON's pattern
+// clause is JavaScript's), and the files the scope leaves out.
+.test imports_and_reads_pass exactly
+    .fixture "packs/javascript/upstream/eslint-plugin-unicorn/generate.mjs" ```
+        import { codePointColumn, withUpstreamTestCwd } from "../../../../scripts/pack-data/eslint-expected.mjs";
+        const here = process.cwd();
+        ```
+    .fixture "packs/javascript/upstream/eslint-plugin-unicorn/fixtures.ts" ```
+        process.chdir(fixtures);
+        ```
+    .fixture "packs/complexity/upstream/generate.mjs" ```
+        function codePointColumn(lines, line, column) {}
+        ```
+    .fixture "packs/javascript/upstream/tests/generate.mjs" ```
+        process.chdir(fixtures);
+        ```
+.end

@@ -32,7 +32,7 @@ tier 2 (token rules, every token):   kinds, text checks, nesting, roles, the tap
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike's tape writer works per node, from a parse. Tier 2 is
+- **SQL index prototype indexes:** the spike's tape writer works per node, from a parse. Tier 2 is
   the same per-node writer, fed by tier 1's token positions instead of a parse.
 - **Lessons ledger #28** (only CPU time counts). The guard counts instructions, which is a
   proxy. Every step is also timed against simdjson's full parse on the same files and load.

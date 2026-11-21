@@ -342,7 +342,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
     // A rule's function is named by its rule (`rust_stream`'s `function`): counted by its signature.
     assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("ret = s.taken_ret();"), "one function, an explicit stack");
-    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0548): the document's where the depth is 0,
+    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0558): the document's where the depth is 0,
     // else the container's two places by one test of its number; no match, no refusal of a number, no number kept
     // by the document's own calls.
     let two_ways = |what: &str, code: &str| {
@@ -469,7 +469,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
     assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end);\n"), "a `,` closes the value by the end it left");
     assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end);\n"), "a `}}` keeps the value's end before it makes its own");
-    // A close cannot fail (`rust_stream::sure_closes`, decision 0547): no result, no `?`, the writer's close asserts.
+    // A close cannot fail (`rust_stream::sure_closes`, decision 0557): no result, no `?`, the writer's close asserts.
     assert!(src16.contains("    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n") && !src16.lines().any(|l| l.contains("s.close::<") && l.contains(")?;")), "a close returns nothing");
     assert!(src16.contains("debug_assert!(self.open_len != 0, \"a close of an open node\");") && !src16.contains("self.fail(w::fail::NO_OPEN"), "the writer's close cannot fail");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its

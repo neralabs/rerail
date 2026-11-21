@@ -307,6 +307,7 @@ native/src/content_store/write_back.rs::TOLD	stays	a warning said once a process
 native/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	a test hook (test-hooks), set in a test's own child process
 native/src/git_access/pool.rs::ROOTS	shared	one-per-repository resources (Git's opened roots)
 native/src/git_access/setup.rs::INSTALLED	stays	the Git setup the host installs once (code registered at load)
+native/src/git_workspace.rs::NAMES	stays	computed once from the engine's own files (the host's ignored folders, compiled in)
 native/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: append-only
 native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)

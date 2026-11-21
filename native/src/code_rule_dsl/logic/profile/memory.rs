@@ -198,7 +198,9 @@ pub(super) fn sample() {
             // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
             // few refusals of a process).
             rerail_accel::gpu::shared::set_refusal_hook(|why| {
+                // Every refusal by the span that asked (one line), the holdings for the first few.
                 static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
                 if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
                     return;
                 }
@@ -342,6 +344,9 @@ pub(super) fn sampled_report(r: &mut String) {
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
+    // What threads keep on the device between strata, past every admission (Q203).
+    let [scratch] = rerail_accel::gpu::shared::kept();
+    let _ = writeln!(r, "  device kept by threads between strata: join scratch {} MB at most ({} MB at the end)", scratch.1 >> 20, scratch.0 >> 20);
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",

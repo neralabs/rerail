@@ -89,15 +89,52 @@
                 assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
             }
             let counts = super::super::step_counts(&db, "dev_test").unwrap();
+            let ranged = super::super::step_ranged(&db, "dev_test").unwrap();
             super::super::close(&db, "dev_test").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
             rows.sort_unstable();
-            got.push((rows, counts));
+            got.push((rows, counts, ranged));
         }
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
         assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's (held: {held})");
-        assert_eq!(got[0].1, got[1].1, "the device's counts per step are the CPU's (held: {held})");
+        // The device's counts per step are the CPU's, but where the CPU's probe read a range of its index that a later
+        // comparison bounds (`ranges`, Q245 item 5): there the probe yields only the rows in it (fewer, from the same
+        // bindings), and the comparison's step, a filter now of rows that all pass, ends where the device's does.
+        let (cpu, dev) = (&got[0].1, &got[1].1);
+        if let Err(e) = counts_agree(cpu, dev, &got[0].2) {
+            panic!("{e} (held: {held})");
         }
+        for (rule, (c, d)) in cpu.iter().zip(dev).enumerate() {
+            assert_eq!(c.last(), d.last(), "rule {rule}: the head's bindings (held: {held})");
+        }
+        }
+    }
+
+    /// Whether the CPU's counts per step (`step_counts`) are the device's, by rule: the same at each step, but where
+    /// the CPU's probe read a range of its index that a later comparison bounds (`ranged`, `step_ranged`; Q245 item
+    /// 5). There the probe yields only the rows in it (fewer, from the same bindings), and each step after it reads
+    /// and yields no more than the device's, until the comparison, a filter now of rows that all pass, ends where the
+    /// device's does: from there they are the same again. The first difference past that, else none.
+    pub(super) fn counts_agree(cpu: &[Vec<(i64, i64)>], dev: &[Vec<(i64, i64)>], ranged: &[Vec<bool>]) -> Result<(), String> {
+        if cpu.len() != dev.len() {
+            return Err(format!("{} rules on the CPU, {} on the device", cpu.len(), dev.len()));
+        }
+        for (rule, (c, d)) in cpu.iter().zip(dev).enumerate() {
+            if c.len() != d.len() {
+                return Err(format!("rule {rule}: {c:?} against {d:?}: its steps"));
+            }
+            let mut narrowed = false;
+            for (s, (cs, ds)) in c.iter().zip(d).enumerate() {
+                let at_range = ranged.get(rule).and_then(|r| r.get(s)).copied().unwrap_or(false);
+                let probe = at_range && cs.0 == ds.0 && cs.1 < ds.1;
+                let filter = narrowed && cs.0 <= ds.0 && cs.1 <= ds.1;
+                if !(cs == ds || probe || filter) {
+                    return Err(format!("rule {rule}, step {s}: the CPU's {cs:?}, the device's {ds:?}: {c:?} against {d:?} (ranged {:?})", ranged.get(rule)));
+                }
+                narrowed = (narrowed || probe) && cs != ds;
+            }
+        }
+        Ok(())
     }
 
     /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
@@ -151,6 +188,9 @@
                 assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
                 // Written in place into the head's block (decision 0325 step 4): none read back.
                 assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
+                // Its total is probed by `v1` (the left rule) and made distinct of by both columns, each round: its
+                // block has room for both indexes, so neither copies it (decision 0353 step 6, `DevIndex::moved`).
+                assert!(r.sorts > 0 && r.moved == 0, "every round's indexes in their relations' blocks: {r:?}");
             }
             super::super::close(&db, "dev_rec").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
@@ -1296,8 +1336,9 @@
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
-        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
-        for name in ["node", "child", "field", "core_node", "line"] {
+        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
+        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
+        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
             let (n, k) = (src.len(), src.columns().len());
@@ -1336,12 +1377,12 @@
                 }
             }
         }
-        assert_eq!(seen, 10);
+        assert_eq!(seen, 16);
         // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
         // of (Metal's, CUDA's, the CPU's); made elsewhere (decision 0440 step C: OpenCL's wraps have none, though
         // its allocations may, Intel's unified shared memory), which the made branch above checked.
-        let read_in_place = if device.has_addresses() { 10 } else { 0 };
-        assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
+        let placed = if device.has_addresses() { 16 } else { 0 };
+        assert_eq!(in_place, placed, "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
@@ -1415,6 +1456,22 @@
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(3).collect();
+        // A relation's columns read by a stage where it lies, against the host's values.
+        let read_in_place = |name: &str, src: &Within, cols: &[usize]| {
+            let n = src.len();
+            let ib = src.in_block().unwrap_or_else(|| panic!("{name}: its answer in a block"));
+            assert_eq!(ib.rows as usize, n, "{name}");
+            let rel = mj::DevRel::in_block(&ib, 2).unwrap();
+            let out = mj::DevRel::empty(cols.len(), n).unwrap();
+            let mut batch = mj::Batch::new().expect("the device");
+            let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+            batch.copy_rows(mj::Rows::Rel(&rel), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+            batch.finish().unwrap();
+            for (j, &c) in cols.iter().enumerate() {
+                let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+            }
+        };
         let axes = [
             ("nearest", Within::axis(Arc::clone(&batch), Axis::Nearest, &kinds, Binding::Cpu)),
             ("inside", Within::axis(Arc::clone(&batch), Axis::Inside, &kinds, Binding::Cpu)),
@@ -1435,6 +1492,10 @@
                 assert_eq!(d0, d1, "{name}: row {r} within one document");
                 assert_ne!(l0, l1, "{name}: row {r} strictly below");
             }
+            // Its columns read by a stage where the relation lies: the host's values.
+            for cols in [vec![0, 1], vec![1]] {
+                read_in_place(name, src, &cols);
+            }
         }
         // On the device's binding the solve itself is made on the device: the host's rows, in its order, and its runs
         // per looked-up node.
@@ -1452,6 +1513,8 @@
                 assert_eq!(dev.lookup(0, &[id]), host.lookup(0, &[id]), "the rows of {id}");
             }
             assert_eq!(dev.in_block().expect("its relation").rows as usize, n);
+            // The device's solve, its answer as ids too: read where it lies.
+            read_in_place("the device's solve", &dev, &[0, 1]);
         }
         // Containment over every kind: a relation of exactly the total's rows, as many as the host's containment, and
         // the same rows on a second solve.
@@ -1473,6 +1536,93 @@
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
     /// planner did not price keeps doubling.
+    /// Decision 0353 step 5: a `has` axis is read off the tape by the device, not uploaded. Probed by its node, a
+    /// stage climbs the node's numbered ancestors where the node is in the set; by its ancestor, it reads the
+    /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
+    /// neither column alone (whole), its rows are uploaded as before.
+    #[test]
+    fn a_has_axis_on_the_device_is_walked_on_the_tape() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-has-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
+        let batch = node.python_batch().expect("the batch");
+        let mut kinds: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu));
+        assert!(has.has_walk().is_some(), "the batch's views are read in place");
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
+        let expect = |col: usize| -> Vec<(i64, i64)> {
+            let mut rows: Vec<(i64, i64)> = ids.iter().flat_map(|&id| has.lookup(col, &[id]).unwrap_or_default()).map(|r| (has.value(r, 0), has.value(r, 1))).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        };
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        for &id in &ids {
+            db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
+        }
+        super::super::hold_source(&db, "has_t", Arc::clone(&has), b"ii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let h = format!("r:{}", hex("has_t"));
+        // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
+        // h0(n, a) :- has(n, a): whole, its rows uploaded (`None`).
+        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
+            let want = expect(col.unwrap_or(0));
+            assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name has_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "has_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "has_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "by column {col:?}: {r:?}");
+                    assert_eq!(r.uploads == 0, col.is_some(), "by column {col:?}: uploaded only whole: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+        }
+    }
+
     #[test]
     fn a_stages_table_is_sized_by_the_plans_estimate_before_it_runs() {
         use super::{EST_MARGIN, table_rows};

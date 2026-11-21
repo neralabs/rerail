@@ -257,7 +257,7 @@ pub fn run_split(
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`kernels::ready_behind_function`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "tempo_batch", None).is_some()
+    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "rerail_batch", None).is_some()
 }
 
 /// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
@@ -440,7 +440,7 @@ pub fn run_batch(
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
-            ("tempo_batch", lane::kernel(&generate_forms(&refs, width), "tempo_batch", None))
+            ("rerail_batch", lane::kernel(&generate_forms(&refs, width), "rerail_batch", None))
         }
     };
     let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: GROUP };
@@ -609,7 +609,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
     generate_forms(&[&form], width)
 }
 
-/// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
+/// A group of programs (each already in the form it runs) as one kernel, `rerail_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
@@ -637,7 +637,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
          UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)\n\
          // Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
          // file's program over the group. A threadgroup is a worker: one group of 32 lanes.\n\
-         DEFINE_KERNEL2(block, tempo_batch,\n\
+         DEFINE_KERNEL2(block, rerail_batch,\n\
          \x20   ROBUFFER, uint32_t, s0, \"[slab]\", RWBUFFER, BM, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
          \x20   ROBUFFER, uint32_t, group_file, \"[2 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
          \x20   RWBUFFER, uint32_t, halos, \"[halos]\", RWBUFFER, uint32_t, ext_states, \"[ext_states]\",\n\
@@ -795,7 +795,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
     let device = ready()?;
-    let kernel = lane::kernel(&source, "tempo_batch", None);
+    let kernel = lane::kernel(&source, "rerail_batch", None);
     // Metal's pipeline reports its limits; elsewhere the device's.
     let (threads, simd, memory) = match lane::limits(&kernel) {
         Some(l) => (l.threads, l.simd, l.threadgroup_memory),
