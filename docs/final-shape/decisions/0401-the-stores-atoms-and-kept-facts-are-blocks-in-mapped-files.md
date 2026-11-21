@@ -323,7 +323,7 @@ Facts:
 9. (built, 0439, 0456) The virtual tables (`kept_entries`, `kept_facts`); F-R5. The frames retired: the engine writes and
    reads none, the store's frame machinery is gone, and an old store's frame tables are dropped when it is opened.
    The blocks are still larger than the frames were (0439, "Open").
-10. Measured on ep2 (the kept frames 0.064 s, the cross space's size).
+10. (measured, below) ep2: the kept reads 0.053 s (0.064 s the target), the cross space 160 MB, collection's roll-up.
 
 ## Measured
 
@@ -389,3 +389,36 @@ instructions (231.0 G with the frames), warm 0.1 s, the edit 1.7 s and 32.8 G (3
 edited tree cold 7.3 s. Its 589 outputs are equal (F-R2), with 48 findings. The kept blocks took 211 MB on disk, where
 the frames took 39 MB; merged with 0456's chain (dc113d27e), the same runs keep 38.9 MB, 31.6 MB after a cold run
 alone (0439, "Met").
+
+### Collection and the kept data (steps 8 and 10, 2026-11-21)
+
+ep2 on m3 with the profiling build (42990efb6d), at a fresh state, its rules renamed `.rerail` (PR #508's rename);
+`tmp/m/ep2r/q-collect.sh`. Every run's rows are h1's (1334, 0 differ).
+
+| run | instructions | CPU | wall | peak | kept facts | the cross space |
+|---|---|---|---|---|---|---|
+| c0 cold | 2,473.7 G | 178.6 s | 94.5 s | 1,727 MB | 88.9 MB, 12 files (the earlier sequence's cold run, below) | |
+| e-qq990, the first under `RERAIL_PREPARE=parts` (another preparation: cold again) | 2,165.0 G | 162.2 s | 82.6 s | 1,736 MB | 175.5 MB, 15 files | 173.2 MB |
+| e-qq991, one constant changed | 53.0 G | 4.39 s | 2.93 s | 429 MB | 162.3 MB, 13 files | 160.0 MB |
+| e-qq992, one constant changed | 52.4 G | 4.24 s | 2.92 s | 426 MB | 162.4 MB, 13 files | 160.1 MB |
+| w1 warm, deciding under a 1 MB history | 35.9 G | 2.66 s | 2.22 s | 378 MB | 162.3 MB, 11 files | 160.0 MB |
+
+The roll-up at e-qq991's decision took the spaces from 175.5 MB in 15 files to 162.3 MB in 13: the entries only
+dead programs' records named. w1's decision (manifests 10 to 7, live plans 34 to 27) rewrote two more spaces
+(116 KB). The cold program's 86 MB of cross entries stay; c0's phase manifests (its root's protected lanes) are
+still kept, and they name its plans. That was not checked entry by entry: the `sql` command takes no query of
+`kept_entries`.
+
+A warm run after collection derives nothing more: w2, profiled, has the same rows. Its kept reads: the cross
+session's kept part 0.013 s, the kept inputs bound where they lie 0.030 s, the kept statistics 0.010 s (0.053 s).
+
+Before 42990efb6d, a run collected nothing under the `logic` command. The command's analysis run (decision 0547)
+holds a collection lease until it finishes, and a run's own pass (`record_run`) found it held every time. 13 runs
+(the same cold run, then three edits and a warm run without `RERAIL_PREPARE=parts`) made no keep decision, and all
+41 plans stayed live. `rerail-engine gc` on that store then decided (41 plans to 33 live). The roll-up took it
+from 89.2 MB in 15 files to 88.9 MB in 12, the cross space from 86.9 MB to 86.6 MB. The warm run after took 33.0 G
+against 32.7 G before. Now the analysis run collects as it finishes (`collect_after`).
+
+Open: against the 2026-11-18 runs above, the cold run takes 2,474 G (1,436 G, `k0`), an edit 53 G (21.6 G, `a2`)
+and a warm run 35.9 G (21.7 G, `k2`), at the same rows. The binaries are three days and many merges apart, so the
+comparison is not clean.
