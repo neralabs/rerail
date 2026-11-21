@@ -48,7 +48,8 @@ typedef uint32_t ukl_mask_t;
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
 #define UKL_PRIVATE thread
-// A table at file scope (`UKL_TABLE const uint32_t t[2]={1u,2u};`) and a pointer into one (`UKL_TABLE_SPACE const T*`).
+// A table at file scope (`UKL_TABLE uint32_t t[2]={1u,2u};`: read-only on every backend, the macro its qualifiers) and a
+// pointer into one (`UKL_TABLE_SPACE const T*`).
 #define UKL_TABLE constant
 #define UKL_TABLE_SPACE constant
 

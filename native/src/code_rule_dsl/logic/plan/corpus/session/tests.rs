@@ -5,7 +5,7 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 /// The Python rule packs: `docs/rule-syntax/packs/python` above the crate that compiles these tests (the engine hosts
 /// them, `tools/cratify/test-hosts.tsv`; the logic crate's manifest sits two levels lower).
 fn packs() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
 }
 
 
@@ -853,7 +853,7 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let _sources = rr::profile_join_sources(&[&rule]);
     // The runs' profiles are the run's (decision 0441): one run under way here holds them for the report.
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    // The deferred joins are off by default (decision 0500): this test is of them.
+    // The deferred joins are off by default (decision 0488): this test is of them.
     let _deferred = profile::bind(corpus::preparation::DeferredJoins(Some("auto")));
     let run = |out: &std::path::Path| {
         corpus::run_read(&program, &root, out, "program", Binding::Cpu, 4096,

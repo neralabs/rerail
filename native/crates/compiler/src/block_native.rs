@@ -448,7 +448,14 @@ impl BlockNative {
         } else {
             Vec::new()
         };
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 splits otherwise (`Split::Tier2`): tier 2 reads its masks too, stored.
+        let split_read: Vec<u16> = r
+            .readers
+            .iter()
+            .filter(|rd| rd.split == crate::records::Split::Tier2 && !rd.parts.is_empty() && !rd.parts.iter().any(|p| unread.contains(&p.start)))
+            .flat_map(|rd| rd.arms.iter().flat_map(|a| [a.opener, a.closer].into_iter().chain(a.last)).chain(rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))))
+            .collect();
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o) && !split_read.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
@@ -478,9 +485,10 @@ impl BlockNative {
     }
 
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
-    /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
+    /// its token loop runs, a reader gives its token's kind and marks, and the walk a part's, so it
+    /// makes none of them. A token's own kind no reader gives (a `0x`, decision 0509) it reads.
     pub fn readers_tags(&self) -> Vec<usize> {
-        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().map(|t| usize::from(t.o)).collect())
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().filter(|t| !crate::records::own_retag(r, t)).map(|t| usize::from(t.o)).collect())
     }
 
     /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds

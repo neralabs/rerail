@@ -282,7 +282,7 @@ impl Sort {
     /// Where the sorted keys and payloads are after `bits`: in the input and `vals_a`, or in
     /// `keys_b` and `vals_b`.
     pub fn in_input(bits: u32) -> bool {
-        bits.div_ceil(8) % 2 == 0
+        bits.div_ceil(8).is_multiple_of(2)
     }
 }
 

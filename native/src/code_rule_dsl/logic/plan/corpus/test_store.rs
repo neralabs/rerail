@@ -285,11 +285,10 @@ pub(super) fn is_own(path: &Path) -> bool {
 
 /// Removes the directories of test processes that have exited.
 fn sweep_copies() {
-    let me = std::process::id();
     for entry in std::fs::read_dir(copies()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(pid) = name.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        if pid as u32 != me && crate::content_store::process_gone(pid) {
+        if crate::content_store::process_gone(pid) {
             let _ = std::fs::remove_dir_all(entry.path());
         }
     }
@@ -385,7 +384,9 @@ struct Lock(std::fs::File);
 impl Lock {
     fn take(path: &Path) -> Lock {
         let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path).expect("the template's lock");
-        file.lock().expect("the template's lock");
+        while let Err(error) = file.lock() {
+            assert_eq!(error.kind(), std::io::ErrorKind::Interrupted, "the template's lock: {error}");
+        }
         Lock(file)
     }
 }

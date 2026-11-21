@@ -111,19 +111,27 @@ struct Api {
     set_kernel_exec_info: Option<unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt>,
 }
 
+/// `clHostMemAllocINTEL`'s signature.
+type HostMemAlloc = unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr;
+/// `clMemBlockingFreeINTEL`'s signature.
+type MemBlockingFree = unsafe extern "C" fn(Ptr, Ptr) -> ClInt;
+/// `clSetKernelArgMemPointerINTEL`'s signature.
+type SetKernelArgMemPointer = unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt;
+/// `clEnqueueMemcpyINTEL`'s signature.
+type EnqueueMemcpy = unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt;
+
 /// `cl_intel_unified_shared_memory`'s entry points (the platform's extension functions): host allocations, which
 /// have an address kernels follow.
-#[allow(clippy::type_complexity)]
 struct Usm {
     /// `clHostMemAllocINTEL(context, properties, size, alignment, errcode)`.
-    host_mem_alloc: unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr,
+    host_mem_alloc: HostMemAlloc,
     /// `clMemBlockingFreeINTEL(context, ptr)`: frees once the device's work with it has completed.
-    mem_blocking_free: unsafe extern "C" fn(Ptr, Ptr) -> ClInt,
+    mem_blocking_free: MemBlockingFree,
     set_kernel_exec_info: unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt,
     /// `clSetKernelArgMemPointerINTEL(kernel, index, ptr)`: an argument that is a host allocation.
-    set_kernel_arg_mem_pointer: unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt,
+    set_kernel_arg_mem_pointer: SetKernelArgMemPointer,
     /// `clEnqueueMemcpyINTEL(queue, blocking, dst, src, size, waits, wait list, event)`.
-    enqueue_memcpy: unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_memcpy: EnqueueMemcpy,
 }
 
 /// What a kernel's argument or a copy names of a buffer: an OpenCL buffer, or a host allocation's address (`Usm`),
@@ -272,7 +280,7 @@ fn native_subgroups(a: &Api, device: Ptr) -> bool {
         return false;
     }
     let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
-    sizes.chunks_exact(8).any(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 32)
+    sizes.as_chunks::<8>().0.iter().any(|c| u64::from_ne_bytes(*c) == 32)
 }
 
 /// The device's host allocations, with `RERAIL_OPENCL_USM=1`, where it has Intel's unified shared memory with host
@@ -299,11 +307,11 @@ fn usm(a: &Api, platform: Ptr, device: Ptr) -> Option<Usm> {
     };
     // SAFETY: each is the extension's function of that name, with the signature its field declares.
     Some(Usm {
-        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, _>(f("clHostMemAllocINTEL")?) },
-        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, _>(f("clMemBlockingFreeINTEL")?) },
+        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, HostMemAlloc>(f("clHostMemAllocINTEL")?) },
+        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, MemBlockingFree>(f("clMemBlockingFreeINTEL")?) },
         set_kernel_exec_info: a.set_kernel_exec_info?,
-        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, _>(f("clSetKernelArgMemPointerINTEL")?) },
-        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, _>(f("clEnqueueMemcpyINTEL")?) },
+        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, SetKernelArgMemPointer>(f("clSetKernelArgMemPointerINTEL")?) },
+        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, EnqueueMemcpy>(f("clEnqueueMemcpyINTEL")?) },
     })
 }
 
@@ -527,10 +535,10 @@ unsafe impl Sync for Allocation {}
 impl Drop for Allocation {
     fn drop(&mut self) {
         // A queue's work keeps the buffers it uses until it has completed, so no kernel reads these pages now.
-        if let Ok(a) = api() {
-            if !self.mem.is_null() {
-                unsafe { (a.release_mem_object)(self.mem) };
-            }
+        if let Ok(a) = api()
+            && !self.mem.is_null()
+        {
+            unsafe { (a.release_mem_object)(self.mem) };
         }
         match &self.owner {
             Owner::Heap(layout) => unsafe { std::alloc::dealloc(self.ptr, *layout) },

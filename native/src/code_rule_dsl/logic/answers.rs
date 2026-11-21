@@ -172,13 +172,13 @@ impl RulePass for GateRules<'_> {
             let inside = in_comp(l);
             let agg = matches!(l.view(), Lit::Agg { .. });
             let at_bound = bound.clone();
-            if let Lit::Atom(a) = l.view() {
-                if !a.neg() {
-                    bound.extend(a.args().filter_map(|t| match t {
-                        TermRef::Var(s) => Some(s),
-                        _ => None,
-                    }));
-                }
+            if let Lit::Atom(a) = l.view()
+                && !a.neg()
+            {
+                bound.extend(a.args().filter_map(|t| match t {
+                    TermRef::Var(s) => Some(s),
+                    _ => None,
+                }));
             }
             let Some(a) = l.atom().filter(|a| inside && (a.neg() || agg) && !a.gated()) else {
                 outs.push(Out::Copy(i));

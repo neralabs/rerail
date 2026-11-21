@@ -162,7 +162,8 @@ fn build(sources: &[String]) -> Vec<Entry> {
         text.push_str(&format!("mod s{k} {{\n{src}\n}}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry_{k}(ctx: u64) -> u64 {{\n    unsafe {{ s{k}::tier2_entry(ctx) }}\n}}\n"));
     }
     std::fs::write(&rs, text).expect("writes");
-    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    // With its debug assertions: a walk's invariants the reserved writer leaves unchecked (`rust_stream::reserved`).
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-C", "debug-assertions", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
     let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
     // SAFETY: a library rustc just built from the sources above; kept loaded for the process.

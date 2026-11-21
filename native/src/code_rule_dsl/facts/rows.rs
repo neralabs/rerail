@@ -992,7 +992,7 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
-/// A column's blocked Bloom filter (decision 0500, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// A column's blocked Bloom filter (decision 0488, `rerail_blocks::bloom`) in a block of the run's relations: the
 /// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
 /// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
 pub struct FactsBloom {

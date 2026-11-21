@@ -101,7 +101,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
     Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
-    // A blocked Bloom filter's (decision 0500): the descriptor is a `bloom::Bloom`.
+    // A blocked Bloom filter's (decision 0488): the descriptor is a `bloom::Bloom`.
     Read { family: Family::Relation, name: "bloom_hash", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_hash },
     Read { family: Family::Relation, name: "bloom_mask", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_mask },
     Read { family: Family::Relation, name: "bloom_may", params: &[I64], ret: I32, hot: true, body: crate::relation::bloom_may },
@@ -217,7 +217,10 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
 }
 
 /// Where the reads' UKL is held: the library's `ukl/reads/`, which every kernel includes them from.
-pub const UKL_READS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/reads");
+#[cfg(test)]
+fn ukl_reads() -> String {
+    format!("{}/../ukl/lib/ukl/reads", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+}
 
 /// A generated header's first lines: what made it, and how to make it again.
 fn generated(function: &str, decision: &str, test: &str) -> String {
@@ -2540,7 +2543,7 @@ mod tests {
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {
-        let path = format!("{}/ids.h", super::UKL_READS);
+        let path = format!("{}/ids.h", super::ukl_reads());
         let source = super::ids_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2552,7 +2555,7 @@ mod tests {
     /// The relation's kernels' reads are these, as UKL (`<ukl/reads/relation.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_kernels_reads_are_these() {
-        let path = format!("{}/relation.h", super::UKL_READS);
+        let path = format!("{}/relation.h", super::ukl_reads());
         let source = super::relation_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2564,7 +2567,7 @@ mod tests {
     /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = format!("{}/view.h", super::UKL_READS);
+        let path = format!("{}/view.h", super::ukl_reads());
         let source = super::view_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();

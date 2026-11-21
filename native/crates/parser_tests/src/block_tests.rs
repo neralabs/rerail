@@ -978,7 +978,7 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
 pub(crate) fn repo_file(path: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -1031,7 +1031,7 @@ fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockN
     out
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
@@ -1045,7 +1045,7 @@ fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> 
     vec![("generated msl".to_owned(), got)]
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()

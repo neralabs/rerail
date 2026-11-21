@@ -1,6 +1,6 @@
-# 0501: P1 on the device: includes as rounds, the conditionals, and the cases refused until now
+# 0467: P1 on the device: includes as rounds, the conditionals, and the cases refused until now
 
-(Was 0467 on Go-C-and-C-support, 0487 on rr-align at roll-up 21; renumbered past 0499 at its merge into the hub.)
+(0467 on Go-C-and-C-support and here, 0487 on rr-align at roll-up 21, 0501 on investigate-bend-vs-datalog, renumbered past 0499 at its merge into that hub; 0467 again here at roll-up 26, Q445.)
 
 Status: accepted (2026-11-19); being built in the steps below. Builds 0436's evaluator passes 2
 to 4 ("includes", "definitions", "conditionals") and the step 0448 left open ("until P1's

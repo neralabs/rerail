@@ -1,6 +1,9 @@
 # Decision 0442: every non-constant static in the engine, by where it goes (check_no_global_state.py).
 # path::NAME<TAB>class<TAB>why; classes: stays, run, connection, shared, machine, review. Only shrinks.
 accel/src/ane/mod.rs::INSTANCE	stays	an id counter: append-only, the same meaning in every run
+accel/src/budget.rs::HEAP	stays	code registered at load (the engine installs its allocator's reader)
+accel/src/budget.rs::LATEST	stays	the process's written bytes' high mark since the last read: the process's own memory, counted as the OS counts it (as `mem.rs`'s RESERVED)
+accel/src/budget.rs::MOST	stays	the process's written bytes' high mark: the process's own memory, counted as the OS counts it (as `mem.rs`'s RESERVED)
 accel/src/cost_model.rs::NEXT	stays	an id counter: append-only (model versions no two machines share)
 accel/src/exec.rs::JOB_SCOPE	stays	the job scope a crate above registers once (code registered at load)
 accel/src/exec.rs::MADE	stays	the one block policy registered once, before the first block (decision 0342): code registered at load
@@ -8,6 +11,7 @@ accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the ma
 accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
+accel/src/gpu/shared.rs::LAYER	stays	the device in the device layer: one per process, as SHARED (code registered at load)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
@@ -164,6 +168,7 @@ native/src/code_rule_dsl/logic/rr.rs::CORE	stays	computed once from the engine's
 native/src/code_rule_dsl/logic/rr.rs::SHAPE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/images.rs::SHIPPED	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/rr/lower.rs::ENGINE	stays	computed once from the engine's own constants
 native/src/code_rule_dsl/logic/rr/lower.rs::WORLD	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/rr/lower/core.rs::DECLS	stays	computed once from the engine's own files
 native/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
@@ -286,9 +291,11 @@ native/src/code_rule_dsl/waves/relational/pipeline/readers.rs::IDENTIFIER	stays	
 native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
+native/src/code_rule_dsl/workspace/index.rs::SOURCE_CLASSIFIER	stays	code registered at load (a hook)
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
+native/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id counter: append-only
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
 native/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)

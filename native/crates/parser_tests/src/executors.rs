@@ -127,7 +127,7 @@ impl<'a> Executors<'a> {
         keep("device forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
     }
 
-    /// No device executors but on a Mac.
+    /// No device executors off the device layer's targets.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn device(&self, _bytes: &[u8], _out: &mut Runs, _skipped: &mut Vec<String>) {}
 }

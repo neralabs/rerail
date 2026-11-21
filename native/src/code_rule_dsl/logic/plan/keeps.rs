@@ -808,8 +808,8 @@ pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program
     factors_without(v, r, None)
 }
 
-/// `factors_of` rule `r` without its literal `skip` (a requests guard the split leaves out, decision 0500): the parts
-/// by the rule's own places.
+/// `factors_of` over rule `r`'s body without its literal `skip` (a request that guards the rule, which names both
+/// halves of its head): the parts' literals by their places in the whole body.
 pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
     let places: Vec<usize> = (0..r.body().count()).filter(|&i| Some(i) != skip).collect();
@@ -827,7 +827,8 @@ pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::pr
     let vars: Vec<super::body::VarSet> = lits.iter().map(|&l| super::body::lit_vars(l)).collect();
     let numbered = Numbered::of(head.iter().map(name), vars.iter().map(|vs| vs.iter().map(name)));
     let (key, parts) = factor_parts(&numbered, &positive)?;
-    Some((numbered.names[key].to_owned(), parts.into_iter().map(|p| p.into_iter().map(|i| places[i]).collect()).collect()))
+    let parts = parts.into_iter().map(|p| p.into_iter().map(|i| places[i]).collect()).collect();
+    Some((numbered.names[key].to_owned(), parts))
 }
 
 /// A body's variables for `factor_parts`, numbered in the order of their names (so a key tried in number order is

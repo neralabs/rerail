@@ -6,8 +6,8 @@
 //
 // ```text
 // # the observer states                       the key                              the result
-// observer__source_file("a.py", "a",          doc_key("a.py", "9f2c…", "python",   doc_tape("a.py", t)
-//                       "python", "9f2c…").           "tape-1").                   (t: the loaded document's tape)
+// observer__source_file("a.py", "a",          doc_key("a.py", "9f2c…", "python", …, doc_tape("a.py", t)
+//                       "python", "9f2c…").           "tape-2").                   (t: the loaded document's tape)
 // ```
 //
 // The key is what decides whether a tape is still right: the file's content, its grammar and the tape's version.
@@ -20,6 +20,7 @@
 // rules: its key names the resolved file's content (`file_digest`), and the result is the loaded document's tape.
 
 #include "core.rerail"
+#include "source-language.rerail"
 #include "python/modules.rerail"
 #include "c/includes.rerail"
 #include "c/compile-commands.rerail"
@@ -30,11 +31,14 @@
 // The observer's facts (decision 0104, rule 1): each source file of the run's tree, its module, its grammar (by its
 // name) and its content's SHA-256, hex. Handed to this phase as an earlier phase's exports are: inputs of the run.
 .decl observer__source_file(p: symbol, m: symbol, g: symbol, c: symbol)
+.decl observer__source_path(path: symbol, loaded_path: symbol)
 
 // ---- the run's own files ---------------------------------------------------------------------------------------
 // The key.
-.decl doc_key(p: symbol, c: symbol, g: symbol, v: symbol)
-doc_key(p, c, g, "tape-1") :- observer__source_file(p, _, g, c).
+source_language_request(p) :- observer__source_file(p, _, _, _).
+.decl doc_key(p: symbol, c: symbol, g: symbol, parser: symbol, format: number, v: symbol)
+doc_key(p, c, g, parser, format, "tape-2") :-
+    observer__source_file(p, _, g, c), source_language(p, g), source_tape_version(parser, format).
 
 // Each file's module, as the observer names it. (Derived, so that a document's own rules join it, not the observer's
 // rows: those rows are the run's inputs, and each file's memo entry would be taken under all of them.)
@@ -42,34 +46,39 @@ doc_key(p, c, g, "tape-1") :- observer__source_file(p, _, g, c).
 doc_module(p, m) :- observer__source_file(p, m, _, _).
 
 // Each key's file, asked for as a document named by its module: `loaded` gives it by its canonical path.
-load(p, m, g) :- doc_key(p, _, g, _), doc_module(p, m).
+load(p, m, g) :- doc_key(p, _, g, _, _, _), doc_module(p, m).
 
 // A loaded file of the run's own tree is the workspace's module: an import of it loads nothing.
 py_own(m) :- doc_module(_, m).
 
 // The result: the loaded document's tape.
 .decl doc_tape(p: symbol, t: tape)
-doc_tape(p, t) :- doc_key(p, _, g, _), doc_module(p, m), loaded(f, m, g), doc(d, f, m), tape_of(d, t).
+doc_tape(p, t) :-
+    doc_key(p, _, g, _, _, _), doc_module(p, m), observer__source_path(p, f),
+    loaded(f, m, g), doc(d, f, m), tape_of(d, t).
 .cache doc_tape by doc_key
 
 // What a later phase takes: each source file that is a document, with its grammar and content.
 .decl document(p: symbol, g: symbol, c: symbol)
-document(p, g, c) :- doc_key(p, c, g, _), doc_tape(p, _).
+document(p, g, c) :- doc_key(p, c, g, _, _, _), doc_tape(p, _).
 
 // ---- the libraries the imports reach ---------------------------------------------------------------------------
 // The key: the file module q resolves to, by its content.
-.decl library_key(q: symbol, f: symbol, c: symbol, v: symbol)
-library_key(q, f, c, "tape-1") :- py_resolves(q, f, _), file_digest(f, c).
+.decl library_key(q: symbol, f: symbol, c: symbol, parser: symbol, format: number, v: symbol)
+library_key(q, f, c, parser, format, "tape-2") :-
+    py_resolves(q, f, _), file_digest(f, c), source_tape_version(parser, format).
 
 // The result: the tape of the document its load gave (python/modules.rerail asks for it: `load(f, q, "python")`).
-.decl library_tape(q: symbol, t: tape)
-library_tape(q, t) :- library_key(q, _, _, _), loaded(f, q, "python"), doc(d, f, q), tape_of(d, t).
+// `loaded` names that document by its canonical path, not by `f` as the resolution reached it (a setting's
+// directory, `../ts`, is relative to the root): it is joined by its module.
+.decl library_tape(q: symbol, f: symbol, t: tape)
+library_tape(q, f, t) :- library_key(q, f, _, _, _, _), loaded(l, q, "python"), doc(d, l, q), tape_of(d, t).
 .cache library_tape by library_key
 
 // What a later phase that reads the libraries takes as its documents: each library document, by its canonical path,
 // with its module, grammar and content.
 .decl library(p: symbol, m: symbol, g: symbol, c: symbol)
-library(f, q, "python", c) :- library_key(q, _, c, _), library_tape(q, _), loaded(f, q, "python").
+library(l, q, "python", c) :- library_key(q, f, c, _, _, _), library_tape(q, f, _), loaded(l, q, "python").
 
 // ---- C's and C++'s headers (decision 0327) ---------------------------------------------------------------------
 // The files the run's translation units include, to the closure's fixed point (c/includes.rerail: every branch taken,

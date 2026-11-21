@@ -222,7 +222,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
                 interp.push(p.display().to_string());
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            if on_device(&c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
+            if on_device(c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
                 metal.push(p.display().to_string());
             }
             match cl {
@@ -280,8 +280,9 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if let Some(m) = on_device(&c, &[src.as_bytes()], "it") {
+        if let Some(m) = on_device(c, &[src.as_bytes()], "it") {
             assert_eq!(m[0], Some(got), "Metal");
         }
     }
 }
+

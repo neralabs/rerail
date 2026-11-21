@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
 }
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1117,7 +1117,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1656,7 +1656,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rename, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -137,6 +137,66 @@ async function edit(auditor: CheckoutCodeRuleRouter, sessionId: string, revision
 }
 
 describe("CheckoutCodeRuleRouter", () => {
+  it("changes a nested boundary when its Git directory is moved and restored during a watch", async () => {
+    const root = await temporaryRoot(), databasePath = join(root, "rerail.sqlite");
+    const parent = await repository(join(root, "parent"));
+    const nested = await repository(join(parent, "inner"));
+    const other = join(parent, "unregistered");
+    await mkdir(other);
+    const db = openRerailDatabase(databasePath);
+    try {
+      recordCheckout(db, parent);
+      recordCheckout(db, nested);
+    } finally { db.$client.close(); }
+    const auditor = router(parent, databasePath, recordingAudits().recorder);
+    // Each lookup after a point (`refreshOwners`, a tool call's start and result): the disk as it was then.
+    const sourceRoot = (path: string) => { auditor.refreshOwners(); return auditor.sourceRoot(path); };
+    const file = "inner/api/a.py";
+    expect(sourceRoot(file)).toBe(nested);
+    expect(sourceRoot("unregistered/api/a.py")).toBe(parent);
+    await rename(join(nested, ".git"), join(root, "saved.git"));
+    // Until the next point no change is taken.
+    expect(auditor.sourceRoot(file)).toBe(nested);
+    expect(sourceRoot(file)).toBe(parent);
+    await repository(other);
+    expect(sourceRoot("unregistered/api/a.py")).toBe(parent);
+    await rename(join(root, "saved.git"), join(nested, ".git"));
+    expect(sourceRoot(file)).toBe(nested);
+  });
+
+  it("routes an unregistered submodule from the current gitlink and gitmodules path during a watch", async () => {
+    const root = await temporaryRoot(), databasePath = join(root, "rerail.sqlite");
+    const parent = await repository(join(root, "parent"));
+    const sub = await repository(join(parent, "vendor", "sub"));
+    const file = "vendor/sub/api/a.py";
+    const auditor = router(parent, databasePath, recordingAudits().recorder);
+    // Each lookup after a point (`refreshOwners`): the gitlink and `.gitmodules` as they were then.
+    const sourceRoot = (path: string) => { auditor.refreshOwners(); return auditor.sourceRoot(path); };
+    const configure = (path: string) => git(parent, "config", "--file", ".gitmodules", "submodule.fixture.path", path);
+    expect(sourceRoot(file)).toBe(parent);
+    configure("vendor/sub");
+    expect(sourceRoot(file)).toBe(parent);
+    git(parent, "add", "--", "vendor/sub");
+    expect(sourceRoot(file)).toBe(sub);
+    configure("vendor");
+    expect(sourceRoot(file)).toBe(parent);
+    configure("vendor/sub");
+    expect(sourceRoot(file)).toBe(sub);
+    await rm(join(parent, ".gitmodules"));
+    expect(sourceRoot(file)).toBe(parent);
+    configure("vendor/sub");
+    git(parent, "update-index", "--split-index");
+    expect(sourceRoot(file)).toBe(sub);
+    const shared = execFileSync("git", ["rev-parse", "--shared-index-path"], { cwd: parent, encoding: "utf8" }).trim();
+    expect(shared).not.toBe("");
+    await rename(resolve(parent, shared), join(root, "saved-index"));
+    expect(sourceRoot(file)).toBe(parent);
+    await rename(join(root, "saved-index"), resolve(parent, shared));
+    expect(sourceRoot(file)).toBe(sub);
+    git(parent, "update-index", "--force-remove", "--", "vendor/sub");
+    expect(sourceRoot(file)).toBe(parent);
+  });
+
   it("interrupts the session's audits when it closes, unless it is told they belong to a session that replaced it", async () => {
     const root = await temporaryRoot();
     const databasePath = join(root, "rerail.sqlite");

@@ -208,14 +208,15 @@ mod tests {
         let untouched = b.used();
         assert!(untouched < 1 << 20, "a 64 MB reservation counts {untouched} bytes untouched");
         b.try_alloc_chunk(8 << 20, 1 << 14).unwrap();
-        let after = b.used();
-        assert!(after >= 8 << 20 && after < 9 << 20, "8 MB written counts {after} bytes");
+        // Less what the free list holds: the bytes skipped to align the chunk (decision 0342, amended by 0494 step 6).
+        let after = b.used() - b.free_bytes();
+        assert!((8 << 20..9 << 20).contains(&after), "8 MB written counts {after} bytes");
         assert!(written().host_blocks >= after, "the block is in the count");
         // A chunk given back (a dead relation's) is not counted (decision 0445).
         let at = b.try_alloc_chunk(4 << 20, 1 << 14).unwrap();
         b.free_chunk(at, 4 << 20);
         let counted = b.used() - b.free_bytes();
-        assert!(counted >= 8 << 20 && counted < 9 << 20, "a chunk given back counts: {counted} bytes");
+        assert!((8 << 20..9 << 20).contains(&counted), "a chunk given back counts: {counted} bytes");
         assert!(written().host_blocks >= counted, "the block is in the count, less its free list");
         assert!(limit() == memory() + metal());
         drop(b);

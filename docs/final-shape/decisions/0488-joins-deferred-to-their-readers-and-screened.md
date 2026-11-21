@@ -1,7 +1,8 @@
-# 0500. Joins deferred to their readers' requests, and keyed probes screened by a Bloom filter
+# 0488. Joins deferred to their readers' requests, and keyed probes screened by a Bloom filter
 
-(Was 0477 on cost-classifier-metal-rf, Typing-support-final-shape and rr-align; renumbered past 0499 at its merge into
-the hub, where 0477 is the run's serial phases.)
+(0477 on cost-classifier-metal-rf, Typing-support-final-shape and rr-align, where 0477 is now the run's serial phases;
+renumbered 0488 here when roll-up 24 merged it (Q419), and 0500 on investigate-bend-vs-datalog, which roll-up 26
+merged (Q445).)
 
 Status: accepted (2026-11-19). Ported from the Release-debugging worktree's uncommitted work (its session of
 2026-11-17 to 2026-11-19), adapted to decision 0281's version path and decision 0442. The user asked for the port;
@@ -337,6 +338,10 @@ findings 463 `d067ec2ebf6f` in both.
   hash).
 - **Walks driven by a key** (the first step a probe): a screen there belongs to the caller's loop, the scan that
   drives the walks.
+- **The screen does not use the statistics' filters yet.** Where the build side's column has a `HeavyCol` filter,
+  the screen can take it, not build its own.
+- **The AMS counters (0096)** share one hash across columns, so two columns' counters estimate a join's size
+  (Σₖ L[k]·R[k]). They are not used yet.
 - **Join sizes through several atoms** (measured 2026-11-20, below): not built. Where several atoms share the
   variable, the heavy values price it (the third moment); counters would need a second sign family a column and
   would rarely tell. Where the variable is reached through another join, the fix would be counters of the bindings

@@ -1,15 +1,16 @@
-# 0502: The text in P1's iterations: `_Pragma` rows, and `__COUNTER__` in directives
+# 0485: The text in P1's iterations: `_Pragma` rows, and `__COUNTER__` in directives
 
-(Was 0475 on Go-C-and-C-support, 0488 on rr-align at roll-up 21; renumbered past 0499 at its merge into the hub.)
+(Was 0475 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0488 on rr-align
+at its roll-up 21, 0502 on investigate-bend-vs-datalog.)
 
 Status: accepted (the user, 2026-11-19: "please implement these two": "A `_Pragma` that changes
 macro state (`once`, `push_macro`, `pop_macro`, or one whose operand is a macro)", and
-"`__COUNTER__` inside a directive's line"; 0501 left both refused, and named the choice: "either
+"`__COUNTER__` inside a directive's line"; 0467 left both refused, and named the choice: "either
 the text pass joins those iterations for units that have one, or the refusal stays").
 
 ## Intro
 
-The preprocessor runs on the device in rounds (0501). In each round, P1's iterations decide the
+The preprocessor runs on the device in rounds (0467). In each round, P1's iterations decide the
 directives: the definitions' table, every `#if`, the groups, the includes. Then the text, the
 tokens between the directives, is expanded. The two cases here run the other way: the text
 changes what the directives see.
@@ -21,12 +22,12 @@ changes what the directives see.
   text's uses before it, and the text's uses after it count it.
 
 So the text's expansion is an input of the iterations, and the iterations' answer is an input of
-the text's expansion. Every dependency points backwards in the reading, as in 0501's iterations,
+the text's expansion. Every dependency points backwards in the reading, as in 0467's iterations,
 so iterating both to a common fixpoint gives the serial reading.
 
 ## Context
 
-- 0501 §6 refused both (`X_PRAGMA`, `X_COUNTER`) and left the choice open. The user chose to
+- 0467 §6 refused both (`X_PRAGMA`, `X_COUNTER`) and left the choice open. The user chose to
   build them.
 - The spike (`c_pp::stream::parallel`) already places a text `_Pragma`'s pushes, pops and `once`
   as rows by position (`pragma_events`), read by the next round's table. It refuses `_Pragma`
@@ -69,7 +70,7 @@ so iterating both to a common fixpoint gives the serial reading.
     `#pragma once`);
   - `push_macro ( "name" )` and `pop_macro ( "name" )`: a push or pop row, the name's key as
     `pp_pragma_act` keys a directive's (its string's bytes destringized). They join the
-    directives' rows in the table and its push and pop matching (0501 §3).
+    directives' rows in the table and its push and pop matching (0467 §3).
   - Any other pragma makes no row, and no `_Pragma` makes a token.
 - **The operand.** A `_Pragma` whose operand holds a name is expanded first, as the serial pass
   does (`expand_list`): the operand is an argument's list (scanned and flattened like a
@@ -85,7 +86,7 @@ so iterating both to a common fixpoint gives the serial reading.
 
 - Each use has a place in the reading:
   - in the text: its outermost invocation's `)` slot, then its order inside the invocation (the
-    chains' order, 0501 step 7c);
+    chains' order, 0467 step 7c);
   - in a directive's line: the directive's slot, then its outermost call's first token in the
     line, then its order inside the call.
   A text token and a directive never share a slot, so the places are one order.
@@ -95,7 +96,7 @@ so iterating both to a common fixpoint gives the serial reading.
   They read the text's places from the last text pass. The text pass reads the last iteration's
   lines' places. Two relations, the text's and the lines', each rewritten by its pass.
 - An arm after its chain's taken arm (the last iteration's) is not read: its uses count nothing.
-- The value is written into the use's digits, as in 0501 step 7c. `X_COUNTER` goes.
+- The value is written into the use's digits, as in 0467 step 7c. `X_COUNTER` goes.
 - **Refused (`X_COUNTER_SPELLED`): `#` or `##` of the value**, a macro's argument that expanded
   to `__COUNTER__` (the unique-name idiom `CAT(x, __COUNTER__)`, and an include's name made of
   it). The rank among an invocation's uses is known only once the queue has drained, after the
@@ -121,6 +122,6 @@ so iterating both to a common fixpoint gives the serial reading.
 
 ## Built
 
-- Commit "0475: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives" (0475 there, 0488 on rr-align, 0502 here).
+- Commit "0475: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives" (0475 there, 0485 here).
   Every test of R1–R5 passes under Relax. The corpus slices give 3,135 units equal to the serial
   pass, none refused, 2 launches a round.

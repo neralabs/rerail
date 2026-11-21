@@ -119,7 +119,7 @@ Each has its test before the code that meets it.
   granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
   Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
   and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
-  part's `kind`, a view of `node` the maintain mode derives (work queue Q382, Q287 on phased-facts, as before this decision).
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q421, Q287 on phased-facts, as before this decision).
 - **Not yet:** a document is not yet made when first read: the corpus batch makes every document (on the 50 files'
   edit 0.45 s, most of what the batch adds over the memo's base rows). A session (0077) still digests a base relation
   by its rows (`retain::kept_source`), holds no corpus batch from run to run, and keeps no base statistics (it counts

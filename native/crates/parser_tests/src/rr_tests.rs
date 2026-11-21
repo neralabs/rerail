@@ -493,7 +493,7 @@ fn rr_look() {
 fn rr_corpus() {
     let (name, source) = grammar().remove(0);
     let c = rerail_compiler::ladder::compile_step(&name, &source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {

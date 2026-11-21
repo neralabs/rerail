@@ -116,6 +116,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan.rs", "WALK_SALT", Call, "the walks' seeds' salt, set while one search repeats its walks (decision 0247)"),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
+    ("src/git_snapshot.rs", "REPOSITORY", Thread, "a worker-local gix handle keyed by view and pack epoch"),
     ("src/code_rule_dsl/logic/plan/corpus/maintain.rs", "BY_LEVELS", Thread, "counts of this thread's own runs, which a test reads beside others (decision 0204)"),
     ("src/code_rule_dsl/logic/plan/corpus/test_store.rs", "FILLING", Thread, "this thread fills the test store's template: its own runs take the switches without making it first"),
     ("src/reactor.rs", "KEPT", Outermost, "the reactor's session between its commands, taken by each command (decision 0204)"),

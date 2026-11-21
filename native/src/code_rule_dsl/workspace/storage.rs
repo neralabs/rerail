@@ -348,11 +348,15 @@ impl Drop for StorageMaintenance {
 pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
+    transient_store: Option<StdArc<ContentStore>>,
 }
 
 impl Drop for StorageRegistration {
     fn drop(&mut self) {
         self.maintenance.unregister(self.workspace_id);
+        if let Some(store) = &self.transient_store {
+            let _ = store.retire_workspace(self.workspace_id);
+        }
     }
 }
 
@@ -389,31 +393,30 @@ pub(super) fn unix_seconds() -> Result<i64> {
 pub fn storage_context_in(root: &str, store_path: std::path::PathBuf) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    match attach_storage(root, discovered, store_path, StdArc::default())? {
+    match attach_storage(root, discovered, store_path, StdArc::default(), false)? {
         Attached::Storage(context) => Ok(context),
-        Attached::Busy(reason) => Err(invalid(reason)),
+        Attached::Unavailable(reason) => Err(invalid(reason)),
     }
 }
 
 /// What a storage attach produced.
 pub(super) enum Attached {
     Storage(StorageContext),
-    /// Another writer held the store past the write deadline, so the workspace runs without
-    /// reuse: the store is a cache, and waiting on it costs time, never results. Says why.
-    Busy(String),
+    /// The store could not open or persist this workspace.
+    Unavailable(String),
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file, never holding files `secret_names` names; `Attached::Busy` when the store
-/// stays busy.
+/// explicit store file, never holding files `secret_names` names.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
     secret_names: StdArc<SecretNames>,
+    transient: bool,
 ) -> Result<Attached> {
     let busy = |during: &str| {
-        Attached::Busy(format!(
+        Attached::Unavailable(format!(
             "content store busy: another writer held it past the write deadline {during}"
         ))
     };
@@ -421,23 +424,39 @@ pub(super) fn attach_storage(
     // publication share it (`publish_snapshot` joins it).
     let _deadline = OperationDeadline::enter();
     let repository_prefix = repository_prefix(root, &discovered.worktree_root)?;
-    let (store, maintenance) = match shared_content_store(store_path) {
-        Ok(shared) => shared,
-        Err(StoreError::Busy) => return Ok(busy("while opening the store")),
-        Err(error) => return Err(invalid(error.to_string())),
+    let (store, maintenance) = if store_path == std::path::Path::new(":memory:") {
+        let store = match ContentStore::open_ephemeral() {
+            Ok(store) => store,
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
+        };
+        (StdArc::new(store), None)
+    } else {
+        match shared_content_store(store_path) {
+            Ok((store, maintenance)) => (store, Some(maintenance)),
+            Err(StoreError::Busy) => return Ok(busy("while opening the store")),
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
+        }
     };
-    let owner = format!(
+    let mut owner = format!(
         "rerail:{}:{}",
         std::process::id(),
         discovered.worktree_root.to_string_lossy()
     );
+    let registered = if transient {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let invocation = format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+        owner.push_str(&invocation);
+        discovered.worktree_root.join("rerail-invocations").join(invocation)
+    } else {
+        discovered.worktree_root.clone()
+    };
     let published = discovered.publish_snapshot(
         &store,
         1,
         grammar_set(),
         i64::from(tape::formats::stored_version()),
         &WorkspaceRegistration {
-            root: discovered.worktree_root.to_string_lossy().as_ref(),
+            root: registered.to_string_lossy().as_ref(),
             repository: discovered.common_directory.to_string_lossy().as_ref(),
             owner: &owner,
             generation: 1,
@@ -448,15 +467,18 @@ pub(super) fn attach_storage(
         Ok(published) => published,
         Err(StoreError::Busy) => return Ok(busy("while publishing the Git snapshot")),
         Err(error) => {
-            return Err(invalid(format!(
+            return Ok(Attached::Unavailable(format!(
                 "snapshot publication failed: cannot persist Git snapshot: {error}"
             )));
         }
     };
-    maintenance.register(workspace_id, &owner);
-    let registration = StdArc::new(StorageRegistration {
-        maintenance,
-        workspace_id,
+    let registration = maintenance.map(|maintenance| {
+        maintenance.register(workspace_id, &owner);
+        StdArc::new(StorageRegistration {
+            maintenance,
+            workspace_id,
+            transient_store: transient.then(|| StdArc::clone(&store)),
+        })
     });
     Ok(Attached::Storage(StorageContext {
         store,
@@ -466,13 +488,13 @@ pub(super) fn attach_storage(
         snapshot_id: snapshot,
         owner,
         secret_names,
-        _maintenance: Some(registration),
+        _maintenance: registration,
     }))
 }
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = dunce::canonicalize(std::path::Path::new(root))
+    let root = git_workspace::snapshot::canonicalize(root)
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

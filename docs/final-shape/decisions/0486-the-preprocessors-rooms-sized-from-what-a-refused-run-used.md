@@ -1,8 +1,9 @@
-# 0503: the preprocessor's rooms sized from what a refused run used
+# 0486: the preprocessor's rooms sized from what a refused run used
 
-(Was 0478 on Go-C-and-C-support, 0489 on rr-align at roll-up 21; renumbered past 0499 at its merge into the hub.)
+(Was 0478 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0489 on rr-align
+at its roll-up 21, 0503 on investigate-bend-vs-datalog.)
 
-The user, 2026-11-19, after 0502: "test on boost::preprocessor and ensure that we are accurate on
+The user, 2026-11-19, after 0485: "test on boost::preprocessor and ensure that we are accurate on
 those files. Also profile on them and address any inefficiencies."
 
 ## Intro
@@ -59,7 +60,7 @@ On Boost.Preprocessor's tests that does not work:
    Before, every round climbed the definitions' rungs and P1's rooms again from the first: 3
    Boost `control` units took 82 runs for their rounds and 9 for their expansions; now 41 and 6.
 
-7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0502 a run
+7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0485 a run
    that makes no requests has done the text pass inside P1's iterations: it is the expansion.
    Each unit's rounds ran alone (`lookups`), and then the batch's run (`expand_many`) did every
    unit's last round again. Now `rounds::run_many` runs a batch's units' rounds together:

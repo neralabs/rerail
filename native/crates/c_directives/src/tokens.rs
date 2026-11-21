@@ -118,10 +118,9 @@ mod tests {
             Ok(m) => Some(m),
             Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
             Err(_) => None,
-        } {
-            if m[0] != image {
-                return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
-            }
+        } && m[0] != image
+        {
+            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
         }
         let Some(image) = image else { return Ok(false) };
         let (got, want) = (read(&image, src)?, lean(src, cpp));

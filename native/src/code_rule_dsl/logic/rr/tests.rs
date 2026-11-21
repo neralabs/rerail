@@ -236,7 +236,7 @@ Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
 }
 
 fn repo() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
 }
 
 fn rule_syntax() -> PathBuf {
@@ -634,6 +634,41 @@ fn a_negated_match_reads_its_named_groups_as_groups() {
     assert!(text.contains("(?:.*)") && !text.contains("(?<z>"), "{text}");
 }
 
+#[test]
+fn bound_family_keeps_its_contract_when_printed_and_rejects_incompatible_keys() {
+    let source = r#"
+.decl selected(r: symbol, k: number)
+.decl ask(r: symbol, k: number) extensible
+.decl complete(r: symbol, k: number)
+.decl member(r: symbol, k: number, value: symbol)
+.pragma "bound-family" "ask complete member"
+.decl empty(r: symbol, k: number)
+empty(r,k) :- selected(r,k), !member(r,k,_).
+.output empty
+"#;
+    // The reader asks for its keys (`ask`, from `selected`), and its negation reads `complete` at them.
+    let check = |p: &Arc<Version>| {
+        let demand = rules_of(p, |h| h == "ask");
+        assert_eq!(demand.len(), 1, "{:?}", shown(p, |h| h == "ask"));
+        let first = demand[0].body().next().and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned());
+        assert_eq!(first.as_deref(), Some("selected"), "{:?}", shown(p, |h| h == "ask"));
+        let query = rules_of(p, |h| h == "empty");
+        let complete = query[0].body().filter(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && p.rel_name(a.rel()) == "complete")).count();
+        assert_eq!(complete, 1, "{:?}", shown(p, |h| h == "empty"));
+    };
+    let program = parse(source).unwrap();
+    check(&program);
+    check(&parse(&print_version(&program).unwrap()).unwrap());
+    for (from, to, why) in [
+        ("ask complete member", "ask complete absent", "undeclared relation absent"),
+        ("complete(r: symbol, k: number)", "complete(r: symbol)", "needs the key columns"),
+        ("member(r: symbol, k: number", "member(r: symbol, k: symbol", "needs the key columns"),
+    ] {
+        let error = parse(&source.replace(from, to)).unwrap_err().to_string();
+        assert!(error.contains(why), "{error}");
+    }
+}
+
 /// What is not lowered yet says so by name. A `must` head needs its relation declared `must, may`; a `.violation`
 /// at a span or loc whose values can be spans the engine does not make lowers (such a row has no `docof`, and so no
 /// finding).
@@ -780,11 +815,13 @@ ks(1, 20). ks(1, 10). ks(2, 30).
 lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
 .decl hi(k: number, v: number)
 hi(k, v) :- kv(k, _), v = max x : { kv(k, x) }.
+.decl one(k: number)
+one(k) :- ks(k, _), s = min t : { ks(k, t) }, ks(k, s).
 .decl q(p: symbol, k: number)
 q("a.b.c", 1). q("a.b.c", 2). q("a", 3).
 .decl up(p: symbol, k: number, u: symbol)
 up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
-.output lo, hi, up
+.output lo, hi, one, up
 "#;
     // (A min or max over symbols is refused: `front::tests::named_errors`.)
     let out = dir.join("out");
@@ -792,6 +829,7 @@ up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     assert_eq!(read("lo"), [["1", "3"], ["2", "4"]]);
     assert_eq!(read("hi"), [["1", "9"], ["2", "4"]]);
+    assert_eq!(read("one"), [["1"], ["2"]]);
     assert_eq!(read("up"), [["a", "3", ""], ["a.b.c", "1", "a.b"], ["a.b.c", "2", "a"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -871,7 +909,7 @@ fn difference(a: &Version, b: &Version) -> Option<String> {
 /// The authored `.rdl` programs, as (name, text): T's, the pinned goldens, the data-layer programs (each after its
 /// prelude) and the serverplan-quality program.
 fn authored() -> Vec<(String, String, PathBuf)> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let src = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     let mut out = Vec::new();
     for dir in ["typing/programs", "logic/plan/golden/programs"] {
         let mut found = Vec::new();
@@ -944,7 +982,7 @@ fn rdl_programs_translate_to_the_same_program() {
 /// read back as themselves.
 #[test]
 fn rr_programs_print_as_themselves() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
+    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
     let prelude = std::fs::read_to_string(dir.join("prelude.rerail")).unwrap();
     let mut found = Vec::new();
     files(&dir, "rerail", &mut found);
@@ -2597,7 +2635,7 @@ fn the_guests_setting_is_refused() {
 /// Decision 0523 R3, R4: no library rule reads `guest_policy("library", …)`, and no pack rule says `.guests`.
 #[test]
 fn no_library_or_pack_rule_reads_the_guests_setting() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = rerail_store::source_tree::native().join("../docs/rule-syntax");
     let (mut found, mut files): (Vec<String>, usize) = (Vec::new(), 0);
     let mut todo = vec![root.join("lib"), root.join("packs")];
     while let Some(dir) = todo.pop() {
@@ -3525,6 +3563,61 @@ Call(c) :- kind(c, "call").
     ], "{outcome:?}");
 }
 
+/// A file's tests run again add no corpus root to the store: each test runs in the same directory every run
+/// (`testing::in_work`), so the store's root for it, and the frames kept by its path, are the last run's. A directory
+/// of each run's own made the store a root and its frames more on every run of the same tests.
+#[test]
+fn running_a_files_tests_again_adds_no_root_to_the_store() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-again");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, r#".policy "t:again" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test one
+    .fixture "a.py" ```
+        f()
+        ```
+    .expect C1 at "a.py":1
+.end
+"#).unwrap();
+    let roots = || -> std::collections::BTreeSet<String> {
+        let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
+        let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
+        st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+    };
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let report = super::testing::report(std::slice::from_ref(&file), None).unwrap();
+        assert_eq!(report[0]["status"], "pass", "{report}");
+        seen.push(roots());
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(!seen[0].is_empty(), "the test's run recorded its root");
+    assert_eq!(seen[1], seen[0], "the store's corpus roots after the first run, then after the second");
+}
+
+/// A test's directory is the same every run over one store, so the store keeps one root for it; with no store
+/// (`RERAIL_TAPE_CACHE=off`) nothing is kept, and each run has a directory of its own, so two processes at once never
+/// share one.
+#[test]
+fn a_tests_directory_is_the_stores_or_the_runs_own() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rerail");
+    std::fs::write(&file, "").unwrap();
+    let store = dir.join("store.sqlite");
+    let at = |store: Option<&std::path::Path>| super::testing::in_work(store, &file, "t", |work| work.to_owned()).unwrap();
+    let (first, second) = (at(Some(&store)), at(Some(&store)));
+    let (own, other) = (at(None), at(None));
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert_eq!(first, second, "over one store, the same directory");
+    assert_ne!(own, other, "with no store, each run's own");
+}
+
 /// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
 #[test]
 fn test_blocks_parse_only_whole() {
@@ -3767,7 +3860,7 @@ fn converted_cases_are_tests() {
 /// program it lowers to with each candidate stratified whole.
 #[test]
 fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     paths.sort();
     let (mut read, mut demanded) = (0, 0);
@@ -3792,7 +3885,7 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
 /// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
 /// writes both prints of each that differs.
 fn lowers_back(dirs: &[&str], k: usize, n: usize) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
     let mut paths: Vec<_> = dirs
         .iter()
         .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
@@ -3887,7 +3980,7 @@ fn lowering_is_idempotent_other_packs() {
 /// each group within the time a test may take), `preparation::Prune` of the program lowered from the rest is the program lowered whole, pruned: the same rules (each helper of the lowering's, numbered as it is met,
 /// as many), natives and outputs, the same inputs read, and the same declarations of the relations those rules name.
 fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usize)) -> usize {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
     let mut pending: Vec<PathBuf> = dirs.iter().map(|d| manifest.join(d)).collect();
     let mut paths = Vec::new();
     while let Some(dir) = pending.pop() {
@@ -5113,13 +5206,13 @@ fn a_rule_files_json_objects_are_json_programs() {
 fn the_regex_grammar_reads_the_rust_dialect() {
     use crate::code_rule_dsl::literal::{PNode, regex};
     use crate::code_rule_dsl::value::Value;
-    fn show(n: &PNode, text: &str) -> String {
+    fn show(n: &PNode) -> String {
         let kind = regex::GRAMMAR.kinds()[usize::from(n.kind) - 1];
         let value = match &n.value {
             Some(Value::Str(v)) => format!(":{v}"),
             _ => String::new(),
         };
-        let children: Vec<String> = n.children.iter().map(|c| show(c, text)).collect();
+        let children: Vec<String> = n.children.iter().map(show).collect();
         if children.is_empty() { format!("{kind}{value}") } else { format!("{kind}{value}({})", children.join(" ")) }
     }
     let cases = [
@@ -5134,7 +5227,7 @@ fn the_regex_grammar_reads_the_rust_dialect() {
         ("a)", "regex(error:a `)` closes no group)"),
     ];
     for (text, want) in cases {
-        assert_eq!(show(&regex::tree(regex::GRAMMAR, text), text), want, "{text}");
+        assert_eq!(show(&regex::tree(regex::GRAMMAR, text)), want, "{text}");
     }
     // The spans are the text's bytes.
     let root = regex::tree(regex::GRAMMAR, "(?<=a)b");
@@ -5149,7 +5242,7 @@ fn every_rule_files_regex_reads_in_the_regex_grammar() {
     fn has(n: &PNode, kind: &str) -> bool {
         regex::GRAMMAR.kinds()[usize::from(n.kind) - 1] == kind || n.children.iter().any(|c| has(c, kind))
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = rerail_store::source_tree::native().join("..");
     let (mut read, mut bad) = (0usize, Vec::new());
     let mut todo = vec![root.join("docs/rule-syntax"), root.join("packs")];
     while let Some(dir) = todo.pop() {

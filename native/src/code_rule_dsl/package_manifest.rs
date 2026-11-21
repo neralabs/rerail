@@ -771,6 +771,16 @@ pub fn manifest_in<'m>(
 /// one: a regular file (never a symlink) of at most 1 MiB; any other is `unreadable`.
 fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
     let path = directory.join("package.json");
+    if crate::git_workspace::snapshot::contains(&path) {
+        return match crate::git_workspace::snapshot::read_bounded(&path, MAX_MANIFEST_BYTES as u64) {
+            Ok(bytes) => Some(Manifest::parse(folder, &bytes).with_ignore_files(
+                ignore_file_on_disk(directory, NPMIGNORE),
+                ignore_file_on_disk(directory, GITIGNORE),
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => Some(Manifest::unreadable(folder)),
+        };
+    }
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -795,6 +805,10 @@ fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
 /// replaced; `None` for any other, or where it cannot be read.
 fn ignore_file_on_disk(directory: &Path, name: &str) -> Option<String> {
     let path = directory.join(name);
+    if crate::git_workspace::snapshot::contains(&path) {
+        let bytes = crate::git_workspace::snapshot::read_bounded(&path, MAX_MANIFEST_BYTES as u64).ok()?;
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
     let metadata = std::fs::symlink_metadata(&path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
         return None;
@@ -821,7 +835,7 @@ impl Manifests {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         Self {
-            canonical_root: dunce::canonicalize(&root).ok(),
+            canonical_root: crate::git_workspace::snapshot::canonicalize(&root).ok(),
             root,
             server_graph: false,
             directories: HashMap::new(),
@@ -861,7 +875,7 @@ impl Manifests {
             }
             unknown.push(ancestor);
             let contained = self.canonical_root.as_ref().is_some_and(|root| {
-                dunce::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
+                crate::git_workspace::snapshot::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
             });
             if let Some(manifest) = contained
                 .then(|| manifest_on_disk(ancestor, self.folder(ancestor)))

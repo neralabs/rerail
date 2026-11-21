@@ -453,7 +453,7 @@ fn no_tree_program_comes_back() {
             }
         }
     }
-    let native = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     let mut all = Vec::new();
     files(&native.join("src"), &mut all);
     for krate in std::fs::read_dir(native.join("crates")).unwrap() {
@@ -480,7 +480,7 @@ fn no_tree_program_comes_back() {
     let mut found = Vec::new();
     for path in &all {
         let text = std::fs::read_to_string(path).unwrap();
-        let rel = path.strip_prefix(native).unwrap_or(path).display().to_string();
+        let rel = path.strip_prefix(&native).unwrap_or(path).display().to_string();
         let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
         let lowering = rel.contains("logic/rr/lower");
         let image = rel.contains("logic/program_image");

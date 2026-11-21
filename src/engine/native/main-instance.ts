@@ -3,6 +3,7 @@ import { replaceFileSync } from "../file-replace.js";
 import { join, resolve } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
 import { isInMainContentStoreDirectory, mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { keepFolderPrivate } from "../storage/private-files.js";
 
 /**
  * At most one main Rerail instance runs on a machine: the main daemon, which alone opens the machine-wide
@@ -104,7 +105,8 @@ export function mainInstanceLockHeld(directory: string): boolean | undefined {
  */
 export function acquireMainInstance(build: MainRerailBuild, directory: string = mainContentStoreDirectory()): MainInstanceLease {
   if (held !== undefined) throw new Error(`This process is already the main Rerail instance (${held.directory})`);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const made = mkdirSync(directory, { recursive: true, mode: 0o700 }) !== undefined;
+  if (resolve(directory) === resolve(mainContentStoreDirectory())) keepFolderPrivate(directory, { made });
   const lock = loadNativeBinding().tryLockExclusive(join(directory, MAIN_INSTANCE_LOCK_FILE));
   if (lock === null) throw new MainInstanceConflictError(directory, readHolder(directory));
   const holder: MainInstanceHolder = {
@@ -141,9 +143,12 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
  * instance. Dev builds never take the lock, so this also keeps them, and any short-lived main process, off the
  * main store whatever `RERAIL_CONTENT_STORE_PATH` says; they reach it only through the main daemon.
  */
+export function canOpenContentStore(storePath: string): boolean {
+  return !isInMainContentStoreDirectory(storePath) || (held !== undefined && resolve(held.directory) === resolve(mainContentStoreDirectory()));
+}
+
 export function assertContentStoreOwner(storePath: string): void {
-  if (!isInMainContentStoreDirectory(storePath)) return;
-  if (held !== undefined && resolve(held.directory) === resolve(mainContentStoreDirectory())) return;
+  if (canOpenContentStore(storePath)) return;
   throw new Error(
     `The machine-wide Rerail content store ${storePath} belongs to the main Rerail daemon, and process ${process.pid} is not it. ` +
       "Main harness processes evaluate policies through the daemon; dev builds use their checkout's own store.",

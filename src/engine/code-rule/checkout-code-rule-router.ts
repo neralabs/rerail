@@ -16,6 +16,8 @@ import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js
 import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
+import type { NativeAnalysisScopeRun, NativeGitRevisionSource } from "../native/native.js";
+import { acquireDirectoryAnalysisRegistration, analysisScopeHome } from "../native/analysis-scope.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -51,6 +53,9 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly followGitignore?: boolean;
   /** The shell the session's coding agent runs commands in, which every lane's steers are written for (`steerShell`). */
   readonly steerShell?: SteerShell | undefined;
+  readonly revisionSource?: NativeGitRevisionSource;
+  readonly analysisStore?: string;
+  readonly analysisRun?: NativeAnalysisScopeRun;
 }
 
 interface Lane {
@@ -126,18 +131,21 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       }
       this.#lanes.delete(lane.root);
       lane.enforcer.interrupt();
-      void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
+      void lane.opening.catch(() => undefined).then(async () => {
+        await lane.enforcer.close();
+      }).catch(error => process.stderr.write(`rerail: cannot close the workspace: ${error instanceof Error ? error.message : String(error)}\n`));
     }
   }
 
   /**
-   * Has the owners look again at each of `paths`, a tool call's files, and the folders above it
-   * (`CheckoutOwners.lookAgainAt`). `git worktree add`, from any repository, can make a folder this session looked up
-   * while it was plain a checkout, and the answers kept from then would leave the call's edits there unchecked.
+   * The point after which the owners answer from the file system as it is now (`CheckoutOwners.lookAgain`), and take no
+   * change until the next one. `git worktree add`, from any repository, can make a folder this session looked up while
+   * it was plain a checkout, a nested checkout's `.git` can move away, and a gitlink can be staged: the answers kept from
+   * before would route a call's edits to the wrong checkout.
    */
-  refreshOwners(paths: readonly string[]): void {
+  refreshOwners(): void {
     if (this.#closing) return;
-    for (const path of paths) this.#options.owners.lookAgainAt(resolve(this.#sessionRoot, path));
+    this.#options.owners.lookAgain();
   }
 
   updateSettings(settings: Required<AuditSettings>): void {
@@ -327,6 +335,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   ): Promise<readonly string[]> {
     this.#assertSession(sessionId);
     const auditIds: string[] = [];
+    if (this.#options.revisionSource !== undefined && input.scope === "touched-files") {
+      const lane = this.#lane(this.#options.startingCheckout);
+      if (lane === undefined) return auditIds;
+      await lane.opening;
+      return lane.enforcer.audit(sessionId, input);
+    }
     if (input.scope === "repository") {
       if ((input.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
       await this.#audit(sessionId, this.#options.startingCheckout, input.mode, input.audit, auditIds, new Set());
@@ -478,7 +492,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         followGitignore: this.#options.followGitignore ?? false,
         steerShell: this.#options.steerShell,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
-        nestedCheckouts: () => this.#nestedCheckoutsOf(root),
+        nestedCheckouts: () => this.#options.revisionSource === undefined ? this.#nestedCheckoutsOf(root) : [],
+        ...(this.#options.revisionSource === undefined ? {} : { revisionSource: this.#options.revisionSource }),
+        ...(this.#options.analysisStore === undefined ? {} : { analysisStore: this.#options.analysisStore }),
+        ...(this.#options.analysisRun === undefined ? {} : { analysisRun: this.#options.analysisRun }),
+        analysisGeneration: store => acquireDirectoryAnalysisRegistration(this.#options.catalogs.databasePath, root, store),
+        analysisHome: analysisScopeHome(this.#options.catalogs.databasePath),
       });
       // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
       lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId) };

@@ -2767,6 +2767,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "onig"
+version = "6.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "once_cell",
+ "onig_sys",
+]
+
+[[package]]
+name = "onig_sys"
+version = "69.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
 name = "ordermap"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3463,6 +3485,7 @@ dependencies = [
  "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-tree-watch",
  "rerail-vue-lean",
  "rerail-w",
  "roaring",
@@ -3623,6 +3646,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-json-aot",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
@@ -3635,13 +3666,8 @@ dependencies = [
 name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-context",
  "rerail-kotlin-aot",
- "rerail-kotlin-lean",
- "rerail-kotlin-parser",
- "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3659,6 +3685,7 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "rerail-compiler",
+ "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",
@@ -4299,6 +4326,8 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-json-aot",
+ "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
@@ -4698,14 +4727,17 @@ dependencies = [
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
+ "clru",
  "dunce",
  "foldhash",
  "gix",
  "hashbrown 0.16.1",
  "libc",
+ "onig",
  "parking_lot",
  "rayon",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
@@ -4713,11 +4745,13 @@ dependencies = [
  "rerail-prof",
  "rerail-store",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "tikv-jemalloc-sys",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 
@@ -4817,6 +4851,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-tree-watch"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "libc",
+ "napi",
+ "napi-derive",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rerail-ukl"
 version = "0.1.0"
 dependencies = [
@@ -4883,6 +4928,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tree-watch",
  "rerail-w",
  "ruff_python_ast",
  "ruff_python_parser",

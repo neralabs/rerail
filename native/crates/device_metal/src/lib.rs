@@ -137,7 +137,7 @@ pub mod code_rule_dsl {
         use serde::{Deserialize, Serialize};
     }
     pub use rerail_w::code_rule_dsl::literal;
-    #[cfg_attr(target_os = "macos", path = "logic")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "logic")]
     pub mod logic {
         pub use rerail_logic::code_rule_dsl::logic::*;
         pub mod front {
@@ -167,10 +167,10 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[cfg_attr(target_os = "macos", path = "native")]
+        #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "native")]
         pub mod native {
             pub use rerail_logic::code_rule_dsl::logic::native::*;
-            #[cfg_attr(target_os = "macos", path = "setfix")]
+            #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "setfix")]
             pub mod setfix {
                 pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -389,7 +389,7 @@ pub mod code_rule_dsl {
     #[cfg(feature="code-rule-profile")]
     pub use rerail_w::code_rule_dsl::profile;
     pub use rerail_w::code_rule_dsl::query;
-    #[cfg_attr(target_os = "macos", path = "residency")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "residency")]
     pub mod residency {
         pub use rerail_transducer::code_rule_dsl::residency::*;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -444,10 +444,10 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[cfg_attr(target_os = "macos", path = "transducer")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "transducer")]
     pub mod transducer {
         pub use rerail_transducer::code_rule_dsl::transducer::*;
-        #[cfg_attr(target_os = "macos", path = "packed")]
+        #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "packed")]
         pub mod packed {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
             #[cfg(test)]

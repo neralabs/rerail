@@ -306,7 +306,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
@@ -925,6 +925,8 @@ unused(f) :- def(f, _), !used(f).
 /// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1048,6 +1050,8 @@ reach(a, a) :- side(a), never(a).
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1623,7 +1627,7 @@ fn the_run_after_a_cold_one_writes_nothing() {
 #[test]
 fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
-    let c408 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
     cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
@@ -1754,7 +1758,7 @@ y = x{i} + 2
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
@@ -1844,7 +1848,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -2031,7 +2035,7 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -2381,7 +2385,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;

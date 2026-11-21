@@ -973,7 +973,9 @@ mod tests {
             let (says, run) = (Says(seen.clone()), job_run());
             std::thread::spawn(move || {
                 if carried {
-                    in_run(run, move || drop(&says));
+                    in_run(run, move || {
+                        let _ = &says;
+                    });
                 } else {
                     let _in = enter(run);
                     let _ = &says;

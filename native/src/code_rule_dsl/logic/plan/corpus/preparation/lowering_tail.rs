@@ -1498,6 +1498,7 @@ impl ProgramPass for Findings {
                 L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
                 _ => None,
             }),
+            heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
             reads_guests: {
                 let reads = |v: &Version| {
                     v.rules().flat_map(|r| r.body()).any(|l| match l.view() {

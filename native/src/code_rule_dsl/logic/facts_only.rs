@@ -53,6 +53,20 @@ const FACT_STORE: &[&str] = &[
     // The archive of aged sources and tapes (decision 0450 step 4): their bytes, compressed.
     "object_archive",
     "workspace_overlay",
+    "analysis_scope_manifest",
+    "analysis_scope_snapshot",
+    "analysis_scope_generation",
+    "analysis_directory_acquisition",
+    "analysis_scope_workspace_snapshot",
+    "analysis_scope_collect",
+    "analysis_scope_release",
+    // Pending acquisitions and the scope, run, and snapshot facts published together on success.
+    "analysis_scope_pending",
+    "analysis_history_scope",
+    "analysis_scope_run",
+    "analysis_run_workspace_snapshot",
+    // Index of each history scope's stop ancestors, populated on insert and removed by foreign-key cascade.
+    "analysis_history_ancestor",
     "node",
     "tape",
     "node_type",
@@ -259,7 +273,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
-    // The invocation's rule sources (decision 0500's report of authored joins), bound while a run profiles them.
+    // The invocation's rule sources (decision 0488's report of authored joins), bound while a run profiles them.
     ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
@@ -269,9 +283,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
-    // The accounts and gaps of threads that have ended, read by the report: profiling, as `THREADS`.
-    ("code_rule_dsl/logic/profile.rs", "EXITED"),
-    ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The world's rows (`rr::lower::World`), made once the languages are installed: a registry of what is
@@ -320,6 +331,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession"),
     // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
+    // The evaluation of a Git revision the run reads (`strings::git::Evaluation`), bound by its scope.
+    ("code_rule_dsl/logic/strings/git.rs", "GitEvaluation"),
+    // The invoking audit's store path while its inventory program runs.
+    ("code_rule_dsl/logic/plan/corpus.rs", "SelectedStore"),
+    // The engine's own answers (`rr::lower::World`), listed once from its constants.
+    ("code_rule_dsl/logic/rr/lower.rs", "ENGINE"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
@@ -341,7 +358,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 9;
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

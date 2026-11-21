@@ -5,9 +5,9 @@ name: Package
 # calling run. release.yml publishes what this builds; env-matrix.yml installs it on Azure VMs. One build, so the
 # environment matrix tests exactly what a release would ship.
 #
-# The cargo cache is restored, never saved: release-cache.yml builds and saves it on main under exactly the key below
-# (same targets, command and paths; change them together), and a tag's run can read caches saved on main but not
-# those an earlier tag's run saved.
+# Each native build compiles through the Rust compile cache (.github/actions/rust-compile-cache): it starts from the
+# newest store release-cache.yml saved on main as an artifact for that target, and compiles cold without one. Nothing
+# here saves a store, and the Actions cache is not used.
 
 on:
   workflow_call:
@@ -33,13 +33,11 @@ jobs:
           # Linux engines link against the glibc 2.17 sysroot of napi-rs's cross toolchain: built on the runner's
           # own glibc (2.39 on Ubuntu 24.04), they failed to load on every older distribution. The toolchain's
           # linker also drops the symbol tables (`--strip`), which nothing loads at runtime
-          # (scripts/build/release-engine.mjs; `napi_cross` keys the cargo cache).
+          # (scripts/build/release-engine.mjs).
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-            napi_cross: true
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            napi_cross: true
           - runner: windows-2025
             target: x86_64-pc-windows-msvc
             windows_runtime_smoke: true
@@ -49,9 +47,13 @@ jobs:
             target: aarch64-pc-windows-msvc
             windows_runtime_smoke: false
     runs-on: ${{ matrix.runner }}
-    # A cold build (the cache release-cache.yml saves misses whenever Cargo.lock changes) took 37 minutes for Apple
-    # Silicon and 42 for Windows x64 after the rule engine grew, and an Intel Mac was still compiling at 44: 45 cut the
-    # last two off. Keep this and release-cache.yml's the same.
+    # The compile cache's store: main's, read from its runs' artifacts.
+    permissions:
+      contents: read
+      actions: read
+    # A cold build (no store from main) took 37 minutes for Apple Silicon and 42 for Windows x64 after the rule engine
+    # grew, and an Intel Mac was still compiling at 44: 45 cut the last two off. Keep this and release-cache.yml's the
+    # same.
     timeout-minutes: 120
     steps:
       # Windows refuses paths over 260 characters unless Git is told to use long paths. `npm run check` keeps
@@ -87,16 +89,11 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
-      # Exactly the key release-cache.yml builds from scratch on main (same paths), with no prefix fallback, so a
-      # published engine never links artifacts carried forward from an older cache. A miss builds cold.
-      - name: Restore cargo artifacts
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Compiles through sccache, starting from the store release-cache.yml saved on main for this target.
+      - id: cc
+        uses: ./.github/actions/rust-compile-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-release-${{ matrix.target }}${{ matrix.napi_cross && '-napi-cross' || '' }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'native/Cargo.toml', '.cargo/config.toml') }}
+          name: release-${{ matrix.target }}
 
       - name: Install dependencies
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
@@ -161,6 +158,29 @@ jobs:
       - name: Smoke native engine
         if: matrix.target != 'aarch64-pc-windows-msvc'
         run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
+
+      - name: Compare native message selectors with Git
+        if: matrix.target != 'aarch64-pc-windows-msvc'
+        run: |
+          git version --build-options
+          node -p "process.platform + ' ' + process.arch + ' ' + process.version"
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors" --reporter=verbose
+
+      - name: Check Git object invalidation, source reads, and path spelling on Windows
+        if: matrix.windows_runtime_smoke
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+          $format = [System.IO.DriveInfo]::new($drive).DriveFormat
+          Write-Output "Temporary directory filesystem: $format"
+          if ($format -ne 'NTFS') { throw "This object-invalidation check requires NTFS." }
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite|distinguishes a missing source path|uses the filesystem spelling" --reporter=verbose
+
+      - name: Check directory scope identity and concurrent Git evaluations on Linux
+        if: runner.os == 'Linux'
+        env:
+          RERAIL_THREADS: "2"
+        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "two symlink targets differ in raw bytes|isolates concurrent evaluations" --reporter=verbose
 
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke

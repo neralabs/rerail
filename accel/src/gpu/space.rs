@@ -128,7 +128,7 @@ enum Job {
     Probe { left: Vec<Column>, right: Arc<Keyed>, job: ProbeOne },
     /// A probe on a device without addresses (`Fused::can`): its own count, scan and scatter.
     Each { left: Vec<Column>, right: Arc<Keyed>, job: ProbeJob },
-    Tile { left: Resident, right: Arc<Resident>, job: TileJob },
+    Tile { left: Resident, right: Arc<Resident>, job: Box<TileJob> },
 }
 
 /// The distinct gates of a batch's staged columns.
@@ -137,10 +137,10 @@ fn gates(ks: &[&Kernel]) -> Vec<Arc<crate::col::Gate>> {
     for k in ks {
         if let Kernel::Join { left, right, .. } = k {
             for c in left.iter().chain(right.iter()) {
-                if let Some(g) = c.gate() {
-                    if !out.iter().any(|o| Arc::ptr_eq(o, g)) {
-                        out.push(Arc::clone(g));
-                    }
+                if let Some(g) = c.gate()
+                    && !out.iter().any(|o| Arc::ptr_eq(o, g))
+                {
+                    out.push(Arc::clone(g));
                 }
             }
         }
@@ -278,7 +278,7 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                 let left = crate::score::phase("group (host)", || group(left))?;
                 let keys: Vec<usize> = (0..k_len(k)).collect();
                 let job = crate::score::phase("encode", || TileJob::count(&pass, &left, &keys, &right, &keys))?;
-                Job::Tile { left, right, job }
+                Job::Tile { left, right, job: Box::new(job) }
             }
         };
         jobs.push(job);
@@ -360,7 +360,7 @@ impl Started {
                         // Into the kernel's order on the device, after the scatter.
                         let job = crate::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
                         second |= job.total > 0;
-                        Job::Tile { left, right, job }
+                        Job::Tile { left, right, job: Box::new(job) }
                     }
                     other => other,
                 });

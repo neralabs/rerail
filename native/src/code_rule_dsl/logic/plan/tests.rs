@@ -339,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -3116,7 +3116,7 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
 }
 
-/// A deferred join's request (`rr_deferred_pairs_x`, decision 0500) bounds its producer as a demand does (Q59): an
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0488) bounds its producer as a demand does (Q59): an
 /// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
 /// requested calls; an unrestricted atom may not.
 #[test]
@@ -3733,7 +3733,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }
 
-/// Decision 0500: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// Decision 0488: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
 /// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
 /// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
 #[test]
@@ -3764,7 +3764,7 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
 }
 
-/// Decision 0500: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
 /// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
 /// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
 #[test]

@@ -844,7 +844,7 @@ fn the_device_rungs_run_a_tu_again_past_its_room() {
 
 /// Stage 5's spike (0348): each round of `TUS` run on the device as batches of 1 to 128 copies
 /// of itself, against the Cranelift JIT on one core. It prints; it asserts nothing.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "a measurement: run alone, on an idle Mac"]
 fn the_device_words_time_against_the_jit() {
@@ -996,12 +996,12 @@ fn the_corpus_through_the_rungs() {
 
 /// What `corpus_on_metal` hands on for each chunk: its TUs (each one's path, and whether C++), and each
 /// one's expansion or why it failed.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 type Chunk<'a> = dyn FnMut(&[(std::path::PathBuf, bool)], Vec<Result<Vec<Out>, String>>) + 'a;
 
 /// The corpus's TUs (C and C++), `RERAIL_PP_CHUNK` at a time (512 by default), each chunk one
 /// `expand_tus_with` whose rounds are the device's batches (0408, L4).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn corpus_on_metal(each: &mut Chunk<'_>, batch: &crate::expand::BatchRunner<'_>) {
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let mut tus = Vec::new();
@@ -1023,7 +1023,7 @@ fn corpus_on_metal(each: &mut Chunk<'_>, batch: &crate::expand::BatchRunner<'_>)
 }
 
 /// The device's batches' totals: GPU seconds, dispatches, the largest arena, the runs by rung.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Default)]
 struct OnMetal {
     gpu: f64,
@@ -1034,7 +1034,7 @@ struct OnMetal {
     batches: usize,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate::expand::Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'a {
     move |jobs| {
         let ran = rerail_metal::pp_on::run_batch(crate::expand::ukl().unwrap(), jobs, jobs.len()).expect("the device's batch");
@@ -1048,7 +1048,7 @@ fn counted_batch<'a>(totals: &'a std::cell::RefCell<OnMetal>) -> impl Fn(&[crate
 }
 
 /// The corpus on Metal (0408, L4): each TU the interpreter's, its rounds the device's batches.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
 fn the_corpus_on_metal_is_the_interpreters() {
@@ -1082,7 +1082,7 @@ fn the_corpus_on_metal_is_the_interpreters() {
 /// The corpus on Metal timed (0408, L4): the device's batches' GPU seconds, warmed first, against
 /// the CPU's compiled words (`expand::native`: rustc's build where it is the process's words,
 /// else Cranelift's) on the same jobs on this thread. A benchmark: through `quiet-run`.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "a benchmark of the corpus on Metal"]
 fn the_corpus_on_metal_timed() {

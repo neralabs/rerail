@@ -281,7 +281,7 @@ impl<'v> Body<'v> {
         })
     }
     /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
-    /// deferred join's request (`rr_deferred_pairs_x`, decision 0500), of its producer or of the support heads
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0488), of its producer or of the support heads
     /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
     /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
@@ -491,7 +491,17 @@ impl<'v> Body<'v> {
     /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
     /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208); nor a line's planned from given variables bound.
+        self.digest_pre(d);
+        self.digest_atom(d, self.head());
+        d.u64(self.lits.len() as u64);
+        for &l in &self.lits {
+            self.digest_lit(d, l);
+        }
+    }
+
+    /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
+    /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
+    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
         match &self.pre {
             None => {}
             Some(Pre::Head) => d.str("head bound"),
@@ -502,11 +512,6 @@ impl<'v> Body<'v> {
                     d.u64(*w);
                 }
             }
-        }
-        self.digest_atom(d, self.head());
-        d.u64(self.lits.len() as u64);
-        for &l in &self.lits {
-            self.digest_lit(d, l);
         }
     }
     /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,

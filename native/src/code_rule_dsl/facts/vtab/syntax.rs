@@ -1788,7 +1788,7 @@ impl KindRows {
         let Some(dialect) = b.dialects.get(tag) else { return KindRows { keys: Vec::new(), starts: vec![0], at: Vec::new() } };
         for &doc in &b.of_tag[usize::from(tag)] {
             let p = &b.docs[doc as usize];
-            all.extend(p.nodes().map(|(l, x)| (dialect.kind(&p.facts, x), doc as u32, l, x)));
+            all.extend(p.nodes().map(|(l, x)| (dialect.kind(&p.facts, x), doc, l, x)));
         }
         // Stable: within a kind, the rows stay in order.
         all.sort_by_key(|e| e.0);
@@ -2018,6 +2018,7 @@ pub enum Place {
     EndLine,
     Col,
     Docof,
+    Report,
 }
 
 /// The relations of core.rerail a batch makes only for a program that reads them (its `reads`), T's exporter having
@@ -3176,7 +3177,7 @@ impl Batch {
                         .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::pattern_source(t), lang).ok().map(|p| (t.as_str(), p)))
                         .collect()
                 });
-                c.patterns(&p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);
+                c.patterns(p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);
             }
             if dialect.is_some_and(|d| !d.values) {
                 unvalued.insert(d.key);
@@ -3229,7 +3230,7 @@ impl Batch {
                 // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
                     visited += p.len() as usize;
-                    rows.document(&p, dialect, core, &mut string);
+                    rows.document(p, dialect, core, &mut string);
                 }
                 if core_nodes || wants_long_text_nodes {
                     let kept = (c.skip.literal_rows, c.skip.literal_value);
@@ -3241,16 +3242,16 @@ impl Batch {
                         if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
                             long_text_nodes.push(n);
                         }
-                        if core_nodes && c.visited(visits, &p, dialect, id) {
+                        if core_nodes && c.visited(visits, p, dialect, id) {
                             visited += 1;
-                            c.node(&p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
+                            c.node(p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
                     (c.skip.literal_rows, c.skip.literal_value) = kept;
                 }
                 if let Some((line, msg)) = error {
                     let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
-                    c.withheld(&p, &(line, msg.clone()), &mut string);
+                    c.withheld(p, &(line, msg.clone()), &mut string);
                 }
             }
             copying.done((rows.bytes() + c.bytes()).saturating_sub(rows_before));
@@ -3259,14 +3260,14 @@ impl Batch {
             // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 let s = crate::code_rule_dsl::logic::profile::span(|| "core document rows".into());
-                c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
+                c.document(p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 drop(s);
                 if let Some(dialect) = dialect
                     && wants_digests
                     && !withheld
                 {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "digests".into());
-                    c.digests(&p, dialect, &mut string, wants_trees, wants_units);
+                    c.digests(p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
             if d.guest.is_none() {
@@ -3275,26 +3276,26 @@ impl Batch {
                 let rx = if withheld { &[][..] } else { &rx_spans[..] };
                 {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "extra document rows".into());
-                    extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                    extra.document(p, d, dialect, python == Some(tag) || tag == TEXT, rx, &span_ends[j], &mut rows.text, &mut string)?;
                 }
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
-                tree.document(&p, dialect, python == Some(tag), &mut string);
+                tree.document(p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0222).
                 if d.tape.is_some() {
-                    extra.values(&p, d, dialect, &mut string)?;
+                    extra.values(p, d, dialect, &mut string)?;
                 }
-                extra.nodes(&p, &mut string);
+                extra.nodes(p, &mut string);
                 if let Some(dialect) = dialect {
-                    tree.operators(&p, dialect, &mut string);
+                    tree.operators(p, dialect, &mut string);
                 }
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in produced.iter_mut() {
                 if d.guest.is_none() || run.reads_guests() {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| format!("produced rows: {}", run.name()));
-                    run.document(&p, d, dialect, *own == Some(tag), &mut string)?;
+                    run.document(p, d, dialect, *own == Some(tag), &mut string)?;
                 }
             }
             drop(document_span);
@@ -3565,6 +3566,7 @@ impl Viewed {
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
+            View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
     /// The column holding the row's own node, which ranges and direct lookups address.
@@ -4192,12 +4194,19 @@ impl Viewed {
         if matches!(place, Place::Docof) {
             return i64::from(p.file);
         }
+        // `rr_report_location(n, line, column, end_line, end_column)`: each end's line and its column from 1.
+        if matches!(place, Place::Report) {
+            let at = span[(column - 1) / 2];
+            let (line, _, col) = p.extra.as_ref().expect("core.rerail's lines").place([at, at]);
+            return i64::from(if column % 2 == 1 { line } else { col + 1 });
+        }
         let (line, last, col) = p.extra.as_ref().expect("core.rerail's lines").place(span);
         match place {
             Place::Line => i64::from(line),
             Place::EndLine => i64::from(last),
             Place::Col => i64::from(col),
             Place::Docof => i64::from(p.file),
+            Place::Report => unreachable!(),
         }
     }
 
@@ -4307,15 +4316,18 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
 /// The views a batch of `shape` binds by name (`views`).
 fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
     let mut named = vec![("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core), ("node_order", View::Order)];
+    // A node's depth is the tape's (`at.depth`) in either shape: the cross part reads it as a measure's key (decision
+    // 0364 R6) whatever the program's shape.
+    named.push(("ast_depth", View::Depth));
     match shape {
         Shape::T => named.push(("line", View::Line)),
         Shape::Core => named.extend([
+            ("rr_report_location", View::Loc(Place::Report)),
             ("line", View::Loc(Place::Line)),
             ("end_line", View::Loc(Place::EndLine)),
             ("col", View::Loc(Place::Col)),
             // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
-            ("ast_depth", View::Depth),
             ("next_sibling", View::Sibling),
         ]),
     }
