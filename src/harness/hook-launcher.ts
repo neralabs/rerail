@@ -4,8 +4,10 @@
  * Claude Code spawns these exec-form hooks without a shell, so the `cmd` command line the shell-form registrations use
  * is unavailable. The entry starts cmd.exe with each word as an argument of its own, and cmd starts the recorded node
  * itself as `<node>` while it exists and `node.exe` from PATH once it is gone: one node a hook event, whatever PATH
- * Claude Code has. Where cmd.exe cannot start the paths, and in entries 0.2.0 and earlier wrote, `<node>` is `node`,
- * which Claude Code resolves from its PATH. The launcher runs the hook under the node
+ * Claude Code has. Where cmd.exe cannot start the paths, `<node>` is `node`, which Claude Code resolves from its PATH,
+ * and so it is in every entry 0.1.4 and earlier wrote and in those 0.1.5 and 0.2.0 wrote where set-up's PATH found the
+ * recorded node; where it found another, 0.1.5 and 0.2.0 wrote the cmd.exe entry.
+ * The launcher runs the hook under the node
  * recorded at registration, in this process when that node started it, falling back to this node once that binary is
  * gone. A version-manager upgrade (nvm-windows, Volta, fnm) removes it and would otherwise break every hook until
  * `rerail setup` runs again. The recorded-first order keeps the shell launchers' version guarantee, so the hook still
