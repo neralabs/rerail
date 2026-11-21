@@ -254,6 +254,39 @@ fn nearest_costs(cap: usize) {
     }
 }
 
+/// A helper several rules read, of one content and so one name, that the split leaves outside the chunks undoes
+/// every reader's push at once. Undone at its first reader only, it was made again by the next and failed again:
+/// ep2's `option(k, v), @rx(v, …)` helper, read by 352 `violation` rules, took 91 rounds of the pass, each a split of
+/// half the program (4 s of a cold run's prepare).
+#[test]
+fn a_helper_the_split_leaves_outside_undoes_all_its_readers_at_once() {
+    let mut text = String::from(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl option(k: symbol, v: symbol)
+.input node, text, option
+// Any file's names: no location column, so cross-file, and so is each rule that negates it.
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl finding(n: node, v: symbol)
+.output finding
+"#);
+    let kinds = ["call", "name", "attribute", "subscript", "lambda", "tuple"];
+    for k in kinds {
+        text.push_str(&format!("finding(n, v) :- node(_, n, \"{k}\", _, _), option(\"target\", v), v != \"none\", !defined(v).\n"));
+    }
+    let v = read(&text);
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let v = p.finish().unwrap().0;
+    let split = split_of(&v);
+    assert!(pass.made.iter().all(|m| split.local.contains(m)), "what is left made is file-local: {:?}", pass.made);
+    assert!(!pass.made.iter().any(|m| rules_of(&v, m).iter().any(|r| reads(&v, *r).iter().any(|x| x == "option"))), "no helper over `option` is left");
+    // Each push: a round with the helper, and one with it a level less, whatever its readers; the pass pushes twice.
+    assert!(pass.rounds <= 2 * 2, "{} rounds for {} readers", pass.rounds, kinds.len());
+}
+
 /// A cross-file rule's file-local part is made per chunk: the rule reads one exported join, not its base relations.
 #[test]
 fn a_cross_file_rules_local_join_is_pushed_into_the_chunks() {
