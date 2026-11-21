@@ -329,7 +329,7 @@ impl Lp<'_, '_> {
             if self.checked.iter().any(|c| c == k) {
                 let _ = writeln!(body, "if !check_{}(&src[s..e]) {{\nreturn Err(s as u32);\n}}", ident(k));
             }
-            let _ = writeln!(body, "w.leaf({}, s as u64, e as u64);\nw.commit();", self.number(k, key)?);
+            let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);\ncommit(d);", self.number(k, key)?);
         }
         let _ = name;
         self.decide(&[(vec![first], body)], "return Err(at(src, starts, i));\n")
@@ -380,20 +380,39 @@ impl Lp<'_, '_> {
              // `{kind}`: read at its token, its pieces leaves.\n\
              let s = starts[i] as usize;\ni += 1;\n\
              let c = match first_bit(&m.{close}, s + 1) {{\nSome(c) => c,\nNone => return Err(s as u32),\n}};\n\
-             w.open({node}, s as u64);\nw.commit();\n\
+             open(d, {node}, s as u64);\ncommit(d);\n\
              let mut p = s + 1;\n\
              loop {{\n\
              let q = match first_bit(&m.{part_start}, p) {{\nSome(q) if q < c => q,\n_ => c,\n}};\n\
-             if q > p {{\nw.leaf({content}, p as u64, q as u64);\nw.commit();\n}}\n\
+             if q > p {{\nleaf(d, {content}, p as u64, q as u64);\ncommit(d);\n}}\n\
              if q == c {{\nbreak;\n}}\n\
              p = q;\n{check}\
-             w.leaf({piece}, p as u64, (p + {len}) as u64);\nw.commit();\n\
+             leaf(d, {piece}, p as u64, (p + {len}) as u64);\ncommit(d);\n\
              p += {len};\n\
              }}\n\
-             e = c + 1;\nw.close(e as u64);\n",
+             e = c + 1;\nclose(d, e as u64);\n",
             bytes = pattern(&self.bytes_of(self.token(&o)?.0)),
             close = rd.close,
         )))
+    }
+
+    /// The most nodes `g` holds open at once inside its level (a node rule written where it is used, around what
+    /// it holds), a level's call not counted (it is its own level's).
+    fn open_in(&self, g: &Gram, depth: u32) -> Result<usize, String> {
+        if depth > 64 {
+            return self.err("rules nested too deep");
+        }
+        Ok(match g {
+            Gram::Sym(n) => match self.g.rules.get(n.as_str()) {
+                Some(Stmt::Node { nested: true, .. } | Stmt::Choice { nested: true, .. }) => 0,
+                Some(Stmt::Node { body, .. }) => 1 + self.open_in(body, depth + 1)?,
+                Some(Stmt::Choice { body, .. }) => self.open_in(body, depth + 1)?,
+                _ => 0,
+            },
+            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| self.open_in(g, depth + 1)).collect::<Result<Vec<_>, _>>()?.into_iter().max().unwrap_or(0),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::As(_, a) => self.open_in(a, depth + 1)?,
+            _ => 0,
+        })
     }
 
     /// Whether `g` calls a level (a nested rule), itself or through the rules written where they are used.
@@ -425,7 +444,7 @@ impl Lp<'_, '_> {
                     if let Some(code) = self.region(kind, body, key)? {
                         return Ok(code);
                     }
-                    format!("w.open({}, at(src, starts, i) as u64);\nw.commit();\n{}w.close(e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default())?)
+                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}close(d, e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default())?)
                 }
                 Some(Stmt::Choice { supertype, body, .. }) => self.plain(body, &self.through(key, supertype.as_deref())?)?,
                 _ => return self.err(format!("`{n}`: no rule or token")),
@@ -481,14 +500,14 @@ impl Lp<'_, '_> {
                     let first = self.level(n)?;
                     let ret = self.to_place(k);
                     format!(
-                        "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nw.open({}, at(src, starts, i) as u64);\nw.commit();\nstack.push({ret});\n{}",
+                        "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nopen(d, {}, at(src, starts, i) as u64);\ncommit(d);\nstack.push({ret});\n{}",
                         self.number(kind, key)?,
                         Self::go(first)
                     )
                 }
                 Some(Stmt::Node { kind, body, .. }) => {
-                    let after = format!("w.close(e as u64);\n{}", Self::jump(&k));
-                    format!("w.open({}, at(src, starts, i) as u64);\nw.commit();\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after))?)
+                    let after = format!("close(d, e as u64);\n{}", Self::jump(&k));
+                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after))?)
                 }
                 Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.walk(body, &self.through(key, supertype.as_deref())?, k)?,
                 _ => return self.err(format!("`{n}`: a nested choice is not written yet")),
@@ -540,7 +559,7 @@ impl Lp<'_, '_> {
         let first = self.place(String::new());
         self.levels.borrow_mut().insert(rule.to_owned(), first);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
-        let end = "w.close(e as u64);\nst = match stack.pop() {\nSome(p) => p,\nNone => return Err(at(src, starts, i)),\n};\ncontinue 'run;\n".to_owned();
+        let end = "close(d, e as u64);\nst = match stack.pop() {\nSome(p) => p,\nNone => return Err(at(src, starts, i)),\n};\ncontinue 'run;\n".to_owned();
         let code = self.walk(body, &Key::default(), K::Code(end))?;
         self.places.borrow_mut()[first] = code;
         Ok(first)
@@ -630,8 +649,41 @@ enum Admit {
     Kind { name: String, rk: u8 },
 }
 
-/// The parser's own code: the record's first byte, the masks' bits.
+/// The parser's own code: the writer's ops, the record's first byte, the masks' bits.
 const RUNTIME: &str = r#"
+/// Node `number` opened at `start`, by the writer's op on its state `d`. `parse` reserved the run's room once
+/// (`reserve_run`), for every node and level it can write, so the op does not fail.
+#[inline(always)]
+fn open(d: *mut u8, number: u32, start: u64) {
+    // SAFETY: `d` is the writer's state, its room reserved for the run (`parse`).
+    let r = unsafe { w_open(d, number, start) };
+    debug_assert_eq!(r, 0, "the writer's open, its room reserved");
+}
+
+/// A leaf, as `open`.
+#[inline(always)]
+fn leaf(d: *mut u8, number: u32, start: u64, end: u64) {
+    // SAFETY: as `open`'s.
+    let r = unsafe { w_leaf(d, number, start, end) };
+    debug_assert_eq!(r, 0, "the writer's leaf, its room reserved");
+}
+
+/// The innermost open node closed at `end`, as `open`.
+#[inline(always)]
+fn close(d: *mut u8, end: u64) {
+    // SAFETY: as `open`'s; a node is open (each close is its open's).
+    let r = unsafe { w_close(d, end) };
+    debug_assert_eq!(r, 0, "the writer's close, its room reserved");
+}
+
+/// The nodes so far final but for the open ones, as `open`.
+#[inline(always)]
+fn commit(d: *mut u8) {
+    // SAFETY: as `open`'s.
+    let r = unsafe { w_commit(d) };
+    debug_assert_eq!(r, 0, "the writer's commit, its room reserved");
+}
+
 /// The first byte of record `i`, or 256 past the last.
 #[inline(always)]
 fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
@@ -739,8 +791,8 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     };
     let first = lp.place(String::new());
     let number = lp.number(kind, &Key::default())?;
-    let end = "w.close(src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
-    let code = format!("w.open({number}, at(src, starts, i) as u64);\nw.commit();\n{}", lp.walk(body, &Key::default(), K::Code(end))?);
+    let end = "close(d, src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
+    let code = format!("open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\n{}", lp.walk(body, &Key::default(), K::Code(end))?);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.
     let mut words = String::new();
@@ -769,13 +821,20 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
         let _ = write!(arms, "{l} => {{\n{code}}}\n");
     }
     let ty = if places.len() <= 256 { "u8" } else { "u16" };
+    // A level's nodes open at once: its own, and those written where they are used inside it (the root's too).
+    let mut frames = 1 + lp.open_in(body, 0)?;
+    for rule in lp.levels.borrow().keys() {
+        if let Some(Stmt::Node { body, .. }) = g.rules.get(rule.as_str()) {
+            frames = frames.max(1 + lp.open_in(body, 0)?);
+        }
+    }
     let mut entries = String::new();
     for (k, f, cs) in lp.entries.borrow().iter() {
         let _ = writeln!(entries, "    ({k}, {f}, &[{}]),", cs.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", "));
     }
     let mut out = String::new();
     out.push_str("// Generated by the Bitlex compiler (`rerail_compiler::bitlex_rust::tier2_loop`) from the grammar's tree rules. Do not edit.\n\n");
-    out.push_str("use rerail_tape_format::f16::Writer;\n\n");
+    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{w_close, w_commit, w_leaf, w_open};\n\n");
     let _ = write!(out, "/// The code table the numbers below are of: each number's kind, field and supertypes.\npub const ENTRIES: &[(u16, u16, &[u16])] = &[\n{entries}];\n\n");
     out.push_str("/// The levels open at most: past it, the file is refused, as the JIT's calls (`native_cpu_stream::DEPTH`).\nconst DEPTH: usize = 1024;\n");
     out.push_str(RUNTIME);
@@ -784,7 +843,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     out.push_str(&check_fns);
     let _ = write!(
         out,
-        "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
+        "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nw.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * {frames} + 1);\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
     );
     let _ = &x.tokens;
     Ok(out)

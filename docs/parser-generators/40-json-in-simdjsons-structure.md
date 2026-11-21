@@ -593,6 +593,12 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 55, done: the loop's writer reserved once (decision 0552)
+
+The generated tier 2 reserves its run's room once, as the JIT does, and calls the writer's ops on its state: an
+open, a leaf, a close and a commit cannot fail, and the writer's failure is read once after the walk. On the way,
+`reserve_final` had reserved no laid entry for a run's blocks (only for the blocks made before it).
+
 ## Step 54, done: JSON's Rust from the grammar, in one loop (decision 0551)
 
 Steps 41 to 53 wrote tier 2's Rust from its native IR (`rust_stream`), which 0550 deprecates. The Bitlex compiler
