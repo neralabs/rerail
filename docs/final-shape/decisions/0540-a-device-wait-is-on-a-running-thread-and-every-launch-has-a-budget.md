@@ -88,7 +88,8 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      polled it a million times and saw it unchanged, while their compare-and-swaps after found it stepped. That is
      Q123, the M1 Max's stale polls, which the block kernels' look-backs already poll around (`BLOCK_POLL_RMW`).
      The grid's words are read only by polls now, and so are the 16z cache's words where a stale copy breaks its
-     protocol (a writer's stamp check, a clear's writers, a promotion's source) and in a wait's turns.
+     protocol (a writer's stamp check, a clear's writers, a promotion's source) and in a wait's turns, and the work
+     queue's head, tail and active count (`<ukl/workqueue.h>`, `work_queue.metal`).
    - `a_grid_past_residency_fails_its_barrier` is `a_grid_past_residency_is_the_groups_that_run`: 4,096 groups of
      1,024 dispatched, 24 took part on the Mac mini (in 9.8 ms), 48 on a GB10, 1 on the CPU, and every barrier passed.
    - The barrier, scan, segmented scan and sort tests pass on the Mac mini's Metal, spark1's CUDA and a Linux CPU.
