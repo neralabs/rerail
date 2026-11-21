@@ -362,7 +362,7 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     began = Date.now();
     const read = await lookupDaemon(home);
     ms = Date.now() - began;
-    expect({ read, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ read: { status: "absent" }, file: false });
+    expect({ read, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ read: { status: "absent", notDaemon: process.pid }, file: false });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
   }, 45_000);
 
