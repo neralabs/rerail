@@ -2116,28 +2116,52 @@ mod tests {
     /// host), at `at`; unmapped when dropped.
     struct Guarded {
         map: *mut u8,
+        // Windows frees the whole reservation by its address alone.
+        #[cfg_attr(windows, allow(dead_code))]
         span: usize,
         at: *mut u8,
     }
 
+    #[cfg(unix)]
     unsafe extern "C" {
         fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
         fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
         fn munmap(addr: *mut u8, len: usize) -> i32;
     }
 
+    // Windows' mapping calls (kernel32, which std links).
+    #[cfg(windows)]
+    unsafe extern "system" {
+        fn VirtualAlloc(addr: *mut u8, len: usize, kind: u32, protect: u32) -> *mut u8;
+        fn VirtualProtect(addr: *mut u8, len: usize, protect: u32, old: *mut u32) -> i32;
+        fn VirtualFree(addr: *mut u8, len: usize, kind: u32) -> i32;
+    }
+
     impl Guarded {
         fn new(bytes: &[u8]) -> Guarded {
             const GUARD: usize = 1 << 16;
-            #[cfg(target_os = "macos")]
-            const ANON: i32 = 0x1000;
-            #[cfg(not(target_os = "macos"))]
-            const ANON: i32 = 0x20;
             let span = bytes.len().next_multiple_of(GUARD) + GUARD;
             // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
-            let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
-            assert!(!map.is_null() && map as isize != -1, "a mapping");
-            assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+            #[cfg(unix)]
+            let map = {
+                #[cfg(target_os = "macos")]
+                const ANON: i32 = 0x1000;
+                #[cfg(not(target_os = "macos"))]
+                const ANON: i32 = 0x20;
+                let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
+                assert!(!map.is_null() && map as isize != -1, "a mapping");
+                assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+                map
+            };
+            // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE; then PAGE_NOACCESS.
+            #[cfg(windows)]
+            let map = {
+                let map = unsafe { VirtualAlloc(std::ptr::null_mut(), span, 0x3000, 4) };
+                assert!(!map.is_null(), "a mapping");
+                let mut old = 0u32;
+                assert_ne!(unsafe { VirtualProtect(map.add(span - GUARD), GUARD, 1, &mut old) }, 0, "a page no read may touch");
+                map
+            };
             // SAFETY: the readable part of the mapping holds the bytes, ending at the unreadable page.
             let at = unsafe { map.add(span - GUARD - bytes.len()) };
             unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at, bytes.len()) };
@@ -2148,7 +2172,15 @@ mod tests {
     impl Drop for Guarded {
         fn drop(&mut self) {
             // SAFETY: the mapping `new` made, no read of it left.
-            unsafe { munmap(self.map, self.span) };
+            #[cfg(unix)]
+            unsafe {
+                munmap(self.map, self.span)
+            };
+            // MEM_RELEASE frees the whole reservation (its length must be 0).
+            #[cfg(windows)]
+            unsafe {
+                VirtualFree(self.map, 0, 0x8000)
+            };
         }
     }
 
