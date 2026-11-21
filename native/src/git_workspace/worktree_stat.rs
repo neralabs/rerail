@@ -276,9 +276,10 @@ fn keeps_change_times(name: &str) -> bool {
 
 /// Whether a file whose volume answered the protocol query (`FileRemoteProtocolInfo`) as
 /// `answered` says, or refused it with `refusal`, is on this machine: a network share answers the
-/// protocol it is reached by, and a local NTFS volume refuses the query as a parameter it does not
-/// take (`ERROR_INVALID_PARAMETER`, 87). Any other refusal cannot tell, so the stat decides, as on
-/// a share, and nothing is remembered.
+/// protocol it is reached by, and a local NTFS or ReFS volume (a Dev Drive is ReFS) refuses the
+/// query as a parameter it does not take (`ERROR_INVALID_PARAMETER`, 87), for a file, a folder and
+/// the volume's root alike. Any other refusal cannot tell, so the stat decides, as on a share, and
+/// no file is remembered.
 #[cfg(any(windows, test))]
 fn on_this_machine(answered: bool, refusal: &std::io::Error) -> bool {
     !answered && refusal.raw_os_error() == Some(87)
@@ -640,10 +641,11 @@ mod tests {
     }
 
     /// A file is on this machine only where its volume refuses the protocol query as a local
-    /// NTFS volume does (87): a share answers it, and a volume that refuses it for another reason
-    /// (a function it lacks, a denial, a redirector that does not take the query) cannot tell.
+    /// NTFS or ReFS volume does (87, a Dev Drive's too): a share answers it, and a volume that
+    /// refuses it for another reason (a function it lacks, a denial, a redirector that does not
+    /// take the query) cannot tell.
     #[test]
-    fn only_a_refusal_of_the_protocol_query_as_ntfs_gives_it_is_this_machine() {
+    fn only_a_refusal_of_the_protocol_query_as_ntfs_and_refs_give_it_is_this_machine() {
         let invalid_parameter = Error::from_raw_os_error(87);
         assert!(on_this_machine(false, &invalid_parameter));
         assert!(!on_this_machine(true, &invalid_parameter), "answered");
