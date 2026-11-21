@@ -22,8 +22,8 @@ pub fn metal_buffer_limit() -> usize {
 /// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, and
 /// the allocations' lock. The compiled pipelines are the store of compiled kernels'
 /// (`rerail_accel::gpu::kernels`, decision 0395).
-/// A reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build off macOS has
-/// none of it: its ledgers are its threads' (`test_pool`), and only Metal's driver is weighed under the lock.
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build's ledgers
+/// are its threads' (`test_pool`): off macOS it has none of it, on macOS only the lock Metal's driver is weighed under.
 #[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 #[derive(Default)]
 pub(crate) struct DeviceState {
@@ -82,6 +82,25 @@ fn working_set(device: &metal::DeviceRef) -> u64 {
 
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::test_pool;
+/// A buffer the driver refused (`driver_refuses`), counted; with the profile on, what the driver held then and the
+/// pool's and the accelerator's parts of it (main's #915).
+#[cfg(target_os = "macos")]
+fn count_driver_refusal(device: &metal::DeviceRef) {
+    rerail_prof::count("capacity.metal_pool_driver", 1);
+    if rerail_prof::on() {
+        let mut stages = rerail_prof::stages();
+        let e = stages.entry("capacity.driver_mb_max".to_owned()).or_default();
+        e.1 = e.1.max((driver_bytes(device) >> 20) as usize);
+        let e = stages.entry("capacity.pool_mb_at_refusal_max".to_owned()).or_default();
+        e.1 = e.1.max(pool().load(Ordering::Acquire) >> 20);
+        let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+        let e = stages.entry("capacity.accel_live_mb_at_refusal_max".to_owned()).or_default();
+        e.1 = e.1.max(live >> 20);
+        let e = stages.entry("capacity.accel_idle_mb_at_refusal_max".to_owned()).or_default();
+        e.1 = e.1.max(idle >> 20);
+    }
+}
+
 /// What the Metal driver has allocated for the device (a test build's: `test_pool::driver_bytes`).
 #[cfg(all(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 fn driver_bytes(device: &metal::DeviceRef) -> u64 {
@@ -179,29 +198,7 @@ impl BufferReservation {
         // the device blocks, relational work: 0266 §16), so a reservation counts them; room is made in the pool's one
         // order (idle buffers, then the residency's least recently used slabs).
         let pooled = Arc::ptr_eq(&ledger, &pool());
-        // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
-        // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
-        // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
-        let bound = || if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::bound_bytes() } else { 0 };
-        // Drawn from this thread's admission (a wave's workspace, admitted as a stratum's tables are): its room was
-        // made when it was admitted.
-        let drawn = pooled && rerail_accel::gpu::shared::draw_reserved(bytes);
-        let take = || {
-            let bound = if drawn { 0 } else { bound() };
-            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| drawn || *next + bound <= limit))
-        };
-        let previous = take()
-            .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
-            .map_err(|used| {
-                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
-                    eprintln!(
-                        "RERAIL_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
-                        std::backtrace::Backtrace::force_capture()
-                    );
-                }
-                rerail_prof::count("capacity.metal_pool_ledger", 1);
-                Error::BackendCapacity
-            })?;
+        let previous = Self::reserve(bytes, &ledger, limit, pooled)?;
         if pooled {
             // Idle buffers fit what the budget leaves now.
             rerail_accel::gpu::shared::trim_idle();
@@ -212,17 +209,7 @@ impl BufferReservation {
         }
         if pooled {
             pool_peak().fetch_max(previous + bytes, Ordering::AcqRel);
-            if bytes >= 4 << 20 && std::env::var_os("RERAIL_BUFFERS").is_some() {
-                let trace = std::backtrace::Backtrace::force_capture().to_string();
-                let frames = trace
-                    .lines()
-                    .filter(|line| line.trim_start().starts_with("at ") && line.contains("code_rule_dsl"))
-                    .take(3)
-                    .map(|line| line.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == ':' || c == ' ').to_owned())
-                    .collect::<Vec<_>>()
-                    .join(" < ");
-                eprintln!("buffer {} MB (alive {} MB): {frames}", bytes >> 20, (previous + bytes) >> 20);
-            }
+            Self::trace_large(bytes, previous);
             launch::record_buffer_allocation(previous + bytes);
         }
         Ok(Self {
@@ -237,6 +224,48 @@ impl BufferReservation {
                 Vec::new()
             },
         })
+    }
+
+    /// Adds `bytes` to `ledger` within `limit`, making room in the pool once when `pooled`; the bytes it held before.
+    fn reserve(bytes: usize, ledger: &AtomicUsize, limit: usize, pooled: bool) -> Result<usize, Error> {
+        // One account (Q203): the pool's leases and the admissions' reservations not yet leased (`bound_bytes`), as
+        // `make_room` counts them; counting the leases alone, a reservation took room a stratum had been admitted to.
+        // A test's ledger is its thread's, the pool's leases the process's: tests are bounded by `test_pool`.
+        let bound = || if pooled && !cfg!(any(test, feature = "test-hooks")) { rerail_accel::gpu::shared::bound_bytes() } else { 0 };
+        // Drawn from this thread's admission (a wave's workspace, admitted as a stratum's tables are): its room was
+        // made when it was admitted.
+        let drawn = pooled && rerail_accel::gpu::shared::draw_reserved(bytes);
+        let take = || {
+            let bound = if drawn { 0 } else { bound() };
+            ledger.try_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| drawn || *next + bound <= limit))
+        };
+        take()
+            .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
+            .map_err(|used| {
+                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!(
+                        "RERAIL_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
+                        std::backtrace::Backtrace::force_capture()
+                    );
+                }
+                rerail_prof::count("capacity.metal_pool_ledger", 1);
+                Error::BackendCapacity
+            })
+    }
+
+    /// With `RERAIL_BUFFERS`, a pooled reservation of 4 MB or more and the engine frames that asked for it.
+    fn trace_large(bytes: usize, previous: usize) {
+        if bytes >= 4 << 20 && std::env::var_os("RERAIL_BUFFERS").is_some() {
+            let trace = std::backtrace::Backtrace::force_capture().to_string();
+            let frames = trace
+                .lines()
+                .filter(|line| line.trim_start().starts_with("at ") && line.contains("code_rule_dsl"))
+                .take(3)
+                .map(|line| line.trim().trim_start_matches(|c: char| c.is_ascii_digit() || c == ':' || c == ' ').to_owned())
+                .collect::<Vec<_>>()
+                .join(" < ");
+            eprintln!("buffer {} MB (alive {} MB): {frames}", bytes >> 20, (previous + bytes) >> 20);
+        }
     }
 
 }
@@ -344,6 +373,7 @@ impl HostMapped {
                 if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!("RERAIL_HOST_MAPPED_REJECT bytes={} driver={}", region.length, driver_bytes(metal));
                 }
+                count_driver_refusal(metal);
                 return Err(Error::BackendCapacity);
             }
         }

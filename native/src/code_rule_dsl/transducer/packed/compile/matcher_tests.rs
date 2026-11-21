@@ -299,7 +299,7 @@ fn a_recursive_utility_inside_another_settles() {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_owned(), "json", CAPABILITIES).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
     let tape = python_tape("x = ['a'] + b + c\ny = (['a'] + b) + c\nz = d + e\n");
@@ -418,7 +418,7 @@ fn nested_recursion() -> LoweredMatcher {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = crate::code_rule_dsl::rule_api::compile(&policy.to_owned(), "json", CAPABILITIES).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles")
 }

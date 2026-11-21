@@ -510,7 +510,7 @@ fn source_room(len: usize) -> usize {
 
 /// Zero bytes past each source in its slab (a slab is mapped zeroed, and nothing else is written
 /// there): tier 2 reads its words in place, a window past the file's end reading zeros, as the
-/// batch's layout (`native_cpu_block::BACK`).
+/// batch's layout (`block_native::BACK`).
 pub const SOURCE_MARGIN: usize = rerail_compiler::block_native::BACK;
 
 /// Files' bytes resident as sources, in order: hits by SHA-256 from the residency, misses copied

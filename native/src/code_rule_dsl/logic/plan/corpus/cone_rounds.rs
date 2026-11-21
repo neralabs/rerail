@@ -648,7 +648,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeMap::new())?
+                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &BTreeMap::new())?
             }
             None => 0,
         };

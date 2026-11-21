@@ -54,20 +54,6 @@ fn install_with(ids: Option<BuildIds>) {
     });
 }
 
-/// This crate's own test binary, which the engine does not load: booted as it loads, as the engine boots, so no
-/// test meets an unregistered pack, device or SQL function.
-#[cfg(test)]
-mod test_load {
-    extern "C" fn load() {
-        super::install_for_tests();
-    }
-    #[used]
-    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
-    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
-    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
-    static LOAD: extern "C" fn() = load;
-}
-
 /// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
 /// loads, before any run: the core asks a family's questions of the pack registered here.
 pub fn install_languages(tests: bool) {
@@ -434,4 +420,18 @@ fn heap_peak_reset() {
         // SAFETY: `thread.peak.reset` reads and writes nothing: no old or new value is passed.
         unsafe { tikv_jemalloc_sys::mallctlbymib(reset.as_ptr(), reset.len(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
     }
+}
+
+/// This crate's own test binary, which the engine does not load: booted as it loads, as the engine boots, so no
+/// test meets an unregistered pack, device or SQL function.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        super::install_for_tests();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
 }

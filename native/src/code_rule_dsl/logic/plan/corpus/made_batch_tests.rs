@@ -246,19 +246,20 @@ fn r7_a_run_after_an_edit_makes_no_document() {
     c.write("a.py", "def foo(x, y):\n    w = x\n    return w\n\ndef bar():\n    pass\n");
     c.run_over("kept.sqlite");
     // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
-    let (report, rows, said) = {
+    let (report, rows, said, whole) = {
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         profile::set(true);
         profile::take_decisions();
         let (report, rows) = c.run_over("kept.sqlite");
         let made = profile::take_decisions();
         profile::set(false);
+        let whole: BTreeSet<String> = made.keys().filter(|(t, _)| t.contains("row space") || t.contains("every document") || t == "documents" || t.contains("statistics") || t.contains("semi-join") || t.contains("measured")).map(|(t, x)| format!("{t}: {}", x.chars().take(160).collect::<String>())).collect();
         let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0494)").map(|(_, x)| x).collect();
-        (report, rows, said)
+        (report, rows, said, whole)
     };
     let docs = report.corpus_docs;
     assert!(said.contains(&format!("{n} of {n} documents' views' counts kept", n = FILES.len())), "the edit kept its changed document's counts: {said:?}");
-    assert_eq!((docs.from_tape, docs.parsed), (0, 0), "Q332: no document is built after an edit with nothing changed since: {docs:?}");
+    assert_eq!((docs.from_tape, docs.parsed), (0, 0), "Q332: no document is built after an edit with nothing changed since: {docs:?}; the reads that made them: {whole:#?}");
     assert_eq!(docs.made, 0, "Q332: no document's rows are made after an edit with nothing changed since: {docs:?}");
     let (_, fresh) = c.run_over("fresh.sqlite");
     assert_eq!(rows, fresh, "the outputs are a cold run's");

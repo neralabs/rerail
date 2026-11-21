@@ -144,7 +144,15 @@ impl std::fmt::Debug for Exact {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Column {
+    /// The within-document sum of squares of the rows whose first column names a node (each document a group).
     sqd: i64,
+    /// The rows whose first column is a document key (`doc32` 0): `syntax::measured` counts them all as one group,
+    /// so their part of the within-document sum, `zero_sq`, is each value's count over every such row, squared. No
+    /// sum by document gives it (a document counted out takes out less than it put in), so each value's count is
+    /// kept (`zero`) and `zero_sq` moved by its square's change; past `EXACT` values the map is given up and a
+    /// document's own squares are taken (as before 0458's patching).
+    zero: Option<Exact>,
+    zero_sq: i64,
     local_ndv: i64,
     /// Documents counted in that hold a value naming another document.
     crossing: i64,
@@ -206,7 +214,7 @@ fn summed(pairs: &mut Vec<(i64, i64)>) {
 impl RelStats {
     /// No rows yet, of these columns.
     pub(in crate::code_rule_dsl) fn new(columns: Vec<String>) -> Self {
-        let cols = columns.iter().map(|_| Column { exact: Some(Exact::default()), ..Column::default() }).collect();
+        let cols = columns.iter().map(|_| Column { exact: Some(Exact::default()), zero: Some(Exact::default()), ..Column::default() }).collect();
         RelStats { columns, rows: 0, partial: false, cols }
     }
 
@@ -401,13 +409,13 @@ impl RelStats {
                 summed(&mut values);
                 summed(&mut zero);
             }
-            sqd += zero.iter().map(|(_, k)| k * k).sum::<i64>();
             if let Some(p) = &mut col.pairs {
                 for &(v, k) in &zero {
                     p.add(pair(0, v), sign * k);
                 }
             }
             col.sqd += sign * sqd;
+            Self::zeros(col, &zero, sign);
             col.local_ndv += sign * local;
             col.crossing += sign * crossed.values().filter(|x| **x).count() as i64;
             Self::values(col, &values, sign);
@@ -428,6 +436,7 @@ impl RelStats {
             let (mut sqd, mut local) = (0i64, 0i64);
             let pairs = col.pairs.as_mut().expect("paired");
             let mut exact = col.exact.take();
+            let mut zeros: Vec<(i64, i64)> = Vec::new();
             let found = postings(c, &mut |v, firsts| {
                 col.sketch.add(v, firsts.len() as i64);
                 if let Some(e) = &mut exact {
@@ -461,8 +470,8 @@ impl RelStats {
                     }
                     at = end;
                 }
-                sqd += small * small;
                 if small > 0 {
+                    zeros.push((v, small));
                     pairs.add(pair(0, v), small);
                 }
             });
@@ -471,6 +480,7 @@ impl RelStats {
             }
             col.exact = exact;
             col.sqd = sqd;
+            Self::zeros(col, &zeros, 1);
             col.local_ndv = local;
             col.crossing = crossing.len() as i64;
         }
@@ -537,6 +547,26 @@ impl RelStats {
         }
     }
 
+    /// The document-key rows' counts by value (`zero`, one pair a value) in or out of their group (`Column::zero`).
+    fn zeros(col: &mut Column, zero: &[(i64, i64)], sign: i64) {
+        if zero.is_empty() {
+            return;
+        }
+        let Some(map) = &mut col.zero else {
+            col.zero_sq += sign * zero.iter().map(|(_, k)| k * k).sum::<i64>();
+            return;
+        };
+        for &(v, k) in zero {
+            let old = map.get(v);
+            let new = old + sign * k;
+            col.zero_sq += new * new - old * old;
+            map.add(v, sign * k);
+        }
+        if map.len() > EXACT {
+            col.zero = None;
+        }
+    }
+
     /// Each distinct value's count (`values`, one pair a value) into the sketch and the exact map.
     fn values(col: &mut Column, values: &[(i64, i64)], sign: i64) {
         for &(v, k) in values {
@@ -567,8 +597,9 @@ impl RelStats {
                 if !held(name) || n == 0 {
                     return (name.clone(), n, n, n, n);
                 }
+                let within = col.sqd + col.zero_sq;
                 let (ndv, sq) = if !self.partial && col.crossing == 0 {
-                    (col.local_ndv, col.sqd)
+                    (col.local_ndv, within)
                 } else if let Some(exact) = &col.exact {
                     (exact.len() as i64, exact.values().map(|k| k * k).sum())
                 } else {
@@ -576,7 +607,7 @@ impl RelStats {
                 };
                 let ndv = ndv.clamp(1, n);
                 let sqd = match (&col.pairs, self.partial) {
-                    (_, false) => col.sqd,
+                    (_, false) => within,
                     (Some(p), true) => p.sq().round() as i64,
                     (None, true) => sq,
                 };
@@ -607,14 +638,26 @@ impl RelStats {
 
     /// Bytes `encode` takes, near enough (the exact maps and sketches dominate).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.cols.iter().map(|c| 24 + c.exact.as_ref().map_or(0, |e| 16 * e.len()) + c.sketch.bytes() + c.pairs.as_ref().map_or(0, Sketch::bytes)).sum::<usize>() + self.columns.iter().map(|c| c.len() + 4).sum::<usize>()
+        self.cols.iter().map(|c| 32 + [&c.exact, &c.zero].iter().map(|e| e.as_ref().map_or(0, |e| 16 * e.len())).sum::<usize>() + c.sketch.bytes() + c.pairs.as_ref().map_or(0, Sketch::bytes)).sum::<usize>() + self.columns.iter().map(|c| c.len() + 4).sum::<usize>()
     }
 
     /// As stored in the wave's blob (0096 §2): a format byte, the columns, the rows, then per column its sums, its
     /// exact map (or none) and its sketch. Integers little-endian.
     pub(in crate::code_rule_dsl) fn encode(&self, out: &mut Vec<u8>) {
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
-        out.push(2);
+        let exact = |out: &mut Vec<u8>, e: Option<&Exact>| match e {
+            None => int(out, -1),
+            Some(e) => {
+                int(out, e.len() as i64);
+                let mut pairs: Vec<(i64, i64)> = e.iter().collect();
+                pairs.sort();
+                for (v, k) in pairs {
+                    int(out, v);
+                    int(out, k);
+                }
+            }
+        };
+        out.push(3);
         int(out, self.columns.len() as i64);
         for c in &self.columns {
             int(out, c.len() as i64);
@@ -624,20 +667,11 @@ impl RelStats {
         out.push(u8::from(self.partial));
         for col in &self.cols {
             int(out, col.sqd);
+            int(out, col.zero_sq);
+            exact(out, col.zero.as_ref());
             int(out, col.local_ndv);
             int(out, col.crossing);
-            match &col.exact {
-                None => int(out, -1),
-                Some(e) => {
-                    int(out, e.len() as i64);
-                    let mut pairs: Vec<(i64, i64)> = e.iter().collect();
-                    pairs.sort();
-                    for (v, k) in pairs {
-                        int(out, v);
-                        int(out, k);
-                    }
-                }
-            }
+            exact(out, col.exact.as_ref());
             let s = col.sketch.encode();
             int(out, s.len() as i64);
             out.extend_from_slice(&s);
@@ -660,7 +694,20 @@ impl RelStats {
             Some(b)
         }
         let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
-        if take(bytes, at, 1)? != [2] {
+        // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
+        let exact = |at: &mut usize| -> Option<Option<Exact>> {
+            let e = int(at)?;
+            if e < 0 {
+                return Some(None);
+            }
+            let mut m = Exact::default();
+            for _ in 0..e {
+                let v = int(at)?;
+                m.insert(v, int(at)?);
+            }
+            Some(Some(m))
+        };
+        if take(bytes, at, 1)? != [3] {
             return None;
         }
         let k = usize::try_from(int(at)?).ok()?;
@@ -673,25 +720,17 @@ impl RelStats {
         let partial = take(bytes, at, 1)?[0] != 0;
         let mut cols = Vec::with_capacity(k);
         for _ in 0..k {
-            let (sqd, local_ndv, crossing) = (int(at)?, int(at)?, int(at)?);
-            let e = int(at)?;
-            let exact = if e < 0 {
-                None
-            } else {
-                let mut m = Exact::default();
-                for _ in 0..e {
-                    let v = int(at)?;
-                    m.insert(v, int(at)?);
-                }
-                Some(m)
-            };
+            let (sqd, zero_sq) = (int(at)?, int(at)?);
+            let zero = exact(at)?;
+            let (local_ndv, crossing) = (int(at)?, int(at)?);
+            let exact = exact(at)?;
             let l = usize::try_from(int(at)?).ok()?;
             let sketch = Sketch::decode(take(bytes, at, l)?)?;
             let pairs = match int(at)? {
                 l if l < 0 => None,
                 l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
             };
-            cols.push(Column { sqd, local_ndv, crossing, exact, sketch, pairs });
+            cols.push(Column { sqd, zero, zero_sq, local_ndv, crossing, exact, sketch, pairs });
         }
         Some(RelStats { columns, rows, partial, cols })
     }
@@ -907,7 +946,10 @@ pub mod tests {
                     *crossing.entry(dof).or_default() |= !names(v, row);
                     per_doc.insert((dof, v), ());
                 }
-                col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
+                // The document-key rows' group (`doc32` 0) by value, apart (`Column::zero`).
+                col.sqd += sign * counts.iter().filter(|((d, _), _)| *d != 0).map(|(_, k)| k * k).sum::<i64>();
+                let zeros: Vec<(i64, i64)> = counts.iter().filter(|((d, _), _)| *d == 0).map(|(&(_, v), &k)| (v, k)).collect();
+                RelStats::zeros(col, &zeros, sign);
                 col.local_ndv += sign * per_doc.len() as i64;
                 col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
                 // A paired column's sketch of (document, value) counts: rows naming a document by its nodes by

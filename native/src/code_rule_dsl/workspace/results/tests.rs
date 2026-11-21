@@ -46,7 +46,7 @@
             _maintenance: None,
         });
         let compiled =
-            crate::code_rule_dsl::rule_api::compile(&code_rule.to_owned(), "json", CAPABILITIES)
+            crate::code_rule_dsl::rule_api::compile(code_rule, "json", CAPABILITIES)
                 .unwrap();
         workspace.add_code_rule(&compiled, None).unwrap();
         workspace

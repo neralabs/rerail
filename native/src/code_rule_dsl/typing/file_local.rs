@@ -187,6 +187,8 @@ mod on_version;
 pub use on_version::FileLocal;
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use passes::Readers;
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;

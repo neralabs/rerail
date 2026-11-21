@@ -876,3 +876,22 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     assert!(!split.local.contains("out"), "{:?}", split.local);
     assert!(axes.iter().any(|a| split.causes.get("out").is_some_and(|why| why.contains(a.as_str()))), "{:?}", split.causes);
 }
+
+/// A pushed join the split does not take holds back every rule that reads it in one round, not one reader a round
+/// (`passes::push::Readers`). Held against its first reader only, each other reader made it again the next round: on
+/// main's Python pack the two pushes (14,361 and 17,289 helpers) never ended; held against all, 3 rounds each.
+#[test]
+fn a_refused_join_holds_back_all_its_readers_in_one_round() {
+    let mut made = Readers::default();
+    // Six rules read one helper (one component's content); rule 9 reads another, taken; rule 2 reads both.
+    for rule in 0..6 {
+        made.read(rule, "fl1_violation".to_owned());
+    }
+    made.read(9, "fl2_violation".to_owned());
+    made.read(2, "fl2_violation".to_owned());
+    made.read(2, "fl1_violation".to_owned());
+    let taken = std::collections::BTreeSet::from(["fl2_violation".to_owned()]);
+    assert_eq!(made.refused(&taken), (0..6).collect(), "every reader of the refused helper, each once");
+    assert!(made.refused(&std::collections::BTreeSet::from(["fl1_violation".to_owned(), "fl2_violation".to_owned()])).is_empty());
+    assert_eq!(made.names(), ["fl1_violation", "fl2_violation"], "each helper once, in the order made");
+}

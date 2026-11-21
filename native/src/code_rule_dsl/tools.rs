@@ -887,7 +887,7 @@ pub fn dump(
     let compiled = policies
         .iter()
         .map(|(name, source, format)| {
-            crate::code_rule_dsl::rule_api::compile(&source, &format, &capabilities.to_string())
+            crate::code_rule_dsl::rule_api::compile(source, format, capabilities)
                 .map(|rule| (name.clone(), rule))
                 .map_err(|error| format!("{name}: {}", error.reason))
         })

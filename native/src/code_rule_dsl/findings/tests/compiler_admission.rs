@@ -16,7 +16,7 @@ pub(super) fn probe() -> Value {
         let document: Value = serde_json::from_str(text).expect("catalog policy JSON");
         let policy = document["id"].as_str().expect("policy id").to_owned();
         let authored = document["clauses"].as_array().expect("catalog clauses");
-        let compiled = crate::code_rule_dsl::rule_api::compile(&text.to_owned(), "json", CAPABILITIES);
+        let compiled = crate::code_rule_dsl::rule_api::compile(text, "json", CAPABILITIES);
         match compiled {
             Err(error) => {
                 for clause in authored {

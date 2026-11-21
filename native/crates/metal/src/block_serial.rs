@@ -278,7 +278,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     }
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
-    // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
+    // The totals' one count is every total's words OR-ed (`block_native::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
         let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
         tail.push_str(&format!("  {{ const uint32_t n = ukl_sg_sum(ukl_popcount64({w}) __UKL_ARGS); if (l == 0u) counts[{c}u] = n; }}\n"));

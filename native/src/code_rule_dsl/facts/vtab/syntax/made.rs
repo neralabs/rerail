@@ -27,6 +27,9 @@ pub struct Kept {
     pub counts: ViewCounts,
     pub size: FactsSize,
     pub file: bool,
+    /// A host file's tree's or program's host and file (decision 0512), and its tape tag: what a warm run makes it
+    /// pending with (`syntax::Pending::with_guest`).
+    pub guest: Option<(super::Hosted, u8)>,
 }
 
 /// A projection's views' counts.
@@ -164,12 +167,12 @@ impl Docs {
         self.slots[i].input.module()
     }
     /// Document `i`'s place in its host, a guest's; none is built for it.
-    pub fn guest(&self, i: usize) -> Option<&Arc<Guest>> {
+    pub fn guest(&self, i: usize) -> Option<super::GuestOf<'_>> {
         self.slots[i].input.guest()
     }
     /// Document `i`'s file (decision 0431 §4): a program's is its file's, any other document's its own key.
     pub fn file(&self, i: usize) -> u32 {
-        Guest::file_key(self.guest(i).map(|g| &**g), self.keys[i])
+        Guest::file_key(self.guest(i), self.keys[i])
     }
     /// Document `i`'s path, digest and facts' size, as given; none is built for them.
     pub fn path(&self, i: usize) -> &str {
@@ -263,7 +266,7 @@ impl Docs {
         // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
-        p.file = Guest::file_key(d.guest.as_deref(), d.key);
+        p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
