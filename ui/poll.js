@@ -1040,8 +1040,13 @@ function followChanges() {
   const each = message => { watchStall(controller, true); onMessage(message, first); first = false; };
   watchStall(controller, false);
   // How it ended needs no reading here: the read after it says whether the daemon answers.
-  inStreamSlot(() => follow(changesPath(), each, controller.signal)).catch(() => {}).then(() => changesEnded(controller));
+  inStreamSlot(() => follow(changesPath(), each, controller.signal)).catch(warnUnlessEnded).then(() => changesEnded(controller));
   keepPace();
+}
+
+/** Warns of a stream that failed for any cause but its end here (`AbortError`), a render that threw included. */
+function warnUnlessEnded(error) {
+  if (error?.name !== "AbortError") console.warn("change stream failed", error);
 }
 
 /**

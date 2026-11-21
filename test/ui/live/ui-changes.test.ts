@@ -1,12 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { changeScope, refreshNow, setNeeds, startPolling } from "../../../ui/poll.js";
 import { data, setScope, ui } from "../../../ui/state.js";
 import { currentNeeds } from "../../../ui/views/index.js";
 import type { MergeAssistStatus } from "../../../src/engine/index.js";
 import { sampleStatus } from "../../support/merge-assist/status.js";
 
-/** The daemon's change stream as the test writes it: `send` one message, `end` it as a stopping daemon does. */
-interface Stream { send: (data: string, event?: string) => void; end: () => void; signal: AbortSignal }
+/**
+ * The daemon's change stream as the test writes it: `send` one message, `end` it as a stopping daemon does; `cancelled`
+ * once the page let go of it, which closes its connection.
+ */
+interface Stream { send: (data: string, event?: string) => void; end: () => void; signal: AbortSignal; cancelled: () => boolean }
 
 let streams: Stream[] = [];
 /** The reads the page made, by path, beside the stream. */
@@ -35,6 +38,8 @@ let githubDueNow = false;
 /** While set, every read the page makes waits for it to resolve before the daemon answers it, as a slow answer does. */
 let heldReads: PromiseWithResolvers<void> | undefined;
 let renders: boolean[] = [];
+/** While set, the page's next render throws, as one with a bug does. */
+let renderFails = false;
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
 
@@ -70,11 +75,13 @@ function answer(url: URL): Response {
 
 function openStream(signal: AbortSignal): Response {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
-  const body = new ReadableStream<Uint8Array>({ start: c => { controller = c; } });
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({ start: c => { controller = c; }, cancel: () => { cancelled = true; } });
   streams.push({
     send: (token, event) => controller.enqueue(encoder.encode(`${event === undefined ? "" : `event: ${event}\n`}data: ${token}\n\n`)),
     end: () => controller.close(),
     signal,
+    cancelled: () => cancelled,
   });
   signal.addEventListener("abort", () => controller.error(signal.reason));
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -116,6 +123,7 @@ beforeEach(async () => {
   githubDueNow = false;
   heldReads = undefined;
   renders = [];
+  renderFails = false;
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
     const url = new URL(input);
@@ -137,7 +145,13 @@ beforeEach(async () => {
   // One page a test: the listeners of earlier tests' pages would read again at each show.
   visibility = [];
   setHidden(false);
-  startPolling(changed => renders.push(changed));
+  startPolling(changed => {
+    if (renderFails) {
+      renderFails = false;
+      throw new Error("render failed");
+    }
+    renders.push(changed);
+  });
   await settle();
   // Each test counts from the page's first read, which it made as it opened.
   readsAtOpen = reads;
@@ -247,6 +261,19 @@ describe("the dashboard following the daemon's change stream", () => {
     // 5 s from the first message, 3 s after the read t2 began.
     await after(1);
     expect(readsOf("/api/repositories")).toBe(3);
+  });
+
+  it("lets go of a stream whose message the page could not show, so its connection closes, and warns of it", async () => {
+    stream().send("t1");
+    await settle();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    onTestFinished(() => warn.mockRestore());
+    renderFails = true;
+    // A beat that brings nothing new renders at once, as it arrives.
+    stream().send("t1");
+    await settle();
+    expect(streams[0]!.cancelled()).toBe(true);
+    expect(warn).toHaveBeenCalledWith("change stream failed", new Error("render failed"));
   });
 
   it("renders at a beat that brings nothing new and reads nothing, nor moves the poll's time views read more after", async () => {

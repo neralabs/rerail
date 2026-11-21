@@ -91,17 +91,22 @@ function deliver(text, onMessage) {
 /**
  * Follow a stream of server-sent events the daemon holds open (its change stream, `GET /api/changes`), through
  * `fetch` because `EventSource` cannot send the access header; `onMessage` gets each message as it arrives. Resolves
- * when the daemon ends it, rejects when it was refused (as `get` rejects) or broke, or once `signal` ends it here.
+ * when the daemon ends it, rejects when it was refused (as `get` rejects) or broke, when `onMessage` throws, or once
+ * `signal` ends it here. However it ends, the stream is let go of, so its connection closes.
  */
 export async function follow(path, onMessage, signal) {
   const response = await fetch(apiUrl(path), { headers: accessHeaders(), signal });
   if (!response.ok) throw await refused(path, response);
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let rest = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    rest = deliver(rest + value, onMessage);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      rest = deliver(rest + value, onMessage);
+    }
+  } finally {
+    reader.cancel().catch(() => {});
   }
 }
 
