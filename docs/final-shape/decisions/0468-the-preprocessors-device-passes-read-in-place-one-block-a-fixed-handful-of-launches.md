@@ -153,7 +153,7 @@ with the unit, because each primitive's number of levels was chosen by its capac
 | R1 | The preprocessor tape is a format 16 image with its newline index, and its reads give the lean writer's nodes | `the_pp_tape_is_a_format_16_image` |
 | R2 | The evaluator reads its files where the residency placed them: no copy of a source or a tape | a guard over `pp_eval.rs`; `the_names_pass_reads_the_tapes_in_place` |
 | R3 | `__LINE__` is the tape's newline index's | `line_and_file_are_the_serial_passes` |
-| R4 | One block a batch, leased within the budget: no `MappedBuffer` of the arena | a guard over `pp_expand.rs` and `pp_eval.rs`; `a_unit_past_its_room_runs_again_larger` |
+| R4 | One block a batch, leased within the budget: no `MappedBuffer` of the arena | a guard over `pp_expand.rs` and `pp_eval.rs`; `a_unit_past_its_token_room_runs_again_larger` |
 | R5 | Each persistent-grid primitive equals a host reference from 1 to 10^6 elements, at G = 1, 8 and the device's G | the library's tests, on Metal and UKL's CPU backend |
 | R6 | The grid barrier: 10,000 in a row, each seeing every group's writes before it; past residency, `barrier` and no hang | the library's tests |
 | R7 | An evaluation is the same fixed handful of launches for the smallest and the largest unit | `an_evaluation_is_a_fixed_handful_of_launches` |

@@ -121,13 +121,9 @@ fn sym_as<F>(p: *mut c_void) -> F {
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
-        // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no
-        // two of the process's streams (a root's each, `CudaQueueRoot`, and any a caller makes) share one. Read by the driver when it loads; a value the
-        // environment sets is kept.
-        if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
-            // SAFETY: once, before the driver loads, as the process's first use of the device.
-            unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
-        }
+        // The hardware queues the driver maps streams onto, round-robin in the order they are made: one for each of
+        // the process's streams (a root's each, `CudaQueueRoot`), so no two share one.
+        crate::os::nvidia_hardware_queues(MAX_CONNECTIONS);
         use crate::os::{Lib, Scope};
         let (driver, nvrtc_names) = library_names();
         let cuda = Lib::open(driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
@@ -715,8 +711,16 @@ impl CudaComputeFunction {
     }
 }
 
-/// The hardware queues asked of the driver (its maximum).
-const MAX_CONNECTIONS: usize = 32;
+/// The streams the process makes: the waiting root's and the queue root's (`CudaQueueRoot`, `rerail_device`'s
+/// `shared`), one each.
+const STREAMS: usize = 2;
+
+/// The hardware queues asked of the driver: one a stream. Not its maximum of 32: each one costs the context's creation
+/// (`os::nvidia_hardware_queues`).
+const MAX_CONNECTIONS: usize = STREAMS;
+
+/// The streams made so far: past `STREAMS`, one would share a hardware queue with the waiting root's.
+static STREAMS_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// What a queue's work goes to (`metal::CommandQueue`): one stream, made once. Its queues' work runs in the order it is
 /// flushed, as a Metal command queue's command buffers run in the order they are committed: the engine's batches rely
@@ -728,7 +732,8 @@ const MAX_CONNECTIONS: usize = 32;
 /// its hardware queue, and the work the host awaits before it signals may be among them: a deadlock (seen on a
 /// V100). Metal has the same rule within a command queue, which is why the forest keeps its waiting work on a queue
 /// of its own (`shared.waiting`). Here each root's stream has a hardware queue of its own (`MAX_CONNECTIONS`), so the
-/// waiting root's holds back nothing else.
+/// waiting root's holds back nothing else: the driver is given a hardware queue a stream the process makes, and a
+/// stream past them is refused (`STREAMS`).
 pub struct CudaQueueRoot {
     device: CudaDevice,
     stream: Ptr,
@@ -754,6 +759,8 @@ unsafe impl Sync for CudaQueueRoot {}
 impl CudaQueueRoot {
     /// A root on `device`. Made at the process's start (`shared`), the waiting root first.
     pub fn new(device: CudaDevice) -> CudaQueueRoot {
+        let made = STREAMS_MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        assert!(made < STREAMS, "a CUDA stream past the process's {STREAMS}: it would share a hardware queue with the waiting root's (MAX_CONNECTIONS)");
         let a = device.current();
         let mut stream = std::ptr::null_mut();
         must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");

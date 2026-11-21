@@ -9,8 +9,14 @@ use crate::lane::{self, Buffer};
 use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
-/// A store's alignment in its arena: every binding offset and every type's.
+/// A store's alignment in its arena at the least: every binding offset and every type's. A device that binds a
+/// region only at a coarser alignment (OpenCL's sub-buffers: 512 on NVIDIA's) has its own (`Device::bind_align`).
 const ALIGN: usize = 256;
+
+/// A store's alignment in an arena on the process's device.
+fn store_align() -> usize {
+    lane::device().map_or(ALIGN, |d| (d.bind_align() as usize).max(ALIGN).next_power_of_two())
+}
 
 /// An evaluation's arena (decision 0468 §3): one `rerail_blocks::Block`, leased from the GPU pool
 /// within the one budget (`lease_block_within`). Its stores are laid out as the passes' structures
@@ -23,6 +29,8 @@ pub struct Arena(Rc<Inner>);
 struct Inner {
     /// The layout's end: the bytes the stores take.
     end: Cell<usize>,
+    /// Its stores' alignment (`store_align`), found at the first store.
+    align: Cell<usize>,
     /// The stores' initial words, by offset, written when the block is leased.
     init: RefCell<Vec<(usize, Vec<u8>)>>,
     leased: OnceCell<Leased>,
@@ -49,9 +57,16 @@ impl Arena {
         Arena::default()
     }
 
+    fn align(&self) -> usize {
+        if self.0.align.get() == 0 {
+            self.0.align.set(store_align());
+        }
+        self.0.align.get()
+    }
+
     fn place(&self, len: usize) -> Buf {
         let at = self.0.end.get();
-        self.0.end.set(at + len.next_multiple_of(ALIGN));
+        self.0.end.set(at + len.next_multiple_of(self.align()));
         Buf { arena: self.clone(), at, len }
     }
 
@@ -83,12 +98,13 @@ impl Arena {
         if self.0.leased.get().is_some() {
             return Ok(());
         }
-        let bytes = self.bytes().max(ALIGN);
+        let align = self.align();
+        let bytes = self.bytes().max(align);
         let device = lane::device()?;
-        let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * ALIGN + 4096)
+        let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * align + 4096)
             .map_err(|_| Error::BackendCapacity)?;
         // Zeroed: a pooled slab may hold an earlier block's bytes.
-        let base = block.try_alloc(bytes, ALIGN).ok_or(Error::BackendCapacity)?;
+        let base = block.try_alloc(bytes, align).ok_or(Error::BackendCapacity)?;
         let buffer = block.device_buffer(device).map_err(|_| Error::BackendFailure)?;
         let host = block.base_ptr();
         for (at, words) in self.0.init.borrow_mut().drain(..) {
@@ -312,6 +328,17 @@ pub fn groups() -> u64 {
         return 1;
     }
     residency().groups.min(GROUPS_MOST)
+}
+
+/// `ukl/grid.h`'s `UKL_GRID_SMALL`: at most this many values, a grid primitive is group 0's alone.
+pub const GRID_SMALL: usize = 4096;
+
+/// The groups for `nodes` items of work (a unit's nodes, or its expansion's tokens): one a `GRID_SMALL` of them, at
+/// least one, at most `groups()`. Past
+/// its work a group only waits at the grid's barriers, and a barrier costs more with every group: on a GB10 under
+/// CUDA, an evaluation test's 18 runs took 58 ms of GPU time at 1 group, 173 ms at 8 and 640 ms at 32 (2026-11-21).
+pub fn groups_for(nodes: usize) -> u64 {
+    (nodes.div_ceil(GRID_SMALL).max(1) as u64).min(groups())
 }
 
 /// The grid kernel's resident groups on this machine (decision 0568, `rerail_device::grid`): the backend's answer

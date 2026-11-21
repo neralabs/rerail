@@ -435,7 +435,7 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    at_resident(crate::pp_arena::groups(), |groups| evaluate_at(unit, nodes, groups))
+    at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| evaluate_at(unit, nodes, groups))
 }
 
 fn evaluate_at(unit: &Unit, nodes: bool, groups: u64) -> Result<Evaluated, Error> {

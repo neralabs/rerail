@@ -358,7 +358,10 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 
 // A kernel: its info kernel (the rows' layout, three numbers a row after their count, then the rows' text), its
 // body (inner), and its entry, which declares the threadgroup memory and the SIMD group's scratch.
-#define DEFINE_KERNEL2(Library, Name, ...) \
+// The rows expanded first, as the CUDA and CPU shims do: a kernel may give them as a macro (a grid's shared rows),
+// which the info kernel stringizes (`#__VA_ARGS__` stringizes an argument unexpanded: "PP_GRID_ROWS", one field).
+#define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
+#define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
     { \
         __constant char * __ukl_text = #__VA_ARGS__; \

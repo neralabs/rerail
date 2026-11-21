@@ -1474,30 +1474,39 @@ fn calls_past_an_end_are_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
-/// R8 of decision 0448: a unit past its rung's room. An 8⁴ fan-out used three times wants more
-/// than rung 0's arena of tokens, and a `#` of 512 long names more scratch bytes than rung 0's
-/// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
-/// serial pass's tokens there. So does an `#if` line past its room that decides an include.
+/// R8 of decision 0448: a unit past its rung's room runs again at the next rung (`X_ROOM`), and gives the serial
+/// pass's tokens there. `text`'s expansion is past rung 0's room of `what`.
+fn past_its_room_runs_again_larger(what: &str, text: &str) {
+    let files = [("main.c", text)];
+    for cpp in [false, true] {
+        let (got, want, rung, _) = expanded(&files, cpp);
+        let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
+        same(show(&got), show(&want), what);
+        assert!(rung > 0, "{what}: ran at rung 0");
+        eprintln!("{what}: {} tokens at rung {rung}", got.len());
+    }
+}
+
+/// R8: an 8⁴ fan-out used three times wants more than rung 0's arena of tokens.
 #[test]
-fn a_unit_past_its_room_runs_again_larger() {
+fn a_unit_past_its_token_room_runs_again_larger() {
     let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
-    let tokens = format!("{fan}A3 A3 A3\n");
+    past_its_room_runs_again_larger("tokens", &format!("{fan}A3 A3 A3\n"));
+}
+
+/// R8: a `#` of 512 long names wants more scratch bytes than rung 0's 64 KB.
+#[test]
+fn a_unit_past_its_scratch_room_runs_again_larger() {
     // 512 names of 256 bytes: 131 KB stringized.
     let name = "n".repeat(256);
     let bytes = format!("#define B0 {name} {name} {name} {name} {name} {name} {name} {name}\n#define B1 B0 B0 B0 B0 B0 B0 B0 B0\n#define B2 B1 B1 B1 B1 B1 B1 B1 B1\n#define S(a) #a\n#define X(a) S(a)\nX(B2) end\n");
-    for (what, text) in [("tokens", tokens), ("scratch bytes", bytes)] {
-        let files = [("main.c", text.as_str())];
-        for cpp in [false, true] {
-            let (got, want, rung, _) = expanded(&files, cpp);
-            let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
-            same(show(&got), show(&want), what);
-            assert!(rung > 0, "{what}: ran at rung 0");
-            eprintln!("{what}: {} tokens at rung {rung}", got.len());
-        }
-    }
-    // An `#if` line past rung 0's room that decides an include: the rounds and the expansion's
-    // run both run it again larger before reading what the lines decided (a request made from
-    // a line cut short is none).
+    past_its_room_runs_again_larger("scratch bytes", &bytes);
+}
+
+/// R8: an `#if` line past rung 0's room that decides an include. The rounds and the expansion's run both run it
+/// again larger before reading what the lines decided (a request made from a line cut short is none).
+#[test]
+fn a_line_past_its_room_runs_again_larger() {
     let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
                #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n";
     let main = format!("{fan}#if A3 == 4096\n#include \"h.h\"\n#endif\nend\n");

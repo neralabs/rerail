@@ -104,7 +104,7 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    crate::pp_eval::at_resident(crate::pp_arena::groups(), |groups| definitions_at(unit, rung, groups))
+    crate::pp_eval::at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| definitions_at(unit, rung, groups))
 }
 
 fn definitions_at(unit: &Unit, rung: u32, groups: u64) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
@@ -1571,6 +1571,9 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
     loop {
         x = x.fit(p1.top);
         let rung = x.rung;
+        // At most `groups`, one a small grid's work: the unit's nodes, or its expansion's tokens, whose room each
+        // refused run grows (`pp_arena::groups_for`).
+        let groups = groups.min(crate::pp_arena::groups_for(unit.node_bound.max(x.tok)));
         let arena = Arena::new();
         let made = (|| -> Result<_, Error> {
             let front = Front::new(&arena, unit, false, groups)?;
@@ -1671,7 +1674,7 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
 /// `lookups` from the rooms `sizes` (the unit's last round's), which it leaves at the rooms this
 /// run settled at.
 pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
-    crate::pp_eval::at_resident(crate::pp_arena::groups(), |groups| lookups_at(unit, lay, sizes, groups))
+    crate::pp_eval::at_resident(crate::pp_arena::groups_for(unit.node_bound), |groups| lookups_at(unit, lay, sizes, groups))
 }
 
 fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {

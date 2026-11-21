@@ -171,6 +171,11 @@ fn api() -> Result<&'static Api, String> {
         } else {
             &["libOpenCL.so.1", "libOpenCL.so"]
         };
+        // NVIDIA's driver maps command queues onto hardware queues round-robin. Its default (8) cost the context
+        // 0.08 s more than 2 (a GB10), and many queues help nothing here: a root's waits for the host are held in its
+        // backlog (`ClQueueRoot::drive`), never on the device, so a queue that shares a hardware queue with a waiting
+        // root waits only behind work already enqueued, which completes. Two: one a root.
+        crate::os::nvidia_hardware_queues(2);
         let lib = crate::os::Lib::open(paths, crate::os::Scope::Local).ok_or_else(|| format!("no OpenCL library ({}): {}", paths.join(", "), crate::os::Lib::error()))?;
         let sym = |name: &str| -> Result<Ptr, String> {
             let p = lib.sym(name);
@@ -478,6 +483,11 @@ impl ClDevice {
     /// The largest buffer the device makes.
     pub fn max_alloc(&self) -> u64 {
         self.0.max_alloc
+    }
+
+    /// The alignment, in bytes, of a buffer's region bound as an argument (a sub-buffer's origin).
+    pub fn base_align(&self) -> u64 {
+        self.0.base_align
     }
 
     /// The largest threadgroup, and so the emulated SIMD group's scratch (`UKL_TG_MAX`).
@@ -1114,10 +1124,15 @@ impl ClComputeQueue {
         self.keep.borrow_mut().push(Box::new(v));
     }
 
-    /// `keep`s a buffer the work names, and notes it for a `synced` device's maps.
+    /// `keep`s a buffer the work names, and notes it for a `synced` device's maps: a sub-buffer's buffer, whole, so a
+    /// block bound at many offsets is mapped once, and no two maps overlap (OpenCL leaves overlapping maps undefined).
     fn keep_buffer(&self, b: &ClBuffer) {
-        if let Mem::Cl(m) = b.mem() {
-            self.touched.borrow_mut().push((m, b.length() as usize));
+        let mut root = b;
+        while let Some(p) = &root.0._parent {
+            root = p;
+        }
+        if let Mem::Cl(m) = root.mem() {
+            self.touched.borrow_mut().push((m, root.length() as usize));
         }
         self.keep(b.clone());
     }

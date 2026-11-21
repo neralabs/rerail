@@ -400,6 +400,19 @@ fn what_a_barrier_costs() {
     }
 }
 
+/// `GRID_SMALL` is `ukl/grid.h`'s `UKL_GRID_SMALL`, and a unit's groups are one a `GRID_SMALL` of its nodes, at
+/// least one, at most the grid's.
+#[test]
+fn a_units_groups_are_one_a_small_grids_nodes() {
+    let header = rerail_ukl::LIBRARY.iter().find(|(p, _)| *p == "ukl/grid.h").expect("UKL's grid header").1;
+    assert!(header.contains(&format!("#define UKL_GRID_SMALL {}u", GRID_SMALL)), "UKL_GRID_SMALL is GRID_SMALL");
+    let most = groups();
+    assert_eq!(groups_for(0), 1);
+    assert_eq!(groups_for(GRID_SMALL), 1);
+    assert_eq!(groups_for(GRID_SMALL + 1), 2.min(most));
+    assert_eq!(groups_for(usize::MAX / 2), most);
+}
+
 /// The setup's Metal source splits one unit a barriered phase function (decision 0571), as the spike's split did
 /// (14 dynamic libraries, `px_r_substs` among them, calls 6 deep), and the small tape reads stay in their callers.
 #[test]
