@@ -153,16 +153,35 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("sends a new token when another process commits through Rerail's own opener, as the CLI's writes do", async () => {
-    // The writer syncs the write-ahead log between writing its commit and publishing it, so the daemon hears the
-    // write before it can read the commit, and no later notice comes.
+  it("sends a new token when another process commits through Rerail's own opener and closes it, as a CLI command does", async () => {
+    // On Linux and macOS the watch hears the commit's write of the write-ahead log; on Windows, where a commit that does
+    // not wait for the disk gives no notice, it hears the writer close the log at its end.
     const writer = await startDatabaseWriter(databasePath);
     const stream = await open();
     try {
       const first = await stream.next();
       await writer.commit("remote:github.com/acme/web");
+      await writer.close();
 
       expect((await stream.next()).data).not.toBe(first.data);
+    } finally {
+      await stream.stop();
+      await writer.close();
+    }
+  });
+
+  it("sends a new token by the next beat when another process commits and keeps the database open", async () => {
+    // On Windows no notice comes for such a commit: the beat reads the version, which every other connection's commit
+    // moves.
+    const writer = await startDatabaseWriter(databasePath);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const stream = await open();
+    try {
+      const first = await stream.next();
+      await writer.commit("remote:github.com/acme/web");
+      await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+      expect(await movedFrom(stream, first.data)).toBeDefined();
     } finally {
       await stream.stop();
       await writer.close();

@@ -6,7 +6,7 @@ import { basename, dirname } from "node:path";
  * in this process or another), or the API's own stores wrote. `files`: a folder of {@link ChangeFeedOptions.files}
  * changed (the installed rule packs). `conflicts`: Merge Assist's conflicts may have changed. `beat`: every
  * {@link BEAT_MS} while anyone listens, so a listener can say it is alive and look again at what no notice covers (a
- * checkout's own rules and branches, a notice the OS dropped).
+ * checkout's own rules and branches, another process's commit on Windows, a notice the OS dropped).
  */
 export type ChangeNotice = "data" | "files" | "conflicts" | "beat";
 
@@ -34,11 +34,12 @@ export const BEAT_MS = 5_000;
 
 /**
  * The looks again after a file notice that found no new commit, in milliseconds after it. Another process's commit is
- * heard when it writes the `-wal` file, before readers can see it: with `synchronous = FULL` (Rerail's own opener, so
- * every CLI write) the writer syncs the file to disk between the two, then publishes the commit in the shared-memory
- * index, which no watch hears, and writes nothing more. Nothing else tells when that sync ends, so the version is read
- * again on these steps until it moves; they cover the syncs measured on Linux and Windows 11 with room to spare, and
- * past the last one the next beat reads it, as the poll did.
+ * heard when it writes the `-wal` file, before readers can see it: the writer then publishes the commit in the
+ * shared-memory index, which no watch hears, and writes nothing more. Rerail's own opener commits with `synchronous =
+ * NORMAL`, so the two follow each other at once; a commit that waits for the disk (`commitDurably`, a writer at `FULL`)
+ * syncs the file between them. Nothing else tells when that sync ends, so the version is read again on these steps
+ * until it moves; they cover the syncs measured on Linux and Windows 11 with room to spare, and past the last one the
+ * next beat reads it, as the poll did.
  */
 export const LOOK_AGAIN_MS = [2, 5, 10, 20, 40, 80, 160, 320, 640, 1_280] as const;
 
@@ -145,13 +146,22 @@ function lookAgain(moved: () => boolean, onMoved: () => void): { start(): void; 
 }
 
 /**
- * The feed over the database at `databasePath`, whose committed state `version` reads (`PRAGMA data_version` with the
- * stores' own writes). Every commit, from any connection, writes the database's `-wal` file, and a watch of the folder
- * hears it; a `data` notice is told once `version` moved, at once for this process's commits, and after the looks
- * again of {@link LOOK_AGAIN_MS} for another process's. A notice for the main file covers a database not in WAL mode
- * yet, and a name the OS does not report is taken as either. The folder is watched, not the file, so a database
- * created, removed or replaced keeps its watch. Each folder of `options.files` is watched too. A watch that could not
- * start or failed is tried again at the next beat; until then the beat alone looks.
+ * The feed over the database at `databasePath`, whose committed state `version` reads (`PRAGMA data_version`, which
+ * moves at every other connection's commit, with the stores' own writes). Every commit, from any connection, writes the
+ * database's `-wal` file. On Linux and macOS a watch of the folder hears each such write. On Windows it hears the log's
+ * first write after it is opened or restarted, a write synced to disk and a writer closing the file, and nothing of the
+ * other commits of a writer at `synchronous = NORMAL`, which leave the log's directory entry as it was until it is
+ * flushed or closed: on Windows 11, 4 notices for 20 such commits, and 20 for 20 at `FULL`, while the log's size and
+ * time, read by path or through a handle, and `data_version` moved at every commit. So this process's record writes are
+ * told by their writer (`onRecordsWritten`, through {@link ChangeFeed.notify}), as the API stores' own writes are, and
+ * another process's commit on Windows shows when that process closes the database (a CLI command, at its end), at the
+ * next notice or this process's next commit, and else at the next beat, within {@link BEAT_MS}: no fact of it reaches
+ * this process sooner, since SQLite tells no other process of a commit and the system reports no change for it. A
+ * `data` notice is told once `version` moved, at once for this process's commits, and after the looks again of
+ * {@link LOOK_AGAIN_MS} for another process's. A notice for the main file covers a database not in WAL mode yet, and a
+ * name the OS does not report is taken as either. The folder is watched, not the file, so a database created, removed
+ * or replaced keeps its watch. Each folder of `options.files` is watched too. A watch that could not start or failed is
+ * tried again at the next beat; until then the beat alone looks.
  */
 export function databaseChangeFeed(databasePath: string, version: () => string | undefined, options: ChangeFeedOptions = {}): ChangeFeed {
   const names = new Set([basename(databasePath), `${basename(databasePath)}-wal`]);

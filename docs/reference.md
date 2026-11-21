@@ -449,8 +449,8 @@ The daemon writes rules and work links; the shared runtime records harness event
   update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
-  is sent at once, again when any process's commit to the database becomes readable or a pack is installed or
-  removed, and every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
+  is sent at once, again when a commit to the database becomes readable or a pack is installed or removed, and
+  every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
   checkout's own rules and branches, and while Merge Assist is on for its GitHub repository the daemon's gh hosts file,
   are read at that 5 s message, and a token that moved is sent once read, so a login, logout or switch made with gh
   shows on an open Merge Assist page within about 5 s. A message
@@ -464,7 +464,11 @@ The daemon writes rules and work links; the shared runtime records harness event
   they end, makes the page read every 5 s until a stream brings a message, whatever earlier streams did. Behind such a
   proxy the page shows Connecting… for those 12 s after it loads, and after a daemon restart reads nothing for the 12 s
   after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
-  no stream and reads every 5 s. A daemon that stops closes the stream.
+  no stream and reads every 5 s. A daemon that stops closes the stream. The records the daemon writes for sessions and
+  checks, and the dashboard's own writes, are sent at once, and so is another process's commit on Linux and macOS. On
+  Windows another process's commit is sent when that process closes the database, as each CLI command does at its
+  end, and otherwise at the next 5 s message: Rerail commits without waiting for the disk, and Windows reports no change
+  to the database's files for such a commit until the file is flushed or closed.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
