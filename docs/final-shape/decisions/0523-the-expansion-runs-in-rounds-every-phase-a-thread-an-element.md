@@ -212,7 +212,29 @@ SIMD-group operation switches each thread of the group.
    The substitution alone took the `#if` line from 574 to 507 ms: the rest is §3's SIMD-group
    operations once (446 ms), one operation a tile (210 ms) and 16 values a thread (126 ms).
 
-   Next: the call as grid phases.
+   - **The call is phases** (§2's "call" row), `px_cl_*`. A round's items add each definition's
+     call to a set (`QCTL` 7; `_Pragma` and the configuration's tests stay their SIMD group's),
+     and before the substitutions the round runs, over every call of the set:
+     - a thread a call: its raw tokens between its parentheses; a scan;
+     - a thread a token: its depth's change; the depth, a segmented scan by call; the commas at
+       depth 0, and their ranks, a scan (a variadic call's past its last parameter split nothing:
+       the splitting commas are each call's first, so a comma's rank is its argument's);
+     - a thread a call: its arguments' count (a wrong one leaves the name alone, painted) and
+       entries; scans of the calls' body items and arguments;
+     - a thread a splitting comma: the ranges either side;
+     - a thread a body item: the arguments it reads plain, claimed by the first;
+     - a thread an argument claimed: its tokens; a scan; a thread a token: whether it is a name
+       its scan would expand (a macro's, a built-in's or a call's);
+     - a thread an argument: read in place where none is, else its list, scanned in the round's
+       scan; a thread an item: the lists' order (the arguments' first plain uses);
+     - a thread a call: with no argument's list pending, into the round's substitutions.
+
+     `px_arg_flat` and the SIMD group's call body are gone. The calls' columns are the
+     substitutions' (`SB_L`), and a scan of a column is `SCANP`.
+
+   On these tests a chain's level is one call a round, so its time a round is as it was (a
+   100-level chain with an exit at each, 302 rounds: 52 ms); what the phases change is a round
+   with many calls, whose SIMD groups each walked a call's tokens 32 at a time.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

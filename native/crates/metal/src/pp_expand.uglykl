@@ -1107,6 +1107,9 @@ typedef struct Ar {
     // The lists this round substitutes (`QCTL` 6 of them), each a thread a body item, then a piece
     // (`px_sb_*`).
     UKL_GLOBAL uint32_t* subs;
+    // The calls this round reads (`QCTL` 7 of them), each a thread a token, an item, an argument
+    // (`px_cl_*`).
+    UKL_GLOBAL uint32_t* calls;
     // The lists the round's walks make final and place (`px_set_later`), two halves of `qcap` each.
     UKL_GLOBAL uint32_t* fins; UKL_GLOBAL uint32_t* places;
     // The tokens' blocks given back (decision 0478 §10), linked through their first token's ref;
@@ -1806,31 +1809,8 @@ UKL_INLINE void px_pragma_read(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAM
     if (lane == 0u) px_scan_later(a, l);
 }
 
-// Whether the raw tokens `lo..lo + len` of list `p` (or the top level), read in context `slot`,
-// are an argument that expands to itself (`ARG_FLAT`): no name in it a macro's, a built-in's or
-// a call's, as its SCAN would read them (a name the invocation pops refused as there).
-UKL_INLINE bool px_arg_flat(Ux u, Ar a, uint32_t p, uint32_t lo, uint32_t len, uint32_t slot, uint32_t lane __UKL_PARAMS) {
-    bool any = false;
-    for (uint32_t c0 = 0u; c0 < len && !any; c0 += 32u) {
-        uint32_t k = c0 + lane;
-        bool live = false;
-        if (k < len && (par_flags(u, a, p, lo + k) & T_NOEXP) == 0u) {
-            uint32_t g = par_ref(u, a, p, lo + k);
-            if (ref_kind(u, g) == K_IDENTIFIER) {
-                uint64_t key = ref_key(u, g);
-                uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, key, slot, a.ctl + 2);
-                if (u.sc.runs != 0u && px_pops_here(u, a.tf, key, slot)) px_refuse(a.ctl, X_PRAGMA);
-                live = m == L_BUILTIN || px_one_token(m) || px_callable(m);
-            }
-        }
-        any = ukl_sg_ballot(live __UKL_ARGS) != 0u;
-    }
-    return !any;
-}
-
-// A call's substitution (below): a call whose arguments are ready substitutes at once.
-UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS);
-
+// A call (decision 0523 §2): `_Pragma` and a configuration's test by its SIMD group; a definition's
+// in the round's calls (`px_cl_*`, after the round's items).
 UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
     if (a.lists[l].def == L_PRAGMA) {
         px_pragma(u, a, l, lane __UKL_ARGS);
@@ -1840,143 +1820,10 @@ UKL_INLINE void px_call(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
         px_feature(u, a, l, lane __UKL_ARGS);
         return;
     }
-    UKL_GLOBAL PxList* L = &a.lists[l];
-    PpDef d = u.defs[L->def];
-    uint32_t np = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
-    bool va = (d.flags & D_VARIADIC) != 0u;
-    // Its raw tokens: in its parent, or an exit's join.
-    uint32_t p = L->src, open = L->at + 1u, close = L->end;
-    // The splitting commas: at the depth after `(` (a depth carried from it).
-    uint32_t splits = 0u, depth = 0u;
-    for (uint32_t c0 = open + 1u; c0 < close; c0 += 32u) {
-        uint32_t k = c0 + lane;
-        uint32_t g = k < close ? par_ref(u, a, p, k) : 0u, dl = k < close ? paren_delta(u, g) : 0u;
-        uint32_t after = depth + ukl_sg_inclusive_sum(dl, lane __UKL_ARGS);
-        depth += ukl_sg_sum(dl __UKL_ARGS);
-        bool comma = k < close && after == 0u && ref_is(u, g, ',');
-        uint32_t before = splits + ukl_sg_exclusive_sum(comma ? 1u : 0u, lane __UKL_ARGS);
-        comma = comma && !(va && before + 1u >= np);
-        splits += ukl_sg_sum(comma ? 1u : 0u __UKL_ARGS);
-    }
-    bool empty = close == open + 1u;
-    uint32_t nargs = np == 0u ? 0u : splits + 1u;
-    bool fill = np > 0u && va && nargs + 1u == np;
-    bool wrong = np == 0u ? !empty : (fill ? false : nargs != np);
-    if (wrong) {
-        // The name alone, painted: an exit's tokens after it would be lost (the CPU's for now).
-        if ((p & TOP) == 0u && a.lists[p].kind == LK_JOIN) {
-            if (lane == 0u) px_refuse(a.ctl, X_PAST_END);
-        }
-        if (lane == 0u) {
-            Tk t = par_tok(u, a, p, L->at);
-            t.flags |= T_NOEXP;
-            px_one(a, l, t);
-        }
-        px_done(u, a, l, lane __UKL_ARGS);
-        return;
-    }
-    // The arguments' entries: each one's raw range.
-    uint32_t ab = 0u, abl = 0u;
-    if (lane == 0u) ab = px_ids(a.apool, &a.ctl[3], &a.ctl[22], a.arg_cap, np, &abl);
-    ab = ukl_sg_broadcast(ab, 0 __UKL_ARGS);
-    if (ab == NO_POS) {
-        if (lane == 0u) px_refuse(a.ctl, X_ROOM);
-        np = 0u;
-    }
     if (lane == 0u) {
-        L->args = ab; L->nargs = np; L->abl = np != 0u ? abl : 0u;
-        if (np > 0u) a.args[ab].lo = open + 1u;
-        if (fill) { a.args[ab + np - 1u].lo = close; a.args[ab + np - 1u].hi = close; }
-    }
-    for (uint32_t q = lane; q < np; q += 32u) ukl_atomic_store(&a.args[ab + q].list, 0u);
-    uint32_t rank = 0u;
-    depth = 0u;
-    for (uint32_t c0 = open + 1u; c0 < close && np > 0u; c0 += 32u) {
-        uint32_t k = c0 + lane;
-        uint32_t g = k < close ? par_ref(u, a, p, k) : 0u, dl = k < close ? paren_delta(u, g) : 0u;
-        uint32_t after = depth + ukl_sg_inclusive_sum(dl, lane __UKL_ARGS);
-        depth += ukl_sg_sum(dl __UKL_ARGS);
-        bool comma = k < close && after == 0u && ref_is(u, g, ',');
-        uint32_t before = rank + ukl_sg_exclusive_sum(comma ? 1u : 0u, lane __UKL_ARGS);
-        comma = comma && !(va && before + 1u >= np);
-        uint32_t r = rank + ukl_sg_exclusive_sum(comma ? 1u : 0u, lane __UKL_ARGS);
-        if (comma) { a.args[ab + r].hi = k; a.args[ab + r + 1u].lo = k + 1u; }
-        rank += ukl_sg_sum(comma ? 1u : 0u __UKL_ARGS);
-    }
-    if (lane == 0u && np > 0u) a.args[ab + (fill ? np - 2u : np - 1u)].hi = close;
-    px_fence();
-    ukl_sg_barrier();
-    // The body's uses of parameters: one after `#` or beside `##` is read raw; each parameter used
-    // otherwise, with an argument, gets its list once.
-    uint32_t n = d.n_body;
-    for (uint32_t c0 = 0u; c0 < n; c0 += 32u) {
-        uint32_t i = c0 + lane;
-        uint32_t q = 0xffffu;
-        if (i < n) {
-            uint32_t it = u.items[d.ifirst + i];
-            uint32_t kind = ref_kind(u, d.body + i);
-            bool vo = va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt;
-            if (vo && i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) px_refuse(a.ctl, X_VA_OPT);
-            q = it & 0xffffu;
-            if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) q = NO_PARAM;
-            if ((i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < n && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u)) q = NO_PARAM;
-            // `__VA_OPT__` asks whether the variadic argument, expanded, has tokens.
-            if (vo && np > 0u) q = np - 1u;
-        }
-        bool make = false;
-        if (q != NO_PARAM && q < np && a.args[ab + q].hi > a.args[ab + q].lo) {
-            // The lane whose exchange finds the slot free makes the list.
-            make = ukl_atomic_cas(&a.args[ab + q].list, 0u, 1u) == 0u;
-        }
-        // Each list made by the 32 lanes, one after another.
-        uint64_t todo = px_ballot(make __UKL_ARGS);
-        for (uint32_t guard = 0u; guard < 32u && todo != 0u; guard++) {
-            uint32_t who = ((uint32_t)(ukl_ctz32(todo)));
-            todo &= todo - 1u;
-            uint32_t qw = ukl_sg_shuffle(q, ((uint16_t)(who)) __UKL_ARGS);
-            uint32_t lo = a.args[ab + qw].lo, len = a.args[ab + qw].hi - lo;
-            if (px_arg_flat(u, a, p, lo, len, L->slot, lane __UKL_ARGS)) {
-                if (lane == 0u) ukl_atomic_store(&a.args[ab + qw].list, ARG_FLAT);
-                continue;
-            }
-            uint32_t id = 0u;
-            if (lane == 0u) id = px_list_ids(a, 1u);
-            id = ukl_sg_broadcast(id, 0 __UKL_ARGS);
-            if (id == NO_POS) {
-                if (lane == 0u) px_refuse(a.ctl, X_ROOM);
-                continue;
-            }
-            if (lane == 0u) {
-                // Its context the call's (R-args): the frame holding `)`. Its tokens a view of
-                // the call's source, no copy (decision 0520).
-                UKL_GLOBAL PxList* A = &a.lists[id];
-                px_init(A, L->parent, NO_DEF, L->slot, LK_ARG);
-                Sq v = px_sq(a, p, lo);
-                A->src = v.p; A->first = v.k; A->len = len; A->lo = lo; A->hi = lo + len; A->call = l;
-                A->owner = px_owner(a, L->parent);
-                ukl_atomic_store(&a.args[ab + qw].list, id + 2u);
-                ukl_atomic_add(&L->apending, 1u);
-            }
-            px_fence();
-            ukl_sg_barrier();
-            if (lane == 0u) px_scan_later(a, id);
-        }
-        // Each argument's first plain use: the order the serial pass expands them in.
-        if (q != NO_PARAM && q < np) {
-            uint32_t id = ukl_atomic_load(&a.args[ab + q].list);
-            if (id >= 2u && id != ARG_FLAT) ukl_atomic_min(&a.lists[id - 2u].order, i);
-        }
-    }
-    // With no argument's list pending (every argument read in place, or none), the substitution in
-    // this round, by the same SIMD group: a level of a chain is a round, not two.
-    uint32_t ready = 0u;
-    if (lane == 0u) {
-        px_fence();
-        ready = ukl_atomic_sub(&L->apending, 1u) == 1u ? 1u : 0u;
-    }
-    if (ukl_sg_broadcast(ready, 0 __UKL_ARGS) != 0u) {
-        px_fence();
-        px_subst(u, a, l, lane __UKL_ARGS);
+        uint32_t i = ukl_atomic_add(&a.qctl[7], 1u);
+        if (i >= a.qcap) px_refuse(a.ctl, X_ROOM);
+        else a.calls[i] = l;
     }
 }
 
@@ -2463,6 +2310,248 @@ UKL_INLINE bool pc_live(Ar a, uint32_t i) {
     return (a.pn[i] & PN_LEN) != 0u && !((a.psrc[i] & P_KIND) == P_REF && a.pst[i] == PLACEMARKER);
 }
 
+// --- A round's calls (decision 0523 §2) ----------------------------------------------------------------
+// Every call the round's items give (a definition's: `_Pragma` and the configuration's tests stay
+// their SIMD group's), a thread an element of each phase: a call's raw tokens between its
+// parentheses, their depth a segmented scan by call; the depth's commas, their ranks a scan (a
+// variadic call's past its last parameter's split nothing); a thread a call: its arguments'
+// count (a wrong count leaves the name alone, painted) and entries; a thread a splitting comma:
+// the ranges either side. Then the parameters the body uses plain, a thread a body item; whether
+// each such argument expands to itself (`ARG_FLAT`: no name in it a macro's, a built-in's or a
+// call's), a thread a token of each; each other one's list, a thread an argument, scanned in the
+// round's scan; and a call no argument's list holds back is substituted in this round.
+#define CL_OPEN (0u)
+#define CL_CLOSE (1u)
+#define CL_NP (2u)
+#define CL_OK (3u)
+#define CL_AB (4u)
+#define CL_RB (5u)
+#define CL_IN (6u)
+#define CL_IB (7u)
+#define CL_PN (8u)
+#define CL_PB (9u)
+#define CL_TOTALS (10u)
+typedef struct Cl {
+    UKL_GLOBAL const uint32_t* set; uint32_t ns, qcap;
+    // By call, columns of `qcap` words (`SB_L`'s): its `(` and `)`, its parameters, whether its
+    // arguments are made, their entries, its commas' first rank, its body's items and their
+    // first, its arguments to read and their first. `CL_TOTALS`: the phases' totals.
+    UKL_GLOBAL uint32_t* l;
+    // By call: its raw tokens, their first. By token: its depth's change, a head where its call's
+    // begin, the depth after it, whether it is a comma at depth 0, the commas before it.
+    UKL_GLOBAL uint32_t* n; UKL_GLOBAL uint32_t* base;
+    UKL_GLOBAL uint32_t* delta; UKL_GLOBAL uint32_t* heads; UKL_GLOBAL uint32_t* depth; UKL_GLOBAL uint32_t* comma; UKL_GLOBAL uint32_t* rank;
+    // By argument read: its tokens if a list is to be made for it, their first, whether a name in
+    // it is live.
+    UKL_GLOBAL uint32_t* v; UKL_GLOBAL uint32_t* off; UKL_GLOBAL uint32_t* live;
+    uint32_t toks, commas, items, params, atoks;
+} Cl;
+#define CLC(c, col, i) ((c).l[(col) * (c).qcap + (i)])
+UKL_INLINE UKL_GLOBAL uint32_t* px_cl_col(Cl c, uint32_t col) { return c.l + col * c.qcap; }
+
+// List `l`'s substitution in this round's (`px_sb_*`).
+UKL_INLINE void px_sub_later(Ar a, uint32_t l) {
+    uint32_t i = ukl_atomic_add(&a.qctl[6], 1u);
+    if (i >= a.qcap) px_refuse(a.ctl, X_ROOM);
+    else a.subs[i] = l;
+}
+
+// List `l`'s own count down, by one thread (`px_done`'s).
+UKL_INLINE void px_done1(Ar a, uint32_t l) {
+    px_fence();
+    if (ukl_atomic_sub(&a.lists[l].pending, 1u) == 1u) px_set_later(a, 0u, l);
+}
+
+// Call `i`: its raw tokens between its parentheses, its parameters, its body's items.
+UKL_INLINE void px_cl_count(Ux u, Ar a, Cl c, uint32_t i) {
+    if (i >= c.ns) return;
+    UKL_GLOBAL PxList* L = &a.lists[c.set[i]];
+    PpDef d = u.defs[L->def];
+    uint32_t open = L->at + 1u, close = L->end;
+    c.n[i] = close - open - 1u;
+    CLC(c, CL_OPEN, i) = open;
+    CLC(c, CL_CLOSE, i) = close;
+    CLC(c, CL_NP, i) = d.n_params >= 2u ? (d.n_params - 1u) / 2u : 0u;
+    CLC(c, CL_IN, i) = d.n_body;
+}
+
+// Token `t` of call `i`'s: where it is.
+UKL_INLINE uint32_t px_cl_call(Cl c, uint32_t t) { return pb_item_of(c.base, c.ns, t); }
+UKL_INLINE uint32_t px_cl_ref(Ux u, Ar a, Cl c, uint32_t i, uint32_t t) {
+    return par_ref(u, a, a.lists[c.set[i]].src, CLC(c, CL_OPEN, i) + 1u + (t - c.base[i]));
+}
+
+// Token `t`: its depth's change, a head where its call's begin.
+UKL_INLINE void px_cl_tok(Ux u, Ar a, Cl c, uint32_t t) {
+    if (t >= c.toks) return;
+    uint32_t i = px_cl_call(c, t);
+    c.delta[t] = paren_delta(u, px_cl_ref(u, a, c, i, t));
+    c.heads[t] = t == c.base[i] ? 1u : 0u;
+}
+// Token `t`: whether it is a comma at its call's depth.
+UKL_INLINE void px_cl_comma(Ux u, Ar a, Cl c, uint32_t t) {
+    if (t >= c.toks) return;
+    uint32_t i = px_cl_call(c, t);
+    c.comma[t] = c.depth[t] == 0u && ref_is(u, px_cl_ref(u, a, c, i, t), ',') ? 1u : 0u;
+}
+
+// Whether a comma of rank `before` in a call of `np` parameters splits: a variadic call's past its
+// last parameter's are its variadic argument's.
+UKL_INLINE bool px_cl_splits(bool va, uint32_t np, uint32_t before) { return !(va && before + 1u >= np); }
+
+// Call `i`: its arguments' count; a wrong count leaves the name alone, painted (done); else its
+// arguments' entries, each one's raw range's ends but where a comma splits.
+UKL_INLINE void px_cl_args(Ux u, Ar a, Cl c, uint32_t i) {
+    if (i >= c.ns) return;
+    uint32_t l = c.set[i];
+    UKL_GLOBAL PxList* L = &a.lists[l];
+    PpDef d = u.defs[L->def];
+    uint32_t np = CLC(c, CL_NP, i), open = CLC(c, CL_OPEN, i), close = CLC(c, CL_CLOSE, i), b = c.base[i], e = b + c.n[i];
+    bool va = (d.flags & D_VARIADIC) != 0u;
+    uint32_t rb = b < c.toks ? c.rank[b] : c.commas, re = e < c.toks ? c.rank[e] : c.commas, commas = re - rb;
+    uint32_t splits = va ? (np == 0u ? 0u : ukl_min(commas, np - 1u)) : commas;
+    bool empty = close == open + 1u;
+    uint32_t nargs = np == 0u ? 0u : splits + 1u;
+    bool fill = np > 0u && va && nargs + 1u == np;
+    bool wrong = np == 0u ? !empty : (fill ? false : nargs != np);
+    CLC(c, CL_RB, i) = rb;
+    CLC(c, CL_OK, i) = 0u;
+    CLC(c, CL_PN, i) = 0u;
+    if (wrong) {
+        // The name alone, painted: an exit's tokens after it would be lost (the CPU's for now).
+        uint32_t p = L->src;
+        if ((p & TOP) == 0u && a.lists[p].kind == LK_JOIN) px_refuse(a.ctl, X_PAST_END);
+        Tk t = par_tok(u, a, p, L->at);
+        t.flags |= T_NOEXP;
+        px_one(a, l, t);
+        CLC(c, CL_IN, i) = 0u;
+        px_done1(a, l);
+        return;
+    }
+    uint32_t abl = 0u, ab = px_ids(a.apool, &a.ctl[3], &a.ctl[22], a.arg_cap, np, &abl);
+    if (ab == NO_POS) {
+        px_refuse(a.ctl, X_ROOM);
+        np = 0u;
+        ab = 0u;
+    }
+    L->args = ab; L->nargs = np; L->abl = np != 0u ? abl : 0u;
+    if (np > 0u) {
+        a.args[ab].lo = open + 1u;
+        if (fill) { a.args[ab + np - 1u].lo = close; a.args[ab + np - 1u].hi = close; }
+        a.args[ab + (fill ? np - 2u : np - 1u)].hi = close;
+    }
+    for (uint32_t q = 0u; q < np; q++) ukl_atomic_store(&a.args[ab + q].list, 0u);
+    CLC(c, CL_NP, i) = np | (va ? 0x80000000u : 0u);
+    CLC(c, CL_AB, i) = ab;
+    CLC(c, CL_OK, i) = 1u;
+    CLC(c, CL_PN, i) = np;
+}
+
+// Token `t`, a splitting comma: the argument before it ends at it, the next begins past it.
+UKL_INLINE void px_cl_split(Cl c, Ar a, uint32_t t) {
+    if (t >= c.toks || c.comma[t] == 0u) return;
+    uint32_t i = px_cl_call(c, t);
+    if (CLC(c, CL_OK, i) == 0u) return;
+    uint32_t w = CLC(c, CL_NP, i), np = w & 0x7fffffffu, before = c.rank[t] - CLC(c, CL_RB, i), ab = CLC(c, CL_AB, i);
+    if (np == 0u || !px_cl_splits((w >> 31) != 0u, np, before)) return;
+    uint32_t k = CLC(c, CL_OPEN, i) + 1u + (t - c.base[i]);
+    a.args[ab + before].hi = k;
+    a.args[ab + before + 1u].lo = k + 1u;
+}
+
+// Item `j` of call `i`'s body: the argument its parameter reads plain (`NO_PARAM`: none; one after
+// `#` or beside `##` is read raw), `__VA_OPT__` the variadic one's (whether it expands to tokens).
+UKL_INLINE uint32_t px_cl_use(Ux u, Ar a, PpDef d, uint32_t np, bool va, uint32_t i) {
+    uint32_t n = d.n_body, it = u.items[d.ifirst + i], kind = ref_kind(u, d.body + i);
+    bool vo = va && kind == K_IDENTIFIER && u.keys[d.body + i] == u.va_opt;
+    if (vo && i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) px_refuse(a.ctl, X_VA_OPT);
+    uint32_t q = it & 0xffffu;
+    if (i > 0u && ref_kind(u, d.body + i - 1u) == K_HASH) q = NO_PARAM;
+    if ((i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < n && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u)) q = NO_PARAM;
+    if (vo && np > 0u) q = np - 1u;
+    return q < np ? q : NO_PARAM;
+}
+
+// Item `t` of the calls' bodies: an argument with tokens that it reads plain is to be read (the
+// first item to claim it, `list` 1).
+UKL_INLINE void px_cl_item(Ux u, Ar a, Cl c, uint32_t t) {
+    if (t >= c.items) return;
+    uint32_t i = pb_item_of(px_cl_col(c, CL_IB), c.ns, t);
+    UKL_GLOBAL PxList* L = &a.lists[c.set[i]];
+    uint32_t w = CLC(c, CL_NP, i), ab = CLC(c, CL_AB, i);
+    uint32_t q = px_cl_use(u, a, u.defs[L->def], w & 0x7fffffffu, (w >> 31) != 0u, t - CLC(c, CL_IB, i));
+    if (q != NO_PARAM && a.args[ab + q].hi > a.args[ab + q].lo) ukl_atomic_cas(&a.args[ab + q].list, 0u, 1u);
+}
+
+// Argument `p` of the calls': its tokens where it is to be read.
+UKL_INLINE void px_cl_param(Ar a, Cl c, uint32_t p) {
+    if (p >= c.params) return;
+    uint32_t i = pb_item_of(px_cl_col(c, CL_PB), c.ns, p), e = CLC(c, CL_AB, i) + (p - CLC(c, CL_PB, i));
+    c.v[p] = ukl_atomic_load(&a.args[e].list) == 1u ? a.args[e].hi - a.args[e].lo : 0u;
+    c.live[p] = 0u;
+}
+
+// Token `x` of the arguments read: whether it is a name its scan would expand (a macro's, a
+// built-in's or a call's; a name the invocation pops refused as there).
+UKL_INLINE void px_cl_atok(Ux u, Ar a, Cl c, uint32_t x) {
+    if (x >= c.atoks) return;
+    uint32_t p = pb_item_of(c.off, c.params, x), i = pb_item_of(px_cl_col(c, CL_PB), c.ns, p);
+    UKL_GLOBAL PxList* L = &a.lists[c.set[i]];
+    uint32_t e = CLC(c, CL_AB, i) + (p - CLC(c, CL_PB, i)), k = a.args[e].lo + (x - c.off[p]);
+    if ((par_flags(u, a, L->src, k) & T_NOEXP) != 0u) return;
+    uint32_t g = par_ref(u, a, L->src, k);
+    if (ref_kind(u, g) != K_IDENTIFIER) return;
+    uint64_t key = ref_key(u, g);
+    uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, key, L->slot, a.ctl + 2);
+    if (u.sc.runs != 0u && px_pops_here(u, a.tf, key, L->slot)) px_refuse(a.ctl, X_PRAGMA);
+    if (m == L_BUILTIN || px_one_token(m) || px_callable(m)) ukl_atomic_store(&c.live[p], 1u);
+}
+
+// Argument `p`, to be read: read in place where it expands to itself, else its list (its context
+// the call's, R-args: the frame holding `)`; its tokens a view of the call's source, no copy,
+// decision 0520), scanned in this round's scan.
+UKL_INLINE void px_cl_make(Ar a, Cl c, uint32_t p) {
+    if (p >= c.params) return;
+    uint32_t i = pb_item_of(px_cl_col(c, CL_PB), c.ns, p), e = CLC(c, CL_AB, i) + (p - CLC(c, CL_PB, i));
+    if (ukl_atomic_load(&a.args[e].list) != 1u) return;
+    if (ukl_atomic_load(&c.live[p]) == 0u) { ukl_atomic_store(&a.args[e].list, ARG_FLAT); return; }
+    uint32_t id = px_list_ids(a, 1u);
+    if (id == NO_POS) { px_refuse(a.ctl, X_ROOM); return; }
+    uint32_t l = c.set[i];
+    UKL_GLOBAL PxList* L = &a.lists[l];
+    UKL_GLOBAL PxList* A = &a.lists[id];
+    uint32_t lo = a.args[e].lo, len = a.args[e].hi - lo;
+    px_init(A, L->parent, NO_DEF, L->slot, LK_ARG);
+    Sq v = px_sq(a, L->src, lo);
+    A->src = v.p; A->first = v.k; A->len = len; A->lo = lo; A->hi = lo + len; A->call = l;
+    A->owner = px_owner(a, L->parent);
+    ukl_atomic_store(&a.args[e].list, id + 2u);
+    ukl_atomic_add(&L->apending, 1u);
+    px_scan_later(a, id);
+}
+
+// Item `t` of the calls' bodies, a plain use: its argument's list expanded in the order of the
+// arguments' first plain uses (the serial pass's).
+UKL_INLINE void px_cl_order(Ux u, Ar a, Cl c, uint32_t t) {
+    if (t >= c.items) return;
+    uint32_t i = pb_item_of(px_cl_col(c, CL_IB), c.ns, t), j = t - CLC(c, CL_IB, i);
+    UKL_GLOBAL PxList* L = &a.lists[c.set[i]];
+    uint32_t w = CLC(c, CL_NP, i);
+    uint32_t q = px_cl_use(u, a, u.defs[L->def], w & 0x7fffffffu, (w >> 31) != 0u, j);
+    if (q == NO_PARAM) return;
+    uint32_t id = ukl_atomic_load(&a.args[CLC(c, CL_AB, i) + q].list);
+    if (id >= 2u && id != ARG_FLAT) ukl_atomic_min(&a.lists[id - 2u].order, j);
+}
+
+// Call `i`: with no argument's list pending (every argument read in place, or none), substituted
+// in this round: a level of a chain is a round, not two.
+UKL_INLINE void px_cl_ready(Ar a, Cl c, uint32_t i) {
+    if (i >= c.ns || CLC(c, CL_OK, i) == 0u) return;
+    uint32_t l = c.set[i];
+    px_fence();
+    if (ukl_atomic_sub(&a.lists[l].apending, 1u) == 1u) px_sub_later(a, l);
+}
+
 // SUBST `l`: `_Pragma`'s read and a built-in's token by its SIMD group; a definition's body in the
 // round's substitutions (`px_sb_*`, after the round's items).
 UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
@@ -2474,11 +2563,7 @@ UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
         px_builtin(u, a, l, lane __UKL_ARGS);
         return;
     }
-    if (lane == 0u) {
-        uint32_t i = ukl_atomic_add(&a.qctl[6], 1u);
-        if (i >= a.qcap) px_refuse(a.ctl, X_ROOM);
-        else a.subs[i] = l;
-    }
+    if (lane == 0u) px_sub_later(a, l);
 }
 
 // --- A round's substitutions (decision 0523 §2) ----------------------------------------------------
@@ -2721,7 +2806,7 @@ UKL_INLINE void px_sb_finish(Ux u, Ar a, Sb s, uint32_t i) {
 // The arena and the unit as a round's items and phases read them.
 UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const PpDef* defs, UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint64_t* sorted, UKL_GLOBAL const uint32_t* perm, UKL_GLOBAL const uint32_t* n_rows, UKL_GLOBAL const uint64_t* name_keys, UKL_GLOBAL const uint32_t* values, UKL_GLOBAL const uint32_t* text_nodes, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, UKL_GLOBAL const uint32_t* firsts, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* tinst, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* unit_file, UKL_GLOBAL const uint32_t* tline, UKL_GLOBAL const uint32_t* tlinen, Scope sc, Tf tf, UKL_GLOBAL const uint32_t* top_depth, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxArg* args, UKL_GLOBAL uint32_t* out, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* qctl, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const uint32_t* words, UKL_GLOBAL PxScratch* scratch, UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL const uint32_t* floors, uint32_t n_units,
                           UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat,
-                          UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, UKL_GLOBAL const uint32_t* ldelta, uint32_t lt0, UKL_GLOBAL uint32_t* scans, UKL_GLOBAL uint32_t* subs, UKL_GLOBAL uint32_t* fins, UKL_GLOBAL uint32_t* places, UKL_PRIVATE Ux* uo, UKL_PRIVATE Ar* ao)  {
+                          UKL_GLOBAL uint32_t* cnt, uint32_t cnt_cap, UKL_GLOBAL const uint32_t* ldelta, uint32_t lt0, UKL_GLOBAL uint32_t* scans, UKL_GLOBAL uint32_t* subs, UKL_GLOBAL uint32_t* calls, UKL_GLOBAL uint32_t* fins, UKL_GLOBAL uint32_t* places, UKL_PRIVATE Ux* uo, UKL_PRIVATE Ar* ao)  {
     // words: n_files, tok_cap, list_cap, arg_cap, out_cap, q_cap, va_opt (low, high), the scratch
     // bytes' and tokens' capacities.
     Ux u;
@@ -2753,6 +2838,7 @@ UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t
     a.cnt = cnt; a.cnt_cap = cnt_cap; a.tf = tf;
     a.scans = scans;
     a.subs = subs;
+    a.calls = calls;
     a.fins = fins;
     a.places = places;
     *uo = u;
