@@ -290,7 +290,7 @@ async function holderThatNeverReads(name: string, answer?: string): Promise<{ an
     stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   children.push(holder);
-  // A holder that has exited takes no input: the write in `answer()` then fails with EPIPE, and `line()` says it ended.
+  // The write in `answer()` can meet a holder that is exiting and fail with EPIPE; `line()` then says it ended.
   holder.stdin!.on("error", () => undefined);
   const line = linesOf(holder);
   expect(await line()).toMatch(/^listening/u);
