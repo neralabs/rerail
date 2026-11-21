@@ -3925,7 +3925,12 @@ impl Source for Viewed {
             return None;
         }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
+            // Room for an index of each key the strata probe a view by, found again by every later binding: with room
+            // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
+            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
+            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
+        }).clone());
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {

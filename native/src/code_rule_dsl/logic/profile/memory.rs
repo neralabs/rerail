@@ -389,8 +389,9 @@ pub(super) fn sampled_report(r: &mut String) {
         let rows: usize = s.relations.iter().map(|r| r.1).sum();
         let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values in all; rows, columns, MB, runs):",
             mb(s.heap_at as f64), s.relations.len(), rows, total >> 20);
-        for (name, rows, k, bytes, runs) in s.relations.iter().take(40) {
-            let _ = writeln!(r, "{:>10} MB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 20, rows, super::short(name, 120));
+        // Every one: what the rows are is read off the whole list, not its head.
+        for (name, rows, k, bytes, runs) in s.relations.iter() {
+            let _ = writeln!(r, "{:>10} KB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 10, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
