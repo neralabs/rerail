@@ -193,6 +193,33 @@ fn a_waves_kept_puts_are_one_file_a_space_and_a_key_keeps_its_last() {
     assert_eq!(got, vec![("a".into(), 3), ("b".into(), 2)]);
 }
 
+/// A wave's kept puts, queued through the store (`queue_kept`) under a run's waves, are gathered and written as one
+/// file per space when the wave is sealed: queued as a job each, every input's puts wrote a write of its own (O125
+/// step 05: 112 a run; t43 step 16). A key put twice in the wave is written once, its later put what the space keeps.
+#[test]
+fn a_waves_kept_puts_are_one_block_per_space() {
+    let (path, _) = store("wave-queue");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    store.queue_kept(SPACE, vec![put("base", 0, 1, flat(&(0..40_000).collect::<Vec<i64>>()))]);
+    store.written().unwrap();
+    let before = files(&path);
+    {
+        let _waves = crate::content_store::write_back::run_waves();
+        for (i, rel) in ["a", "b", "c", "d"].into_iter().enumerate() {
+            store.queue_kept(SPACE, vec![put(rel, 0, 10 + i as u64, flat(&[i as i64, 1]))]);
+        }
+        store.queue_kept(SPACE, vec![put("a", 0, 20, flat(&[7, 7]))]);
+    }
+    store.written().unwrap();
+    let c = Connection::open(&path).unwrap();
+    let got: Vec<(String, u64, Vec<Vec<i64>>)> = read(&path, &c).into_iter().map(|(r, _, d, rows)| (r, d, rows)).filter(|(r, _, _)| r != "base").collect();
+    assert_eq!(got, [("a".into(), 20, vec![vec![7, 7]]), ("b".into(), 11, vec![vec![1, 1]]), ("c".into(), 12, vec![vec![2, 1]]), ("d".into(), 13, vec![vec![3, 1]])]);
+    // The wave's five puts in one appended file of the chain (decision 0456), where five jobs wrote five.
+    let made = files(&path).into_iter().filter(|f| !before.contains(f)).count();
+    assert_eq!(made, 1, "one file made in the wave: {:?} after {before:?}", files(&path));
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
 /// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
 /// write each.
@@ -239,7 +266,9 @@ fn the_kept_relations_read_through_sql_equal_their_entries() {
     crate::content_store::atoms::Atoms::attach(&c).unwrap();
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
-    let entries_of: Vec<(String, i64, i64, i64, Vec<Vec<i64>>)> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
+    // An entry's relation, part, digest, row count and rows.
+    type Entry = (String, i64, i64, i64, Vec<Vec<i64>>);
+    let entries_of: Vec<Entry> = view.all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest as i64, k.rows.len() as i64, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect();
     let entries: Vec<(String, i64, i64, i64, String, String)> = c
         .prepare("SELECT rel, part, digest, rows, types, reads FROM kept_entries WHERE space = ?1 ORDER BY rel, part")
         .unwrap()
@@ -320,6 +349,55 @@ fn kept_facts_are_a_virtual_table() {
     let r = view.all().find(|k| k.key.rel == "r").unwrap();
     assert!(!r.rows.leads(0), "an entry put as given records no order");
     assert_eq!(rows("SELECT c0, c1, part FROM kept_facts WHERE space = ?1 AND rel = 'r' AND c0 = 1"), [[Some(1), Some(0), Some(0)]], "scanned, not a range");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// K3 (decision 0456), over decision 0384 steps 7 and 8: a continuation is kept with every row it reads down its
+/// chain, its base's first, and not the rows its bases' writers put past where it forked; the run's dead bits are of
+/// its ids down the chain. (Once `packed::pack_open` packed a continuation's own rows only.)
+#[test]
+fn a_continuation_is_kept_with_every_row_it_reads() {
+    let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+    let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+    let fill = |r: &Relation, from: u32, n: u32, tag: i64| {
+        assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
+        let at = r.rows.len();
+        // SAFETY: rows reserved just now, written before anything reads them.
+        unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(at + i, 0, i64::from((from + i) % 10));
+                r.rows.put(at + i, 1, tag + i64::from(from + i));
+            }
+        }
+    };
+    let base = Relation::try_create(&block, &spec, None).unwrap();
+    fill(base, 0, 100, 1000);
+    let fork = Relation::try_continue(&block, &spec, base, 100).expect("room in the base's block");
+    fill(fork, 100, 50, 2000);
+    // The base's writer goes on past the fork's start: rows the fork does not read.
+    fill(base, 100, 30, 9000);
+    let fork2 = Relation::try_continue(&block, &spec, fork, 120).expect("a continuation of a continuation");
+    fill(fork2, 120, 40, 3000);
+    fill(fork, 150, 5, 8000);
+    let at = block.offset_of(std::ptr::from_ref(fork2));
+    // The run killed a base row (3), one of the middle's (110) and one of its own (130).
+    let mut dead = vec![0u64; 3];
+    for id in [3u32, 110, 130] {
+        dead[id as usize / 64] |= 1 << (id % 64);
+    }
+    let (path, c) = store("continuation");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(Box::new(Lent { block, at, dead })))]);
+    let mut want: Vec<Vec<i64>> = (0..160i64)
+        .filter(|id| ![3, 110, 130].contains(id))
+        .map(|id| vec![id % 10, if id < 100 { 1000 } else if id < 120 { 2000 } else { 3000 } + id])
+        .collect();
+    want.sort();
+    let got = read(&path, &c);
+    assert_eq!(got.len(), 1);
+    let mut rows = got[0].3.clone();
+    rows.sort();
+    assert_eq!(rows, want, "every live row down the chain, and none its bases' writers put past it");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 

@@ -1,5 +1,4 @@
 .policy "ruff-e401-multiple-imports-on-one-line" revision 1
-.guests off
 .description "Give each module its own import statement instead of comma-separating several in one; from-imports may still list several names."
 .language python
 .mode steer

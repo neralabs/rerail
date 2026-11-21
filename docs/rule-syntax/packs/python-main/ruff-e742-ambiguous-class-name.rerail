@@ -1,5 +1,4 @@
 .policy "ruff-e742-ambiguous-class-name" revision 1
-.guests off
 .description "Avoid naming classes l, I or O; in many fonts they are hard to tell apart from 1 and 0."
 .language python
 .mode steer

@@ -28,7 +28,7 @@ Measured 2026-11-18 on arm64, at d169f605b.
 |---|---:|---:|
 | simdjson's stage 1, by clang | **344** | 0 |
 | simdjson's stage 1 as our block program (`fixtures/simdjson-stage1/stage1.rir`), by our compiler | 437 | 1 |
-| JSON's tier 1 (`bitlex_ladder/14-json.bitlex`, simdjson's acceptance) | **1,078** | 31 |
+| JSON's tier 1 (`bitlex_ladder/14-json.bitlex`, now `json_parser/json-rfc.bitlex` (0531), simdjson's acceptance) | **1,078** | 31 |
 | JSONC's tier 1 (`15-jsonc.bitlex`) | 1,332 | 58 |
 | `lexers/json.bitlex` (`json_loop_keeps_values_in_registers`) | 673 | 7 |
 

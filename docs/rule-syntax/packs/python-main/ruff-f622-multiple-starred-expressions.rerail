@@ -1,5 +1,4 @@
 .policy "ruff-f622-multiple-starred-expressions" revision 1
-.guests off
 .description "Use at most one starred element in each Python unpacking target; two in the same target is a syntax error."
 .language python
 .mode steer

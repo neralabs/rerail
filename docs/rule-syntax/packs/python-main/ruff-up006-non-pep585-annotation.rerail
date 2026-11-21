@@ -1,5 +1,4 @@
 .policy "ruff-up006-non-pep585-annotation" revision 1
-.guests off
 .description "Use built-in and collections generics such as list[int] instead of typing aliases such as List[int]; the aliases are deprecated since Python 3.9."
 .language python
 .mode steer

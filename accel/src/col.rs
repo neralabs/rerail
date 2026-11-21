@@ -33,7 +33,8 @@ pub(crate) struct Staged {
 }
 
 enum Store {
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    #[cfg(gpu_lane)]
+    /// Held by its lease's ledger (decision 0487 step 3): a kernel that binds it holds it until its work completes.
     Shared(crate::gpu::shared::Pooled),
     Host(#[allow(dead_code)] Box<[i64]>),
 }
@@ -65,7 +66,7 @@ impl Col {
     }
 
     /// A staged column's shared buffer, which the device reads in place.
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    #[cfg(gpu_lane)]
     pub(crate) fn shared(&self) -> Option<&crate::gpu::shared::Pooled> {
         match &*self.0 {
             Data::Staged(Staged { store: Store::Shared(p), .. }) => Some(p),
@@ -128,7 +129,7 @@ struct GateState {
     /// When it opened.
     at: Option<std::time::Instant>,
     /// The event a device's submission waits on, made when a lane first needs it.
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    #[cfg(gpu_lane)]
     event: Option<rerail_device::device::SharedEvent>,
 }
 
@@ -165,7 +166,7 @@ impl Gate {
 
     /// Makes `pass` wait at its head until the gate opens, unless it is open already: whether it waits. Under the
     /// gate's lock, so an opening cannot fall between the check and the wait.
-    #[cfg(all(feature = "gpu", target_os = "macos"))]
+    #[cfg(gpu_lane)]
     pub(crate) fn hold(&self, pass: &crate::gpu::join::Pass, device: &rerail_device::device::Device) -> bool {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if s.open {
@@ -183,7 +184,7 @@ impl Gate {
         }
         s.open = true;
         s.at = Some(std::time::Instant::now());
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if let Some(e) = &s.event {
             e.set_signaled_value(1);
         }
@@ -232,8 +233,8 @@ impl Writer {
 
 impl Store {
     fn new(len: usize) -> Result<(Store, *mut i64), String> {
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
-        if crate::gpu::shared::get().is_some() {
+        #[cfg(gpu_lane)]
+        if crate::gpu::shared::layer().is_some() {
             let p = crate::gpu::shared::lease((len * 8).max(8))?;
             let ptr = p.host().cast::<i64>();
             return Ok((Store::Shared(p), ptr));

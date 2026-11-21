@@ -370,8 +370,6 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     /// them, written back behind the run.
     pub(in crate::code_rule_dsl) store: &'a crate::content_store::ContentStore,
     pub(in crate::code_rule_dsl) space: [u8; 32],
-    /// A revision's rounds (`corpus`'s `history`): what its own space holds, written there too.
-    pub(super) alternate: Option<&'a retain::InKept>,
     pub(in crate::code_rule_dsl) db: &'a Connection,
     pub(in crate::code_rule_dsl) modules: &'a Modules,
     pub(in crate::code_rule_dsl) lowered: &'a lower::Lowered,
@@ -506,21 +504,7 @@ impl RoundProgram {
                     let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
                         (q == req && key.len() == width).then_some(key)
                     }).collect();
-                    let keys: Vec<_> = if req == super::reference_facts::LINK_REQUEST {
-                        // The graph stays on the run's thread. Check its saved observations in one request.
-                        let prior: Vec<_> = candidates.iter().flat_map(|key| {
-                            by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())
-                        }).collect();
-                        let current: HashSet<Vec<i64>> = if prior.is_empty() {
-                            HashSet::new()
-                        } else {
-                            answer(super::reference_facts::LINK_VALIDATE, &prior)?.into_iter()
-                                .flat_map(|(_, rows)| rows).map(|row| row[..width].to_vec()).collect()
-                        };
-                        candidates.into_iter().filter(|key| current.contains(key.as_slice())).collect()
-                    } else {
-                        candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))).collect()
-                    };
+                    let keys: Vec<_> = candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))).collect();
                     let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
@@ -654,7 +638,7 @@ impl RoundProgram {
         for (req, _) in &answers.asked {
             *answered.entry(req.clone()).or_insert(0) += 1;
         }
-        let mut next = kept.expect("a round ran");
+        let next = kept.expect("a round ran");
         // Written back as any kept part is (t33 K4): each relation whose rows or reads differ from its frame, each
         // input's granules whose documents' rows changed. What no round derived again stays as stored.
         let written = match &was {
@@ -664,16 +648,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                // Admit quiet rows before either write if the other fact space (a revision's rounds) needs them.
-                let different = on.alternate.is_some_and(|target| !was.same_rows(target));
-                let copied = !different || next.admit_for_copy(on.store, &self.placed, &cut.clean.iter().cloned().collect::<Vec<_>>())?;
-                let write = |target, cut| next.write_kept(on.store, target, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &BTreeMap::new());
-                let mut written = write(was, &cut)?;
-                if let Some(target) = on.alternate.filter(|_| copied) {
-                    let complete = retain::Cut { clean: BTreeSet::new(), strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };
-                    written += write(target, if different { &complete } else { &cut })?;
-                }
-                written
+                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &BTreeMap::new())?
             }
             None => 0,
         };

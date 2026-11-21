@@ -29,6 +29,18 @@ use rerail_device::device::{Buffer, ComputeFunction, ComputeQueue};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+/// `f` in a pool of its own for the objects its work autoreleases: Metal's, on macOS; elsewhere `f` as it is.
+pub fn released<T>(f: impl FnOnce() -> T) -> T {
+    #[cfg(target_os = "macos")]
+    {
+        objc::rc::autoreleasepool(f)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        f()
+    }
+}
+
 pub mod join;
 pub mod kernels;
 pub mod shared;
@@ -76,7 +88,7 @@ impl Gpu {
         }
         // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
         let functions = PIPES.iter().map(|name| kernels::function_fixed(SOURCE, name, None)).collect();
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
+        let page = rerail_device::page_size();
         Ok(Gpu { layer, functions, page, max_buffer: layer.max_buffer })
     }
 }
@@ -196,7 +208,7 @@ impl Backend for GpuBackend {
             let t = std::time::Instant::now();
             for &i in &programs {
                 let Kernel::Program(p) = ks[i] else { unreachable!("a program") };
-                let r = objc::rc::autoreleasepool(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
+                let r = released(|| p.0.run(crate::lanes::Lane::Gpu)).map_err(|e| format!("program {}: {e}", p.0.name()))?;
                 outs[i] = Some(Output::Program(crate::kernel::ProgramResult(r)));
             }
             phases.device = Some(t.elapsed().as_secs_f64());
@@ -210,7 +222,7 @@ impl Backend for GpuBackend {
         }
         if !joins.is_empty() {
             let t = std::time::Instant::now();
-            let o = objc::rc::autoreleasepool(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
+            let o = released(|| space::run(&self.space, &joins.iter().map(|&i| ks[i]).collect::<Vec<_>>()))?;
             phases.device = Some(phases.device.unwrap_or(0.0) + t.elapsed().as_secs_f64());
             for (&i, o) in joins.iter().zip(o) {
                 outs[i] = Some(o);
@@ -223,7 +235,7 @@ impl Backend for GpuBackend {
     /// submission meanwhile). Any other batch runs as it begins.
     fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn crate::exec::Pending + 'a>, String> {
         if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
-            let started = objc::rc::autoreleasepool(|| space::start(&self.space, ks))?;
+            let started = released(|| space::start(&self.space, ks))?;
             return Ok(Box::new(started));
         }
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
@@ -245,7 +257,7 @@ impl Backend for GpuBackend {
                 programs
                     .iter()
                     .map(|p| {
-                        objc::rc::autoreleasepool(|| p.run(crate::lanes::Lane::Gpu))
+                        released(|| p.run(crate::lanes::Lane::Gpu))
                             .map(|r| Output::Program(crate::kernel::ProgramResult(r)))
                             .map_err(|e| format!("program {}: {e}", p.name()))
                     })
@@ -276,7 +288,7 @@ impl Backend for GpuBackend {
 
 impl crate::exec::Pending for space::Started {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
-        objc::rc::autoreleasepool(|| space::Started::finish(*self))
+        released(|| space::Started::finish(*self))
     }
 }
 
@@ -316,7 +328,9 @@ impl Drop for RunningCount {
 }
 
 /// A batch of programs running on the lanes' pool ([`crate::exec::lane_spawn`]).
-struct Running(std::sync::mpsc::Receiver<(std::thread::Result<Result<Vec<Output>, String>>, f64)>);
+struct Running(std::sync::mpsc::Receiver<Ran>);
+/// A batch's outputs (or why it failed, or its panic) and the CPU its thread spent.
+type Ran = (std::thread::Result<Result<Vec<Output>, String>>, f64);
 
 impl crate::exec::Pending for Running {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
@@ -369,10 +383,10 @@ impl GpuBackend {
         let t = std::time::Instant::now();
         let mut outs = Vec::with_capacity(jobs.len());
         for (i, j) in jobs.into_iter().enumerate() {
-            if let Some(bad) = &j.bad {
-                if read::<u32>(bad, 1)[0] != 0 {
-                    return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
-                }
+            if let Some(bad) = &j.bad
+                && read::<u32>(bad, 1)[0] != 0
+            {
+                return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
             }
             outs.push(match j.read {
                 Read::Ready(o) => o,
@@ -395,7 +409,7 @@ impl GpuBackend {
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
         let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
-        let mut q = ComputeQueue::new(gpu.layer.queue);
+        let q = shared::Queue::new()?;
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
         for s in 0..depth {
             if s > 0 {
@@ -409,6 +423,7 @@ impl GpuBackend {
         }
         crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
         let event = crate::score::phase("gpu commit", || q.flush());
+        // What the steps read and write is held until the submission completes (decision 0487 step 2).
         crate::score::phase("gpu wait", || event.await_()).map_err(|e| format!("the submission failed: {e}"))?;
         stats.device += event.gpu_seconds();
         stats.command_buffers += 1;

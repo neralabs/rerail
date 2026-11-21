@@ -1,5 +1,4 @@
 .policy "ruff-f632-is-literal" revision 2
-.guests off
 .description "Use == or != instead of is or is not to compare literal values; the identity of such values is unreliable."
 .language python
 .mode steer

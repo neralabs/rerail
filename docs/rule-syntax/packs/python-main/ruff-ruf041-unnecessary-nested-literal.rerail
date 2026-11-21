@@ -1,5 +1,4 @@
 .policy "ruff-ruf041-unnecessary-nested-literal" revision 1
-.guests off
 .description "Flatten a Literal that wraps another Literal into a single Literal; the nesting adds nothing but noise."
 .language python
 .mode steer

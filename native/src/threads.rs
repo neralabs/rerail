@@ -86,11 +86,12 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 }
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
-/// waits must never run it on the caller's own stack. A pool worker or a service thread owns the job before the
-/// caller can help with other work.
+/// waits must never run it on the caller's own stack. It runs on another of the pool's threads, and the caller runs
+/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), or when no pool thread takes
+/// it at once, on a thread of its own: one thread cannot hold both stacks.
 pub(crate) struct Beside<T> {
     name: &'static str,
-    slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
+    slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
 }
 
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
@@ -101,15 +102,18 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
 
 /// Starts `f` beside the caller ([`Beside`]).
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
-    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
+    let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let run = move || {
+        held.1.store(true, std::sync::atomic::Ordering::Release);
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        *held.lock() = Some(r);
+        *held.0.lock() = Some(r);
     };
+    // Every pool thread may itself be starting a request and its answers: a pool thread has a millisecond to claim
+    // the job, and one that none claims runs on a thread of its own.
     let unclaimed = if cfg!(not(target_family = "wasm")) && max() >= 2 {
         let pending = std::sync::Arc::new(parking_lot::Mutex::new(Some(run)));
         let queued = std::sync::Arc::clone(&pending);
@@ -121,28 +125,36 @@ pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> 
                 job();
             }
         });
-        // Each available worker could itself be starting a request/answer pair.
-        // Give another worker first claim, without depending on one becoming free.
         let _ = ready.recv_timeout(std::time::Duration::from_millis(1));
         pending.lock().take()
     } else {
         Some(run)
     };
     if let Some(job) = unclaimed && let Err(error) = rerail_accel::exec::service(name, None, job) {
-        *slot.lock() = Some(Err(Box::new(error)));
+        slot.1.store(true, std::sync::atomic::Ordering::Release);
+        *slot.0.lock() = Some(Err(Box::new(error)));
     }
     Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value, running queued jobs and recording the wait under `site`.
-    pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
+    /// Waits until `poll` gives a value, the wait recorded under `site`. Once the job has started, the wait runs the
+    /// pool's other jobs; before, it only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
+    pub(crate) fn wait_for<V>(&self, site: &'static str, mut poll: impl FnMut() -> Option<V>) -> V {
+        let mut nap = 20e-6f64;
+        while !self.slot.1.load(std::sync::atomic::Ordering::Acquire) {
+            if let Some(v) = poll() {
+                return v;
+            }
+            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
+            nap = (nap * 2.0).min(1e-3);
+        }
         rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
     pub(crate) fn join(self) -> std::thread::Result<T> {
-        self.wait_for(self.name, || self.slot.lock().take())
+        self.wait_for(self.name, || self.slot.0.lock().take())
     }
 }
 

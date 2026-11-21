@@ -1,5 +1,4 @@
 .policy "ruff-up036-outdated-version-block" revision 1
-.guests off
 .description "Remove version checks on sys.version_info that are always true or false for the minimum supported Python version; keep only the branch that runs."
 .language python
 .mode steer

@@ -1,0 +1,407 @@
+// The preprocessor's evaluator over tapes (decision 0436): plain MSL passes over a unit's files,
+// each a source's bytes and its preprocessor tape (format 16, decision 0468 §1), both where the
+// slab residency placed them: `data` is the first document's slab, the others reached from it by
+// the slabs' addresses (0353 step 4, 0471), and `files` their views (`DocView`, the residency's
+// layout). The tape is read through the reads
+// written once in CLIF (decision 0310; `<ukl/reads/tape.h>`, their kernels' copy, 0524), each node where it lies: nothing is
+// decoded into another array. Every size a pass needs is made on the device (counts, a prefix
+// sum, and the next dispatch's arguments).
+//
+// Preprocessed before Metal compiles it (`rerail_ukl::metal_source`): the view's definition and
+// the reads come first (`pp_eval::source`), the view read where the batch holds it.
+
+// A file of the unit: its document's view. Its parts are offsets from its first byte, `at` and
+// `at_high` (an i64) from `data`.
+typedef DocView PpFile;
+
+// A file's first byte from `data`: `at` and `at_high`, an i64.
+UKL_INLINE int64_t pf_at(PpFile f) { return (int64_t)(((uint64_t)f.at_high << 32) | (uint64_t)f.at); }
+
+// The tape's kinds the passes read (`rerail_c_pp::tape`).
+#define K_IDENTIFIER (28u)
+
+// --- A format 16 tape, read through the CLIF reads ---------------------------------------------
+
+// A document: its first byte in the slab, and its view.
+typedef struct Tape {
+    UKL_GLOBAL const uint8_t* d;
+    UKL_GLOBAL const DocView* v;
+    UKL_GLOBAL const uint8_t* codes;
+} Tape;
+
+UKL_INLINE Tape tape_at(UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const PpFile* files, uint32_t f) {
+    Tape t;
+    t.v = files + f;
+    t.d = data + pf_at(*t.v);
+    // The language's table: `codes` from the document's first byte, modulo 2^32 (`slabs::codes_offset`).
+    t.codes = t.d + (int32_t)t.v->codes;
+    return t;
+}
+
+// A file's source: its first byte's offset from `data`.
+UKL_INLINE int64_t pf_src(PpFile f) { return pf_at(f) + (int64_t)f.source; }
+
+// A file's document's first byte, 16-byte aligned in its slab: where its names' words are read from.
+UKL_INLINE UKL_GLOBAL const uint64_t* pf_words(UKL_GLOBAL const uint8_t* data, PpFile f) { return (UKL_GLOBAL const uint64_t*)(data + pf_at(f)); }
+
+// Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
+// have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
+UKL_INLINE uint32_t node_key(Tape t, uint32_t i) {
+    UKL_GLOBAL const uint16_t* c = (UKL_GLOBAL const uint16_t*)(t.codes + 24u * clif_tape_number(t.d, (UKL_GLOBAL const uint32_t*)t.v, i));
+    return ((uint32_t)(c[0])) | ((uint32_t)(c[1])) << 10;
+}
+UKL_INLINE uint32_t node_kind(Tape t, uint32_t i) { return node_key(t, i) & 0x3ffu; }
+UKL_INLINE uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_INLINE uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_INLINE uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+// The line (from 0) of byte `x` of the file: by its tape's newline index.
+UKL_INLINE uint32_t tape_line_of(Tape t, uint32_t x) { return clif_tape_line(t.d, (UKL_GLOBAL const uint32_t*)t.v, x); }
+
+// --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
+
+
+// The file of the unit's node `g`: the last whose first node is at or before it.
+UKL_INLINE uint32_t file_of(PP_GLOBAL const uint32_t* bases, uint32_t n_files, uint32_t g) {
+    uint32_t lo = 0u, hi = n_files;
+    while (hi - lo > 1u) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (bases[mid] <= g) lo = mid; else hi = mid;
+    }
+    return lo;
+}
+
+// --- Names -------------------------------------------------------------------------------------
+
+// The 8 bytes of `data` at byte `a`, as a little-endian word.
+UKL_INLINE uint64_t word_at(PP_GLOBAL const uint64_t* d, uint32_t a) {
+    uint32_t q = a >> 3, r = (a & 7u) * 8u;
+    uint64_t lo = d[q];
+    return r == 0u ? lo : (lo >> r) | (d[q + 1u] << (64u - r));
+}
+
+// Where a line splice at byte `i` (a `\\`, blanks, then a newline) ends, before `end`; `i`
+// where there is none (`rerail_c_lean::pp`'s `splice_at`).
+UKL_INLINE uint32_t splice_end(PP_GLOBAL const uint8_t* b, uint32_t i, uint32_t end) {
+    uint32_t k = i + 1u;
+    for (; k < end && (b[k] == ((uint8_t)(' ')) || b[k] == ((uint8_t)('\t')) || b[k] == 0x0bu || b[k] == 0x0cu); k++) {}
+    if (k < end && b[k] == ((uint8_t)('\n'))) return k + 1u;
+    if (k + 1u < end && b[k] == ((uint8_t)('\r')) && b[k + 1u] == ((uint8_t)('\n'))) return k + 2u;
+    return i;
+}
+
+// Whether a word holds the byte `c` (a zero byte of `w ^ c…c`).
+UKL_INLINE bool word_has(uint64_t w, uint8_t c) {
+    uint64_t x = w ^ (0x0101010101010101ul * ((uint64_t)(c)));
+    return ((x - 0x0101010101010101ul) & ~x & 0x8080808080808080ul) != 0ul;
+}
+
+UKL_INLINE uint64_t key_mix(uint64_t h, uint64_t w) {
+    h = (h ^ w) * 0xff51afd7ed558ccdul;
+    return h ^ (h >> 32);
+}
+
+// A name's key: its bytes a word at a time, line splices left out (its phase-2 spelling,
+// `rerail_metal::pp_eval::name_key`). A name with no `\\` is read a word at a time; one with
+// one is read again a byte at a time, which only a splice inside a name needs.
+UKL_INLINE uint64_t name_key(PP_GLOBAL const uint64_t* d, uint32_t a, uint32_t len) {
+    bool slash = false;
+    for (uint32_t k = 0u; k < len; k += 8u) {
+        uint64_t w = word_at(d, a + k);
+        uint32_t left = len - k;
+        if (left < 8u) w &= (1ul << (left * 8u)) - 1ul;
+        slash |= word_has(w, ((uint8_t)('\\')));
+    }
+    uint64_t h;
+    if (!slash) {
+        h = 0x9e3779b97f4a7c15ul ^ ((uint64_t)(len));
+        for (uint32_t k = 0u; k < len; k += 8u) {
+            uint64_t w = word_at(d, a + k);
+            uint32_t left = len - k;
+            if (left < 8u) w &= (1ul << (left * 8u)) - 1ul;
+            h = key_mix(h, w);
+        }
+    } else {
+        PP_GLOBAL const uint8_t* b = (PP_GLOBAL const uint8_t*)d;
+        uint32_t end = a + len, n = 0u;
+        for (uint32_t i = a; i < end;) {
+            uint32_t e = b[i] == ((uint8_t)('\\')) ? splice_end(b, i, end) : i;
+            if (e != i) { i = e; continue; }
+            n++;
+            i++;
+        }
+        h = 0x9e3779b97f4a7c15ul ^ ((uint64_t)(n));
+        uint64_t w = 0ul;
+        uint32_t m = 0u;
+        for (uint32_t i = a; i < end;) {
+            uint32_t e = b[i] == ((uint8_t)('\\')) ? splice_end(b, i, end) : i;
+            if (e != i) { i = e; continue; }
+            w |= ((uint64_t)(b[i])) << (8u * m);
+            i++;
+            if (++m == 8u) {
+                h = key_mix(h, w);
+                w = 0ul;
+                m = 0u;
+            }
+        }
+        if (m > 0u) h = key_mix(h, w);
+    }
+    h *= 0xc4ceb9fe1a85ec53ul;
+    return h ^ (h >> 29);
+}
+
+// Each identifier leaf's key, 0 for every other node: one thread a node of the unit.
+UKL_INLINE void pp_names(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL uint64_t* keys, uint32_t n_files, uint32_t g) {
+    if (g >= total[0]) return;
+    uint32_t f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint32_t i = g - bases[f];
+    uint64_t key = 0ul;
+    if (node_kind(t, i) == K_IDENTIFIER) {
+        uint32_t s = node_start(t, i);
+        // From the document's first byte, 16-byte aligned in its slab.
+        key = name_key(pf_words(data, files[f]), files[f].source + s, node_end(t, i) - s);
+    }
+    keys[g] = key;
+}
+
+// For tests: each node of the unit as the reader gives it (key, start, end, size).
+UKL_INLINE void pp_nodes(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL uint32_t* out, uint32_t n_files, uint32_t g) {
+    if (g >= total[0]) return;
+    uint32_t f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint32_t i = g - bases[f];
+    PP_GLOBAL uint32_t* o = out + 4u * g;
+    o[0] = node_key(t, i);
+    o[1] = node_start(t, i);
+    o[2] = node_end(t, i);
+    o[3] = node_size(t, i);
+}
+
+// --- The directives: passes a node each ----------------------------------------------------------
+//
+// A node is a directive row where its kind is a directive's (they are items alone: a directive's
+// own nodes are tokens and kinds past `K_IDENTIFIER`). A group (`K_GROUP`) holds its chain's arms
+// (`#if…`, `#elif…`, `#else`), its `#endif`, and each arm's items after it. Every row's fields come
+// from scans over the batch's nodes and searches, never from a walk of a file (decision 0468):
+// - a node's depth: the groups around it, a scan of +1 after each group's node and -1 at its end;
+// - its place among rows, groups and arms: scans of their flags (a file's from its first node's);
+// - the arm an item is read under: the latest arm at the item's own depth before it, a search in
+//   the arms' keys (depth, place) sorted; a row's group node, the latest group at one depth less;
+// - the text before it: the text tokens' scan (`text_before`, from its file's first node's).
+// The spike's P0 tables (`rerail_c_pp::stream::parallel::tables`), made from the tapes in place.
+
+#define K_CODE (1u)
+#define K_GROUP (2u)
+#define K_DIRECTIVES (3u)
+#define K_IF (12u)
+#define K_IFNDEF (14u)
+#define K_ELSE (18u)
+#define K_ENDIF (19u)
+#define NO_CHAIN (0xffffffffu)
+
+// A directive's row: its node in its file's tape, its kind, the text tokens before it in the
+// file, the group it is read in and the group after it, and its chain (`NO_CHAIN`: none).
+typedef struct PpDir { uint32_t node, kind, text_before, group, after, chain; } PpDir;
+
+#define PP_NONE (0xffffffffu)
+
+// A node's depth: the groups around it (the events' exclusive scan, and its own event).
+UKL_INLINE uint32_t pp_depth(PP_GLOBAL const uint32_t* depth, PP_GLOBAL const uint32_t* dev, uint32_t g) { return depth[g] + dev[g]; }
+
+// The node of the last key at or before (`d`, `x`) in `keys`' first `n` (sorted), where its depth
+// is `d`; `PP_NONE` where there is none.
+UKL_INLINE uint32_t pp_latest(PP_GLOBAL const uint64_t* keys, uint32_t n, uint32_t d, uint32_t x) {
+    uint64_t q = (((uint64_t)(d)) << 32) | ((uint64_t)(x));
+    uint32_t lo = 0u, hi = n;
+    for (uint32_t k = 0u; k < 40u && lo < hi; k++) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (keys[mid] <= q) lo = mid + 1u; else hi = mid;
+    }
+    if (lo == 0u || ((uint32_t)(keys[lo - 1u] >> 32)) != d) return PP_NONE;
+    return ((uint32_t)(keys[lo - 1u]));
+}
+
+// Each node's flags: a row's, a group's; a group's depth events (+1 after its node, -1 past its
+// end: `dev`, words that wrap); and the text map's seed (an interior node's place).
+UKL_INLINE void pp_node_flags(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL uint32_t* dflag, PP_GLOBAL uint32_t* gflag, PP_GLOBAL uint32_t* dev, PP_GLOBAL uint32_t* owner_in, uint32_t n_files, uint32_t g) {
+    uint32_t n = total[0];
+    if (g >= n) return;
+    uint32_t f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint32_t i = g - bases[f];
+    uint32_t k = node_kind(t, i), size = node_size(t, i);
+    dflag[g] = k >= K_DIRECTIVES && k < K_IDENTIFIER ? 1u : 0u;
+    gflag[g] = k == K_GROUP ? 1u : 0u;
+    // A file's root seeds its own place too: past every node of the files before it, so no node's
+    // owner (the max scan's) is another file's. An empty file's root (size 1) took the file before's,
+    // and its text flag read that place in its own tape (4 billion nodes out).
+    owner_in[g] = size > 1u || i == 0u ? g : 0u;
+    if (k == K_GROUP) {
+        if (g + 1u < n) ukl_atomic_add(&dev[g + 1u], 1u);
+        if (g + size < n) ukl_atomic_sub(&dev[g + size], 1u);
+    }
+}
+
+// Each node's arm flag (an arm's kind inside a group), its text flag (a leaf of a text line), and a
+// group's key (its depth, its place) at its rank.
+UKL_INLINE void pp_node_depths(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* depth, PP_GLOBAL const uint32_t* dev, PP_GLOBAL const uint32_t* gflag, PP_GLOBAL const uint32_t* grank, PP_GLOBAL const uint32_t* owner, PP_GLOBAL uint32_t* aflag, PP_GLOBAL uint32_t* tflag, PP_GLOBAL uint64_t* gkeys, uint32_t n_files, uint32_t g) {
+    if (g >= total[0]) return;
+    uint32_t f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint32_t i = g - bases[f];
+    uint32_t k = node_kind(t, i), d = pp_depth(depth, dev, g);
+    aflag[g] = k >= K_IF && k <= K_ELSE && d > 0u ? 1u : 0u;
+    tflag[g] = node_size(t, i) == 1u && node_kind(t, owner[g] - bases[f]) == K_CODE ? 1u : 0u;
+    if (gflag[g] != 0u) gkeys[grank[g]] = (((uint64_t)(d)) << 32) | ((uint64_t)(g));
+}
+
+// Each arm's key (its depth, its place) at its rank.
+UKL_INLINE void pp_arm_keys(PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* aflag, PP_GLOBAL const uint32_t* arank, PP_GLOBAL const uint32_t* depth, PP_GLOBAL const uint32_t* dev, PP_GLOBAL uint64_t* akeys, uint32_t g) {
+    if (g < total[0] && aflag[g] != 0u) akeys[arank[g]] = (((uint64_t)(pp_depth(depth, dev, g))) << 32) | ((uint64_t)(g));
+}
+
+// Each file's first row, and its groups: the file's own and one an arm.
+UKL_INLINE void pp_file_dirs(PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* drank, PP_GLOBAL const uint32_t* arank, PP_GLOBAL const uint32_t* n_arms, PP_GLOBAL uint32_t* dir_bases, PP_GLOBAL uint32_t* groups, uint32_t n_files, uint32_t f) {
+    if (f >= n_files) return;
+    dir_bases[f] = drank[bases[f]];
+    uint32_t a1 = f + 1u < n_files ? arank[bases[f + 1u]] : n_arms[0];
+    groups[f] = 1u + a1 - arank[bases[f]];
+}
+
+// The group an item at depth `d` is read in: its arm's (the latest arm at its depth before it,
+// numbered from 1 in its file), or 0, the file's own.
+UKL_INLINE uint32_t pp_arm_of(PP_GLOBAL const uint64_t* akeys, uint32_t n_arms, PP_GLOBAL const uint32_t* arank, uint32_t a0, uint32_t d, uint32_t x) {
+    if (d == 0u) return 0u;
+    uint32_t a = pp_latest(akeys, n_arms, d, x);
+    return a == PP_NONE ? 0u : arank[a] - a0 + 1u;
+}
+
+// Each directive's row at its rank: its node, kind and text before it; an arm's group (its
+// chain's), the group it opens and its chain (its group's rank in the file); an `#endif`'s its
+// chain's group; any other's the group it is read in.
+UKL_INLINE void pp_rows(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* dflag, PP_GLOBAL const uint32_t* drank, PP_GLOBAL const uint32_t* depth, PP_GLOBAL const uint32_t* dev, PP_GLOBAL const uint32_t* trank, PP_GLOBAL const uint32_t* arank, PP_GLOBAL const uint32_t* grank, PP_GLOBAL const uint64_t* akeys, PP_GLOBAL const uint32_t* n_arms, PP_GLOBAL const uint64_t* gkeys, PP_GLOBAL const uint32_t* n_groups, PP_GLOBAL PpDir* rows, uint32_t n_files, uint32_t g) {
+    if (g >= total[0] || dflag[g] == 0u) return;
+    uint32_t f = file_of(bases, n_files, g);
+    Tape t = tape_at(data, files, f);
+    uint32_t b = bases[f], i = g - b, k = node_kind(t, i), d = pp_depth(depth, dev, g);
+    uint32_t a0 = arank[b], na = n_arms[0];
+    PpDir r;
+    r.node = i;
+    r.kind = k;
+    r.text_before = trank[g] - trank[b];
+    r.chain = NO_CHAIN;
+    bool arm = k >= K_IF && k <= K_ELSE && d > 0u;
+    if (arm || (k == K_ENDIF && d > 0u)) {
+        uint32_t grp = pp_latest(gkeys, n_groups[0], d - 1u, g);
+        uint32_t outer = grp == PP_NONE ? 0u : pp_arm_of(akeys, na, arank, a0, d - 1u, grp);
+        r.group = outer;
+        if (arm) {
+            r.after = arank[g] - a0 + 1u;
+            r.chain = grp == PP_NONE ? NO_CHAIN : grank[grp] - grank[b];
+        } else {
+            r.after = outer;
+        }
+    } else {
+        r.group = pp_arm_of(akeys, na, arank, a0, d, g);
+        r.after = r.group;
+    }
+    rows[drank[g]] = r;
+}
+
+// A file's rows after its first that break an include guard's shape: outside every group, or
+// another arm of the first chain (`outside`, `arms`, a count each by file).
+UKL_INLINE void pp_guard_marks(PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const uint32_t* dir_total, PP_GLOBAL const PpDir* rows, PP_GLOBAL uint32_t* outside, PP_GLOBAL uint32_t* arms, uint32_t n_files, uint32_t r) {
+    if (r >= dir_total[0]) return;
+    uint32_t f = file_of(dir_bases, n_files, r);
+    if (r == dir_bases[f]) return;
+    PpDir d = rows[r];
+    if (d.group == 0u || d.after == 0u) ukl_atomic_add(&outside[f], 1u);
+    if (d.chain == 0u && d.kind != K_ENDIF) ukl_atomic_add(&arms[f], 1u);
+}
+
+// Each file's include guard, where it has a guard's shape: its first directive an `#ifndef` with
+// no text before it, of one arm, its `#endif` the last directive with no text after it, every
+// directive between inside it (the spike's `files::guard`); the guard's name is the first row's
+// key, else 0.
+UKL_INLINE void pp_guards(PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const uint32_t* dir_total, PP_GLOBAL const PpDir* rows, PP_GLOBAL const uint32_t* trank, PP_GLOBAL const uint32_t* ttotal, PP_GLOBAL const uint32_t* outside, PP_GLOBAL const uint32_t* arms, PP_GLOBAL const uint64_t* dir_keys, PP_GLOBAL uint32_t* guarded, PP_GLOBAL uint64_t* guards, uint32_t n_files, uint32_t f) {
+    if (f >= n_files) return;
+    uint32_t d0 = dir_bases[f], d1 = f + 1u < n_files ? dir_bases[f + 1u] : dir_total[0];
+    uint32_t text = (f + 1u < n_files ? trank[bases[f + 1u]] : ttotal[0]) - trank[bases[f]];
+    bool shaped = d1 >= d0 + 2u && rows[d0].kind == K_IFNDEF && rows[d0].text_before == 0u && arms[f] == 0u
+                  && rows[d1 - 1u].kind == K_ENDIF && rows[d1 - 1u].after == 0u && rows[d1 - 1u].text_before == text && outside[f] == 1u;
+    guarded[f] = shaped ? 1u : 0u;
+    guards[f] = shaped ? dir_keys[d0] : 0ul;
+}
+
+// --- The directives' names: a line pass ---------------------------------------------------------
+
+#define K_DEFINE (6u)
+#define K_UNDEF (7u)
+#define K_IFDEF (13u)
+#define K_ELIFDEF (16u)
+#define K_ELIFNDEF (17u)
+
+// Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
+// `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
+// its word is an identifier: the key the names pass gave that leaf. One thread a row.
+// What a `#pragma` does (decision 0467 §3), by its first word as the spike's `pragma` reads it:
+// `once`, and `push_macro` or `pop_macro` with `( "name"` after it.
+#define A_NONE (0u)
+#define A_ONCE (1u)
+#define A_PUSH (2u)
+#define A_POP (3u)
+#define PK_LITERAL (30u)
+#define PK_PUNCT (31u)
+#define PK_PRAGMA (23u)
+#define PK_PRAGMA_TEXT (40u)
+
+// Whether leaf `j`'s bytes are the `n` bytes of `w`.
+UKL_INLINE bool pp_leaf_is(Tape t, UKL_GLOBAL const uint8_t* data, PpFile f, uint32_t j, UKL_PRIVATE const uint8_t* w, uint32_t n) {
+    uint32_t s = node_start(t, j);
+    if (node_end(t, j) - s != n) return false;
+    for (uint32_t k = 0u; k < n; k++)
+        if (data[pf_src(f) + s + k] != w[k]) return false;
+    return true;
+}
+
+// A pragma's act, and the key of a push's or pop's name (the string's bytes inside its quotes).
+UKL_INLINE uint32_t pp_pragma_act(Tape t, UKL_GLOBAL const uint8_t* data, PpFile f, uint32_t node, UKL_PRIVATE uint64_t* key) {
+    uint32_t end = node + node_size(t, node), j = node + 3u;
+    if (j >= end || node_kind(t, j) != PK_PRAGMA_TEXT) return A_NONE;
+    uint32_t te = j + node_size(t, j), w = j + 1u;
+    if (w >= te || node_kind(t, w) != K_IDENTIFIER) return A_NONE;
+    const uint8_t once[4] = {'o', 'n', 'c', 'e'};
+    const uint8_t push[10] = {'p', 'u', 's', 'h', '_', 'm', 'a', 'c', 'r', 'o'};
+    const uint8_t pop[9] = {'p', 'o', 'p', '_', 'm', 'a', 'c', 'r', 'o'};
+    if (pp_leaf_is(t, data, f, w, once, 4u)) return A_ONCE;
+    uint32_t act = pp_leaf_is(t, data, f, w, push, 10u) ? A_PUSH : pp_leaf_is(t, data, f, w, pop, 9u) ? A_POP : A_NONE;
+    if (act == A_NONE || w + 2u >= te) return A_NONE;
+    const uint8_t lp[1] = {'('};
+    if (node_kind(t, w + 1u) != PK_PUNCT || !pp_leaf_is(t, data, f, w + 1u, lp, 1u) || node_kind(t, w + 2u) != PK_LITERAL) return A_NONE;
+    uint32_t s = node_start(t, w + 2u), e = node_end(t, w + 2u);
+    if (e - s < 2u || data[pf_src(f) + s] != ((uint8_t)('"'))) return A_NONE;
+    *key = name_key(pf_words(data, f), f.source + s + 1u, e - s - 2u);
+    return act;
+}
+
+UKL_INLINE void pp_dir_keys(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const uint32_t* dir_total, PP_GLOBAL const PpDir* rows, PP_GLOBAL uint64_t* dir_keys, PP_GLOBAL uint32_t* acts, uint32_t n_files, uint32_t r) {
+    if (r >= dir_total[0]) return;
+    uint32_t f = file_of(dir_bases, n_files, r);
+    Tape t = tape_at(data, files, f);
+    PpDir d = rows[r];
+    bool named = d.kind == K_DEFINE || d.kind == K_UNDEF || d.kind == K_IFDEF || d.kind == K_IFNDEF
+                 || ((d.kind == K_ELIFDEF || d.kind == K_ELIFNDEF) && d.chain != NO_CHAIN);
+    uint64_t key = 0ul;
+    // Its `#`, its word, then the first token after them: a leaf, or an operand node's first.
+    uint32_t end = d.node + node_size(t, d.node);
+    uint32_t j = d.node + 3u;
+    if (named && j < end) {
+        while (node_size(t, j) > 1u) j++;
+        if (node_kind(t, j) == K_IDENTIFIER) key = keys[bases[f] + j];
+    }
+    uint32_t act = A_NONE;
+    if (d.kind == PK_PRAGMA) act = pp_pragma_act(t, data, files[f], d.node, &key);
+    dir_keys[r] = key;
+    acts[r] = act;
+}
+

@@ -155,7 +155,7 @@ impl Fact {
             let nodes = tape.transducer_len();
             if tape.path().is_some_and(|path| condition.holds(path)) {
                 bits.iter_mut().for_each(|w| *w = !0);
-                if nodes % 64 != 0
+                if !nodes.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last &= (1 << (nodes % 64)) - 1;

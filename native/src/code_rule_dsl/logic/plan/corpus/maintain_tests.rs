@@ -198,19 +198,8 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
         let ran = s.edit(what);
         assert_eq!(ran.shape.maintenance_held, 0, "R1: after {what}, no relation is held under a maintenance name");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no row is copied to state a change");
-    }
-}
-
-/// R2 in a session (t43 step 13): the changed documents' memo entries are found (under the memo plan's id and the
-/// store path), so the inputs' deltas are read from them, not every document hashed. (A few still are: 0364's open
-/// item.)
-#[test]
-fn r2_a_session_reads_its_inputs_deltas_from_the_changed_entries() {
-    let mut s = kinds("r2-entries");
-    s.run();
-    for (file, body, what) in SMALL_EDITS {
-        s.write(file, body);
-        let ran = s.edit(what);
+        // The changed documents' memo entries are found (under the memo plan's id and the store path), so the inputs'
+        // deltas are read from them, not every document hashed. (A few still are: 0364's open item.)
         assert!(ran.shape.inputs_from_entries > 0, "R2: after {what}, inputs' deltas are read from the changed documents' entries ({} hashed)", ran.shape.inputs_hashed);
     }
 }
@@ -261,8 +250,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
-    let root = if root.exists() { root } else { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
+    let root = if root.exists() { root } else { std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(d) = stack.pop() {
@@ -505,7 +494,7 @@ fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_skipped + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_skipped, r.cross_maintained, &r.cross_again));
 }
 
-/// Q382: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
+/// Q421: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
 /// on the kept frames' route and in a session: `retain::after` refuses a view by the program's rules
 /// (`Cut::views`) whatever form a run held it in, and the maintain mode holds it as a view.
 #[test]

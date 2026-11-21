@@ -51,14 +51,14 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
     /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
     /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
@@ -71,7 +71,7 @@ pub struct DeviceView<'a> {
 /// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
@@ -82,7 +82,7 @@ pub struct ViewInPlace {
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
@@ -161,6 +161,14 @@ pub trait Source: Send + Sync {
             }
         }
     }
+    /// The rows whose `column` holds one of `keys`, each with its values of `columns`, in row order, until `each`
+    /// returns false; `false` (nothing given) where the source has no such read. A view of a batch's documents walks
+    /// the documents the keys name, reading each row's own column and the other columns of the rows kept alone:
+    /// the walk carries a node's depth and place, where a lookup a key computes them again (a semi-join's rows,
+    /// decision 0458).
+    fn for_rows_keyed(&self, _column: usize, _keys: &rustc_hash::FxHashSet<i64>, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        false
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
@@ -215,6 +223,12 @@ pub trait Source: Send + Sync {
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         None
     }
+    /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
+    /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
+    /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
+    fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
@@ -235,7 +249,7 @@ pub trait Source: Send + Sync {
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }
@@ -863,8 +877,6 @@ static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
 pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
-
-/// The tables registered on each connection that no statement has resolved yet (`register`).
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).

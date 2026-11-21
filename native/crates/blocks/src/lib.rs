@@ -22,26 +22,26 @@
 pub mod alloc;
 pub mod atoms;
 pub mod block;
+pub mod bloom;
 pub mod chunk;
 pub mod col;
 #[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
 pub mod free;
-/// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
-/// `Relation` read through, the same reads the kernels' (`<ukl/reads/relation.h>`) and the JIT make.
-#[rustfmt::skip]
-pub mod generated_reads;
-/// The same reads in UKL, for every kernel that reads a relation in its block (decision 0325): the library's header,
+/// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
+/// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
 /// which a kernel source including it is preprocessed with (the device layer's programs; decision 0440 §3.3).
 pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
+pub mod ledger;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
 pub mod refs;
+pub mod region;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
@@ -131,7 +131,7 @@ macro_rules! structure {
                 $(s += &format!("    {};\n", <$t as $crate::KernelField>::decl(stringify!($f)));)*
                 s += &format!("}} {};\n", stringify!($name));
                 s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
-                $(s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
+                $(s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
             }
@@ -141,11 +141,11 @@ macro_rules! structure {
 
 /// The hash every index and every kernel uses for a key: one value at a time, the same arithmetic in UKL.
 pub const SEED: u64 = 0x243F_6A88_85A3_08D3;
-/// The arithmetic is the read written once (`rel_key_mix`, decision 0325 step 5), which the kernels call too.
+/// The arithmetic is the CLIF's `rel_key_mix` (decision 0325 step 5), which the kernels and the JIT call.
 #[inline(always)]
 pub fn mix(h: u64, v: i64) -> u64 {
-    // SAFETY: `rel_key_mix` reads nothing through its descriptor.
-    unsafe { crate::generated_reads::rel_key_mix(std::ptr::null(), h, v as u64) }
+    let h = (h ^ v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^ (h >> 29)
 }
 #[inline]
 pub fn key_hash(vals: &[i64]) -> u64 {

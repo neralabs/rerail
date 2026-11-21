@@ -304,7 +304,7 @@ impl Sorted {
     /// The ranges written in `part`'s relation's block (decision 0478 step 5c), and read there from now on: true when
     /// they are (they were already, or there are none), false when its block keeps others or has no room (they then
     /// stay as they were).
-    pub(super) fn into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
+    pub(super) fn move_into_block(&mut self, part: &crate::code_rule_dsl::facts::rows::Part) -> bool {
         if self.own.is_empty() && self.base.as_ref().is_some_and(|b| std::ptr::eq(b.rel(), part.rel())) {
             return true;
         }
@@ -516,45 +516,42 @@ fn cmp_rows<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: u32, b: 
 
 /// A run given to its relation's block (`Relation::try_add_order`): its rows listed or a range, its fences, tags and
 /// prints, each a chunk of the block.
-pub(super) struct GivenRun {
-    pub(super) ids: Option<rerail_blocks::relation::Given>,
-    pub(super) range: Option<(u32, u32)>,
-    pub(super) fences: rerail_blocks::relation::Given,
-    pub(super) tags: rerail_blocks::relation::Given,
-    pub(super) prints: rerail_blocks::relation::Given,
-}
+pub(super) struct GivenRun(pub(super) rerail_blocks::relation::GivenOrder);
 
 impl GivenRun {
     /// The run again, its chunks its own (no directory took them).
     pub(super) fn into_run(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, life: crate::code_rule_dsl::facts::rows::Life) -> Run {
-        let ids = match (self.ids, self.range) {
-            (_, Some((lo, hi))) => Ids::Rows(lo, hi),
-            (g, None) => Ids::List(BlockVec::from_chunk(facts, life, g.unwrap_or_default())),
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
+        let GivenOrder { rows, fences, tags, prints } = self.0;
+        let ids = match rows {
+            OrderRows::Range(lo, hi) => Ids::Rows(lo, hi),
+            OrderRows::Listed(g) => Ids::List(BlockVec::from_chunk(facts, life, g)),
         };
-        Run { ids, fences: BlockVec::from_chunk(facts, life, self.fences), tags: BlockVec::from_chunk(facts, life, self.tags), prints: BlockVec::from_chunk(facts, life, self.prints) }
+        Run { ids, fences: BlockVec::from_chunk(facts, life, fences), tags: BlockVec::from_chunk(facts, life, tags), prints: BlockVec::from_chunk(facts, life, prints) }
     }
 }
 
 impl Run {
-    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself when any lies
-    /// elsewhere or is not its own.
-    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Run> {
+    /// Its arrays handed on to `facts`' block, where they lie (decision 0478 step 5b), or itself (boxed: it is the
+    /// larger) when any lies elsewhere or is not its own.
+    pub(super) fn give(self, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<GivenRun, Box<Run>> {
         let ids_ok = match &self.ids {
             Ids::List(v) => v.can_give(facts),
             Ids::Rows(..) => true,
         };
         if !(ids_ok && self.fences.can_give(facts) && self.tags.can_give(facts) && self.prints.can_give(facts)) {
-            return Err(self);
+            return Err(Box::new(self));
         }
         fn take<T: rerail_blocks::Pod>(v: BlockVec<T>, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> rerail_blocks::relation::Given {
             v.into_chunk(facts).unwrap_or_else(|_| unreachable!("checked"))
         }
+        use rerail_blocks::relation::{GivenOrder, OrderRows};
         let Run { ids, fences, tags, prints } = self;
-        let (ids, range) = match ids {
-            Ids::List(v) => (Some(take(v, facts)), None),
-            Ids::Rows(lo, hi) => (None, Some((lo, hi))),
+        let rows = match ids {
+            Ids::List(v) => OrderRows::Listed(take(v, facts)),
+            Ids::Rows(lo, hi) => OrderRows::Range(lo, hi),
         };
-        Ok(GivenRun { ids, range, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) })
+        Ok(GivenRun(GivenOrder { rows, fences: take(fences, facts), tags: take(tags, facts), prints: take(prints, facts) }))
     }
 
     /// The run order `i` of `owner`'s relation's directory is, read where it lies (borrowed: `BlockVec::shared`).
@@ -564,7 +561,7 @@ impl Run {
     pub(super) unsafe fn in_block(owner: &crate::code_rule_dsl::facts::rows::Part, i: usize) -> Run {
         use rerail_blocks::relation::ORDER_ROWS;
         let block = &owner.facts().block;
-        let ix = owner.rel().index(i);
+        let ix = owner.rel().index_at(i);
         let at = |p: *const u8| block.offset_of(p);
         // SAFETY: the caller's: each span is written in `owner`'s block, which its relation keeps.
         unsafe {
@@ -1163,47 +1160,89 @@ impl Extend<u16> for NoTags {
     fn extend<I: IntoIterator<Item = u16>>(&mut self, _: I) {}
 }
 
-/// `sort_keyed` by packed keys, or `false` (nothing done) when its fields need more than 128 bits.
+/// `sort_keyed` by packed keys, its tags put in `out`, or `false` (nothing done) when its fields need more than 128
+/// bits.
 fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, usize) -> i64, cmp: &impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) -> bool {
-    let (n, nv) = (ids.len(), ncols.min(2));
-    // The held fields of each row, read once: its tag (when tagged), then its first two values, each value's bits
-    // with the sign flipped, so the fields order as the signed values do.
-    let nf = usize::from(tagged) + nv;
-    if n < 2 || nf == 0 {
+    let nf = usize::from(tagged) + ncols.min(2);
+    if ids.len() < 2 || nf == 0 {
         return false;
     }
-    let flip = |v: i64| (v as u64) ^ (1 << 63);
-    let mut f: Vec<u64> = Vec::with_capacity(n * nf);
-    let mut top = 0u32;
-    for &id in ids.iter() {
-        top = top.max(id);
-        let v0 = val(id, 0);
-        if tagged {
-            f.push(u64::from(tag(v0)));
-        }
-        f.push(flip(v0));
-        if nv > 1 {
-            f.push(flip(val(id, 1)));
-        }
-    }
-    let bits = |span: u64| 64 - span.leading_zeros();
-    let wid = bits(u64::from(top));
+    let held = Held::of(ids, tagged, ncols.min(2), val);
     if nf == 1 {
-        // One value (most orders): packed in place, `(v - least) << id bits | id`.
-        let (lo, hi) = f.iter().fold((u64::MAX, 0), |(l, h), &v| (l.min(v), h.max(v)));
-        if bits(hi - lo) + wid > 64 {
-            return false;
-        }
-        for (k, &id) in f.iter_mut().zip(ids.iter()) {
-            *k = (*k - lo) << wid | u64::from(id);
-        }
-        sort_unstable_par(&mut f);
-        let mask = (1u64 << wid) - 1;
-        for (slot, k) in ids.iter_mut().zip(&f) {
-            *slot = (k & mask) as u32;
-        }
-        return true;
+        return sort_one_value(ids, held);
     }
+    sort_fields(ids, held, tagged, ncols, cmp, out)
+}
+
+/// The bits a span of `span` needs.
+fn bits(span: u64) -> u32 {
+    64 - span.leading_zeros()
+}
+
+/// The held fields of each row, read once (`sort_packed`): its tag (when tagged), then its first two values, each
+/// value's bits with the sign flipped, so the fields order as the signed values do; `nf` a row, beside ids of `wid`
+/// bits.
+struct Held {
+    f: Vec<u64>,
+    nf: usize,
+    wid: u32,
+}
+
+impl Held {
+    fn of(ids: &[u32], tagged: bool, nv: usize, val: &impl Fn(u32, usize) -> i64) -> Held {
+        let nf = usize::from(tagged) + nv;
+        let flip = |v: i64| (v as u64) ^ (1 << 63);
+        let mut f: Vec<u64> = Vec::with_capacity(ids.len() * nf);
+        let mut top = 0u32;
+        for &id in ids {
+            top = top.max(id);
+            let v0 = val(id, 0);
+            if tagged {
+                f.push(u64::from(tag(v0)));
+            }
+            f.push(flip(v0));
+            if nv > 1 {
+                f.push(flip(val(id, 1)));
+            }
+        }
+        Held { f, nf, wid: bits(u64::from(top)) }
+    }
+}
+
+/// One value (most orders): packed in place, `(v - least) << id bits | id`; `false` past 64 bits.
+fn sort_one_value(ids: &mut [u32], held: Held) -> bool {
+    let (mut f, wid) = (held.f, held.wid);
+    let (lo, hi) = f.iter().fold((u64::MAX, 0), |(l, h), &v| (l.min(v), h.max(v)));
+    if bits(hi - lo) + wid > 64 {
+        return false;
+    }
+    for (k, &id) in f.iter_mut().zip(ids.iter()) {
+        *k = (*k - lo) << wid | u64::from(id);
+    }
+    sort_unstable_par(&mut f);
+    let mask = (1u64 << wid) - 1;
+    for (slot, k) in ids.iter_mut().zip(&f) {
+        *slot = (k & mask) as u32;
+    }
+    true
+}
+
+/// Two or three held fields, packed beside the id: `ids` sorted, rows equal in every held field ordered by `cmp` when
+/// the order has more columns, and the tags (when tagged) put in `out`; `false` past 128 bits.
+fn sort_fields(ids: &mut [u32], held: Held, tagged: bool, ncols: usize, cmp: &impl Fn(u32, u32) -> Ordering, out: &mut impl Extend<u16>) -> bool {
+    let Some(layout) = Layout::of(&held) else { return false };
+    let keys = sort_by_keys(ids, held.f, &layout, ncols > 2 || tagged);
+    if ncols > 2 {
+        order_ties(ids, &keys, layout.wid, cmp);
+    }
+    if tagged {
+        out.extend(keys.iter().map(|&k| layout.first(k) as u16));
+    }
+    true
+}
+
+/// Each field's least and greatest value in `f`, rows of `nf`.
+fn bounds(f: &[u64], nf: usize) -> ([u64; 3], [u64; 3]) {
     let (mut lo, mut hi) = ([u64::MAX; 3], [0u64; 3]);
     for row in f.chunks_exact(nf) {
         for (j, &v) in row.iter().enumerate() {
@@ -1211,71 +1250,117 @@ fn sort_packed(ids: &mut [u32], tagged: bool, ncols: usize, val: &impl Fn(u32, u
             hi[j] = hi[j].max(v);
         }
     }
-    let mut w = [0u32; 3];
-    for j in 0..nf {
-        w[j] = bits(hi[j] - lo[j]);
+    (lo, hi)
+}
+
+/// Where each held field sits in a packed key: its width (`w`, the bits of its span) at `shift`, less its least
+/// (`lo`); the first highest, the id lowest, in `wid` bits; `total` bits in all.
+struct Layout {
+    nf: usize,
+    wid: u32,
+    total: u32,
+    lo: [u64; 3],
+    w: [u32; 3],
+    shift: [u32; 3],
+}
+
+impl Layout {
+    /// The layout of `held`'s fields, or `None` when they need more than 128 bits.
+    fn of(held: &Held) -> Option<Layout> {
+        let (nf, wid) = (held.nf, held.wid);
+        let (lo, hi) = bounds(&held.f, nf);
+        let mut w = [0u32; 3];
+        for j in 0..nf {
+            w[j] = bits(hi[j] - lo[j]);
+        }
+        let total = w.iter().sum::<u32>() + wid;
+        if total > 128 {
+            return None;
+        }
+        let mut shift = [0u32; 3];
+        let mut at = wid;
+        for j in (0..nf).rev() {
+            shift[j] = at;
+            at += w[j];
+        }
+        Some(Layout { nf, wid, total, lo, w, shift })
     }
-    let total = w.iter().sum::<u32>() + wid;
-    if total > 128 {
-        return false;
-    }
-    // Each field's place: the first highest, the id lowest.
-    let mut shift = [0u32; 3];
-    let mut at = wid;
-    for j in (0..nf).rev() {
-        shift[j] = at;
-        at += w[j];
-    }
-    // Zero-width fields hold nothing (their shift may be the key's whole width).
-    let (sh, lo_) = (shift, lo);
-    let pack = |row: &[u64], id: u32| -> u128 {
+
+    /// The key of `row` (its held fields) and `id`. A zero-width field holds nothing: its shift may be the key's whole
+    /// width.
+    fn pack(&self, row: &[u64], id: u32) -> u128 {
         let mut k = u128::from(id);
-        for j in 0..row.len() {
-            if w[j] > 0 {
-                k |= u128::from(row[j] - lo_[j]) << sh[j];
+        for (j, &v) in row.iter().enumerate() {
+            if self.w[j] > 0 {
+                k |= u128::from(v - self.lo[j]) << self.shift[j];
             }
         }
         k
-    };
-    let mask = (1u128 << wid) - 1;
-    let keys: Vec<u128> = if total <= 64 {
-        let mut narrow: Vec<u64> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id) as u64).collect();
-        drop(f);
-        sort_unstable_par(&mut narrow);
-        for (slot, &k) in ids.iter_mut().zip(&narrow) {
-            *slot = (u128::from(k) & mask) as u32;
-        }
-        if ncols <= 2 && !tagged {
-            return true;
-        }
-        narrow.into_iter().map(u128::from).collect()
-    } else {
-        let mut keys: Vec<u128> = f.chunks_exact(nf).zip(ids.iter()).map(|(row, &id)| pack(row, id)).collect();
-        drop(f);
-        sort_unstable_par(&mut keys);
-        for (slot, k) in ids.iter_mut().zip(&keys) {
-            *slot = (k & mask) as u32;
-        }
-        keys
-    };
-    // The stretches equal in every held field, which `cmp` orders when the order has more columns.
-    if ncols > 2 {
-        let mut at = 0;
-        while at < keys.len() {
-            let mut end = at + 1;
-            while end < keys.len() && keys[end] >> wid == keys[at] >> wid {
-                end += 1;
-            }
-            if end - at > 1 {
-                ids[at..end].sort_unstable_by(|&a, &b| cmp(a, b));
-            }
-            at = end;
-        }
     }
-    if tagged {
-        out.extend(keys.iter().map(|&k| ((k >> shift[0]) as u64 + lo[0]) as u16));
+
+    /// The first field's value in key `k` (the tag, when tagged). Zero-width, it is every row's least, and its place,
+    /// past the other fields and the id, is the key's whole width when they fill all 128 bits.
+    fn first(&self, k: u128) -> u64 {
+        if self.w[0] == 0 {
+            return self.lo[0];
+        }
+        (k >> self.shift[0]) as u64 + self.lo[0]
     }
-    true
+
+    /// The id's bits of a key.
+    fn id_mask(&self) -> u128 {
+        (1u128 << self.wid) - 1
+    }
+}
+
+/// `ids` sorted by their keys (`layout`'s, of `f`'s rows in turn), each in a u64 when the fields fit one: the sorted
+/// keys, kept when `keep`.
+fn sort_by_keys(ids: &mut [u32], f: Vec<u64>, layout: &Layout, keep: bool) -> Vec<u128> {
+    if layout.total > 64 {
+        return sort_wide(ids, f, layout);
+    }
+    let narrow = sort_narrow(ids, f, layout);
+    if keep { narrow.into_iter().map(u128::from).collect() } else { Vec::new() }
+}
+
+/// `sort_by_keys` with keys of at most 64 bits.
+fn sort_narrow(ids: &mut [u32], f: Vec<u64>, layout: &Layout) -> Vec<u64> {
+    let mut narrow: Vec<u64> = f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id) as u64).collect();
+    drop(f);
+    sort_unstable_par(&mut narrow);
+    let mask = layout.id_mask();
+    for (slot, &k) in ids.iter_mut().zip(&narrow) {
+        *slot = (u128::from(k) & mask) as u32;
+    }
+    narrow
+}
+
+/// `sort_by_keys` with keys of more than 64 bits.
+fn sort_wide(ids: &mut [u32], f: Vec<u64>, layout: &Layout) -> Vec<u128> {
+    let mut keys: Vec<u128> = f.chunks_exact(layout.nf).zip(ids.iter()).map(|(row, &id)| layout.pack(row, id)).collect();
+    drop(f);
+    sort_unstable_par(&mut keys);
+    let mask = layout.id_mask();
+    for (slot, k) in ids.iter_mut().zip(&keys) {
+        *slot = (k & mask) as u32;
+    }
+    keys
+}
+
+/// The stretches of sorted `keys` equal in every held field (all but the id's low `wid` bits): their `ids` ordered by
+/// `cmp`.
+fn order_ties(ids: &mut [u32], keys: &[u128], wid: u32, cmp: &impl Fn(u32, u32) -> Ordering) {
+    let mut at = 0;
+    while at < keys.len() {
+        let mut end = at + 1;
+        while end < keys.len() && keys[end] >> wid == keys[at] >> wid {
+            end += 1;
+        }
+        if end - at > 1 {
+            ids[at..end].sort_unstable_by(|&a, &b| cmp(a, b));
+        }
+        at = end;
+    }
 }
 
 /// `sort_keyed` by 24-byte tuples of the tag, the first two values and the id.
@@ -1712,6 +1797,10 @@ pub mod presorted {
     }
 }
 
+// The probe structures an index could be, over a run's captured relations (t50 step 5; measurement only).
+#[cfg(test)]
+mod index_spike;
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2058,6 +2147,27 @@ pub mod tests {
             }
         }
         assert!(packed_seen[0], "the narrow shapes pack");
+    }
+
+    /// A tagged order whose leading values all have one tag: the tag's field is zero-width, and its place, past the
+    /// values and the ids, is the key's whole width when they fill all 128 bits. Each row's tag is then that tag, as
+    /// the tuples give it; shifted by the key's width it was an overflow, and a release build (the shift taken
+    /// modulo 128, by 0) gave the key's low bits as the tag.
+    #[test]
+    fn a_tag_every_row_shares_is_each_rows_tag_when_the_values_fill_the_key() {
+        // Values whose hashes share their high 16 bits (tag 0xBE36), spanning 62 bits, beside values spanning 64, and
+        // ids of 2 bits: 0 + 62 + 64 + 2 = 128 bits.
+        let lead = [-9_217_541_510_037_437_257, -9_204_588_067_223_325_516, -9_196_900_843_560_476_845, -6_910_328_919_769_916_054i64];
+        let rows: Vec<i64> = lead.iter().zip([i64::MIN, i64::MAX, 0, -1]).flat_map(|(&a, b)| [a, b]).collect();
+        let cols = [0, 1];
+        let val = |id: u32, i: usize| rows[id as usize * 2 + cols[i]];
+        let cmp = |a: u32, b: u32| cmp_rows(&rows[..], 2, &cols, a, b);
+        let (mut a, mut b) = (vec![3, 2, 1, 0], vec![3, 2, 1, 0]);
+        let (mut ta, mut tb) = (Vec::new(), Vec::new());
+        assert!(sort_packed(&mut a, true, 2, &val, &cmp, &mut ta), "128 bits pack");
+        sort_tupled(&mut b, true, 2, val, cmp, &mut tb);
+        assert_eq!(tb, [0xBE36; 4]);
+        assert_eq!((a, ta), (b, tb));
     }
 
     /// Measurement aid (decision 0186): instructions and cycles a row of the packed and tupled sorts, over orders of

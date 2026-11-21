@@ -120,7 +120,7 @@ struct Solved {
     start: Vec<u32>,
     rows: crate::code_rule_dsl::facts::rows::Part,
     /// The starts' offset in the chunk, when the device made them.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     start_in_chunk: Option<usize>,
 }
 
@@ -234,7 +234,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
             return out;
@@ -260,7 +260,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
             return out;
@@ -318,6 +318,13 @@ impl Within {
         self.solved.get().is_some()
     }
 
+    /// Tests: the rows made per looked-up node so far, both sides.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn made_rows(&self) -> usize {
+        let made = self.made.lock();
+        made.0[0] + made.0[1]
+    }
+
     /// The first id of the rows made per looked-up `n`.
     fn looked_up(&self) -> usize {
         if self.solvable() { LOOKED_UP } else { 0 }
@@ -327,7 +334,7 @@ impl Within {
     /// rows (that ancestor, or for `inside` the chain of them).
     fn solved(&self) -> &Solved {
         self.solved.get_or_init(|| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             if let Some(s) = self.solved_in_chunk() {
                 return s;
             }
@@ -401,7 +408,7 @@ impl Within {
         Solved {
             start,
             rows,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             start_in_chunk: None,
         }
     }
@@ -420,7 +427,7 @@ impl Within {
             });
             found.extend(p.nodes().map(|(_, id)| match near[id as usize] {
                 rerail_tape_format::tape::NONE => file_local::NONE,
-                a => base + p.local_of_node(a as u32),
+                a => base + p.local_of_node(a),
             }));
         }
         self.solved_from(&found, inside)
@@ -429,7 +436,7 @@ impl Within {
     /// The solve's first row per node row (`nodes + 1` values).
     fn starts(&self) -> &[u32] {
         let s = self.solved();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(at) = s.start_in_chunk {
             let n = self.batch.nodes().last().copied().unwrap_or(0) + 1;
             // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
@@ -445,14 +452,14 @@ impl Within {
 
     /// The solve made on the device in the batch's chunk (decision 0289 §2), when the binding is the device's and
     /// one is registered: `None` sends it to the host's.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in_chunk(&self) -> Option<Solved> {
         self.solved_in(&[self.batch.chunk()]).map(|c| Solved { start: Vec::new(), rows: c.rows, start_in_chunk: Some(c.start) })
     }
 
     /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
     /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
@@ -462,7 +469,7 @@ impl Within {
     }
 
     /// The axis solved on the device over `chunks`, in one relation (`nearest::ChunkAxis`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn solved_in(&self, chunks: &[&super::device_chunk::Chunk]) -> Option<crate::code_rule_dsl::facts::nearest::InChunk> {
         use crate::code_rule_dsl::facts::core::KIND_STRIDE;
         use crate::code_rule_dsl::facts::nearest::chunk_axis;
@@ -519,7 +526,7 @@ impl Within {
         let p = &self.batch.docs[doc];
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
-        let slot = p.facts.kind(p.node(local as u32)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let slot = p.facts.kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
         self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
@@ -531,7 +538,7 @@ impl Within {
 
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
@@ -649,6 +656,15 @@ impl Within {
             }
         }
         out
+    }
+
+    /// Whether node `n` is strictly below node `a` (ids): in one document, `n` in `a`'s preorder interval of the
+    /// projection (`size`, a rank of the held tape's subtree end), the interval the made rows are (`contained`).
+    /// Nothing is made, and no tape reader is opened: a reader a call (`tape_of`) cost more than the rows it saved
+    /// in strata that check the same nodes again (t50 step 4).
+    fn below(&self, n: i64, a: i64) -> bool {
+        let (Some((dn, ln)), Some((da, la))) = (self.batch.node(n), self.batch.node(a)) else { return false };
+        dn == da && la < ln && ln <= la + self.batch.docs[da].size(la as usize)
     }
 
     /// The rows of node row `row` as inner (`side` 0) or outer (1), made on the first lookup.
@@ -859,6 +875,28 @@ impl Source for Within {
         if column == 0 {
             self.expect(keys);
         }
+    }
+    /// `within(n, a)` with both given is a test, not a join (t50 step 4): `lookup_all` reads `n`'s rows (made, or the
+    /// batch's solve) for the one of them that is `a`, and `holds` reads the projection's interval of `a` (`below`).
+    fn composite(&self) -> bool {
+        self.mode == Mode::Tree
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if self.mode != Mode::Tree || equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return None;
+        }
+        Some(self.lookup(0, &[n])?.into_iter().filter(|&r| self.value(r, 1) == a).collect())
+    }
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        if self.mode != Mode::Tree {
+            return None;
+        }
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return Some(false);
+        }
+        Some(self.below(n, a))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();

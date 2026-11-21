@@ -1,5 +1,4 @@
 .policy "ruff-pt008-pytest-patch-with-lambda" revision 1
-.guests off
 .description "Patch with a fixed return value rather than a lambda that ignores its arguments; it states the intent and keeps call assertions available."
 .language python
 .mode steer

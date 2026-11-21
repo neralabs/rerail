@@ -1,5 +1,4 @@
 .policy "ruff-c400-unnecessary-generator-list" revision 1
-.guests off
 .description "Use a list comprehension instead of passing a generator expression to list, or pass the iterable itself when the generator yields its items unchanged."
 .language python
 .mode steer

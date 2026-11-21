@@ -79,6 +79,8 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, u
                 break;
             }
             case 13u: v = BMC(within_lane(f.len + s.imm, gl * W) & ~within_lane(s.imm, gl * W)); break;
+            // `early`: a file's first bits read ahead, in the word.
+            case 14u: v = BMC(a >> s.imm); break;
             case 15u: {
                 // `phase`: k and r in a, the period's bits in b and imm.
                 uint32_t k = s.a & 0xffu, r = s.a >> 8;

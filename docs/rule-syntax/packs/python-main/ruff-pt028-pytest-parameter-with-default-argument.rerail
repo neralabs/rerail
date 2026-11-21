@@ -1,5 +1,4 @@
 .policy "ruff-pt028-pytest-parameter-with-default-argument" revision 1
-.guests off
 .description "Don't give pytest test function parameters default values; the default always wins, so a fixture of the same name is never injected."
 .language python
 .mode steer

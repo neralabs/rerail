@@ -385,8 +385,7 @@ impl PackedBatch {
         // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
-        for file in 0..file_count {
-            let tape = &files[file];
+        for tape in files.iter().take(file_count) {
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
@@ -973,7 +972,7 @@ impl PackedBatch {
                 Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks, query))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let capacities = self
+        self
             .tasks
             .iter()
             .map(|task| {
@@ -1067,8 +1066,7 @@ impl PackedBatch {
                     properties,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>();
-        capacities
+            .collect::<Result<Vec<_>, Error>>()
     }
 
     /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are
@@ -2022,7 +2020,7 @@ impl PackedExecution {
         self.program_count
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn host_arena_counts(&self) -> [usize; 4] {
         self.pages.iter().fold([0; 4], |mut counts, page| {
             for (count, length) in counts.iter_mut().zip([
@@ -2037,7 +2035,7 @@ impl PackedExecution {
         })
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }

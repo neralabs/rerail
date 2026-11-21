@@ -482,7 +482,7 @@ impl RelStats {
         if width == 0 {
             return;
         }
-        let each = |sign: i64, f: &mut dyn FnMut(&[i64])| (if sign < 0 { minus } else { plus }).chunks_exact(width).for_each(|r| f(r));
+        let each = |sign: i64, f: &mut dyn FnMut(&[i64])| (if sign < 0 { minus } else { plus }).chunks_exact(width).for_each(f);
         self.delta_each((plus.len() / width, minus.len() / width), width, &each);
     }
 
@@ -784,7 +784,7 @@ pub mod tests {
         fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
         assert_eq!(placed, fresh);
         // Read by the source's walk, a column at a time (`documents_scanned`): the same counts, in and out.
-        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.chunks_exact(3).map(<[i64]>::to_vec));
+        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| r.to_vec()));
         let mut scanned = RelStats::new(names());
         scanned.documents_scanned(&source(&all), &from, 1);
         assert_eq!(scanned, flat);

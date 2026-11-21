@@ -22,7 +22,14 @@ C408(c, k) :- c408_call(c, k), node(d, c, _, _, _), doc(d, _, _).
 C408(s, k) :- c408_call(c, k), guest_of(c, s), node(d, c, _, _, _), !doc(d, _, _).
 
 // c408_call(c, k): c is a call of builtin k that a literal replaces.
-.decl c408_call(c: node, k: symbol)
+.decl c408_call(c: node, kind: symbol)
 c408_call(c, k) :- c4_builtin(c, k), (k = "dict" ; k = "list" ; k = "tuple"), call_nargs(c, 0), call_nkwargs(c, 0).
 c408_call(c, "dict") :- c4_builtin(c, "dict"), call_nargs(c, 0), !call_nkwargs(c, 0), !call_kwsplat(c),
     !option("flake8-comprehensions.allow-dict-calls-with-keyword-arguments", "true").
+// A call in a string annotation is a tape value's node, which no file holds (decision 0431): it is reported at the
+// string it was parsed at, or, for a string inside a parsed string, at that one's, up to a string of the file.
+.decl c408_place(c: node, s: node)
+c408_place(c, s) :- c408_call(c, _), guest_of(c, s).
+c408_place(c, s2) :- c408_place(c, s), guest_of(s, s2).
+C408(c, k) :- c408_call(c, k), !guest_of(c, _).
+C408(s, k) :- c408_call(c, k), c408_place(c, s), !guest_of(s, _).

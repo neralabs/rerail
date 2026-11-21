@@ -57,7 +57,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
         return Ok(Solved { targets: Vec::new(), rounds: 0, launches: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
     }
     // Node indices leave bit 31 free.
-    if cells >= u32::MAX as usize || nodes == 0 || nodes >= FINAL as usize || cells % nodes != 0 || done.len() != cells {
+    if cells >= u32::MAX as usize || nodes == 0 || nodes >= FINAL as usize || !cells.is_multiple_of(nodes) || done.len() != cells {
         return Err(Error::BackendCapacity);
     }
     let device = lane::device()?;
@@ -125,7 +125,7 @@ mod tests {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            if x % 7 == 0 || stack.len() > 200 {
+            if x.is_multiple_of(7) || stack.len() > 200 {
                 stack.clear();
             } else {
                 for _ in 0..(x >> 8) % 3 {

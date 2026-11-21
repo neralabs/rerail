@@ -1,5 +1,4 @@
 .policy "ruff-b015-useless-comparison" revision 1
-.guests off
 .description "Remove comparisons whose result is discarded; assign, return or assert the result if it was meant to be used."
 .language python
 .mode steer

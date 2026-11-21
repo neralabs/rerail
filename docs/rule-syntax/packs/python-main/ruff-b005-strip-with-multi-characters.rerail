@@ -1,5 +1,4 @@
 .policy "ruff-b005-strip-with-multi-characters" revision 1
-.guests off
 .description "Avoid strip, lstrip or rstrip with a multi-character string that repeats a character; the argument is a set of characters, not a substring to remove."
 .language python
 .mode steer

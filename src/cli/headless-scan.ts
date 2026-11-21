@@ -694,7 +694,7 @@ async function scanRrRules(
   loadedRr?: NativeLoadedRrPolicies,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[]; failures: ScanFailure[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync({ paths: inputs, root, store, output, ...(paths === null ? {} : { sourcePaths: paths }) }, analysisRun, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
   const failures: ScanFailure[] = [];

@@ -239,7 +239,6 @@ function engineTimeout(timeout: number | undefined): number | undefined | null {
   return Number.isInteger(timeout) && inU32(timeout) ? timeout : null;
 }
 
-/** The engine's run as `spawnSync` answers it. */
 /** The engine's run as `spawnSync` answers it, its stdout the bytes Git wrote (`runGitSync` makes them a string). */
 type EngineAnswer = GitRunBytes & { stdout: Buffer };
 

@@ -1,5 +1,4 @@
 .policy "ruff-ruf023-unsorted-dunder-slots" revision 1
-.guests off
 .description "Keep the entries of a class's __slots__ in natural sorted order, with digit runs compared by number."
 .language python
 .mode steer

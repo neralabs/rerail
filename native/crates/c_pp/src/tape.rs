@@ -244,10 +244,10 @@ fn nodes(src: &[u8], opts: Options) -> Vec<Node> {
             for p in &def.params {
                 g.leaf(file(*p).0, field("param"));
             }
-            if def.variadic != Variadic::No {
-                if let Some(k) = (open..close).rev().find(|&k| g.text(k) == b"...") {
-                    g.fields[k] = field("variadic");
-                }
+            if def.variadic != Variadic::No
+                && let Some(k) = (open..close).rev().find(|&k| g.text(k) == b"...")
+            {
+                g.fields[k] = field("variadic");
             }
         }
         if !def.body.is_empty() {

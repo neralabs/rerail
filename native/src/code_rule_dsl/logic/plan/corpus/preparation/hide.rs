@@ -574,7 +574,7 @@ impl ProgramPass for Hide {
             }
         }
         for (_, w) in &removed {
-            if enters(w) && !rules_of(&w.head).iter().any(|r| enters(r)) {
+            if enters(w) && !rules_of(&w.head).iter().any(&enters) {
                 return Ok(false);
             }
         }
@@ -1339,6 +1339,13 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
     facts
 }
 
+
+/// Declares `rel` with `cols` on the staged fields.
+fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+    b.declare(rel, &pairs);
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -1455,11 +1462,10 @@ mod tests {
 
     /// A copy for a guest in the run's own language (an annotation in a Python run, its guests shown) is its
     /// original: folded once the language is known (`FoldOwn`), its reader reads the original and its clone repeats
-    /// its rule. In another language's run, or with guests hidden, the copies stay.
+    /// its rule. In another language's run the copies stay.
     #[test]
     fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY, HIDDEN_KEYS};
-        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let text = |g: &str| {
             format!(concat!(
                 ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
@@ -1469,19 +1475,11 @@ mod tests {
                 ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
             ), g = g)
         };
-        // Hidden, its own guests' copies folded, and merged, as the preparation runs them; with guests off as
-        // `.guests off` states it.
-        let folded = |grammar: &str, label: &str, guests: bool| -> (usize, usize, Vec<String>) {
+        // Hidden, its own guests' copies folded, and merged, as the preparation runs them.
+        let folded = |grammar: &str, label: &str| -> (usize, usize, Vec<String>) {
             let read = crate::code_rule_dsl::logic::rr::parse_version(&text(grammar)).unwrap();
-            let read = if guests {
-                read
-            } else {
-                let mut b = Builder::on(&read);
-                b.fields().set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
-                b.finish().unwrap().0
-            };
             let mut p = Pipeline::new("test", read);
-            p.program(&mut super::Hide::new(if guests { ANNOTATION_KEYS } else { GUEST_KEYS }));
+            p.program(&mut super::Hide::new(RUN_VALUE_KEYS));
             let (v, _) = p.finish().unwrap();
             let made = v.declared_names().iter().filter(|r| r.starts_with("rr_in_")).count();
             let mut p = Pipeline::new("test", v);
@@ -1491,20 +1489,19 @@ mod tests {
             let (v, _) = p.finish().unwrap();
             (made, fold.folded, v.rules().map(|r| v.show_rule(r)).collect())
         };
-        let (made, n, rules) = folded("python", "python", true);
+        let (made, n, rules) = folded("python", "python");
         assert!(made > 0, "hiding made the guest's copies");
         assert_eq!(n, made);
         assert!(rules.iter().all(|r| !r.contains("rr_in_") && !r.contains("python:")), "{rules:#?}");
         let outs: Vec<&String> = rules.iter().filter(|r| r.starts_with("out(")).collect();
         assert_eq!(outs.len(), 2, "each clone repeats its rule: {outs:#?}");
-        assert_eq!(folded("python", "rust", true).1, 0, "another language's run keeps them");
-        assert_eq!(folded("python", "python", false).1, 0, "guests hidden keep them");
+        assert_eq!(folded("python", "rust").1, 0, "another language's run keeps them");
         // An annotation is not shown to a rule that does not name it, so its copies fold into originals whose
         // bounds take annotations in; a rule no annotation reaches keeps the narrow bound.
-        let (made, n, rules) = folded("annotation", "python", true);
+        let (made, n, rules) = folded("annotation", "python");
         assert!(made > 0 && n == made, "{made} made, {n} folded");
         let wide = (i64::from(HIDDEN_KEYS) << 32).to_string();
-        let narrow = (i64::from(ANNOTATION_KEYS) << 32).to_string();
+        let narrow = (i64::from(RUN_VALUE_KEYS) << 32).to_string();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
     }
@@ -1515,7 +1512,7 @@ mod tests {
     /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
     #[test]
     fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
-        use crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        use crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
         use crate::code_rule_dsl::logic::front::{axis, is_axis};
         let v = hidden(
             concat!(
@@ -1525,7 +1522,7 @@ mod tests {
                 ".decl out(t: node)\n.output out\n",
                 "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
             ),
-            ANNOTATION_KEYS,
+            RUN_VALUE_KEYS,
         );
         let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
         assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
@@ -1544,10 +1541,4 @@ mod tests {
         let outs = rules_of(&v, "out");
         assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
     }
-}
-
-/// Declares `rel` with `cols` on the staged fields.
-fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
-    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-    b.declare(rel, &pairs);
 }

@@ -197,7 +197,6 @@ fn r6_an_edit_reads_no_base_relation_through() {
 /// R6: after an edit, each base relation's changed rows are found by group (the changed documents made as one, whose
 /// rows are theirs): none is read through, and no kept statistic is counted again; the outputs are a cold run's.
 #[test]
-#[ignore = "0494 step 4: the import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open item), so its doc and tape_of are counted again"]
 fn r6_an_edit_counts_no_kept_statistic_again() {
     use crate::code_rule_dsl::logic::profile;
     let mut c = Corpus::new("r6");

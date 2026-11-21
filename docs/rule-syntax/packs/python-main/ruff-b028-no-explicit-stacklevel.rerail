@@ -1,5 +1,4 @@
 .policy "ruff-b028-no-explicit-stacklevel" revision 1
-.guests off
 .description "Pass an explicit stacklevel to warnings.warn(); without it the warning points at the warn call instead of the caller who triggered it."
 .language python
 .mode steer

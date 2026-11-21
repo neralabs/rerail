@@ -31,7 +31,7 @@ struct Pages {
 
 impl Pages {
     fn new(words: usize) -> Pages {
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+        let page = rerail_device::page_size();
         let layout = std::alloc::Layout::from_size_align((words * 4).next_multiple_of(page), page).unwrap();
         // SAFETY: a non-zero size.
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
@@ -163,7 +163,7 @@ fn an_indirect_launch_runs_the_groups_its_counts_give() {
         .unwrap_or_else(|e| panic!("{e}"));
     q.flush().await_().unwrap();
     let marks: Vec<u32> = read(&out, 2 * N as usize);
-    assert!(marks.iter().all(|&m| m == 1), "every item of the counts' grid once: {:?}", &marks.iter().enumerate().filter(|(_, m)| **m != 1).take(4).collect::<Vec<_>>());
+    assert!(marks.iter().all(|&m| m == 1), "every item of the counts' grid once: {:?}", marks.iter().enumerate().filter(|(_, m)| **m != 1).take(4).collect::<Vec<_>>());
     let s: Vec<u32> = read(&seen, 4);
     assert_eq!((s[0], s[1]), (N.div_ceil(32) * 32, 2), "the grid's size is the counts'");
     assert_eq!(s[2], N.div_ceil(32) - 1, "no group past the counts ran");

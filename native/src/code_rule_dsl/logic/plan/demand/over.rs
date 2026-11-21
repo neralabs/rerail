@@ -566,7 +566,8 @@ mod tests {
             by_def(f, n) :- def(n, f).
             near(n, o) :- rr_nearest_ks1(n, o), !kind(o, "decorator").
         "#;
-        let placed = Placed::whole(super::super::super::super::rr::parse_version(&p.replace('$', "")).unwrap());
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(p).unwrap();
+        let placed = Placed::whole(prog.clone());
         let rules: Vec<R<'_>> = (0..placed.len()).map(|k| R::of(&placed, k)).collect();
         let got = per_node_relations(&rules);
         assert!(got.contains("up") && got.contains("def") && got.contains("near"), "{got:?}");

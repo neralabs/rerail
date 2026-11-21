@@ -1,5 +1,4 @@
 .policy "ruff-c411-unnecessary-list-call" revision 1
-.guests off
 .description "Remove the list call around a list comprehension; the comprehension already builds a new list."
 .language python
 .mode steer

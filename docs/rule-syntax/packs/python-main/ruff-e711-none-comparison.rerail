@@ -1,5 +1,4 @@
 .policy "ruff-e711-none-comparison" revision 2
-.guests off
 .description "Use is None or is not None instead of == or != to compare with None; equality can be overridden and gives surprising results."
 .language python
 .mode steer

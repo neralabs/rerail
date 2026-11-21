@@ -114,6 +114,126 @@ Each has its test before the code that meets it.
    `within`, reached by no test before). Test: `made_batch_tests::r6_an_edit_reads_no_base_relation_through`
    (`child`, `field`, `within` read across files; no read-through; the edit's outputs a cold run's). Part 2: the
    import fixpoint's run lists its files inside another run's waves and reads no old source there (0458's open
-   item), so its `doc` and `tape_of` are counted again; `r6_an_edit_counts_no_kept_statistic_again` is ignored
-   until it reads them with no SQL.
-5. Measured. R7.
+   item), so its `doc` and `tape_of` were counted again. Done (2026-11-20, below):
+   `r6_an_edit_counts_no_kept_statistic_again` passes.
+
+   Part 2, decided by the user (2026-11-20: "Table keeps the places"). The run is phase 1's `load` run: its files
+   are listed inside phase 1's waves, and its compare runs after its chunks, still inside them. Finding an old
+   source, tape or memo entry takes SQL (its row names its segment), and 0104 has none in a wave. The documents'
+   table is read there already (a kept fact, in the snapshot). So each row of the table also keeps:
+   - its content's sha256;
+   - its source's place in its segment;
+   - its tape's hash (`HashKey::tape_identity`) and place, in the run's grammar.
+
+   The writer resolves them as it writes the table (its transaction may read SQL), once this run's sources and tapes
+   are placed. Inside the waves the compare reads with no SQL:
+   - it compares a file's digest now with the row's;
+   - it maps the places, each checked by the hash kept: a segment number is `max + 1`, so a removed last segment's
+     number is used again, and a place gone, moved, archived or reused is a miss;
+   - it finds the old memo entry by the digest in the snapshot (each path's newest entry under the plan: the old one).
+
+   A miss there is "none", as before (what reads a base relation runs again). Before the first wave a miss is read
+   through SQL, as before.
+
+   As built (`content_store::document_places`, `KeptWhat::Documents`): a row is 23 words (the 7 given, then the
+   sha256, the source's place, the tape's hash, place and length); a table of 7 (an older store's) reads with no
+   places. A content the run gave by its sha256 (not stored then) and stored by the time the writer writes is kept
+   by its id, as the compare before the first wave resolves it: inside the waves a file is found by its id, and
+   with a row still by digest every file of a warm run's `load` compared as changed
+   (`the_run_after_a_cold_one_with_tape_values_writes_nothing`: 4 writes). `memo_admitted` says whether the plan's
+   entries are in the snapshot: where not, inside the waves the old entries are "none", not a SQL read.
+
+   Rejected:
+   - the store's places of every object held in memory (a read of every place each process start, for this one
+     reader);
+   - the read as work behind the run, through 0298 §5's exception (a second exception to 0104).
+5. Measured. R7. Done (2026-11-20), on this Mac (M5 Max), the CPU only (no Metal, `RERAIL_METAL_MAINTENANCE=off`), the
+   57 data-layer rule files over the 50 files, against 0458's binary (4289403855) on the same inputs that day:
+   - 589 outputs equal across the cold run, the edit, the warm run after it and the edited tree's cold run; 48
+     findings, 0458's.
+   - The run first stopped twice: the gate refused an aggregate inside the parse demand's component (gated per key
+     now, the user's choice: decision 0065 §2a, Q388), and a key of no columns (`Key([])`, 0361 step 6).
+   - A cold run first took 378 G instructions, 28.6 s CPU, to 0458's 213.6 G, 18.9 s: each of the 301 text tests
+     ran every test over each chunk's strings and kept its own (`TextTest::whole`, step 2's). Now each string is
+     tested once against every test (`made::Tested`): 208.3 G (232.1 G repeated), 20.2 s CPU; 826 MB at most to
+     0458's 743 MB.
+   - The edit: 45.0 G to 0458's 35.2 G, but 3.64 s CPU to 3.59 s. Instructions and CPU part here: retired
+     instructions vary by ~10% between runs of one binary, the pool's waits among them, so the CPU is what
+     compares.
+   Then above 0458: a cold run's +1.3 s CPU, its 83 MB more at most, the edit's 0.21 s of well-founded proofs. The
+   prepare span is split so these show (`the measures' keys`, `the memo's program and digests`, …).
+
+   Measured again (2026-11-20, evening). Those runs had not been the CPU's alone: with `RERAIL_METAL_MAINTENANCE=off`
+   both engines still submitted Metal work on this Mac, and 0458's has no switch that keeps it off. Both now run
+   under a sandbox that refuses the GPU's user clients (`AGXDeviceUserClient`, `IOGPUDeviceUserClient`: no process
+   can make a Metal device), ours with `RERAIL_GPU=cpu` as well. Found and fixed, each with the 589 outputs unchanged:
+   - **The cycles, not the instructions.** About 2× 0458's cycles for 6% more instructions: the tape values' parts
+     (`syntax::values::Values`, 0431 §8) were behind a read-write lock that every probe of a layered source took,
+     21% of the samples in `lock_shared_slow`. They are an `ArcSwap` now: a probe loads them, and an admission makes
+     a new map under its own lock.
+   - **The proofs.** The whole program's well-founded check found the recursive components by a pass over the
+     6,842 rules for each component: 0.165 s, in both the cold run and the edit. One pass over the rules, keyed by
+     each relation's component: 0.056 s (the helpers' steps 0.025 s of it, checking every recursive component under
+     0.03 s).
+   - **The text tests' lazy DFA.** A group the DFA limit leaves lazy was searched in pieces on every thread, each
+     thread building its own states (3.6 µs a string over an edit's 30,000), and the regex's own pool kept a cache a
+     thread for the vocabulary's life (36 MB at the peak). A lazy group is searched on one thread, with a cache of
+     that search's own; a determinized group is still read by every thread at once.
+   - **A sketch made for every column measured** (`syntax::measured`), used only when a shadow is written: made only
+     then.
+
+   Cold, three alternated rounds (load 6–7): 12.35–12.44 s CPU and 202.4 G instructions to 0458's 12.02–12.08 s and
+   195.3 G (+2.8%); 726–732 MB of footprint at most to 594–610 MB. The edit: 3.42 s CPU to 3.04 s, 51.4 G to 41.4 G
+   (prepare +3.0 G, the chunks +2.2 G, the cross part +2.1 G).
+
+   Open: the footprint's +125 MB. It is not the CPU lane's 64 MB tape slab (a run with no device at all peaks
+   higher), nor the heap at the peak (within 20 MB of 0458's, the slab's zeroed pages aside), nor the blocks' free
+   lists (their free bytes are pages given back; with no split of a fitted chunk the run is the same).
+   That last was wrong: the free lists held 316 MB at the end of a cold run, about 200 MB of it resident (step 6).
+6. The footprint: the blocks' free lists. R7. Done (2026-11-20, user: "please do spike 3"). A free chunk's first
+   word held its list's link, so its first page stayed; free chunks never merged, so one under a page never freed
+   one. Three spikes, each with the 589 outputs unchanged, three alternated rounds (load 9–29, footprint at most):
+   | | HEAD | links outside the chunks | small structures on the heap | buddies, links outside |
+   |---|---|---|---|---|
+   | footprint | 703–728 MB | 646–666 MB | 693–718 MB | 631–650 MB |
+   | peak RSS | 891–900 MB | 889–895 MB | 858–860 MB | 830–836 MB |
+   | instructions | 202.7–203.8 G | 202.8–203.9 G | 202.4–202.7 G | 202.7–203.5 G |
+
+   The small structures were the planner's and setfix's sketches, statkeep's `Exact` and `Groups` (a census of the
+   chunks under a page: the relations' rows about 97 MB of them, the sketches about 88 MB, `Exact` 30 MB, `Groups`
+   14 MB); on the heap they saved 10 MB, and splitting no fitted chunk under a page saved none. Built: the third,
+   decision 0342 as amended (the lists in the ledger, a page given back once no live chunk shares it, buddies
+   merged, a chunk from the front aligned to its size up to 1 MB). Near the peak the free-listed blocks hold 80 MB
+   live in 84 MB of pages holding a live byte; the rest is given back.
+
+   Cold, three alternated rounds (load 17–25): 648–656 MB of footprint at most to HEAD's 714–724 MB and 0458's
+   596–608 MB; 202.9–203.1 G instructions to HEAD's 202.4–202.7 G and 0458's 194.5–195.3 G.
+
+   The 40–50 MB left are the blocks', not the heap's. `vmmap` taken back to back through a run of each, the five
+   samples of most footprint: the heap (jemalloc's region) 362–378 MB dirty to 0458's 360–381 MB, the blocks 135–169
+   MB to 0458's 112–134 MB. The heap's 16–23 MB more in single samples before was their timing. A profiled run's heap
+   by span does not say it either: its snapshot of the strata under way moves by tens of MB between runs, and the
+   profile's own author-join sources (`rr::profile_join_sources`, 7 MB) are counted in ours alone. Open: the blocks'
+   35 MB at the peak.
+
+## Reads side by side make a document once (2026-11-20)
+
+A group is made unlocked (its prefilter and matchers run on the pool), and it was kept only if no other read had
+made one of its documents meanwhile. With the base relations counted on the pool (Q396, 0487's merge), every count
+read the whole batch at once: each made every document, and all but one set their groups aside. On the data layer's
+`leg-083-typed` over 901 files that was 3,604 documents' rows for 901, 835 G instructions and 2.6 GB at the peak.
+
+- **Claims.** A group's documents are claimed by its thread while it is made (`State::claimed`). A read finding
+  documents another thread claimed waits for them: it runs the pool's next job (`rayon::yield_now`), else waits for a
+  group to end (1 ms at most a wait), and reads them once made. A claim is given up when its group ends, made or not
+  (`Claim`'s drop, a panic's too).
+- **No maker waits.** A thread making a group of the batch (`State::makers`) makes what it reads itself, as before:
+  a read under it, a job it ran while its group's jobs ran, never waits. So no two makers wait on each other.
+- **Checks.** `syntax::tests::reads_side_by_side_make_each_document_once`: a thread a relation, each reads it whole at
+  once, and every group made is kept (`Batch::makes` is `Batch::groups`).
+- **The counts in waves.** The counts side by side each list their relation's rows (`RelStats::count`, 48 bytes a
+  row), so counting every relation at once held 1.2 GB more. They are counted in waves within a share of the
+  budget (`budget::share(256 MB)`, decision 0126), each wave side by side.
+
+The same run, CPU, unprofiled: 581 G instructions and 1.36 GB at the peak, 18.2 s (the hub before Q396's pool counts,
+measured the same way: 534–540 G, 1.14–1.15 GB, 28–30 s at a higher load). Cycles: 164 G to its 194–207 G.

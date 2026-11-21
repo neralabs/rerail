@@ -13,8 +13,8 @@
 //! ```
 //!
 //! A segment and the tail are relations of `rerail_blocks` (columns in doubling chunks), read through the reads
-//! written once (`rerail_clif::relation`: the host's are `rerail_blocks::generated_reads`, the kernels' the same
-//! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
+//! written once (`rerail_clif::relation`: the host's written directly in `rerail_blocks`, the kernels' the same
+//! reads in UKL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
 //! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
 //! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
 //! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
@@ -31,9 +31,9 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
-/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
-const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+/// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
+/// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(any(unix, windows), target_pointer_width = "64"));
 
 /// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
 /// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
@@ -75,7 +75,8 @@ const MARGIN: usize = 1 << 20;
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
-    pub block: Block,
+    /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
+    pub block: Arc<Block>,
     /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
     pub ix: Mutex<()>,
     /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
@@ -91,7 +92,7 @@ impl Facts {
     /// A block of relations of `life`: the chunk's the run is evaluating, if one is, counted in its tally.
     fn new(block: Block, life: Life) -> Facts {
         let tally = current_chunk().map(|c| Arc::clone(&c.tally));
-        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
+        Facts { block: Arc::new(block), ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life }
     }
 }
 
@@ -453,8 +454,9 @@ impl Home {
 
 /// An array of `T`s in a block of relations (decision 0384 step 4): a relation's derived structure (a sorted run's
 /// ids, tags, fences, prints), written once where it is computed, in its relation's block when that has room past
-/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk goes back to the block's
-/// free list when dropped; it keeps the block while it lives. Grows as a vector does, in the same block.
+/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk is a region it owns
+/// (decision 0491 step 2): back to the block's free list with it, after the GPU's work, and the block kept while it
+/// lives. Grows as a vector does, in the same block.
 pub struct BlockVec<T: rerail_blocks::Pod> {
     facts: Option<Arc<Facts>>,
     /// Its first `T` in the block (which never moves): read as a vector's buffer is, with no walk to the block.
@@ -463,10 +465,13 @@ pub struct BlockVec<T: rerail_blocks::Pod> {
     at: usize,
     len: usize,
     cap: usize,
-    /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back); 0 for a borrowed one (`shared`).
-    kept: usize,
+    /// Its own chunk, as a region (`None` for a borrowed one, `shared`, and an empty one).
+    region: Option<rerail_blocks::region::Mutable<T>>,
     /// A borrowed one's relation, whose directory owns its chunk (decision 0478 step 5b): kept while it lives.
     owner: Option<Part>,
+    /// Its block's ledger, beside the pointer: each read and write is checked against the GPU's queued uses of its
+    /// chunk (decision 0487 R4), with no walk to the block.
+    ledger: Option<Arc<rerail_blocks::ledger::Ledger>>,
     _t: std::marker::PhantomData<T>,
 }
 
@@ -483,7 +488,7 @@ impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
 impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// Empty, with no chunk.
     pub const fn new() -> Self {
-        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, owner: None, _t: std::marker::PhantomData }
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, region: None, owner: None, ledger: None, _t: std::marker::PhantomData }
     }
 
     /// The `len` `T`s at `at` of `owner`'s block, which `owner`'s relation keeps (its directory's: decision 0478 step
@@ -497,7 +502,8 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         }
         let facts = owner.facts().clone();
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
-        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, kept: 0, owner: Some(owner.clone()), _t: std::marker::PhantomData }
+        let ledger = Some(facts.block.ledger().clone());
+        BlockVec { facts: Some(facts), ptr, life: owner.life(), at, len, cap: len, region: None, owner: Some(owner.clone()), ledger, _t: std::marker::PhantomData }
     }
 
     /// The chunk `into_chunk` handed on, its own again (no directory took it).
@@ -506,7 +512,11 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             return BlockVec::new();
         }
         let ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(g.at)).expect("a block's chunk");
-        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap: g.kept / size_of::<T>(), kept: g.kept, owner: None, _t: std::marker::PhantomData }
+        let ledger = Some(facts.block.ledger().clone());
+        let cap = g.kept / size_of::<T>();
+        // SAFETY: the chunk was this vector's (`into_chunk`), handed back whole: `kept` bytes, `cap` `T`s.
+        let region = Some(unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, g.at, cap, g.kept, "a relation's array") });
+        BlockVec { facts: Some(facts.clone()), ptr, life, at: g.at, len: g.len, cap, region, owner: None, ledger, _t: std::marker::PhantomData }
     }
 
     /// `n` items, those past its length `v`.
@@ -526,6 +536,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             let near = self.facts.clone();
             self.realloc(near.as_ref().map(|f| (f, 0)), n.max(2 * self.cap));
         }
+        self.check(self.len, n - self.len, true);
         // SAFETY: room for `n` past the chunk's start, this vector's alone.
         unsafe {
             for i in self.len..n {
@@ -537,7 +548,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
 
     /// Whether `into_chunk` would hand its chunk on to `facts`' block (or it has none to hand).
     pub fn can_give(&self, facts: &Arc<Facts>) -> bool {
-        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.owner.is_none() && self.kept > 0)
+        self.len == 0 || (self.facts.as_ref().is_some_and(|f| Arc::ptr_eq(f, facts)) && self.region.is_some())
     }
 
     /// Whether it is borrowed (`shared`).
@@ -552,13 +563,14 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             return Ok(rerail_blocks::relation::Given::default());
         }
         match &self.facts {
-            Some(f) if Arc::ptr_eq(f, facts) && self.owner.is_none() && self.kept > 0 => {}
+            Some(f) if Arc::ptr_eq(f, facts) && self.region.is_some() => {}
             _ => return Err(self),
         }
-        let given = rerail_blocks::relation::Given { at: self.at, len: self.len, kept: self.kept };
+        let (at, kept) = self.region.take().expect("its own chunk").into_chunk();
+        let given = rerail_blocks::relation::Given { at, len: self.len, kept };
         // Handed on: nothing of it is given back here.
         self.facts = None;
-        self.kept = 0;
+        self.ledger = None;
         self.cap = 0;
         self.len = 0;
         self.ptr = std::ptr::NonNull::dangling();
@@ -599,27 +611,29 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
             }
         };
         if self.len > 0 {
+            self.check(0, self.len, false);
             // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
             // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
         }
         self.free();
-        self.ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
+        let cap = size / size_of::<T>();
+        // SAFETY: the chunk was just taken for this vector: `size` bytes, `cap` `T`s.
+        let mut region = unsafe { rerail_blocks::region::Mutable::adopt(&facts.block, at, cap, size, "a relation's array") };
+        self.ptr = std::ptr::NonNull::new(region.as_mut_ptr()).expect("a block's chunk");
+        self.region = Some(region);
+        self.ledger = Some(facts.block.ledger().clone());
         self.facts = Some(facts);
         self.at = at;
-        self.kept = size;
-        self.cap = size / size_of::<T>();
+        self.cap = cap;
     }
 
-    /// Its chunk given back.
+    /// Its chunk given back: its region's last handle goes (a borrowed one's chunk is its owner's).
     fn free(&mut self) {
-        // A borrowed one's chunk is its owner's.
         self.owner = None;
-        if let Some(f) = self.facts.take()
-            && self.kept > 0
-        {
-            f.block.free_chunk_fit(self.at, self.kept);
-        }
+        self.region = None;
+        self.facts = None;
+        self.ledger = None;
         self.ptr = std::ptr::NonNull::dangling();
         self.cap = 0;
     }
@@ -639,6 +653,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         if self.len == self.cap {
             self.reserve(1);
         }
+        self.check(self.len, 1, true);
         // SAFETY: `len` is within the chunk's room, this vector's alone.
         unsafe { self.ptr_mut().add(self.len).write(v) };
         self.len += 1;
@@ -647,6 +662,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
     // copy: derived: an array's values written once where they are computed (a merged run's)
     pub fn extend_from_slice(&mut self, src: &[T]) {
         self.reserve(src.len());
+        self.check(self.len, src.len(), true);
         // SAFETY: room for `src` past `len` is this vector's alone, apart from `src`.
         // copy: derived: the values `extend_from_slice` writes
         unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr_mut().add(self.len), src.len()) };
@@ -671,6 +687,17 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
     #[inline]
     pub fn as_ptr(&self) -> *const T {
         self.ptr.as_ptr()
+    }
+
+    /// The CPU reads (or writes) `n` `T`s from its `from`th: none may be under a GPU write (or use) of its chunk
+    /// queued (decision 0487 R4). With none queued on its block, one load.
+    #[inline]
+    #[track_caller]
+    fn check(&self, from: usize, n: usize, write: bool) {
+        if let Some(l) = &self.ledger {
+            let (at, len) = (self.at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
+            if write { l.cpu_write(at, len) } else { l.cpu_read(at, len) }
+        }
     }
 
     #[inline]
@@ -703,6 +730,7 @@ impl<T: rerail_blocks::Pod> std::ops::Deref for BlockVec<T> {
     type Target = [T];
     #[inline]
     fn deref(&self) -> &[T] {
+        self.check(0, self.len, false);
         // SAFETY: `len` `T`s are written at `as_ptr`, in the block it keeps.
         unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
     }
@@ -716,6 +744,7 @@ impl<T: rerail_blocks::Pod> std::ops::DerefMut for BlockVec<T> {
             let near = self.facts.clone();
             self.realloc(near.as_ref().map(|f| (f, 0)), self.len);
         }
+        self.check(0, self.len, true);
         // SAFETY: as `deref`, and `&mut self` is the one writer.
         unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len) }
     }
@@ -749,6 +778,7 @@ impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
         v.life = self.life;
         if self.len > 0 {
             v.realloc(self.facts.as_ref().map(|f| (f, 0)), self.len);
+            self.check(0, self.len, false);
             // SAFETY: room for `len` `T`s, this vector's alone.
             // copy: derived: a derived array written again for a writer of its own (a merge of a shared run)
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), v.ptr_mut(), self.len) };
@@ -801,10 +831,15 @@ fn room_for(k: usize, rows: usize) -> usize {
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
 /// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
-/// refusal running it on the CPU). Without Metal, anonymous memory.
+/// refusal running it on the CPU). Without a device (none opened: a Linux host with no GPU, unless `RERAIL_GPU=cpu`),
+/// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(target_os = "macos") && life == Life::Device { Device::Must } else { Device::No };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+        Device::Must
+    } else {
+        Device::No
+    };
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 
@@ -962,6 +997,74 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
+/// A column's blocked Bloom filter (decision 0488, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
+/// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
+pub struct FactsBloom {
+    facts: Arc<Facts>,
+    at: usize,
+}
+
+// SAFETY: the filter lies in `facts`' block, which it keeps; its one writer is its owner (`Bloom::add_hashed`).
+unsafe impl Send for FactsBloom {}
+unsafe impl Sync for FactsBloom {}
+
+impl FactsBloom {
+    /// An empty filter of `words` words (a power of two), in the open block of the run's relations or a new one.
+    pub fn new(words: usize) -> FactsBloom {
+        FactsBloom::try_new(words).unwrap_or_else(|e| panic!("a filter of {words} words: {e}"))
+    }
+
+    pub fn try_new(words: usize) -> Result<FactsBloom, String> {
+        let life = Life::Run;
+        let need = 8 * words + 128;
+        let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
+        let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+        let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+        for fresh in [false, true] {
+            let facts = match &*open {
+                Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
+                _ => {
+                    let f = new_open(&chunk, life, need)?;
+                    *open = Some(f.clone());
+                    f
+                }
+            };
+            if let Some(at) = rerail_blocks::bloom::Bloom::try_create(&facts.block, words) {
+                return Ok(FactsBloom { facts, at });
+            }
+        }
+        unreachable!("a new block of {} bytes holds a filter of {need}", 2 * need + MARGIN)
+    }
+
+    /// Its block, which the device binds it by.
+    pub fn facts(&self) -> &Arc<Facts> {
+        &self.facts
+    }
+
+    /// Its descriptor's offset in its block.
+    pub fn at(&self) -> usize {
+        self.at
+    }
+}
+
+impl std::ops::Deref for FactsBloom {
+    type Target = rerail_blocks::bloom::Bloom;
+    #[inline(always)]
+    fn deref(&self) -> &rerail_blocks::bloom::Bloom {
+        // SAFETY: `at` is a filter's descriptor in `facts`' block, which this keeps.
+        unsafe { &*self.facts.block.ptr::<rerail_blocks::bloom::Bloom>(self.at) }
+    }
+}
+
+impl Drop for FactsBloom {
+    fn drop(&mut self) {
+        let block = &self.facts.block;
+        // SAFETY: as `deref`; this is its one holder, and nothing reads it after.
+        unsafe { &*block.ptr::<rerail_blocks::bloom::Bloom>(self.at) }.release(block);
+    }
+}
+
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
@@ -1038,10 +1141,23 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
+        Part::claimed(Life::Device, k, rows)
+    }
+
+    /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
+    /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
+    /// budget refuses it.
+    pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
+        Part::claimed(Life::Run, k, rows)
+    }
+
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for one
+    /// index of its rows.
+    fn claimed(life: Life, k: usize, rows: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
         let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
-        let part = Part::try_new_with(Life::Device, k, rows, index, false)?;
-        // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
+        let part = Part::try_new_with(life, k, rows, index, false)?;
+        // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
     }
@@ -1638,6 +1754,9 @@ impl Rows {
             self.tail = Some(t);
         }
         let tail = self.tail.as_mut().expect("opened");
+        // Decision 0487 R4 at a write's start: room lent to another writer (the device, `Part::room`) is that writer's
+        // until its loan is claimed; the host writing there would write what the device writes.
+        assert_eq!(tail.lent.load(std::sync::atomic::Ordering::Acquire), 0, "a CPU write of a relation's rows with its room lent to the device (claim the loan first)");
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
@@ -1824,7 +1943,7 @@ impl Rows {
                     let m = merged_counts();
                     m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, (rows * self.k * 8) >> 10));
                     let mut one = Part::new(self.life, self.k, rows);
                     for p in parts {
                         one.copy_from(p, 0, p.len());
@@ -2332,6 +2451,31 @@ mod tests {
         let lone = BlockVec::from_iter_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+    }
+
+    /// Decision 0487 R4 at a relation's arrays: with a GPU read of a `BlockVec`'s items queued, a CPU write of them
+    /// fails and a push past them (in place) passes; with a GPU write queued, a read fails. Once the fence completes
+    /// both pass.
+    #[test]
+    fn a_block_vec_under_a_queued_gpu_use_of_its_chunk_fails() {
+        let fails = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
+        let mut v = BlockVec::from_iter_in(None, 0..64u64);
+        // Room past its length, so the push below writes in place.
+        v.reserve(8);
+        let (facts, at, len) = (v.facts().expect("a chunk").clone(), v.offset(), v.len() * 8);
+        let block = &facts.block;
+        let r = rerail_blocks::ledger::Fence::new();
+        r.reads_chunk(block, at, len);
+        assert_eq!(v[3], 3, "reads pass under a GPU read");
+        assert!(fails(&mut || v[3] = 7), "a write by index under a GPU read");
+        assert!(!fails(&mut || v.push(64)), "a push past what the GPU reads");
+        r.complete();
+        v[3] = 7;
+        let w = rerail_blocks::ledger::Fence::new();
+        w.writes_chunk(block, at, len);
+        assert!(fails(&mut || { std::hint::black_box(v[3]); }), "a read under a GPU write");
+        w.complete();
+        assert_eq!(v[3], 7);
     }
 
     /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it

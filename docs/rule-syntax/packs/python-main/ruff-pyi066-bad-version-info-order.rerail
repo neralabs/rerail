@@ -1,5 +1,4 @@
 .policy "ruff-pyi066-bad-version-info-order" revision 1
-.guests off
 .description "Put the branch for newer Python versions first in stub files that branch on the interpreter version, testing with a greater-or-equal comparison."
 .language python
 .mode steer

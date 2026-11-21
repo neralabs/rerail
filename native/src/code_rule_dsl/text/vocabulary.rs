@@ -372,8 +372,11 @@ impl Searchers {
                 }
                 continue;
             }
-            let hits = pieces("text tests: a group", terms, |piece| {
+            // The lazy DFA's cache is this search's own: the regex's own pool kept one a thread for as long as the
+            // vocabulary lived (36 MB of the data layer's 50 files, held to the run's end; R7 against 0458).
+            let search = |piece: &[&[u8]]| -> Vec<Vec<usize>> {
                 let mut set = regex_automata::PatternSet::new(group.owners.len());
+                let mut cache: Option<regex_automata::meta::Cache> = None;
                 piece.iter().map(|term| {
                     set.clear();
                     let input = regex_automata::Input::new(*term);
@@ -384,12 +387,22 @@ impl Searchers {
                     if asked_lazily {
                         set.clear();
                         if let Some(regex) = group.lazy() {
-                            regex.which_overlapping_matches(&input, &mut set);
+                            regex.which_overlapping_matches_with(cache.get_or_insert_with(|| regex.create_cache()), &input, &mut set);
                         }
                     }
                     set.iter().map(|pattern| pattern.as_usize()).collect::<Vec<_>>()
                 }).collect()
-            });
+            };
+            // A determinized group is read by every thread at once. One on the lazy DFA is searched on one thread: each
+            // thread's piece determinized the states again in a cache of its own (3.6 µs a string over the data layer's
+            // 30,000 on an edit, R7 against 0458, which searched on one).
+            let hits = match &group.engine {
+                Engine::Lazy => {
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| "text tests: a group on the lazy DFA".into());
+                    search(terms)
+                }
+                _ => pieces("text tests: a group", terms, search),
+            };
             for (i, patterns) in hits.into_iter().enumerate() {
                 patterns.into_iter().for_each(|pattern| out[group.owners[pattern]].push(i as u32));
             }

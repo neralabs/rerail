@@ -1,5 +1,4 @@
 .policy "ruff-fast003-fast-api-unused-path-parameter" revision 1
-.guests off
 .description "Declare each path parameter of a FastAPI route as a function parameter, so the route can read the value its path captures."
 .language python
 .mode steer

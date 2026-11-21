@@ -1,5 +1,4 @@
 .policy "ruff-td006-invalid-todo-capitalization" revision 1
-.guests off
 .description "Write the TODO tag in uppercase; lowercase and mixed-case tags are easy to overlook when searching for open work."
 .language python
 .mode steer

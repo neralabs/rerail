@@ -15,7 +15,7 @@ fn st(p: &V) -> Vec<BTreeSet<String>> {
 }
 
 /// The text of `count` inputs, each filtered into its result: a relation of rows, not a view of its input (a bare copy
-/// is one, Q37, and is never kept, Q382).
+/// is one, Q37, and is never kept, Q421).
 fn fixture_text(count: usize) -> String {
     let mut text = String::new();
     for i in 0..count {

@@ -317,7 +317,13 @@ fn closure(nfa: &Nfa, states: impl IntoIterator<Item = u32>) -> Vec<u32> {
 
 const STATE_CAP: usize = 20_000;
 
-fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<(Vec<FxHashMap<Label, u32>>, Vec<bool>)> {
+/// A DFA: each state's moves, and whether each state accepts.
+type Dfa = (Vec<FxHashMap<Label, u32>>, Vec<bool>);
+
+/// A state reached from another: its distance, its count of shortest words (at most 2), the move it was reached by.
+type Reached = (u32, u8, Option<(u32, Label)>);
+
+fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<Dfa> {
     let first = closure(nfa, [start]);
     let mut ids: FxHashMap<Vec<u32>, u32> = FxHashMap::default();
     let mut order = vec![first.clone()];
@@ -364,8 +370,8 @@ fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<(Vec<FxHashMap<Labe
 fn implied(moves: &[FxHashMap<Label, u32>], accepting: &[bool]) -> Implied {
     let mut implied = Implied { to: FxHashMap::default(), end: vec![None; moves.len()] };
     for from in 0..moves.len() as u32 {
-        // Per state reached: its distance, its count of shortest words (at most 2), the move it was reached by.
-        let mut seen: FxHashMap<u32, (u32, u8, Option<(u32, Label)>)> = FxHashMap::default();
+        // Per state reached (`Reached`).
+        let mut seen: FxHashMap<u32, Reached> = FxHashMap::default();
         seen.insert(from, (0, 1, None));
         let mut order = vec![from];
         let mut queue = VecDeque::from([from]);

@@ -70,7 +70,7 @@ fn every_part() -> Arc<Version> {
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
@@ -531,7 +531,7 @@ fn a_delta_is_the_size_of_its_edit() {
         for k in 0..9 {
             for r in small.rules() {
                 let head = format!("{}_{k}", small.rel_name(r.head().rel()));
-                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(r, t)).collect();
                 let mut w = b.rule().head(head.as_str(), &args);
                 for l in r.body() {
                     w = w.lit(&small, r, l);
@@ -610,7 +610,7 @@ fn passes_hold(v: &Arc<Version>) {
     use super::fields::ProgramFields;
     use super::passes;
     use std::collections::BTreeSet;
-    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let Ok((nv, ns)) = passes::normalize(v) else { return };
     let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     let lattice = ProgramFields::lattice(&**v);
     let nullary = ProgramFields::nullary(&**v);
@@ -626,7 +626,7 @@ fn passes_hold(v: &Arc<Version>) {
     }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if !Arc::ptr_eq(&nv, &v) {
+    if !Arc::ptr_eq(&nv, v) {
         for r in nv.rules() {
             let s = r.source().expect("a derived rule's source");
             assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -915,7 +915,7 @@ fn fields_agree(v: &Arc<Version>) {
         assert!(f.request(req) && f.answer(req));
     }
     // Gates, in order.
-    // A gate's key, source, relation, level, and its two lists.
+    // A gate's key, source, relation, level, quiet relations and dependencies.
     type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
     let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
@@ -1156,7 +1156,7 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     }
     let mut p = super::manager::Pipeline::new("test", managed());
     p.rules(&mut Liar);
-    let e = p.finish().err().expect("refused");
+    let e = p.finish().expect_err("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }
 
@@ -1744,11 +1744,10 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
         let gone: Vec<RuleId> = if ran == Ran::Delta { vec![prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").nth(5).unwrap().id()] } else { Vec::new() };
         prog = fresh(&edited(&prog, &gone, &[add]));
         if ran == Ran::Whole {
-            // A request's rule added with its entry in the record, which states each rule's readers (decision 0331):
-            // `p` reads both of `q`'s rules. A record of another length than its relation's rules is no record
-            // (`AskedByRule::of`, 0276 steps 3-4).
+            // The added rule is `q`'s second: its record is stated again, an entry a rule, as a lowering states it.
+            // A record of another length gates nothing (`AskedByRule::of`), and there would be none to carry.
             let by = |r: &str| std::collections::BTreeSet::from([r.to_owned()]);
-            prog = asked_of(&prog, &std::collections::BTreeMap::from([("q".to_owned(), vec![by("p"), by("p")])]));
+            prog = asked_of(&prog, &std::collections::BTreeMap::from([("q".to_owned(), vec![by("p"), by("q")])]));
         }
         let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
         let mut p = Pipeline::again(last, v);
@@ -1764,9 +1763,10 @@ fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
 
 /// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
 /// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
-/// or copied. The input's image is in a segment from its first write, as every object is (Q270: no inline rows), and
-/// the keep leaves it there. Its request record is kept with its steps (decision 0393), so a rerun in a new process
-/// over an edit states a run from scratch's.
+/// or copied. An image stored before the run (a prepared program's, `store_encoded`) is in a segment from its write,
+/// as every source is (store floor 7), and is read there before the keep and after it. Its request record is kept
+/// with its steps (decision 0393), so a rerun in a new process over an edit states a run from
+/// scratch's.
 #[test]
 fn a_stored_run_is_read_in_place() {
     use super::manager::{Pipeline, Ran, Runs, rebase};
@@ -1788,13 +1788,13 @@ fn a_stored_run_is_read_in_place() {
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         store.put_source(bytes, &[image_key(&digest)]).unwrap();
         let held = |store: &ContentStore| store.sources_by_alias_in_place(&[image_key(&digest)]).unwrap().remove(0).expect("the input's image held");
-        assert!(held(&store).in_place(), "the input's image is in a segment from its write (Q270)");
+        assert!(held(&store).in_place(), "a prepared program's image is in a segment from its write");
         let mut p = Pipeline::keeping("test", v0.clone());
         p.get::<super::analyses::Needed>().unwrap();
         p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
         let run = p.done().unwrap();
         StoredRuns(&store).keep(&key, &run).unwrap();
-        assert!(held(&store).in_place(), "the keep leaves the input's image in place");
+        assert!(held(&store).in_place(), "the keep left the input's image in place");
         // Kept again under the same key: its facts kept once, no error.
         StoredRuns(&store).keep(&key, &run).unwrap();
         drop(store);
@@ -1886,15 +1886,16 @@ fn a_request_record_a_step_misaligns_is_stated_again_at_once() {
             w.keep(|r| r.id() != first)
         }
     }
-    let decls = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n";
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
     let by = |r: &str| BTreeSet::from([r.to_owned()]);
-    let v = asked_base(&format!("{decls}q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n"), &[("q", vec![by("r1"), by("r2"), by("r3")])]);
+    let v = asked_base(text, &[("q", vec![by("r1"), by("r2"), by("r3")])]);
     let mut pipe = super::manager::Pipeline::new("test", v);
     pipe.program(&mut DropFirstQ);
     let now = pipe.current().unwrap().clone();
     assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "stated by rule after the step");
-    // As a text states it: the rule dropped, its entry with it.
-    let want = asked_base(&format!("{decls}q(x) :- b(x).\nq(x) :- c(x).\n"), &[("q", vec![by("r2"), by("r3")])]);
+    // As a lowering states it: the rule dropped, its entry with it.
+    let want = asked_base(&text.replacen("q(x) :- a(x).\n", "", 1), &[("q", vec![by("r2"), by("r3")])]);
     assert!(super::same_program(&want, &now), "{}", super::differences(&want, &now));
 }
 
@@ -2002,27 +2003,6 @@ mod layouts {
     }
 }
 
-/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
-/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
-/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
-/// their identities, so an order-sensitive digest lost every kept round when a library file went.
-#[test]
-fn facts_in_another_order_are_the_same_program() {
-    use crate::code_rule_dsl::logic::plan::{body::Placed, fields::Fields, leaf_identity};
-    let with = |rows: &[i64]| {
-        let mut b = Builder::base();
-        b.fields().declare("k", &[("x", "int")]);
-        b.fields().set_facts("k", &rows.iter().map(|&x| vec![Value::Int(x)].into()).collect::<Vec<_>>());
-        b.rule().head("r", &[T::Var("x")]).atom("k", &[T::Var("x")]).finish().unwrap();
-        Placed::whole(b.finish().unwrap().0)
-    };
-    let (a, b) = (with(&[1, 2, 3]), with(&[3, 1, 2]));
-    assert_eq!(a.digest(), b.digest(), "the program's digest");
-    assert_eq!(leaf_identity(Fields::of(&a).unwrap(), "k"), leaf_identity(Fields::of(&b).unwrap(), "k"), "the relation's identity");
-    // Other rows are another program.
-    assert_ne!(a.digest(), with(&[1, 2]).digest());
-}
-
 /// A rule written literal by literal on an open rule (`Builder::open_rule`, the lowering's writer, decision 0276 A3)
 /// is the rule `RuleBuilder` writes, byte for byte; a rule ended once (`close_rule_once`) leaves out its repeat.
 #[test]
@@ -2077,4 +2057,67 @@ fn a_run_of_kept_rules_is_the_rules_kept_one_by_one() {
     assert!(one.rules().map(|r| (r.hash(), r.source())).eq(run.rules().map(|r| (r.hash(), r.source()))));
     assert!(run.rules().all(|r| r.source().is_some()));
     same(&Version::open(run.fold().unwrap().base_bytes().unwrap()).unwrap(), &run);
+}
+
+/// A relation's facts are a set (decision 0456 K3): the same facts in another order are the same program, its digest
+/// and each relation's identity unchanged. A phase's export maintained from kept rows comes in their canonical order,
+/// one derived anew in another; the cone's rounds' space is named by the program's digest, and its kept relations by
+/// their identities, so an order-sensitive digest lost every kept round when a library file went.
+#[test]
+fn facts_in_another_order_are_the_same_program() {
+    use crate::code_rule_dsl::logic::plan::{body::{Placed, Versions}, leaf_identity};
+    let prog = every_part();
+    let with_k = |rows: &[crate::code_rule_dsl::logic::front::List<Value>]| {
+        let mut b = Builder::on(&prog);
+        b.fields().set_facts("k", rows);
+        b.finish().unwrap().0
+    };
+    let rows = ProgramFields::fact_rows(&*prog, "k");
+    let mut back = rows.clone();
+    back.reverse();
+    assert_ne!(rows, back, "the rows in another order");
+    let reordered = with_k(&back);
+    let (a, b) = (Placed::whole(prog.clone()), Placed::whole(reordered));
+    assert_eq!(a.digest(), b.digest(), "the program's digest");
+    let (va, vb) = (Versions::of_placed(a), Versions::of_placed(b));
+    assert_eq!(leaf_identity(va.fields(0).unwrap(), "k"), leaf_identity(vb.fields(0).unwrap(), "k"), "the relation's identity");
+    // Other rows are another program.
+    let other = with_k(&rows[..rows.len() - 1]);
+    assert_ne!(Placed::whole(prog.clone()).digest(), Placed::whole(other).digest());
+}
+
+/// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
+/// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
+/// the record by the made version's rules, not the input's (decision 0488: every `rr_value_req` rule was then read
+/// as serving only itself).
+#[test]
+fn a_made_steps_request_record_is_carried_by_its_own_rules() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    let asked = |text: &str, record: &super::about::Asked| {
+        let base = crate::code_rule_dsl::logic::rr::parse_version(text).map_err(|e| format!("{e:?}"))?;
+        let mut b = Builder::on(&base);
+        b.fields().set_asked(record);
+        Ok::<_, String>(b.finish()?.0)
+    };
+    let v = asked(text, &super::about::Asked::from([("q".to_owned(), vec![by("r1"), by("r2"), by("r3")])])).unwrap();
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    // Made again with two rules of another relation first: every rule of `q` is numbered anew.
+    let before = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl s(x: number)\n.output s\n\
+                  .decl q(x: number)\n.output q\ns(x) :- a(x).\ns(x) :- b(x).\nq(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    pipe.made("rules before q's", 1, &[], |v| Ok((asked(before, &v.asked())?, Vec::new())));
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "q's readers by its rules after the made step");
 }

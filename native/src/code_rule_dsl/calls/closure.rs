@@ -12,12 +12,6 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-#[path = "closure/reference_bindings.rs"]
-mod reference_bindings;
-#[path = "closure/reference_files.rs"]
-mod reference_files;
-pub use reference_files::ReferenceFile;
-
 /// Terms of one dense closure: bit `i` is the `i`th term.
 #[cfg(any(test, feature = "test-hooks"))]
 pub type Bits = u64;
@@ -542,11 +536,8 @@ pub struct ReferenceRows {
 /// class's member first), `self.x`/`cls.x` (`self`: the class's bases breadth first, then a sibling base of a
 /// subclass), `super().x` (`super`), a late-bound name (`late`: `C.m^`), and any other qualified name (`name`: a
 /// definition, an import or re-export of one, a module or class member).
-pub(crate) fn reference_via(name: &str) -> &'static str {
-    let marked = |marker: &str, rest: char| {
-        name.split_once(marker)
-            .is_some_and(|(_, tail)| tail.contains(rest))
-    };
+pub fn reference_via(name: &str) -> &'static str {
+    let marked = |marker: &str, rest: char| name.split_once(marker).is_some_and(|(_, tail)| tail.contains(rest));
     if marked(".<type>.", '.') {
         "param_type"
     } else if marked(".<field>.", '.') {
@@ -713,40 +704,11 @@ impl Graph {
         graph
     }
 
-    /// Install the reference bindings before asking for links. The resolver may supply a saved
-    /// answer for a name if its current bindings give that same answer.
-    pub fn link_references_with<E>(
-        contracts: super::contracts::Key,
-        files: Vec<(Arc<str>, ReferenceFile)>,
-        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
-    ) -> Result<Self, E> {
-        let mut graph = Self {
-            references: true,
-            reference_contracts: contracts,
-            ..Self::default()
-        };
-        let (changes, contributions): (Vec<_>, Vec<_>) = files.into_iter()
-            .map(|(path, file)| ((path, Some(file.summary)), file.bindings)).unzip();
-        graph.update_with_links(changes, Some(contributions), resolve)?;
-        Ok(graph)
-    }
-
     /// Replaces, adds (`Some`) or removes (`None`) files, and numbers the result as `link` would.
     pub fn update(
         &mut self,
         changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
     ) -> GraphUpdate {
-        self.update_with_links(changes, None, |graph, names| {
-            Ok(parallel(names, |name| graph.link_followed(name)))
-        }).unwrap_or_else(|never: std::convert::Infallible| match never {})
-    }
-
-    fn update_with_links<E>(
-        &mut self,
-        changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
-        prepared: Option<Vec<Contribution>>,
-        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
-    ) -> Result<GraphUpdate, E> {
         let mut orphans = Vec::new();
         // Each change's slot, and its file's old and new summary.
         let mut staged = Vec::new();
@@ -796,13 +758,7 @@ impl Graph {
             };
             (of(old), of(new))
         };
-        let contributions = if let Some(prepared) = prepared {
-            debug_assert!(previous.is_empty());
-            debug_assert_eq!(prepared.len(), staged.len());
-            prepared.into_iter().map(|new| (Contribution::default(), new)).collect()
-        } else {
-            parallel(&staged, contribution)
-        };
+        let contributions = parallel(&staged, contribution);
         // Before anything is linked, no link can go stale.
         let mut keys = (!self.links.is_empty()).then(HashSet::new);
         let mut replaced = Vec::new();
@@ -1005,7 +961,7 @@ impl Graph {
             memo.set(link, followed);
             self.links.insert(name, memo);
         }
-        self.link_calls(&replaced, resolve)?;
+        self.link_calls(&replaced);
         // Files whose callee links changed resolve their edges again; they call what they did.
         relinked.extend(replaced);
         let mut relinked = relinked.into_iter().collect::<Vec<_>>();
@@ -1077,12 +1033,12 @@ impl Graph {
         relinked.extend(removed);
         relinked.sort_unstable();
         relinked.dedup();
-        Ok(GraphUpdate {
+        GraphUpdate {
             slots: relinked,
             reshaped,
             touched,
             dropped,
-        })
+        }
     }
 
     /// Lays out again the callers of the files `changes` names, keeping each list in number
@@ -1116,11 +1072,7 @@ impl Graph {
     }
 
     /// Links what the files in `slots` call, and records them as its users.
-    fn link_calls<E>(
-        &mut self,
-        slots: &[u32],
-        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
-    ) -> Result<(), E> {
+    fn link_calls(&mut self, slots: &[u32]) {
         let summaries = slots
             .iter()
             .filter_map(|slot| {
@@ -1143,8 +1095,7 @@ impl Graph {
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
-        let linked = resolve(self, &unlinked)?;
-        assert_eq!(linked.len(), unlinked.len(), "one link per requested name");
+        let linked = parallel(&unlinked, |name| self.link_followed(name));
         self.links.reserve(unlinked.len());
         for (name, (link, followed)) in unlinked.into_iter().zip(linked) {
             let mut memo = Memo {
@@ -1166,7 +1117,6 @@ impl Graph {
                 memo.users.push(*slot);
             }
         }
-        Ok(())
     }
 
     /// Indexes `name`, which follows `followed`, under the roots a change must share to relink it.
@@ -1584,9 +1534,6 @@ impl Graph {
 
     /// What `name` links to, and the names linking it followed.
     fn link_followed(&self, name: &Name) -> (Link, Vec<Name>) {
-        if self.references {
-            rerail_prof::count("reference.name_links", 1);
-        }
         let mut followed = Vec::new();
         let link = self.link_name(name, 0, &mut followed);
         followed.sort_unstable();
@@ -1619,9 +1566,9 @@ impl Graph {
     /// aliases, and whether a binding of it is a value no name denotes or a decorator's. `None`
     /// where nothing does.
     pub fn member(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Link> {
-        let defs = self.lookup_definitions(name);
-        let aliases = self.lookup_aliases(name);
-        let opaque = self.lookup_opaque(name);
+        let defs = self.by_name.get(name);
+        let aliases = self.aliases.get(name);
+        let opaque = self.opaque.contains_key(name);
         if defs.is_none() && aliases.is_none() && !opaque {
             return None;
         }
@@ -1670,7 +1617,7 @@ impl Graph {
             let Mro::Workspace(class) = entry else {
                 continue;
             };
-            for (_, (meta, kind)) in self.lookup_bases(class).into_iter().flatten() {
+            for (_, (meta, kind)) in self.supers.get(class).into_iter().flatten() {
                 if *kind != METACLASS {
                     continue;
                 }
@@ -1729,14 +1676,14 @@ impl Graph {
             return None;
         }
         followed.push(class.clone());
-        let [(_, (_, flags))] = self.lookup_definitions(class)?.as_slice() else {
+        let [(_, (_, flags))] = self.by_name.get(class)?.as_slice() else {
             return None;
         };
         if flags & CLASS == 0 {
             return None;
         }
         let mut bases = Vec::new();
-        for (_, (target, kind)) in self.lookup_bases(class).into_iter().flatten() {
+        for (_, (target, kind)) in self.supers.get(class).into_iter().flatten() {
             match *kind {
                 BASE => bases.push(self.class_of(target, hops + 1, followed)?),
                 UNKNOWN_BASE => return None,
@@ -1781,10 +1728,10 @@ impl Graph {
             for kind in ["imported", "class"] {
                 let key = Name::new(family, &format!("{module}.<{kind}>.{short}"));
                 followed.push(key.clone());
-                if let Some(aliases) = self.lookup_aliases(&key) {
+                if let Some(aliases) = self.aliases.get(&key) {
                     for (_, target) in aliases {
                         followed.push(target.clone());
-                        if self.lookup_definitions(target).is_some_and(|entries| {
+                        if self.by_name.get(target).is_some_and(|entries| {
                             entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
                         }) {
                             return Some(Mro::Workspace(target.clone()));
@@ -1793,19 +1740,19 @@ impl Graph {
                 }
             }
             followed.push(Name::new(family, &format!("<global-class>.{short}")));
-            return match self.lookup_class_candidates(short).map(Vec::as_slice) {
+            return match self.reference_classes.get(short).map(Vec::as_slice) {
                 Some([class]) => Some(Mro::Workspace(class.clone())),
                 _ => None,
             };
         }
         followed.push(name.clone());
-        if let Some(entries) = self.lookup_definitions(name) {
+        if let Some(entries) = self.by_name.get(name) {
             return entries
                 .iter()
                 .all(|(_, (_, flags))| flags & CLASS != 0)
                 .then(|| Mro::Workspace(name.clone()));
         }
-        if self.lookup_opaque(name) {
+        if self.opaque.contains_key(name) {
             return None;
         }
         let only = |entries: &[(u32, Name)]| {
@@ -1815,33 +1762,28 @@ impl Graph {
                 .all(|(_, target)| target == first)
                 .then(|| first.clone())
         };
-        if let Some(entries) = self.lookup_aliases(name) {
+        if let Some(entries) = self.aliases.get(name) {
             return self.class_noting(&only(entries)?, hops + 1, followed, missing);
         }
         for prefix in name.lineage().skip(1) {
             let rest = &name.text()[prefix.text().len()..];
-            if let Some(entries) = self.lookup_aliases(prefix)
+            if let Some(entries) = self.aliases.get(prefix)
                 && let Some(target) = only(entries).filter(|target| target != prefix)
             {
                 let renamed = Name::new(target.family(), &format!("{}{rest}", target.text()));
                 return self.class_noting(&renamed, hops + 1, followed, missing);
             }
-            if self.lookup_definitions(prefix).is_some() || self.lookup_opaque(prefix) {
+            if self.by_name.contains_key(prefix) || self.opaque.contains_key(prefix) {
                 return None;
             }
-            if let Some(entries) = self.lookup_module(prefix) {
+            if let Some(entries) = self.modules.get(prefix) {
                 // Only a star import binds a workspace module's member no binding gives.
                 return entries
                     .iter()
                     .flat_map(|(_, (stars, _))| stars.iter())
                     .find_map(|star| {
                         let text = format!("{}{rest}", star.text());
-                        let starred = if self.references {
-                            Some(Name::new(star.family(), &text))
-                        } else {
-                            Name::get(star.family(), &text)
-                        };
-                        let Some(starred) = starred else {
+                        let Some(starred) = Name::get(star.family(), &text) else {
                             missing.push((star.family(), text.into_boxed_str()));
                             return None;
                         };

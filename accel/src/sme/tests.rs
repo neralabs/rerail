@@ -39,7 +39,7 @@ fn rows(rng: &mut Rng, rows: usize, width: usize, sparsity: u32) -> Bits {
             for _ in 0..sparsity {
                 x &= rng.next();
             }
-            if w == words - 1 && width % 64 != 0 {
+            if w == words - 1 && !width.is_multiple_of(64) {
                 x &= (1u64 << (width % 64)) - 1;
             }
             data[r * words + w] = x;

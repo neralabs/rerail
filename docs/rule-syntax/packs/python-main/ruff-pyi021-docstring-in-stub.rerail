@@ -1,5 +1,4 @@
 .policy "ruff-pyi021-docstring-in-stub" revision 1
-.guests off
 .description "Remove docstrings from stub files; stubs exist to carry type information, not documentation."
 .language python
 .mode steer

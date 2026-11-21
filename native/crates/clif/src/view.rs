@@ -105,7 +105,7 @@ pub fn ukl() -> String {
     s += &format!("UKL_STATIC_ASSERT(sizeof(TapeView) == {}, \"TapeView: size\");\n", std::mem::size_of::<TapeView>());
     for (_, name, at) in fields.iter() {
         let name = name.split('[').next().unwrap_or(name);
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(TapeView, {name}) == {at}, \"TapeView.{name}\");\n");
     }
     s
 }
@@ -154,10 +154,14 @@ pub mod z {
 /// generations, `gens - 1` are live at an epoch `E` (the head, `E`, and the frozen ones behind it, `E - 1` ...) and
 /// one, `E + 1`, is a spare, cleared ahead. A lookup looks in the live ones, head first; a miss computes its entry
 /// into the head; a full head makes the spare the head (one compare-and-swap of the epoch) and the thread that
-/// turned it clears the next spare, the oldest live one; a hit in the oldest is copied into the head. A miss waits
-/// for no thread: two that miss one key both compute it. Every loop is bounded; a lookup that finds no room
+/// turned it clears the next spare, the oldest live one; a hit in the oldest is copied into the head. A lookup that
+/// finds its entry being written waits for its writer, `SPIN` times at most (its writer waits for nothing, so it is
+/// running), then computes an entry of its own (decision 0540). Every loop is bounded; a lookup that finds no room
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
+    mod lookup;
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
     pub const GENS: i32 = 4;
@@ -178,8 +182,8 @@ pub mod cache {
     pub const PROMOTED: i32 = 40;
     pub const ROTATED: i32 = 44;
     /// The statistics mode (1: the counts below kept too, for tuning a cache's size), and its counts: lookups that
-    /// found their entry complete, ones that found it being written and waited for it, and blocks decoded while
-    /// another thread decoded the same one (a wait run out, or an index lost to it).
+    /// found their entry complete, ones that found it being written and waited for it, and blocks decoded into an
+    /// entry of their own while another thread decoded the same one (a wait run out).
     pub const STATS: i32 = 48;
     pub const HITS: i32 = 52;
     pub const WAITED: i32 = 56;
@@ -219,7 +223,8 @@ pub mod cache {
     pub const TRIES: u32 = 4;
     pub const SPIN: u32 = 1 << 16;
     /// An index slot's u32: its key's tag (16 bits, never 0) above its entry's number + 1 (0 while its writer has
-    /// claimed the slot and not yet an entry), so a generation holds at most `NUMBER` entries.
+    /// claimed the slot and not yet an entry), so a generation holds at most `NUMBER` entries. A number with no tag
+    /// is an entry given back (not filled): its slot no key's.
     pub const TAG_SHIFT: u32 = 16;
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
@@ -315,7 +320,7 @@ pub mod cache {
             let max = word(MAX)?;
             let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
             spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
-            if spec.gens < 3 || max == 0 || max as usize % ALIGN != 0 || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];

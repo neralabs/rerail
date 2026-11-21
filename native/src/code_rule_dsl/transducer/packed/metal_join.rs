@@ -248,9 +248,15 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
+    /// The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a
+    /// `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer (the filter's block, bound where it
+    /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
+    pub(in crate::code_rule_dsl) screen: u32,
+    pub(in crate::code_rule_dsl) screen_at: u32,
+    pub(in crate::code_rule_dsl) screen_pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2320 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>().is_multiple_of(16));
 
 impl Default for Stage {
     fn default() -> Self {
@@ -342,7 +348,7 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
         // SAFETY: the starts' pages lie in the chunk's block, which outlives the work: it is waited for below.
         let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), start_bytes)? };
         let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
-        let scan = Scan::owned(n + 1)?;
+        let scan = Scan::owned(n)?;
         let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
         let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
         pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
@@ -437,7 +443,7 @@ impl DevRel {
     /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
     fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let buffer = Held::kept(part.facts().block.device_buffer(device)?, Box::new(part.facts().clone()));
+        let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
         Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None }.noted())
@@ -520,7 +526,7 @@ impl DevRel {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
-        let buffer = Held::kept(b.facts.block.device_buffer(device)?, Box::new(b.clone()));
+        let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone() }.noted())
     }
 
@@ -753,7 +759,22 @@ impl DevIndex {
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-    Ok(Held::kept(home.block.device_buffer(device)?, Box::new(home.clone())))
+    held_block(device, home, Box::new(home.clone()))
+}
+
+/// The buffer of `facts`' block as it is now, `keep` kept with it, and the block held by its own region (decision
+/// 0491 step 3): a launch that binds it pins that region by the kernel's access.
+fn held_block(device: &rerail_device::device::Device, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, keep: Box<dyn std::any::Any + Send + Sync>) -> Result<Held, Error> {
+    Ok(Held::of_block(facts.block.device_buffer(device)?, rerail_blocks::region::whole(&facts.block), keep))
+}
+
+/// A stage's screen (decision 0488, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
+/// `rerail_blocks::bloom::Bloom` at byte `at` of `held` (the filter's block, bound where it lies: nothing copied).
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) struct Screen {
+    pub(in crate::code_rule_dsl) held: std::rc::Rc<Held>,
+    pub(in crate::code_rule_dsl) at: u32,
+    pub(in crate::code_rule_dsl) key: u32,
 }
 
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
@@ -1009,6 +1030,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
     /// Stages whose grids were sized on the device (`Scan::size`).
     pub(in crate::code_rule_dsl) sized: u32,
+    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
+    pub(in crate::code_rule_dsl) screened: u32,
 }
 
 /// Work encoded into one submission at a time, committed when the launch budget of one is near and at `finish`;
@@ -1018,15 +1041,6 @@ pub(in crate::code_rule_dsl) struct Batch {
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
-    /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
-    /// by the host when handed out again, and no host write is ordered after a device read).
-    keep: Vec<Held>,
-    /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
-    /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
-    read: Vec<std::rc::Rc<DevRel>>,
-    /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
-    /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
-    held: Vec<Box<dyn std::any::Any>>,
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
@@ -1061,9 +1075,7 @@ impl Batch {
         if self.atoms.as_ref().is_some_and(|a| a.end() >= end) {
             return Ok(());
         }
-        if let Some(old) = self.atoms.take() {
-            self.held.push(Box::new(old));
-        }
+        // The one before goes: a pass that binds its buffers holds them until its work completes (decision 0491 step 2).
         self.atoms = Some(std::rc::Rc::new(make()?));
         Ok(())
     }
@@ -1076,11 +1088,6 @@ impl Batch {
         Ok(())
     }
 
-    /// Keeps `rel` (a handle a stratum made for its work) until this batch's work completes.
-    pub(in crate::code_rule_dsl) fn keeps(&mut self, rel: std::rc::Rc<DevRel>) {
-        self.read.push(rel);
-    }
-
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -1089,7 +1096,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
+        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1116,9 +1123,18 @@ impl Batch {
             .collect()
     }
 
-    /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
-    pub(in crate::code_rule_dsl) fn hold(&mut self, what: Box<dyn std::any::Any>) {
-        self.held.push(what);
+    /// `stage` screened by `screen` (decision 0488): the buffer to bind as the stage's `F` (the batch's dummy for
+    /// none), held by the pass that binds it (decision 0491 step 2).
+    fn screen(&mut self, stage: &mut Stage, screen: Option<&Screen>) -> Buffer {
+        match screen {
+            Some(f) if (f.key as usize) < stage.nkeys as usize => {
+                stage.screen = f.key + 1;
+                stage.screen_at = f.at;
+                self.done.screened += 1;
+                f.held.buffer.clone()
+            }
+            _ => self.dummy.buffer.clone(),
+        }
     }
 
     /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
@@ -1150,13 +1166,11 @@ impl Batch {
         Ok(self.pass.as_ref().expect("an open pass"))
     }
 
-    /// `bytes` in a buffer of their own, kept until the batch's work completes: a parameter block a kernel reads (a
-    /// stage's, a copy's), past what a launch's own parameters hold on every backend.
-    fn block(&mut self, bytes: &[u8]) -> Result<Buffer, Error> {
-        let held = Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?;
-        let buffer = held.buffer.clone();
-        self.keep.push(held);
-        Ok(buffer)
+    /// `bytes` in a buffer of their own: a parameter block a kernel reads (a stage's, a copy's), past what a launch's
+    /// own parameters hold on every backend. A launch that binds it holds it until its work completes (decision 0491
+    /// step 2), so its holder may drop it once the launch is encoded.
+    fn block(&mut self, bytes: &[u8]) -> Result<Held, Error> {
+        Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)
     }
 
     /// Commits the open submission (`Pass::commit`, checked against the launch budget).
@@ -1201,9 +1215,6 @@ impl Batch {
         if failed > 0 {
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
             self.building.clear();
-            self.keep.clear();
-            self.read.clear();
-            self.held.clear();
             return Err(Error::BackendFailure);
         }
         for b in self.building.drain(..) {
@@ -1212,9 +1223,6 @@ impl Batch {
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { (*b.rel).index_built(&b.room) };
         }
-        self.keep.clear();
-        self.read.clear();
-        self.held.clear();
         Ok(std::mem::take(&mut self.done))
     }
 
@@ -1271,7 +1279,6 @@ impl Batch {
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
-                self.read.push(fresh.clone());
                 let ix = self.index(&fresh, cols)?;
                 return Ok(DevIndex { moved: Some(fresh), ..ix });
             }
@@ -1280,7 +1287,6 @@ impl Batch {
             const MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
             MOVED.copied(8 * rel.cols * rel.rows);
             let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
-            self.read.push(copy.clone());
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
             let ix = self.index(&copy, cols)?;
@@ -1294,7 +1300,7 @@ impl Batch {
             let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
             let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask as u64, cols: [0; 8], dir: 0, kind: 0 };
+            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
             for (k, &c) in cols.iter().enumerate() {
                 ix.cols[k] = c as u32;
             }
@@ -1308,17 +1314,15 @@ impl Batch {
             // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
             // until its submission is done: dropped here, it would go back to the pool at once.
             rel.resident_in(pass);
-            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params], &[], groups(n));
+            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params.buffer], &[], groups(n));
             let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
                 Ok(parts) => parts,
                 Err(e) => {
-                    self.keep.push(words);
                     return Err(e.into());
                 }
             };
             pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32],
                      &[room.offs as i64, room.rows as i64], groups(n));
-            self.keep.extend([words, parts.perm, parts.starts, parts.rkeys, parts.nruns]);
         }
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
@@ -1342,7 +1346,7 @@ impl Batch {
         if out.rows > 0 {
             let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
             let pass = self.pass(1)?;
-            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params], &[], groups(out.rows));
+            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
         }
         Ok(())
     }
@@ -1350,7 +1354,8 @@ impl Batch {
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
     /// scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, in_slot: usize, out_slot: usize,
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, screen: Option<&Screen>, in_slot: usize, out_slot: usize,
                                           totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let count = pipeline("join", "stage_count", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
@@ -1369,12 +1374,13 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        let fbuf = self.screen(&mut stage, screen);
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
             let sscatter = pipeline("join", "scan_scatter", || SOURCE.to_owned())?;
             let n = stage.nr as usize + 1;
-            let counts = scratch(FREE, 4 * n)?;
+            let counts = scratch(FREE, 4 * (n + 1))?;
             let scan = Scan::new(n)?;
             let sb = self.block(stage.bytes())?;
             let pass = self.pass(12)?;
@@ -1382,13 +1388,13 @@ impl Batch {
                 index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
             }
             let lbuf: &Buffer = &left.buffer.buffer;
-            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb], &[], groups(n));
+            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb.buffer], &[], groups(n));
             scan.encode(pass, &counts)?;
-            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb], &[], groups(n));
+            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
             return Ok(());
         }
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer.buffer.clone()
@@ -1415,9 +1421,9 @@ impl Batch {
             }
             None => (&dummy, 0),
         };
-        let count_bufs: [(&Buffer, u64); 8] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&sb, 0)];
-        let scatter_bufs: [(&Buffer, u64); 9] =
-            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&sb, 0)];
+        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
+        let scatter_bufs: [(&Buffer, u64); 10] =
+            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work); at most the table's.
@@ -1426,7 +1432,6 @@ impl Batch {
             scan.encode_sized(pass, &counts, &sizes)?;
             pass.run_bytes_indirect_at(&scatter, &scatter_bufs, &[], &sizes.buffer, 4 * 32, groups(n));
             self.done.sized += 1;
-            self.keep.push(sizes);
             return Ok(());
         }
         pass.run_bytes_at(&count, &count_bufs, &[], groups(n));
@@ -1439,7 +1444,7 @@ impl Batch {
     /// order until one that each of `rest`'s probes (semi- or anti-joins, at most `WITNESS_PROBES`) passes; then the
     /// bindings that have one, as a semi-join writes them. `stage`'s sizes, and the probes', are set here.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), rest: &[(Stage, &DevRel, Option<&DevIndex>)],
+    pub(in crate::code_rule_dsl) fn witness(&mut self, mut stage: Stage, left: &Table, right: (&DevRel, Option<&DevIndex>), screen: Option<&Screen>, rest: &[(Stage, &DevRel, Option<&DevIndex>)],
                                             in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
         assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
         let count = pipeline("join", "witness_count", || SOURCE.to_owned())?;
@@ -1455,6 +1460,7 @@ impl Batch {
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
         let a = right.1.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
+        let fbuf = self.screen(&mut stage, screen);
         let mut probes = [Stage::default(); WITNESS_PROBES];
         let mut bufs: Vec<Buffer> = Vec::new();
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
@@ -1470,12 +1476,13 @@ impl Batch {
         }
         let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
         let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
         write.mode = SEMI;
         write.nbinds = 0;
+        write.screen = 0;
         let (sb, wb) = (self.block(stage.bytes())?, self.block(write.bytes())?);
         let pass = self.pass(3)?;
         rel.resident_in(pass);
@@ -1485,12 +1492,12 @@ impl Batch {
         let lbuf: &Buffer = &left.buffer.buffer;
         let mut count_bufs: Vec<&Buffer> = vec![lbuf, &a, &totals.buffer.buffer, &counts, &held.buffer];
         count_bufs.extend(bufs.iter());
-        count_bufs.push(&sb);
+        count_bufs.push(&fbuf);
+        count_bufs.push(&sb.buffer);
         pass.run_bytes(&count, &count_bufs, &[], groups(n));
         scan.encode(pass, &counts)?;
-        let scatter_bufs: [&Buffer; 9] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &wb];
+        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb.buffer];
         pass.run_bytes(&scatter, &scatter_bufs, &[], groups(n));
-        self.keep.push(held);
         Ok(())
     }
 
@@ -1516,7 +1523,7 @@ impl Batch {
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
         let p = Held::of([ngroups as u32, kept, states, classes, start, id, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let values = Held::new(8 * n)?;
         let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.clone();
@@ -1532,13 +1539,12 @@ impl Batch {
         // A SIMD group a row, a threadgroup each.
         pass.run_bytes_simd_at(
             &text,
-            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb, 0)],
+            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb.buffer, 0)],
             &[],
             ngroups,
         );
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb], &[], groups(n));
-        self.keep.extend([work, p, values]);
+        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1563,17 +1569,16 @@ impl Batch {
         let bytes: &[u8] = unsafe { std::slice::from_raw_parts(d.as_ptr().cast::<u8>(), std::mem::size_of_val(&d)) };
         let p = Held::new(4 * places)?;
         let n = table.cap + 1;
-        let counts = scratch(FREE, 4 * n)?;
+        let counts = scratch(FREE, 4 * (n + 1))?;
         let scan = Scan::new(n)?;
         let db = self.block(bytes)?;
         let pass = self.pass(12)?;
         let t: &Buffer = &table.buffer.buffer;
-        pass.run_bytes(&clear, &[&p.buffer, &db], &[], groups(places));
-        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db], &[], groups(table.cap));
-        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts, &db], &[], groups(n));
+        pass.run_bytes(&clear, &[&p.buffer, &db.buffer], &[], groups(places));
+        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db.buffer], &[], groups(table.cap));
+        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts, &db.buffer], &[], groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer, &db], &[], groups(n));
-        self.keep.push(p);
+        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer, &db.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1590,7 +1595,6 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
         self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
-        self.keep.push(dst.buffer);
         Ok(())
     }
 
@@ -1638,7 +1642,7 @@ impl Batch {
         if let Some(r) = view {
             r.resident_in(pass);
         }
-        pass.run_bytes(&copy, &[&s, &d, &totals, &cb], &[], groups(n));
+        pass.run_bytes(&copy, &[&s, &d, &totals, &cb.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1651,7 +1655,7 @@ impl Batch {
         stage.nslots = table.slots as u32;
         let sb = self.block(stage.bytes())?;
         let pass = self.pass(1)?;
-        pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb], &[], groups(table.cap));
+        pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb.buffer], &[], groups(table.cap));
         Ok(())
     }
 }
@@ -1685,9 +1689,34 @@ pub mod tests {
             .collect()
     }
 
+    /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
+    /// the kernel's declared access: a copy into a relation moves its block's version once the batch's work is done,
+    /// and the block it reads from, bound read-only, keeps its version.
+    #[test]
+    fn a_kernels_write_moves_its_blocks_version_and_a_read_does_not() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 300;
+        let src = DevRel::upload(2, n, |v| for (i, x) in v.iter_mut().enumerate() { *x = i as i64 }).unwrap();
+        let dst = DevRel::empty(2, n).unwrap();
+        let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
+        let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
+        let mut batch = Batch::new().unwrap();
+        batch.copy_rows(Rows::Rel(&src), n, &[Col::From(0), Col::From(1)], Rows::Rel(&dst), 0).unwrap();
+        batch.finish().unwrap();
+        let d1 = rerail_blocks::region::whole(&db.block).region().version();
+        assert!(d1 > d0, "the written block's version moved ({d0} to {d1})");
+        if !std::sync::Arc::ptr_eq(&sb, &db) {
+            assert_eq!(rerail_blocks::region::whole(&sb.block).region().version(), s0, "the block only read keeps its version");
+        }
+    }
+
     /// Q265: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
     /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
-    /// its relation, and the index the batch marks built is still its own.
+    /// its relation, and the index the batch marks built is still its own. The batch holds it as the index it builds
+    /// (`Building`, which `finish` checks against the descriptor as it was reserved); its buffers, as every launch's,
+    /// its passes' fences hold (decision 0491 step 2).
     #[test]
     fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
         if rerail_accel::gpu::join::device().is_err() {
@@ -1707,8 +1736,10 @@ pub mod tests {
             }
         }
         let moved = moved.expect("a key past the relation's directory moves it");
-        assert!(std::rc::Rc::strong_count(&moved) >= 2, "the batch keeps the relation it moved");
+        assert_eq!(std::rc::Rc::strong_count(&moved), 1, "no handle of the stage's is left but this one");
         drop(moved);
+        // A relation made meanwhile takes the room a moved relation given back would have left.
+        let _after = DevRel::upload(4, n, |v| v.fill(-1)).unwrap();
         batch.finish().expect("its index built into the relation it moved, still held");
     }
 
@@ -1743,7 +1774,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
         // Too small on purpose: the stage reports its true count.
         let t2 = Table::new(slots, 1000).unwrap();
         let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, nops: 1, ncols: 1, nparams: 1, noutputs: 1, last: 0, npassed: 1, ..Stage::default() };
@@ -1760,7 +1791,7 @@ pub mod tests {
         join.ops[0] = [OP_CMP, 0, RHS_PARAM, 2 | (64 << 8)];
         join.outputs[0] = 0;
         join.passed[0] = 0;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, Some(0), &t2).unwrap();
         batch.finish().unwrap();
         // The nested loops.
         let mut want2: Vec<[i64; 3]> = Vec::new();
@@ -1781,18 +1812,18 @@ pub mod tests {
         assert!(want2.len() > 1000, "the test overflows the first table: {}", want2.len());
         // Again with room for every row; then the anti-join and the semi-join.
         let t2 = Table::new(slots, want2.len()).unwrap();
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, None, &t2).unwrap();
         let t3 = Table::new(slots, want2.len()).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), None, 2, 3, &totals, &counters, None, &t3).unwrap();
         let t4 = Table::new(slots, want2.len()).unwrap();
         let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
         semi.key_kind[0] = SLOT;
         semi.key_slot[0] = 0;
         semi.key_rcol[0] = 1;
-        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4).unwrap();
+        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), None, 3, 4, &totals, &counters, None, &t4).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows, in the bindings' order");
@@ -1803,6 +1834,90 @@ pub mod tests {
         assert_eq!(got(&t3, totals.get(3) as usize), want3);
         assert_eq!(got(&t4, totals.get(4) as usize), want4);
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
+    }
+
+    /// Decision 0488: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
+    /// relations, bound where it lies) makes the rows it makes unscreened: a join, an anti-join and a semi-join, each
+    /// keyed by a column whose filter holds every key of it. A filter of none of the keys refuses every binding: the
+    /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
+    #[test]
+    fn a_screened_stage_makes_the_unscreened_rows() {
+        let Ok(device) = rerail_accel::gpu::join::device() else { return };
+        let (na, nb, nc) = (3000, 5000, 700);
+        let (a0, a1) = (rows(na, 1, 4000), rows(na, 2, 3000));
+        let (b0, b1) = (rows(nb, 3, 300), rows(nb, 4, 4000));
+        let c0 = rows(nc, 5, 4000);
+        let up = |cols: &[&Vec<i64>]| {
+            let n = cols[0].len();
+            // copy: not block data (a test's literal rows)
+            DevRel::upload(cols.len(), n, |v| for (k, c) in cols.iter().enumerate() { v[k * n..(k + 1) * n].copy_from_slice(c) }).unwrap()
+        };
+        let screen = |keys: &[i64], key: u32| {
+            let f = crate::code_rule_dsl::facts::rows::FactsBloom::new(crate::code_rule_dsl::logic::bloom::kept_words_for(keys.len()));
+            for &k in keys {
+                f.add_hashed(rerail_blocks::bloom::hash(k));
+            }
+            let at = f.at() as u32;
+            let buffer = f.facts().block.device_buffer(device).unwrap();
+            Screen { held: std::rc::Rc::new(Held::kept(buffer, Box::new(f))), at, key }
+        };
+        let (ra, rb, rc) = (up(&[&a0, &a1]), up(&[&b0, &b1]), up(&[&c0]));
+        let (sb0, sb1, sc0, none) = (screen(&b0, 0), screen(&b1, 0), screen(&c0, 0), screen(&[], 0));
+        let run = |join_screen: Option<&Screen>, anti_screen: Option<&Screen>, semi_screen: Option<&Screen>| {
+            let mut batch = Batch::new().unwrap();
+            let ib = batch.index(&rb, &[0]).unwrap();
+            let ic = batch.index(&rc, &[0]).unwrap();
+            let ib1 = batch.index(&rb, &[1]).unwrap();
+            let slots = 3;
+            let totals = Words::zeroed(5).unwrap();
+            totals.set(0, 1);
+            let counters = Words::zeroed(8).unwrap();
+            let t0 = Table::one(slots, &[]).unwrap();
+            let t1 = Table::new(slots, na).unwrap();
+            let mut scan = Stage { mode: JOIN, nbinds: 2, ..Stage::default() };
+            // copy: not block data (a test's literal stage)
+            scan.bind_slot[..2].copy_from_slice(&[0, 1]);
+            scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
+            scan.bind_idx[..2].copy_from_slice(&[0, 1]);
+            batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
+            let cap = 4 * na;
+            let t2 = Table::new(slots, cap).unwrap();
+            let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, ..Stage::default() };
+            join.key_kind[0] = SLOT;
+            join.key_slot[0] = 1;
+            join.key_rcol[0] = 0;
+            join.bind_slot[0] = 2;
+            join.bind_kind[0] = BIND_RIGHT;
+            join.bind_idx[0] = 1;
+            batch.stage(join, &t1, Some((&rb, Some(&ib))), join_screen, 1, 2, &totals, &counters, None, &t2).unwrap();
+            let t3 = Table::new(slots, cap).unwrap();
+            let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
+            anti.key_kind[0] = SLOT;
+            anti.key_slot[0] = 2;
+            batch.stage(anti, &t2, Some((&rc, Some(&ic))), anti_screen, 2, 3, &totals, &counters, None, &t3).unwrap();
+            let t4 = Table::new(slots, cap).unwrap();
+            let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
+            semi.key_kind[0] = SLOT;
+            semi.key_slot[0] = 0;
+            semi.key_rcol[0] = 1;
+            batch.stage(semi, &t3, Some((&rb, Some(&ib1))), semi_screen, 3, 4, &totals, &counters, None, &t4).unwrap();
+            let done = batch.finish().unwrap();
+            let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
+            assert!((2..5).all(|s| (totals.get(s) as usize) <= cap), "the tables held the rows");
+            (got(&t2, totals.get(2) as usize), got(&t3, totals.get(3) as usize), got(&t4, totals.get(4) as usize), done.screened)
+        };
+        let plain = run(None, None, None);
+        assert!(!plain.2.is_empty() && plain.2.len() < plain.1.len() && plain.1.len() < plain.0.len(), "every stage keeps some rows and drops some");
+        let screened = run(Some(&sb0), Some(&sc0), Some(&sb1));
+        assert_eq!((&screened.0, &screened.1, &screened.2), (&plain.0, &plain.1, &plain.2), "the screened stages' rows");
+        assert_eq!((plain.3, screened.3), (0, 3), "three stages screened");
+        // A filter of no keys: the join makes nothing; over the plain join's rows, the anti-join keeps them all and
+        // the semi-join none.
+        let refused = run(Some(&none), None, None);
+        assert!(refused.0.is_empty(), "a join whose screen refuses every key");
+        let all = run(None, Some(&none), Some(&none));
+        assert_eq!(all.1, plain.0, "an anti-join whose screen refuses every key keeps every binding");
+        assert!(all.2.is_empty(), "a semi-join whose screen refuses every key keeps none");
     }
 
     /// A relation's index built on the device (decision 0325 step 5) is the host's (`Relation::build_index`): the same
@@ -1972,7 +2087,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), None, 0, 1, &totals, &counters, None, &t1).unwrap();
         batch.finish().unwrap();
         let live_a: Vec<usize> = (0..na).filter(|&i| !is_dead(&da, i)).collect();
         assert_eq!(totals.get(1) as usize, live_a.len(), "the scan's rows are the live ones");
@@ -1992,12 +2107,12 @@ pub mod tests {
         join.bind_slot[0] = 2;
         join.bind_kind[0] = BIND_RIGHT;
         join.bind_idx[0] = 1;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), None, 1, 2, &totals, &counters, None, &t2).unwrap();
         let t3 = Table::new(slots, want2.len().max(1)).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), None, 2, 3, &totals, &counters, None, &t3).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows: live rows of both");
@@ -2087,7 +2202,7 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
                                                  first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
-        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && delta.cap == n);
+        assert!(nkeys < MAX_KEYS && u.cap == n && delta.cap == n);
         assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
@@ -2108,7 +2223,6 @@ impl Batch {
                 let ob = bound(old.home)?;
                 let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
                 pass.run_bytes(&rehash, &[&r.buffer.buffer, &ob.buffer, &hb.buffer], lat_bytes(&p), groups(old.places));
-                self.keep.push(ob);
             }
         }
         let bytes = lat_bytes(&p);
@@ -2126,7 +2240,6 @@ impl Batch {
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
         pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
         pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r.buffer.buffer, &hb.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
-        self.keep.extend([places, chosen, flags, hb]);
         Ok(())
     }
 }

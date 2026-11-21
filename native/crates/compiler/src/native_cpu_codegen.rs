@@ -55,7 +55,7 @@ pub fn options() -> std::sync::Arc<Options> {
 /// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`.
 pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
     let flags: &[(&str, &str)] = if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
-    cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
+    cranelift_jit::JITBuilder::with_flags(&rerail_clif::jit::flags(flags), cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
 /// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm

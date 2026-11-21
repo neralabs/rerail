@@ -57,6 +57,12 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "dialect": "python",
         "start": "type",
         "tapeTag": 30
+      },
+      {
+        "name": "python-pattern",
+        "dialect": "python",
+        "start": "pattern_module",
+        "tapeTag": 34
       }
     ]
   },
@@ -328,7 +334,21 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "calls": "refused",
       "formatArgs": "refused"
     },
-    "suppressions": []
+    "suppressions": [],
+    "embeds": [
+      {
+        "language": "json",
+        "via": "json-object"
+      },
+      {
+        "language": "regex",
+        "via": "match-regex"
+      },
+      {
+        "language": "python",
+        "via": "pattern"
+      }
+    ]
   },
   {
     "format": "rerail.language/v1",
@@ -756,13 +776,40 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "formatArgs": "not-supported-yet"
     },
     "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "regex",
+    "status": "supported",
+    "family": "format",
+    "dialects": [
+      {
+        "label": "regex",
+        "variant": "Regex",
+        "suffixes": [
+          ".regex"
+        ],
+        "parser": "literal",
+        "grammar": "native:regex",
+        "tapeTag": 33
+      }
+    ],
+    "builtWith": "rr",
+    "capabilities": {
+      "scope": "refused",
+      "value": "refused",
+      "arguments": "refused",
+      "calls": "refused",
+      "formatArgs": "refused"
+    },
+    "suppressions": []
   }
 ] /* end registry */ as const;
 
 /** Every language a rule may name: supported, then planned. */
-export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown", "kotlin", "swift", "scala", "go", "c", "cpp"] as const;
+export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown", "kotlin", "swift", "scala", "go", "c", "cpp", "regex"] as const;
 /** The languages the engine reads. */
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown", "kotlin", "swift", "scala", "go", "c", "cpp"] as const;
+export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "python-format", "eslint-directive", "java", "csharp", "html", "css", "markdown", "kotlin", "swift", "scala", "go", "c", "cpp", "regex"] as const;
 /** The languages a rule may name that the engine does not read yet. */
 export const CODE_RULE_PLANNED_LANGUAGES = [] as const;
 /** The semantic families of the supported languages. */

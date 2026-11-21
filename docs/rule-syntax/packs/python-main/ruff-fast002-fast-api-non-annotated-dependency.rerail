@@ -1,5 +1,4 @@
 .policy "ruff-fast002-fast-api-non-annotated-dependency" revision 1
-.guests off
 .description "Declare FastAPI route dependencies and parameter markers inside Annotated type hints instead of as default values, so the function keeps ordinary defaults when called directly."
 .language python
 .mode steer

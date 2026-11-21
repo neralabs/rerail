@@ -1,5 +1,4 @@
 .policy "ruff-isc001-single-line-implicit-string-concatenation" revision 1
-.guests off
 .description "Join string literals that are implicitly concatenated on one line into a single literal; the split adds nothing and may hide a forgotten comma."
 .language python
 .mode steer

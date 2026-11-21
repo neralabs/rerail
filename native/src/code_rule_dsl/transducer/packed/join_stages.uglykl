@@ -42,11 +42,15 @@ typedef struct Stage {
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
     uint32_t v_parent;
+    // The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a `bloom::Bloom` at
+    // byte `screen_at` of the kernel's `F`; 0 for none.
+    uint32_t screen, screen_at;
+    uint32_t screen_pad[2];
 } Stage;
-UKL_STATIC_ASSERT(sizeof(Stage) == 2320, "Stage: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, ops) == 208, "Stage.ops");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, arith) == 2176, "Stage.arith");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, v_dir) == 2304, "Stage.v_dir");
+UKL_STATIC_ASSERT(sizeof(Stage) == 2336, "Stage: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, ops) == 208, "Stage.ops");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, arith) == 2176, "Stage.arith");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 
 typedef UKL_GLOBAL const Stage* StageP;
 typedef UKL_GLOBAL const int64_t* Longs;
@@ -269,11 +273,17 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 }
 
 // A binding's candidates (`probe`), and its key values.
-UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_PRIVATE int64_t* kv, UKL_PRIVATE uint32_t* lo,
-                           UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+// A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
+// its index group is not read. `F` is the screen's buffer.
+UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
+                           UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
     *how = 0u;
     if (s->mode == 3) { *lo = 0; *hi = 1; return; }
     for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in + t] : s->key_const[i];
+    if (s->screen != 0u && s->screen <= s->nkeys && s->screen <= 8u
+        && clif_bloom_may(F, (uint64_t)s->screen_at, clif_bloom_hash(F, 0ul, (uint64_t)kv[s->screen - 1u])) == 0u) {
+        *lo = 0; *hi = 0; return;
+    }
     probe(s, R, kv, lo, hi, how);
 }
 
@@ -467,6 +477,7 @@ DEFINE_KERNEL2(join, stage_count,
                RWBUFFER, uint32_t, counts,   "[cap_in + 1]",
                RWBUFFER, uint32_t, A,        "[arena]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[screen]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -484,7 +495,7 @@ DEFINE_KERNEL2(join, stage_count,
         if (s->counter != NONE && (unheld || host)) ukl_atomic_or(&counters[s->counter], (unheld ? 4u : 0u) | (host ? 2u : 0u));
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     if (s->mode == 4) {
         int64_t v = 0;
         uint32_t st = aggregate(s, L, t, R, lo, hi, how, kv, &v);
@@ -537,6 +548,7 @@ DEFINE_KERNEL2(join, stage_scatter,
                RWBUFFER, uint32_t, A,        "[arena]",
                RWBUFFER, uint32_t, counters, "[counters]",
                ROBUFFER, uint8_t,  D,        "[atoms directory]",
+               ROBUFFER, uint8_t,  F,        "[screen]",
                ROBUFFER, Stage,    s,        "[1]",
                GID0,     uint32_t, t,        )
 {
@@ -562,7 +574,7 @@ DEFINE_KERNEL2(join, stage_scatter,
     }
     if (s->mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, R, kv, &lo, &hi, &how);
+        candidates(s, L, t, R, F, kv, &lo, &hi, &how);
         int64_t v = 0;
         aggregate(s, L, t, R, lo, hi, how, kv, &v);
         write_row(s, L, t, R, 0, O, at);
@@ -574,7 +586,7 @@ DEFINE_KERNEL2(join, stage_scatter,
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     for (uint32_t q = lo; q < hi && at < s->cap_out; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
         if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
@@ -617,6 +629,7 @@ DEFINE_KERNEL2(join, witness_count,
                ROBUFFER, int64_t,  R0,     "[rows]",
                ROBUFFER, int64_t,  R1,     "[rows]",
                ROBUFFER, int64_t,  R2,     "[rows]",
+               ROBUFFER, uint8_t,  F,      "[screen]",
                ROBUFFER, Stage,    s,      "[1]",
                GID0,     uint32_t, t,      )
 {
@@ -625,7 +638,7 @@ DEFINE_KERNEL2(join, witness_count,
     if (t >= n) { counts[t] = 0; return; }
     int64_t kv[8];
     uint32_t lo, hi, how;
-    candidates(s, L, t, R, kv, &lo, &hi, &how);
+    candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     uint32_t nb = ukl_min(s->agg[0], 3u);
     uint32_t found = 0;
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
@@ -902,7 +915,23 @@ DEFINE_KERNEL2(join, row_text,
             bool has = row < n;
             int64_t v = has ? key_value(s, L, row, 0) : -1;
             bool sym = has && v >= 0 && v <= (int64_t)0xffffffffu;
-            uint32_t got = sym ? clif_verdict_get(VC, 0ul, test, (uint32_t)v) : 1u;
+            // An entry holds 64 symbols of the test, and a lookup that misses makes it. Lanes whose symbols share
+            // one would wait on each other's making it, in their own group, which makes no progress while they
+            // spin: they run out of spins, and each takes a second entry of the key, splitting its verdicts. So one
+            // lane an entry looks first, its entry made and complete, and the lanes that share it look after.
+            uint32_t entry = sym ? (uint32_t)v >> 6 : 0xffffffffu;
+            uint32_t got = 1u;
+            uint32_t todo = ukl_sg_ballot(sym __UKL_ARGS);
+            while (todo != 0u) {
+                uint32_t first = ukl_ctz32(todo);
+                uint32_t its = ukl_sg_shuffle(entry, first __UKL_ARGS);
+                uint32_t sharing = ukl_sg_ballot(sym && entry == its __UKL_ARGS);
+                todo &= ~sharing;
+                if (lane == first) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+                // The entry's making, seen by the group (`todo` is the group's, so every lane is here).
+                ukl_sg_barrier();
+                if (lane != first && sym && entry == its) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+            }
             uint32_t miss = ukl_sg_ballot(sym && got == 0u __UKL_ARGS);
             while (miss != 0u) {
                 uint32_t l = ukl_ctz32(miss);
@@ -954,8 +983,10 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 0ul) {
-                UKL_GLOBAL const uint8_t* e = VC + (r & ~3ul);
-                uint32_t len = *(UKL_GLOBAL const uint32_t*)(e + 12) - 16u;
+                // Another group's writes: read coherently (`ukl/grid.h`'s rule; Q367: a plain load of them can be
+                // stale, and the text read short, zeros past what was seen).
+                UKL_COHERENT const uint8_t* e = (UKL_COHERENT const uint8_t*)(VC + (r & ~3ul));
+                uint32_t len = *(UKL_COHERENT const uint32_t*)(e + 12) - 16u;
                 uint32_t off = 0;
                 if (lane == 0) off = ukl_atomic_add(A, len);
                 off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
@@ -1048,7 +1079,8 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 1ul) {
-                UKL_GLOBAL uint8_t* e = VC + (r & ~3ul);
+                // Read by other groups: written coherently, as they read it.
+                UKL_COHERENT uint8_t* e = (UKL_COHERENT uint8_t*)(VC + (r & ~3ul));
                 UKL_GLOBAL const uint8_t* o = (UKL_GLOBAL const uint8_t*)A + 16 + off;
                 for (uint32_t i = lane; i < len; i += SGW) e[16 + i] = o[i];
                 ukl_sg_barrier();
@@ -1100,7 +1132,7 @@ typedef struct Copy {
     uint32_t v_pad;
 } Copy;
 UKL_STATIC_ASSERT(sizeof(Copy) == 256, "Copy: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Copy, v_dir) == 240, "Copy.v_dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 240, "Copy.v_dir");
 
 DEFINE_KERNEL2(join, rows_copy,
                ROBUFFER, uint8_t,  S,      "[source]",
@@ -1282,7 +1314,7 @@ typedef struct IxP {
     uint64_t kind;
 } IxP;
 UKL_STATIC_ASSERT(sizeof(IxP) == 72, "IxP: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(IxP, dir) == 56, "IxP.dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(IxP, dir) == 56, "IxP.dir");
 
 DEFINE_KERNEL2(join, ix_bucket,
                ROBUFFER, uint8_t,  B,   "[block]",

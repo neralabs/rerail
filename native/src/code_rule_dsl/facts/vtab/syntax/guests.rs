@@ -79,11 +79,12 @@ impl GuestRows {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
-        // A file's grammar (a program's is its `rr_program` row's).
-        if guest.is_none() {
-            if let Some(grammar) = d.facts.tape.as_ref().and_then(|_| crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)) {
-                self.grammar.push([key, string(grammar) as i64]);
-            }
+        // A file's grammar, read off its tape (a program's is its `rr_program` row).
+        if guest.is_none()
+            && d.facts.tape.is_some()
+            && let Some(grammar) = crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)
+        {
+            self.grammar.push([key, string(grammar) as i64]);
         }
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
         let Some(g) = guest else { return };
@@ -94,6 +95,8 @@ impl GuestRows {
         // A value document has no host: what made it is its row.
         match &g.made {
             Made::Host => {}
+            // A file's own tree (decision 0512): the file itself, no program of it.
+            Made::File => return,
             // A tape value (decision 0431): a row of each relation for each place, and no `rr_program` row: it is
             // no file's program.
             Made::Tape { places } => {

@@ -77,6 +77,16 @@ today" is the inventory, and "The plan" removes it step by step.
      is read.
    - **An index**, in the block of the relation it indexes (0325 step 5). It is built from the relation, not from a
      copy of it.
+   - **The memory hierarchy.** Registers, caches, TLBs, paging, a GPU's own memory and caches, and a driver that
+     holds a device's image of a buffer and makes it current by a map, a sync or a migration: each holds the data
+     the processor is computing on now. None of them is a second home that readers read instead, and none is the
+     engine's layout. They are how hardware reads memory.
+6. **What this rule is about: the engine's data design.** It forbids the engine making a second data structure
+   (another layout, another home) for a reader. It is not about hardware or drivers. Never use it to refuse a
+   device, a backend, a driver or a platform. A device whose memory is not the host's is used, and the backend
+   moves the bytes as that device needs (the OpenCL backend's `synced`, 0440). When in doubt, ask one question:
+   does the engine's code now keep the data in a second structure of its own that readers read instead? If not,
+   it is not a copy.
 4. **Named exceptions, each removed by a step below:** the copies listed in "The copies today". Every one carries a
    comment naming this record and its step (`copy (0353 step N)`). The list only shrinks.
 5. **A block that outgrows its space** moves once to a larger one (`facts::rows`'s tail, as a vector grows). It is
@@ -500,7 +510,8 @@ Each step ends with:
          UKL leaves `tape_lz4` out (`HOST_ONLY`). Taken out once (f9451f0dd's first form) while 0434 rewrote
          16z, and redone on 0434's form (rr-align's roll-up 7, merged here 2026-11-19). Check:
          `the_reads_decoder_decodes_what_lz4_compressed` (400 blocks of literals and matches at every offset, a
-         block cut short); hogql 16z, findings 1,629.
+         block cut short); hogql 16z, findings 1,629. Since 2026-11-20 the decoder is `reads::lz4`, written directly
+         in Rust as the other reads are (decision 0534), not translated from the CLIF.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident

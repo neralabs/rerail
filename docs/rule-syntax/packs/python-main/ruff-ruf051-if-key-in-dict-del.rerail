@@ -1,5 +1,4 @@
 .policy "ruff-ruf051-if-key-in-dict-del" revision 1
-.guests off
 .description "Use dict pop with a None default instead of testing a key with in and then deleting it; it removes the key in one step."
 .language python
 .mode steer

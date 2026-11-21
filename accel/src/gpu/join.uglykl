@@ -1,6 +1,7 @@
-// The joins' fixed kernels (decision 0095 §4, §5; 0100 §9), in UKL (decision 0440 step C): the multi-level scan,
-// the pairs' sort keys, a device column's span, and the batch's fused small sorts and probes. The radix sort's and
-// the gather's kernels are `join_sort.uglykl`, made per width; the probe's are written per key widths (`join.rs`).
+// The joins' fixed kernels (decision 0095 §4, §5; 0100 §9), in UKL (decision 0440 step C): the pairs' sort keys, a
+// device column's span, and the batch's fused small sorts and probes. The scans and the radix sort are the UKL
+// library's (`ukl/scan.h`, `ukl/radix.h`, decision 0440 step D); the sort's keys, runs and gather are
+// `join_sort.uglykl`, made per width; the probe's are written per key widths (`join.rs`).
 //
 // Every kernel runs threadgroups of 256 threads (`JOIN_TG`), a 1-D grid; it checks its own bounds. Its parameters are
 // one `JoinP` (`a`): up to eight words and eight longs. Every loop's trip count follows from its inputs.
@@ -9,120 +10,6 @@
 #include <ukl/simd.h>
 #include <ukl/reads/relation.h>
 // `join_common.h` before it (`join.rs`: `JoinP`, `join_tg_prefix`).
-
-// ---- The multi-level exclusive scan (`Scan`): 1,024 values a threadgroup, four a thread. ----
-
-// Each of the `n` values of a tile its exclusive prefix in the tile; the tile's sum into `sums[tg]`.
-UKL_INLINE void join_scan_tile(UKL_GLOBAL uint32_t* data, UKL_GLOBAL uint32_t* sums, uint32_t n, uint32_t tg, uint32_t t, uint32_t lane,
-                               UKL_LOCAL uint32_t* part __UKL_PARAMS)
-{
-  uint32_t at = tg * 1024u + t * 4u;
-  uint32_t v[4];
-  uint32_t mine = 0u;
-  for (uint32_t i = 0u; i < 4u; i++) { v[i] = at + i < n ? data[at + i] : 0u; mine += v[i]; }
-  uint32_t total = 0u;
-  uint32_t run = join_tg_prefix(mine, t, lane, part, &total __UKL_ARGS);
-  for (uint32_t i = 0u; i < 4u; i++) { if (at + i < n) data[at + i] = run; run += v[i]; }
-  if (t == JOIN_TG - 1u) sums[tg] = total;
-}
-
-// p0: the values.
-DEFINE_KERNEL2(join, scan_block,
-               RWBUFFER, uint32_t, data, "[a.p0]",
-               RWBUFFER, uint32_t, sums, "[tiles]",
-               ARGS,     JoinP,    a,    ,
-               SHARED,   uint32_t, part, JOIN_SGS,
-               TGID0,    uint32_t, tg,   ,
-               LID0,     uint32_t, t,    ,
-               LANE,     uint32_t, lane, )
-{
-  join_scan_tile(data, sums, a.p0, tg, t, lane, part __UKL_ARGS);
-}
-
-// Each value of a tile plus its tile's prefix. p0: the values.
-DEFINE_KERNEL2(join, scan_add,
-               RWBUFFER, uint32_t, data, "[a.p0]",
-               ROBUFFER, uint32_t, sums, "[tiles]",
-               ARGS,     JoinP,    a,    ,
-               TGID0,    uint32_t, tg,   ,
-               LID0,     uint32_t, t,    )
-{
-  uint32_t n = a.p0;
-  uint32_t at = tg * 1024u + t * 4u;
-  uint32_t s = sums[tg];
-  for (uint32_t i = 0u; i < 4u; i++) { if (at + i < n) data[at + i] += s; }
-}
-
-// The grids of a scan sized on the device (`Scan::size`): of min(totals[p[0]], p[1]) + 1 values, and of a pass of
-// 256 threads a group over them. Per level k: its count at sizes[k], its threadgroups at sizes[8 + 3k]; the pass's
-// at sizes[32]. p2: the levels.
-DEFINE_KERNEL2(join, scan_size,
-               ROBUFFER, uint32_t, totals, "[a.p0 + 1]",
-               RWBUFFER, uint32_t, sizes,  "[40]",
-               ARGS,     JoinP,    a,      ,
-               GID0,     uint32_t, t,      )
-{
-  if (t != 0u) return;
-  uint32_t n = ukl_min(totals[a.p0], a.p1) + 1u;
-  sizes[32] = (n + 255u) / 256u; sizes[33] = 1u; sizes[34] = 1u;
-  for (uint32_t k = 0u; k < a.p2 && k < 8u; k++) {
-    uint32_t g = ukl_max((n + 1023u) / 1024u, 1u);
-    sizes[k] = n; sizes[8u + 3u * k] = g; sizes[9u + 3u * k] = 1u; sizes[10u + 3u * k] = 1u;
-    n = g;
-  }
-}
-
-// scan_block of level p[0], its count `scan_size`'s.
-DEFINE_KERNEL2(join, scan_block_sized,
-               RWBUFFER, uint32_t, data,  "[sizes[a.p0]]",
-               RWBUFFER, uint32_t, sums,  "[tiles]",
-               ROBUFFER, uint32_t, sizes, "[40]",
-               ARGS,     JoinP,    a,     ,
-               SHARED,   uint32_t, part,  JOIN_SGS,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, t,     ,
-               LANE,     uint32_t, lane,  )
-{
-  join_scan_tile(data, sums, sizes[a.p0], tg, t, lane, part __UKL_ARGS);
-}
-
-// scan_add of level p[0], its count `scan_size`'s.
-DEFINE_KERNEL2(join, scan_add_sized,
-               RWBUFFER, uint32_t, data,  "[sizes[a.p0]]",
-               ROBUFFER, uint32_t, sums,  "[tiles]",
-               ROBUFFER, uint32_t, sizes, "[40]",
-               ARGS,     JoinP,    a,     ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, t,     )
-{
-  uint32_t n = sizes[a.p0];
-  uint32_t at = tg * 1024u + t * 4u;
-  uint32_t s = sums[tg];
-  for (uint32_t i = 0u; i < 4u; i++) { if (at + i < n) data[at + i] += s; }
-}
-
-// One threadgroup: each thread's run of the counts summed, the runs' sums scanned, then each count's offset; the
-// total past the last (a tile join's and a row program's counts, `tile.rs`, the engine's `metal_rows`). p0: the
-// counts.
-DEFINE_KERNEL2(join, rows_scan,
-               ROBUFFER, uint32_t, counts,  "[a.p0]",
-               RWBUFFER, uint32_t, offsets, "[a.p0 + 1]",
-               ARGS,     JoinP,    a,       ,
-               SHARED,   uint32_t, part,    256,
-               LID0,     uint32_t, t,       )
-{
-  uint32_t n = a.p0;
-  uint32_t per = (n + 255u) / 256u;
-  uint32_t lo = ukl_min(n, t * per), hi = ukl_min(n, lo + per);
-  uint32_t s = 0u;
-  for (uint32_t k = lo; k < hi; k++) s += counts[k];
-  part[t] = s;
-  ukl_tg_barrier();
-  uint32_t base = 0u;
-  for (uint32_t k = 0u; k < t; k++) base += part[k];
-  for (uint32_t k = lo; k < hi; k++) { offsets[k] = base; base += counts[k]; }
-  if (t == 255u) offsets[n] = base;
-}
 
 // ---- Pairs as sort keys (`encode_sorted_pairs`). ----
 
@@ -226,7 +113,8 @@ DEFINE_KERNEL2(join, col_narrow,
 //
 // Each job's buffers are reached through device addresses in a table the host writes (`Buffer::device_address`),
 // and made resident with the launch: a batch of any number of joins costs two dispatches. A device without
-// addresses (OpenCL 1.2) takes the radix sort and the probe join instead (`Fused::can`).
+// addresses for its allocations (OpenCL without Intel's unified shared memory) takes the radix sort and the probe
+// join instead (`Fused::can`).
 
 typedef struct SortJob {
   UKL_GLOBAL const int64_t* c[3];
@@ -245,16 +133,18 @@ typedef struct ProbeJob {
   UKL_GLOBAL const uint32_t* perm;
   UKL_GLOBAL const uint64_t* l[3];
   UKL_GLOBAL const uint8_t* r[2];
+  // The sort's screen (`Keyed::screen`): a `bloom::Bloom` at byte `screen_at`; `screen_at` NO_SCREEN for none.
+  UKL_GLOBAL const uint8_t* screen;
   int64_t lbase[3];
   int64_t kbase;
   int64_t rbase[2];
-  uint32_t nl, k, kw, pad;
+  uint32_t nl, k, kw, screen_at;
   uint32_t rw[2];
   uint32_t pad2[2];
 } ProbeJob;
 
 UKL_STATIC_ASSERT(sizeof(SortJob) == 88, "SortJob: size");
-UKL_STATIC_ASSERT(sizeof(ProbeJob) == 152, "ProbeJob: size");
+UKL_STATIC_ASSERT(sizeof(ProbeJob) == 160, "ProbeJob: size");
 
 // Value `i` of `w` bytes at `p`.
 UKL_INLINE uint64_t ld(UKL_GLOBAL const uint8_t* p, uint32_t w, uint32_t i)
@@ -373,7 +263,8 @@ DEFINE_KERNEL2(join, probe_all,
     c[i] = 0u;
     run[i] = 0xFFFFFFFFu;
     uint32_t lo = 0u;
-    if (r < nl && fused_find(j->l[0][r] + (uint64_t)j->lbase[0], j, runs, &lo)) {
+    uint64_t key = r < nl ? j->l[0][r] + (uint64_t)j->lbase[0] : 0ul;
+    if (r < nl && join_may_hold(j->screen, j->screen_at, key) && fused_find(key, j, runs, &lo)) {
       run[i] = lo;
       for (uint32_t q = j->starts[lo]; q < j->starts[lo + 1u]; q++) c[i] += (uint32_t)fused_same(j, r, q);
     }

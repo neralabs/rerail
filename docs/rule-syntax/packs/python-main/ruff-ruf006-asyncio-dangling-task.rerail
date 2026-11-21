@@ -1,5 +1,4 @@
 .policy "ruff-ruf006-asyncio-dangling-task" revision 1
-.guests off
 .description "Keep a reference to every asyncio task until it finishes, such as in a set or by awaiting it; the event loop holds tasks only weakly, so they can be dropped mid-run."
 .language python
 .mode steer

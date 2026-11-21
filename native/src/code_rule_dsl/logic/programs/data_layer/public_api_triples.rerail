@@ -224,8 +224,11 @@ public_len(o, n, l) :- public_candidate(o, n, _, l, _).
 public_best_len(o, n, l) :- public_len(o, n, _), l = min k : { public_len(o, n, k) }.
 .decl public_route(owner: symbol, name: symbol, route: symbol)
 public_route(o, n, r) :- public_candidate(o, n, _, l, r), public_best_len(o, n, l).
+// The least route by its text (a min over a symbol has no order: ids are interning's).
+.decl public_later_route(owner: symbol, name: symbol, route: symbol)
+public_later_route(o, n, r) :- public_route(o, n, r), public_route(o, n, q), q < r.
 .decl public_best_route(owner: symbol, name: symbol, route: symbol)
-public_best_route(o, n, r) :- public_route(o, n, _), r = min q : { public_route(o, n, q) }.
+public_best_route(o, n, r) :- public_route(o, n, r), !public_later_route(o, n, r).
 .decl public_methods(owner: symbol, name: symbol, symbol: symbol)
 public_methods(o, n, id) :- public_candidate(o, n, id, _, r), public_best_route(o, n, r).
 
@@ -369,9 +372,14 @@ function_mixed("function", n) :- mixed_name(n).
 .decl slot_candidate(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, ordinal: symbol, symbol: symbol)
 slot_candidate(sc, o, b, sl, ord, id) :- surfaces(sc, o, ord, id, n, b, sl), !function_mixed(sc, n).
 .decl slot_first(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, ordinal: symbol)
-slot_first(sc, o, b, sl, f) :- slot_candidate(sc, o, b, sl, _, _), f = min t : { slot_candidate(sc, o, b, sl, t, _) }.
+slot_first(sc, o, b, sl, f) :- slot_candidate(sc, o, b, sl, f, _), !slot_after_first(sc, o, b, sl, f).
+// The ordinals another of the slot's precedes, and those another follows (by text: a min over a symbol has no order).
+.decl slot_after_first(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, ordinal: symbol)
+slot_after_first(sc, o, b, sl, t) :- slot_candidate(sc, o, b, sl, t, _), slot_candidate(sc, o, b, sl, q, _), q < t.
+.decl slot_before_last(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, ordinal: symbol)
+slot_before_last(sc, o, b, sl, t) :- slot_candidate(sc, o, b, sl, t, _), slot_candidate(sc, o, b, sl, q, _), t < q.
 .decl slot_last(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, ordinal: symbol)
-slot_last(sc, o, b, sl, l) :- slot_candidate(sc, o, b, sl, _, _), l = max t : { slot_candidate(sc, o, b, sl, t, _) }.
+slot_last(sc, o, b, sl, l) :- slot_candidate(sc, o, b, sl, l, _), !slot_before_last(sc, o, b, sl, l).
 .decl slots(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, symbol: symbol, first_ordinal: symbol)
 slots(sc, o, b, sl, id, f) :- slot_candidate(sc, o, b, sl, l, id), slot_last(sc, o, b, sl, l), slot_first(sc, o, b, sl, f).
 .decl slot_symbol(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, symbol: symbol)
@@ -383,16 +391,21 @@ group_slot(sc, o, b, sl) :- slots(sc, o, b, sl, _, _).
 .decl family_groups(scope: symbol, owner: symbol, base_name: symbol)
 family_groups(sc, o, b) :- slots(sc, o, b, _, _, _).
 .decl group_first(scope: symbol, owner: symbol, base_name: symbol, first_ordinal: symbol)
-group_first(sc, o, b, f) :- family_groups(sc, o, b), f = min t : { slots(sc, o, b, _, _, t) }.
+group_first(sc, o, b, f) :- slots(sc, o, b, _, _, f), !group_after_first(sc, o, b, f).
+.decl group_after_first(scope: symbol, owner: symbol, base_name: symbol, first_ordinal: symbol)
+group_after_first(sc, o, b, t) :- slots(sc, o, b, _, _, t), slots(sc, o, b, _, _, q), q < t.
 .decl group_exemplar(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
 group_exemplar(sc, o, b, id) :- slots(sc, o, b, _, id, f), group_first(sc, o, b, f).
 // max(CASE WHEN slot = … THEN symbol END): NULL where the slot is absent (`group_slot`).
 .decl group_sync(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
-group_sync(sc, o, b, id) :- group_slot(sc, o, b, "sync"), id = max s : { slot_symbol(sc, o, b, "sync", s) }.
+group_sync(sc, o, b, id) :- slot_symbol(sc, o, b, "sync", id), !slot_symbol_below(sc, o, b, "sync", id).
+// A slot's symbols another of its follows by text (a max over a symbol has no order).
+.decl slot_symbol_below(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, symbol: symbol)
+slot_symbol_below(sc, o, b, sl, s) :- slot_symbol(sc, o, b, sl, s), slot_symbol(sc, o, b, sl, q), s < q.
 .decl group_async(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
-group_async(sc, o, b, id) :- group_slot(sc, o, b, "async"), id = max s : { slot_symbol(sc, o, b, "async", s) }.
+group_async(sc, o, b, id) :- slot_symbol(sc, o, b, "async", id), !slot_symbol_below(sc, o, b, "async", id).
 .decl group_lazy(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
-group_lazy(sc, o, b, id) :- group_slot(sc, o, b, "lazy"), id = max s : { slot_symbol(sc, o, b, "lazy", s) }.
+group_lazy(sc, o, b, id) :- slot_symbol(sc, o, b, "lazy", id), !slot_symbol_below(sc, o, b, "lazy", id).
 .decl group_mixed(scope: symbol, owner: symbol, base_name: symbol)
 group_mixed(sc, o, b) :- slots(sc, o, b, _, id, _), traits(id, _, _, n, _), mixed_name(n).
 .decl group_surface(scope: symbol, owner: symbol, base_name: symbol)
@@ -470,7 +483,9 @@ wrapper_candidate(sc, o, b, id, p, s) :- plain_family(sc, o, b, _), group_slot(s
 .decl wrapper_path(scope: symbol, owner: symbol, base_name: symbol, path: symbol)
 wrapper_path(sc, o, b, p) :- wrapper_candidate(sc, o, b, _, p, _).
 .decl wrapper_first_path(scope: symbol, owner: symbol, base_name: symbol, path: symbol)
-wrapper_first_path(sc, o, b, p) :- wrapper_path(sc, o, b, _), p = min q : { wrapper_path(sc, o, b, q) }.
+wrapper_first_path(sc, o, b, p) :- wrapper_path(sc, o, b, p), !wrapper_later_path(sc, o, b, p).
+.decl wrapper_later_path(scope: symbol, owner: symbol, base_name: symbol, path: symbol)
+wrapper_later_path(sc, o, b, p) :- wrapper_path(sc, o, b, p), wrapper_path(sc, o, b, q), q < p.
 .decl wrapper_start(scope: symbol, owner: symbol, base_name: symbol, s: number)
 wrapper_start(sc, o, b, s) :- wrapper_candidate(sc, o, b, _, p, s), wrapper_first_path(sc, o, b, p).
 .decl wrapper_first_start(scope: symbol, owner: symbol, base_name: symbol, s: number)

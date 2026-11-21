@@ -1,5 +1,4 @@
 .policy "bandit-b406-import-xml-sax" revision 2
-.guests off
 .description "Avoid parsing XML with xml.sax (importing only its saxutils helpers is fine); it is open to XML attacks, so use defusedxml."
 .language python
 .mode steer

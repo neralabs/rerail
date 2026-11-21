@@ -1,5 +1,4 @@
 .policy "ruff-f507-percent-format-positional-count-mismatch" revision 1
-.guests off
 .description "Match the number of %-format placeholders to the number of values supplied; a mismatch raises TypeError at run time."
 .language python
 .mode steer

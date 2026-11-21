@@ -1,5 +1,4 @@
 .policy "ruff-f522-string-dot-format-extra-named-arguments" revision 1
-.guests off
 .description "Remove keyword arguments to str.format() that no named placeholder in the string uses; they are silently ignored."
 .language python
 .mode steer

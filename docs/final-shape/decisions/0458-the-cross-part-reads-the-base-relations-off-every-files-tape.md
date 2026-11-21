@@ -105,20 +105,21 @@ Each has its test before the code that meets it.
   they are counted off the corpus batch. A session's input delta of a base relation no longer reads entries: it is
   the changed documents' versions, else the session's kept rows by document.
 - **Step 4 under 0431 §8, a partial hit's tape values** (2026-11-20, the hub merge). The hub's partial hit read a
-  guest's base rows from its entry (`has_base`: an entry without them was a miss). Here no entry keeps them, so
-  an entry keeps what its file's fixpoint asked instead: each `(at, grammar)` of a tape value (`memo::VALUES`,
-  under `guests:`, no output). A chunk of partial hits whose cone sees guests (`guests_seen`) admits them before
-  its run, as far as the cone sees them. It also admits those its own rules ask. A cone that reads a relation
-  hiding widened to annotations (`FoldOwn`) and asks none itself then reads their rows, as the full run did
-  (`a_partial_hit_makes_only_the_guests_its_cone_can_see`, the `ids` edit). The values are made again from
-  their texts' shas (each parsed at most once a run), never read from the entry. A partial entry carries the
-  asks on to the next edit.
+  guest's base rows from its entry (`has_base`: an entry without them was a miss). Here no entry keeps them. An
+  entry keeps the requests its file's fixpoint answered with tape values instead: each `(at, grammar)`, in order
+  (`memo::VALUES`, phased-facts' 1ba2536e5e, which a full hit's corpus batch makes them from). A chunk of partial
+  hits whose cone sees guests (`guests_seen`) admits them before its run, as far as the cone sees them. It also
+  admits those its own rules ask. A cone that reads a relation hiding widened to annotations (`FoldOwn`) and asks
+  none itself then reads their rows, as the full run did (`a_partial_hit_makes_only_the_guests_its_cone_can_see`,
+  the `ids` edit). The values are made again from their texts' shas (each parsed at most once a run), never read
+  from the entry. A partial entry keeps its old requests first and the cone's new ones after, so the next edit's
+  cone sees them all.
 - **Step 5, R6** (2026-11-19, the 50 data-layer files, against 0439's runs): 589 outputs equal across the edit,
   the warm run after it and the edited tree's cold run; the chain's values 17.9 MB to 10.6 MB, no base relation's
   granule left; instructions cold 198.9 G to 212.3 G, the edit 37.3 G to 35.2 G; peak memory cold 888 MB to 724 MB.
   Two costs it found are fixed: the old version (`Before`) answered no lookup, so every stratum hashed all its rows,
   and the corpus batch made what the cross part does not read (tree digests). Kept after an edit is still the cross
-  part's `kind`, a view of `node` the maintain mode derives (work queue Q382, Q287 on phased-facts, as before this decision).
+  part's `kind`, a view of `node` the maintain mode derives (work queue Q421, Q287 on phased-facts, as before this decision).
 - **A session** (2026-11-20). A session's run digests its base relations by their documents as every run does
   (`kept_source_digested`, the corpus batch's digest). It holds its corpus batch from run to run
   (`session::HeldCorpus`, under the maintained cross program's key, as its kept part is): each path's documents, with

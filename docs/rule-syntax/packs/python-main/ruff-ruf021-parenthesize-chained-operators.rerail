@@ -1,5 +1,4 @@
 .policy "ruff-ruf021-parenthesize-chained-operators" revision 1
-.guests off
 .description "Parenthesize an and expression that is chained with or, so the operator precedence is explicit."
 .language python
 .mode steer

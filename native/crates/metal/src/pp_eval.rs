@@ -1,4 +1,5 @@
-//! The preprocessor's evaluator over tapes (decision 0436), plain MSL passes (`pp_eval.metal`).
+//! The preprocessor's evaluator over tapes (decision 0436), UKL passes (`pp_eval.uglykl`, decision
+//! 0468 §5) launched on the process's device.
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
 //! format 16, decision 0468 §1), documents of the slab residency. The evaluator reads them where
@@ -13,11 +14,12 @@
 //! rows: a file pass, a prefix sum and a file pass) and their names (`evaluate`).
 
 use crate::Error;
-use crate::pp_blocks::{Arena, Bound, Buf, Enc, Grid, Scan, TG};
+use crate::lane::Buffer;
+use crate::pp_arena::{Arena, Bound, Buf, Enc, Lay, Scan, Sort};
 
-/// The passes' source, preprocessed for Metal (`crate::pp_blocks::source`).
-pub fn source() -> Result<&'static str, Error> {
-    crate::pp_blocks::source()
+/// The passes' source, UKL (`crate::pp_arena::source`).
+pub fn source() -> &'static str {
+    crate::pp_arena::source()
 }
 
 pub use crate::slabs::DocView;
@@ -26,9 +28,9 @@ pub use crate::slabs::DocView;
 pub struct Unit {
     /// The documents, held for the unit's life. The first one's slab is the one the kernels bind.
     pub documents: Vec<Arc<Resident>>,
-    /// The unit's other slabs, which its passes make resident (`Enc::resident`).
+    /// The unit's other slabs, which its passes make resident (`Enc::over`).
     pub slabs: Vec<Arc<crate::slabs::Slab>>,
-    /// Their views, in the unit's file order (`PpFile` in the MSL): placed in each run's arena
+    /// Their views, in the unit's file order (`PpFile` in the UKL): placed in each run's arena
     /// (`Front::files`).
     pub views: Vec<DocView>,
     /// The unit's nodes: each view's.
@@ -146,6 +148,12 @@ impl Unit {
         Ok(Unit { views, documents, slabs, node_bound, dir_bound, file_nodes })
     }
 
+    /// The batch of `units`: their files in order, each read where it lies (as `of`). `None` where
+    /// a device with no buffer addresses has them in more than one slab.
+    pub fn batch(units: &[&Unit]) -> Option<Unit> {
+        Unit::of(units.iter().flat_map(|u| u.documents.iter().cloned()).collect()).ok()
+    }
+
     /// The unit's files.
     pub fn len(&self) -> usize {
         self.views.len()
@@ -156,7 +164,7 @@ impl Unit {
     }
 
     /// The first document's slab, as the kernels bind it (`None`: no documents).
-    pub fn data(&self) -> Option<&crate::lane::Buffer> {
+    pub fn data(&self) -> Option<&Buffer> {
         self.documents.first().map(|d| d.slab.device_buffer())
     }
 }
@@ -180,7 +188,7 @@ pub struct Evaluated {
     pub guards: Vec<u64>,
 }
 
-/// A directive's row (`PpDir` in the MSL): its node in its file's tape, its kind, the text tokens
+/// A directive's row (`PpDir` in the UKL): its node in its file's tape, its kind, the text tokens
 /// before it in the file, the group it is read in and the group after it, and its chain
 /// (`u32::MAX`: none).
 #[repr(C)]
@@ -194,58 +202,146 @@ pub struct PpDir {
     pub chain: u32,
 }
 
-/// The passes' buffers on the device, made before any is encoded.
+/// The front passes' stores, and the grid's own: its control words (`GRID`: the barrier's and
+/// the expansion's stage), the groups' sums its scans share (`SUMS`), and the run's layout.
 pub struct Front {
     n: usize,
     nodes: bool,
     /// The unit's views (`PpFile`s), in the arena.
     pub files: Buf,
-    pub n_files: Buf,
-    counts: Buf,
+    pub grid: Buf,
+    sums: Buf,
+    pub lay: Buf,
     pub bases: Buf,
-    dir_counts: Buf,
     pub dir_bases: Buf,
+    // The directives, a word a node: the row, group and arm flags, the depth events, their scans.
+    dflag: Buf,
+    gflag: Buf,
+    aflag: Buf,
+    dev: Buf,
+    drank: Buf,
+    grank: Buf,
+    arank: Buf,
+    depth: Buf,
+    dev_scan: Scan,
+    group_scan: Scan,
+    arm_scan: Scan,
+    // The arms' and the groups' keys (depth, place), sorted; a file's guard marks.
+    arm_keys: Buf,
+    arm_sort: Sort,
+    group_keys: Buf,
+    group_sort: Sort,
+    g_out: Buf,
+    g_arms: Buf,
+    // The text map, a word a node: each node's owner (a max scan), its text flag and rank, and
+    // each text token's node.
+    owner_in: Buf,
+    heads: Buf,
+    owner: Buf,
+    tflag: Buf,
+    trank: Buf,
+    tscan: Scan,
+    pub text_nodes: Buf,
     groups: Buf,
     guarded: Buf,
     guards: Buf,
     bad: Buf,
-    args: Buf,
-    dir_args: Buf,
     pub keys: Buf,
     out: Buf,
     pub rows: Buf,
     pub dir_keys: Buf,
+    /// Each directive's pragma act (`A_*`: `once`, `push_macro`, `pop_macro`; decision 0467 §3).
+    pub dir_acts: Buf,
     scan: Scan,
     dir_scan: Scan,
 }
 
+/// The stages a run of `pp_setup` ends after (`LAST`): the front, the definitions, or the whole
+/// setup with P1's iterations and the text inside them (`TO_VIS`), the check after it (`TO_ALL`).
+pub const TO_FRONT: u32 = 1;
+pub const TO_DEFS: u32 = 2;
+pub const TO_VIS: u32 = 3;
+pub const TO_ALL: u32 = 4;
+
 impl Front {
-    pub fn new(arena: &Arena, unit: &Unit, nodes: bool) -> Result<Front, Error> {
+    /// `groups`: the grid's groups (the scans' and sorts' sums are four words a group).
+    pub fn new(arena: &Arena, unit: &Unit, nodes: bool, groups: u64) -> Result<Front, Error> {
         let n = unit.len();
         let per_file = || arena.zeroed::<u32>(n);
-        let one = |k: usize| arena.zeroed::<u32>(k);
+        let per_node = || arena.zeroed::<u32>(unit.node_bound);
+        // Each file's first node and the nodes in all: the views' counts, which the host holds
+        // (decision 0468: no scan on the device for what the layout says).
+        let mut bases = Vec::with_capacity(n.max(1));
+        let mut total = 0u32;
+        for &k in &unit.file_nodes {
+            bases.push(total);
+            total += k;
+        }
+        if bases.is_empty() {
+            bases.push(0);
+        }
         Ok(Front {
             n,
             nodes,
             files: arena.from_slice(&unit.views)?,
-            n_files: arena.from_slice(&[n as u32])?,
-            counts: per_file()?,
-            bases: per_file()?,
-            dir_counts: per_file()?,
+            grid: arena.zeroed::<u32>(8)?,
+            sums: arena.zeroed::<u32>(4 * groups as usize + 4)?,
+            lay: arena.zeroed::<u32>(crate::pp_arena::SLOTS.len())?,
+            bases: arena.from_slice(&bases)?,
             dir_bases: per_file()?,
+            dflag: per_node()?,
+            gflag: per_node()?,
+            aflag: per_node()?,
+            dev: per_node()?,
+            drank: per_node()?,
+            grank: per_node()?,
+            arank: per_node()?,
+            depth: per_node()?,
+            dev_scan: Scan::new(arena)?,
+            group_scan: Scan::new(arena)?,
+            arm_scan: Scan::new(arena)?,
+            arm_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            arm_sort: Sort::new(arena, unit.dir_bound)?,
+            group_keys: arena.zeroed::<u64>(unit.dir_bound)?,
+            group_sort: Sort::new(arena, unit.dir_bound)?,
+            g_out: per_file()?,
+            g_arms: per_file()?,
+            owner_in: per_node()?,
+            heads: per_node()?,
+            owner: per_node()?,
+            tflag: per_node()?,
+            trank: per_node()?,
+            tscan: Scan::new(arena)?,
+            text_nodes: per_node()?,
             groups: per_file()?,
             guarded: per_file()?,
             guards: arena.zeroed::<u64>(n)?,
-            bad: one(1)?,
-            args: one(4)?,
-            dir_args: one(4)?,
+            bad: arena.zeroed::<u32>(1)?,
             keys: arena.zeroed::<u64>(unit.node_bound)?,
             out: arena.zeroed::<[u32; 4]>(if nodes { unit.node_bound } else { 1 })?,
             rows: arena.zeroed::<PpDir>(unit.dir_bound)?,
             dir_keys: arena.zeroed::<u64>(unit.dir_bound)?,
-            scan: Scan::new(arena, n)?,
-            dir_scan: Scan::new(arena, n)?,
+            dir_acts: arena.zeroed::<u32>(unit.dir_bound)?,
+            scan: Scan { total: arena.from_slice(&[total])? },
+            dir_scan: Scan::new(arena)?,
         })
+    }
+
+    /// The front's slots of the layout, and the run's words: the stage it ends after.
+    pub fn lay(&self, l: &mut Lay, last: u32) {
+        l.at("GRID", &self.grid).at("SUMS", &self.sums).at("FILES", &self.files).at("BASES", &self.bases);
+        l.at("TOTAL", &self.scan.total).at("DIR_BASES", &self.dir_bases).at("DIR_TOTAL", &self.dir_scan.total);
+        l.at("DFLAG", &self.dflag).at("GFLAG", &self.gflag).at("AFLAG", &self.aflag).at("DEV", &self.dev).at("DRANK", &self.drank);
+        l.at("GRANK", &self.grank).at("ARANK", &self.arank).at("NDEPTH", &self.depth).at("DEV_TOTAL", &self.dev_scan.total);
+        l.at("N_GROUPS", &self.group_scan.total).at("N_ARMS", &self.arm_scan.total).at("ARM_KEYS", &self.arm_keys).at("GRP_KEYS", &self.group_keys);
+        l.at("ASORT_KB", &self.arm_sort.keys_b).at("ASORT_VA", &self.arm_sort.vals_a).at("ASORT_VB", &self.arm_sort.vals_b).at("ASORT_HIST", &self.arm_sort.hist);
+        l.at("PSORT_KB", &self.group_sort.keys_b).at("PSORT_VA", &self.group_sort.vals_a).at("PSORT_VB", &self.group_sort.vals_b).at("PSORT_HIST", &self.group_sort.hist);
+        l.at("G_OUT", &self.g_out).at("G_ARMS", &self.g_arms);
+        l.at("OWNER_IN", &self.owner_in).at("VHEADS", &self.heads).at("OWNER", &self.owner).at("TFLAG", &self.tflag).at("TRANK", &self.trank);
+        l.at("TTOTAL", &self.tscan.total).at("TEXT_NODES", &self.text_nodes);
+        l.at("DIR_GROUPS", &self.groups).at("GUARDED", &self.guarded).at("GUARDS", &self.guards).at("BAD", &self.bad).at("KEYS", &self.keys);
+        l.at("NODES_OUT", &self.out).at("ROWS", &self.rows).at("DIR_KEYS", &self.dir_keys).at("DIR_ACTS", &self.dir_acts);
+        l.word("N_FILES", self.n as u32).word("NODES_FLAG", u32::from(self.nodes)).word("LAST", last);
     }
 
     /// The slab of the unit's documents, as a pass binds it (the views' store where the unit
@@ -257,49 +353,25 @@ impl Front {
         }
     }
 
-    /// The unit's nodes in all (after `encode`).
+    /// The unit's nodes in all (after a run).
     pub fn total(&self) -> &Buf {
         &self.scan.total
     }
 
-    /// The indirect arguments of a pass a node each (after `encode`).
-    pub fn node_args(&self) -> &Buf {
-        &self.args
-    }
-
-    /// The unit's directive rows in all (after `encode`).
+    /// The unit's directive rows in all (after a run).
     pub fn dir_total(&self) -> &Buf {
         &self.dir_scan.total
     }
 
-    /// The passes, in order:
-    /// - the unit's nodes: `pp_counts` (one thread a file), a scan;
-    /// - the names: `pp_names` (and `pp_nodes` where asked), one thread a node, their number the
-    ///   scan's;
-    /// - the directives: `pp_dir_counts` (one thread a file walks its tape), a scan, `pp_dirs`
-    ///   (the same walk, each file's rows from its first);
-    /// - the directives' names: `pp_dir_keys`, one thread a row, their number the second scan's;
-    /// - each file's include guard: `pp_guards`, one thread a file.
-    pub fn encode(&self, enc: &Enc<'_>, unit: &Unit) -> Result<(), Error> {
-        let n32 = self.n as u32;
-        let files = Grid::Groups((self.n as u64).div_ceil(TG));
-        let (u_files, u_data): (&dyn Bound, &dyn Bound) = (&self.files, self.data(unit));
-        enc.run("pp_counts", None, &[u_files, u_data, &self.counts, &self.bad], &[n32], files)?;
-        self.scan.encode(enc, &self.n_files, 0, &self.counts, &self.bases)?;
-        enc.run("pb_args", None, &[&self.scan.total, &self.args], &[0], Grid::Groups(1))?;
-        let by_node = Grid::Indirect(&self.args, 0);
-        enc.run("pp_names", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.keys], &[n32], by_node)?;
-        if self.nodes {
-            enc.run("pp_nodes", None, &[u_files, u_data, &self.bases, &self.scan.total, &self.out], &[n32], by_node)?;
-        }
-        enc.run("pp_dir_counts", None, &[u_files, u_data, &self.dir_counts, &self.bad], &[n32], files)?;
-        self.dir_scan.encode(enc, &self.n_files, 0, &self.dir_counts, &self.dir_bases)?;
-        enc.run("pb_args", None, &[&self.dir_scan.total, &self.dir_args], &[0], Grid::Groups(1))?;
-        enc.run("pp_dirs", None, &[u_files, u_data, &self.dir_bases, &self.rows, &self.groups, &self.guarded, &self.bad], &[n32], files)?;
-        let by_row = Grid::Indirect(&self.dir_args, 0);
-        let dir_total = &self.dir_scan.total;
-        enc.run("pp_dir_keys", None, &[u_files, u_data, &self.bases, &self.keys, &self.dir_bases, dir_total, &self.rows, &self.dir_keys], &[n32], by_row)?;
-        enc.run("pp_guards", None, &[&self.guarded, &self.dir_bases, &self.dir_keys, &self.guards], &[n32], files)
+    /// Whether the run's grid failed a barrier (after it).
+    pub fn barrier_failed(&self) -> bool {
+        // SAFETY: the device finished writing the grid's words.
+        unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
+    }
+
+    /// `pp_setup` over the arena, `groups` groups.
+    pub fn setup<'a>(&'a self, enc: &Enc<'a>, arena: &'a Arena, unit: &'a Unit, groups: u64) {
+        enc.run("pp_setup", &[("arena", arena), ("data", self.data(unit)), ("lay", &self.lay)], None, groups);
     }
 
     /// The results, read back for tests (after the command buffer is done).
@@ -328,46 +400,72 @@ impl Front {
     }
 }
 
-/// Encodes `f`'s passes in one command buffer, commits it and waits: the launches it made.
-pub fn run(f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
-    run_reading(&[], f)
+/// Encodes `f`'s launches in one command, commits it and waits: the launches it made.
+pub fn run<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, Error> {
+    run_timed(f).map(|(launches, _)| launches)
 }
 
-/// `run` over `unit`: each pass makes the unit's other slabs resident.
-pub fn run_over(unit: &Unit, f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
-    run_reading(&unit.slabs, f)
+/// `run`, and the command's time on the device, in seconds.
+pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
+    run_timed_over(&[], f)
 }
 
-fn run_reading(resident: &[Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'_>) -> Result<(), Error>) -> Result<usize, Error> {
-    // The passes are Metal's library (`source`): on another backend they do not run.
-    if !matches!(crate::lane::device()?, crate::lane::Device::Native(_)) || !cfg!(target_os = "macos") {
-        return Err(Error::UnsupportedBackend);
-    }
+/// `run_timed`, each launch making `resident` resident: a unit's slabs past its first (0471).
+pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let scope = crate::launch::LaunchScope::enter();
-    let command = std::cell::RefCell::new(crate::lane::Command::new("Rerail pp evaluator"));
-    // An encoding refused leaves the command uncommitted: none of its launches runs.
-    f(&Enc { command: &command, source: source()?, resident })?;
-    command.into_inner().run()?;
+    let enc = Enc::over("Rerail pp evaluator", resident);
+    f(&enc)?;
+    let seconds = enc.finish()?;
     // R9 of decision 0448: every pass in this one command, so the host reads nothing between
-    // passes (it reads only after the whole command completed). An encoding that put a dispatch
-    // in another command is refused.
+    // passes (it reads only after the whole command completed). An encoding that put a launch in
+    // another command is refused.
     let records = scope.snapshot();
     if records.iter().any(|r| r.command != records[0].command) {
         return Err(Error::BackendFailure);
     }
-    Ok(records.len())
+    Ok((records.len(), seconds))
 }
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let arena = Arena::new();
-    let front = Front::new(&arena, unit, nodes)?;
-    arena.lease()?;
-    run_over(unit, |enc| front.encode(enc, unit))?;
-    front.read()
+    let mut groups = crate::pp_arena::groups();
+    loop {
+        let arena = Arena::new();
+        let front = Front::new(&arena, unit, nodes, groups)?;
+        arena.lease()?;
+        let mut l = Lay::new();
+        front.lay(&mut l, TO_FRONT);
+        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
+            groups = fewer(groups)?;
+            continue;
+        }
+        return front.read();
+    }
 }
 
-/// A name's key, as `pp_eval.metal`'s `name_key` makes it: its bytes 8 at a time, line splices
+/// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
+/// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
+/// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
+/// `None` where a barrier failed (the grid's groups were not resident together).
+pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
+    l.write(&front.lay);
+    let all = l.get("LAST") == TO_ALL;
+    let ran = run_timed_over(&unit.slabs, |enc| {
+        front.setup(enc, arena, unit, groups);
+        if all {
+            enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);
+        }
+        Ok(())
+    })?;
+    Ok(if front.barrier_failed() { None } else { Some(ran) })
+}
+
+/// The groups of the next run after a barrier failed: half, and none past one.
+pub fn fewer(groups: u64) -> Result<u64, Error> {
+    if groups <= 1 { Err(Error::BackendFailure) } else { Ok(groups / 2) }
+}
+
+/// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
 /// left out (its phase-2 spelling).
 pub fn name_key(bytes: &[u8]) -> u64 {
     let spelled = phase2(bytes);
@@ -380,6 +478,12 @@ pub fn name_key(bytes: &[u8]) -> u64 {
     }
     h = h.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
     h ^ (h >> 29)
+}
+
+/// Two keys made one (`pp_eval.uglykl`'s `key_mix`).
+pub fn key_mix(h: u64, w: u64) -> u64 {
+    let h = (h ^ w).wrapping_mul(0xff51_afd7_ed55_8ccd);
+    h ^ (h >> 32)
 }
 
 /// `bytes` with their line splices left out (a `\`, blanks, then a newline), as phase 2 reads them.

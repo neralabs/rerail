@@ -5,7 +5,8 @@
 //! - [`reads`]: the tape's primitive reads, format 15's and format 16's, as CLIF functions built
 //!   once (a node's code number, its subtree size, its start and end, its parent, hops over its
 //!   children and siblings), each marked hot or cold.
-//! - [`rust`]: CLIF as Rust source: the parser's for `rr_aot`, and the reads' for the tape crate.
+//! - [`rust`]: CLIF as Rust source (`translate`) and a source's fingerprint. No read is translated: every read in Rust
+//!   is written directly (decisions 0534, 0536).
 //! - [`ukl`]: CLIF as UKL: the reads for every GPU's kernels (`<ukl/reads/*.h>`).
 //! - [`relation`]: a relation's reads (decision 0325), the second family: a value of `rerail_blocks`' rows, a
 //!   dead bit, an index's group, each read through the block's self-relative references.
@@ -15,6 +16,9 @@
 //!   select), in the relation's family.
 //! - [`inline`]: the JIT's one inlining pass: a call of a hot read is replaced by its body, a cold
 //!   one stays a call of the read compiled once in the module.
+// The JIT by one name on every target: Cranelift's, or the tree's stand-in on WASM (`Cargo.toml`).
+#[cfg(all(feature = "ir", target_family = "wasm"))]
+extern crate cranelift_jit_wasm as cranelift_jit;
 pub mod ids;
 #[cfg(feature = "ir")]
 pub mod id_reads;

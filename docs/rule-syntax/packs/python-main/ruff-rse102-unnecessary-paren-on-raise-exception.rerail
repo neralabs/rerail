@@ -1,5 +1,4 @@
 .policy "ruff-rse102-unnecessary-paren-on-raise-exception" revision 1
-.guests off
 .description "Remove the empty parentheses when raising an exception class; raise instantiates the class itself."
 .language python
 .mode steer

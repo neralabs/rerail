@@ -1,5 +1,4 @@
 .policy "ruff-up005-deprecated-unittest-alias" revision 1
-.guests off
 .description "Use the current unittest assertion methods instead of their deprecated aliases; the aliases were removed in Python 3.12."
 .language python
 .mode steer

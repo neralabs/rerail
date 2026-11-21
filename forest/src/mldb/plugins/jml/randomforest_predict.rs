@@ -1227,9 +1227,9 @@ mod tests {
         for i in 0..n {
             let r = &real[(h(i, seed) % real.len() as u64) as usize];
             let lane = (h(i, seed + 1) % 4) as usize;
-            let forms = if h(i, seed + 2) % 3 == 0 { r.forms.clone() } else { format!("form{}", h(i, seed + 3) % 300) };
+            let forms = if h(i, seed + 2).is_multiple_of(3) { r.forms.clone() } else { format!("form{}", h(i, seed + 3) % 300) };
             let units = (r.units.max(1.0) * 2f64.powi((h(i, seed + 4) % 9) as i32 - 4)).round();
-            let cold = h(i, seed + 5) % 50 == 0;
+            let cold = h(i, seed + 5).is_multiple_of(50);
             let noise = 1.0 + (h(i, seed + 6) % 1000) as f64 / 2000.0;
             let wall = modelled_wall(&forms, lane, units, r.load, cold, noise);
             let cpu_wall = modelled_wall(&forms, 0, units, r.load, false, 1.25);
@@ -1531,8 +1531,8 @@ mod tests {
         train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
         let nt = s.test.len();
         // The rows a calibrated model trains on (80% of the training rows) and calibrates on (the other 20%).
-        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
-        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
+        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| !h(i, 13).is_multiple_of(5)).collect();
+        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13).is_multiple_of(5)).collect();
         let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
         let fit_cols = named(pick(&train_cols, &fit));
         let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
@@ -1619,7 +1619,7 @@ mod tests {
                         (DeviceForest::new_many(&flats.iter().collect::<Vec<_>>()).unwrap(), nodes)
                     });
                     // The probabilities "above threshold k", per row, for a set of rows (bucketized on the device).
-                    let bucketizer = DeviceBucketizer::new(&fs).unwrap();
+                    let bucketizer = DeviceBucketizer::new(fs).unwrap();
                     let probs = |cols: &[ColumnData]| -> (Vec<Vec<f64>>, f64) {
                         let (p, gpu) = forests.predict_values_timed(&bucketizer, cols).unwrap();
                         (p.chunks(k - 1).map(|r| r.iter().map(|p| p[1] as f64).collect()).collect(), gpu)
@@ -1650,7 +1650,7 @@ mod tests {
                     eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
                         s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
                     if depth == 20 && !subsets && k == 8 && want("batch") {
-                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), &fs, &forests, &test_cols);
+                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), fs, &forests, &test_cols);
                     }
                 }
             }
@@ -1680,7 +1680,7 @@ mod tests {
             run_suite(&Suite { name: format!("synthetic{n}"), train, test, train_labels, test_labels, train_targets, test_targets });
         }
         if data.split(',').any(|d| d == "real") {
-            let (train, test): (Vec<(usize, &Job)>, Vec<(usize, &Job)>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
+            let (train, test): (Vec<_>, Vec<_>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
             let train: Vec<Job> = train.into_iter().map(|(_, j)| j.clone()).collect();
             let test: Vec<Job> = test.into_iter().map(|(_, j)| j.clone()).collect();
             let label = |j: &Job| (j.wall > j.estimate) as u8 as f32;
@@ -1855,7 +1855,7 @@ mod tests {
             f.predict(&rows).unwrap();
         }
         let n = 300;
-        let thread_cpu = || { let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 }; unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }; ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9 };
+        let thread_cpu = rerail_gpu::thread_cpu_seconds;
         let wait = std::env::var("WAIT").unwrap_or("wait".into());
         let mut t = [(0.0f64, 0.0f64); 8];
         let mut tt = [0.0f64; 8];

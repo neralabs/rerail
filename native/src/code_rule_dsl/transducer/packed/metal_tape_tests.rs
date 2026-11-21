@@ -203,6 +203,8 @@ fn a_submission_costs_footprint() {
         diag_submit(&touch, &out, threads);
     }
     eprintln!("ten more on one queue {} MB", mb());
+    // Metal's own queues, made apart from the process's.
+    #[cfg(target_os = "macos")]
     if let Some(metal) = device.metal() {
         let submit = |queue: metal::CommandQueue| {
             let queue = rerail_gpu::device::QueueRoot::Native(queue);
@@ -287,6 +289,7 @@ fn a_label_kernel_costs_footprint() {
 /// nonce, in a comment (`RERAIL_PROBE_NONCE=comment`: the front end's cache misses) or in code each kernel reads (the
 /// default: both miss); then the library (the front end), and per kernel and format its function (the constant's
 /// specialization) and pipeline (the back end), each timed.
+#[cfg(target_os = "macos")]
 #[test]
 #[ignore = "a probe of the label kernels' compile"]
 fn label_kernels_compile_cost() {

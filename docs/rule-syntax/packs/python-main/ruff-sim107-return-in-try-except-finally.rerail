@@ -1,5 +1,4 @@
 .policy "ruff-sim107-return-in-try-except-finally" revision 1
-.guests off
 .description "Don't return from a finally block when the try or except also returns; the finally return silently overrides theirs."
 .language python
 .mode steer

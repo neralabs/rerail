@@ -90,7 +90,7 @@ impl FStrings {
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let markers: Vec<i64> = self.markers.iter().map(|m| string(m) as i64).collect();
         for id in 0..f.len() as u32 {
-            let local = p.local_of_node(id as u32);
+            let local = p.local_of_node(id);
             if local == NONE || !HOSTS.contains(&dialect.name(f, id)) {
                 continue;
             }

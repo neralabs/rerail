@@ -1,5 +1,4 @@
 .policy "ruff-pgh003-blanket-type-ignore" revision 1
-.guests off
 .description "Give type-ignore comments specific error codes instead of silencing every type error on the line; a blanket ignore hides new, unrelated problems."
 .language python
 .mode steer

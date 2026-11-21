@@ -460,7 +460,7 @@ fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
     }
     let mut sorted = Vec::<()>::with_capacity(written);
     let words = read(&roots.records, written * ROOT_RECORD);
-    for record in words.chunks_exact(ROOT_RECORD) {
+    for record in words.as_chunks::<ROOT_RECORD>().0 {
         let [pass, file, task, start] = roots.items[record[0] as usize];
         let base = bases[file as usize];
         // A pack's record: its member's program, task, label and capture labels.
@@ -1257,7 +1257,7 @@ const MICRO_POOL: usize = 4096;
 /// A SIMD group's lanes on every Apple GPU: the kernels that spread a group's roots over its lanes are written for it
 /// (`simd_roots`), and every pool and stack count here is a multiple of it.
 const SIMD_WIDTH: usize = 32;
-const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
+const _: () = assert!(MICRO_POOL.is_multiple_of(SIMD_WIDTH) && MICRO_DEEP_POOL.is_multiple_of(SIMD_WIDTH));
 /// The lanes a micro walk's item (a group of 64 nodes) takes in each tier (`Shape::lanes`): each lane finds the roots
 /// among its share of the group's nodes, and the SIMD group walks all its lanes' roots. The short walks' tiers
 /// take a SIMD group an item: a thread an item gave their dispatches a 32nd of the threads (at s1000, `label_micro_8`
@@ -1299,9 +1299,9 @@ pub(in crate::code_rule_dsl) fn warm() {
         // The job compiles on this thread's machine: a pool thread holds no run.
         let shared = crate::code_rule_dsl::logic::profile::shared_here();
         // A panic leaves the kernels to be compiled where they are needed (a job's panic would end
-        // the process).
+        // the process). The job's own records (its wall, `as_job`'s) are the machine's too: the
+        // thread holds the run around the whole job.
         crate::code_rule_dsl::logic::profile::cores_spawn(move || {
-            // Held before the job: `as_job` reads the job walls, the machine's.
             let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
             rerail_accel::exec::as_job("the label kernels' warm-up", || {
                 let _ = std::panic::catch_unwind(|| {
@@ -1317,7 +1317,7 @@ pub(in crate::code_rule_dsl) fn warm() {
                     });
                     let _ = compile_sweep_cached();
                 });
-            })
+            });
         });
     });
 }
@@ -1418,7 +1418,7 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1614,19 +1614,16 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
     // The run's command buffers and encoders are autoreleased, and they retain its buffers: drained
     // here, its buffers go with it rather than living until the thread's pool drains (06 S7: the
     // 9 runs of a wave held ~1 GB at once).
-    metal::objc::rc::autoreleasepool(|| run_in_pool(plan, files))
+    rerail_accel::gpu::released(|| run_in_pool(plan, files))
 }
 
 fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let _evaluation = super::super::metal_backend::evaluation_scope();
     lane::device()?;
-    // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
-    let launches = |level: &Vec<Pass<'_>>| {
-        let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
-        let patterns = level.iter().any(kernel_pass);
-        // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of
-        // the one with the most (0475).
-        let phases = level
+    // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of the
+    // one with the most (0475).
+    let formulas = |level: &Vec<Pass<'_>>| {
+        level
             .iter()
             .filter_map(|pass| match pass {
                 Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().map(|anchor| &**anchor),
@@ -1634,8 +1631,14 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 _ => None,
             })
             .map(formula_phase_count)
-            .max();
-        2 * usize::from(programs) + usize::from(patterns) + 1 + phases.map_or(0, |phases| 1 + phases)
+            .max()
+            .map_or(0, |phases| 1 + phases)
+    };
+    // A level's launches: the programs' dispatch and sink, the derived labels, the settle, its formulas.
+    let launches = |level: &Vec<Pass<'_>>| {
+        let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
+        let patterns = level.iter().any(kernel_pass);
+        2 * usize::from(programs) + usize::from(patterns) + 1 + formulas(level)
     };
     // The batch's parents, once where a level has formulas (`label_parents`, 0475).
     let parents = plan.steps.iter().flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
@@ -1643,12 +1646,12 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         Pass::Formula { .. } => true,
         _ => false,
     });
+    // A recursive group's anchors are evaluated once, before its rounds (`Runner::anchors`): its levels' formulas.
     let fixed = plan
         .steps
         .iter()
-        .filter(|(recursive, _)| !recursive)
-        .flat_map(|(_, levels)| levels)
-        .map(launches)
+        .flat_map(|(recursive, levels)| levels.iter().map(move |level| (*recursive, level)))
+        .map(|(recursive, level)| if recursive { formulas(level) } else { launches(level) })
         .sum::<usize>()
         + usize::from(parents);
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
@@ -1989,8 +1992,8 @@ fn encode(
         count("mem.nodes", runner.nodes);
         count("mem.labels", plan.labels);
         count("mem.counts", plan.counts);
-        count("mem.scratch_mb", scratch_rows(plan) * words * 4 >> 20);
-        count("mem.counts_mb", tally_rows(plan) * runner.nodes * 4 >> 20);
+        count("mem.scratch_mb", (scratch_rows(plan) * words * 4) >> 20);
+        count("mem.counts_mb", (tally_rows(plan) * runner.nodes * 4) >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
     crate::code_rule_dsl::prof::release();
@@ -2222,7 +2225,7 @@ impl Runner<'_> {
             launch = launch.slot(slot, &block, 0);
         }
         for slab in &self.tapes.table.slabs {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(cache) = &self.tapes.table.cache {
             launch = launch.uses(cache);
@@ -2315,13 +2318,13 @@ impl Runner<'_> {
     }
 
     fn dispatch(&mut self, kernel: &LabelKernel, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
-        let metal = kernel.kernel.metal();
+        let limits = lane::limits(&kernel.kernel);
         // The kernels that spread a SIMD group's roots over its lanes (`simd_roots`) run whole SIMD groups of 32: a lane
         // past the items holds no roots. Every tier's pool is a multiple of 32, so this stays inside its stacks.
         let simd = label.starts_with("label_micro") || label == patterns::KERNEL;
         let threads = if simd {
-            if let Some(metal) = metal {
-                assert_eq!(metal.compute_pipeline_state.thread_execution_width(), SIMD_WIDTH as u64, "simd_roots is written for SIMD groups of 32");
+            if let Some(l) = limits {
+                assert_eq!(l.simd, SIMD_WIDTH as u64, "simd_roots is written for SIMD groups of 32");
             }
             threads.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
         } else {
@@ -2330,15 +2333,15 @@ impl Runner<'_> {
         if crate::code_rule_dsl::prof::on() {
             crate::code_rule_dsl::prof::count_named(format!("threads.{label}"), threads);
             // The pipeline's thread limit: under 1,024 means the kernel's registers cap its occupancy (t41).
-            if let Some(metal) = metal {
-                crate::code_rule_dsl::prof::count_named(format!("pipeline.{label}.max_threads={}", metal.compute_pipeline_state.max_total_threads_per_threadgroup()), 1);
+            if let Some(l) = limits {
+                crate::code_rule_dsl::prof::count_named(format!("pipeline.{label}.max_threads={}", l.threads), 1);
             }
         }
         if threads == 0 {
             return;
         }
         // A group a SIMD group's width (32 on every target the kernels are written for, `SIMD_WIDTH`).
-        let width = metal.map_or(SIMD_WIDTH as u64, |m| m.compute_pipeline_state.thread_execution_width().max(1));
+        let width = limits.map_or(SIMD_WIDTH as u64, |l| l.simd.max(1));
         let micro = label.starts_with("label_micro");
         let stats = micro.then(|| kernel.stats.map(|slot| (slot, self.walk_bind.clone().unwrap_or_else(|| self.flags.buffer().clone())))).flatten();
         let spill = if micro {
@@ -2988,17 +2991,12 @@ impl Runner<'_> {
         }
         let scratch = self.phase_scratch.as_ref().expect("the phases' scratch").buffer().clone();
         let groups = (region as u64).div_ceil(PHASE_WORDS);
-        // A threadgroup a block of `PHASE_WORDS` words, whole: its barriers are every thread's.
-        let whole = |kernel: &LabelKernel, name: &str| {
-            if let Some(metal) = kernel.kernel.metal() {
-                assert!(metal.compute_pipeline_state.max_total_threads_per_threadgroup() >= PHASE_WORDS, "{name} takes {PHASE_WORDS} threads a group");
-            }
-        };
+        let wide_enough = |kernel: &LabelKernel| kernel.kernel.max_threads_per_group().is_none_or(|t| t >= PHASE_WORDS);
         if self.phase_parents.is_none() {
             // Not an upload: a derived answer (each node's parent), written once where it is computed (0353).
             let parents = HostMapped::zeroed::<u32>(32 * region)?;
             let kernel = self.kernels[PARENTS_KERNEL].clone();
-            whole(&kernel, KERNELS[PARENTS_KERNEL]);
+            assert!(wide_enough(&kernel), "label_parents takes {PHASE_WORDS} threads a group");
             let shape = Shape { recursive: region as u32, ..self.shape() };
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PARENTS_KERNEL]), 1);
             self.launch(&kernel, KERNELS[PARENTS_KERNEL])
@@ -3011,7 +3009,7 @@ impl Runner<'_> {
         }
         let parents = self.phase_parents.as_ref().expect("the batch's parents").buffer().clone();
         let kernel = self.kernels[PHASE_KERNEL].clone();
-        whole(&kernel, KERNELS[PHASE_KERNEL]);
+        assert!(wide_enough(&kernel), "label_phase takes {PHASE_WORDS} threads a group");
         crate::code_rule_dsl::prof::count("gpu.formula_phased", programs.len());
         let (scratch_rows, scratch_at) = (self.tapes.supertypes.buffer().clone(), self.tapes.scratch_at);
         let flags = self.flags.buffer().clone();
@@ -3706,7 +3704,7 @@ impl Runner<'_> {
                 let threads = if tier == 0 { tier_items.len().min(stack_lanes(8, 31)) } else { tier_items.len().min(ROOT_POOL) };
                 let (kernel, label) = (ROOT_KERNEL, ROOT_NAMES[tier.min(1)]);
                 let kernel = self.kernels[kernel].clone();
-                let width = kernel.kernel.metal().map_or(SIMD_WIDTH as u64, |m| m.compute_pipeline_state.thread_execution_width().max(1));
+                let width = lane::limits(&kernel.kernel).map_or(SIMD_WIDTH as u64, |l| l.simd.max(1));
                 let mut launch = self.launch(&kernel, label);
                 for (index, (buffer, offset)) in buffers.iter().enumerate() {
                     launch = launch.slot(index as u64, buffer, *offset);

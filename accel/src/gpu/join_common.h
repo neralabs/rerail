@@ -31,3 +31,28 @@ UKL_INLINE uint32_t join_tg_prefix(uint32_t mine, uint32_t t, uint32_t lane, UKL
   *total = all;
   return off + inc - mine;
 }
+
+// A sort's screen (decision 0488, `join::Screen`): a blocked Bloom filter in the host's format, read through the reads
+// written once in CLIF (`clif_bloom_*`, `<ukl/reads/relation.h>`), its descriptor at byte `at` of `f`.
+#include <ukl/reads/relation.h>
+
+// Whether the screen may hold `key` (none at `at` 0xffffffff: every key): a hash and one load. A key it refuses is
+// in no run.
+UKL_INLINE bool screen_may_hold(UKL_GLOBAL const uint8_t* f, uint32_t at, uint64_t key)
+{
+  if (at == 0xffffffffu) return true;
+  return clif_bloom_may(f, (uint64_t)at, clif_bloom_hash(f, 0u, key)) != 0u;
+}
+
+// Adds `key` to the screen at byte `at` of `f`: its word's two 32-bit halves set with atomics (bit b of 64-bit word
+// w is bit b & 31 of 32-bit word 2w + b / 32, the host's bytes).
+UKL_INLINE void screen_add(UKL_GLOBAL uint8_t* f, uint32_t at, uint64_t key)
+{
+  uint64_t h = clif_bloom_hash(f, 0u, key);
+  uint64_t m = clif_bloom_mask(f, 0u, h);
+  UKL_GLOBAL const int64_t* d = (UKL_GLOBAL const int64_t*)(f + at);
+  uint32_t w = (uint32_t)(h >> 32) & (uint32_t)((uint64_t)d[1] - 1u);
+  UKL_GLOBAL uint32_t* words = (UKL_GLOBAL uint32_t*)(f + (uint64_t)at + (uint64_t)d[0]);
+  if ((uint32_t)m != 0u) ukl_atomic_or(&words[2u * w], (uint32_t)m);
+  if ((uint32_t)(m >> 32) != 0u) ukl_atomic_or(&words[2u * w + 1u], (uint32_t)(m >> 32));
+}

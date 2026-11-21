@@ -510,7 +510,7 @@
         let read = |fns: u32, sym: u32| -> Option<String> {
             // SAFETY: the store's cache, in its live block; an entry found is complete.
             unsafe {
-                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                let r = rerail_clif::view::cache::text_find(kept.cache(), fns, sym);
                 (r & 3 == 0).then(|| {
                     let e = (r & !3) as *const u8;
                     let len = e.add(12).cast::<u32>().read() as usize - 16;
@@ -597,6 +597,10 @@
         let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
         db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
         let spec = ["name dev_verdicts".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        // The cache's statistics mode on, so a failure says how it lost a verdict (`view::cache`'s counts).
+        let counted = std::sync::Arc::clone(super::super::symbols(&db).unwrap().read().unwrap().atoms());
+        counted.kept().count_statistics();
+        let kept_counts = move || counted.kept().counts();
         super::super::open(&db, &spec).unwrap();
         super::super::run(&db, "dev_verdicts", 0).unwrap();
         let report = super::take_report();
@@ -609,7 +613,7 @@
         let runs = atoms.runs();
         let verdicts = atoms.kept();
         use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
-        let mut wrong = Vec::new();
+        let (mut wrong, mut wrong_ids) = (Vec::new(), Vec::new());
         let mut seen = std::collections::HashSet::new();
         for name in &names {
             let id = u32::try_from(syms.write().unwrap().id(name)).unwrap();
@@ -621,6 +625,7 @@
             if got != want {
                 let run = runs.iter().position(|(r, _)| r.first <= id && id < r.end);
                 let block = run.map(|k| (runs[k].0.first, runs[k].0.end, runs[k].0.from, runs[k].1.reserved(), runs[k].1.in_slab(), runs[k].1.mapped_file().is_some()));
+                wrong_ids.push(id);
                 wrong.push(format!("{name:?} id {id} got {got} (UNKNOWN {UNKNOWN}) want {want}, run {run:?} {block:?}"));
             }
         }
@@ -630,7 +635,7 @@
         let want: Vec<(i64, i64)> = names.iter().enumerate().filter(|(_, s)| m.is_match(s)).map(|(k, s)| (syms.write().unwrap().id(s), k as i64)).collect();
         assert_eq!(heads, want, "the rows that pass, their names kept");
         let all: Vec<_> = runs.iter().map(|(r, b)| (r.first, r.end, r.from, b.reserved(), b.in_slab(), b.mapped_file().is_some())).collect();
-        assert!(wrong.is_empty(), "{} of {} symbols wrong; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), &wrong[..wrong.len().min(12)]);
+        assert!(wrong.is_empty(), "{} of {} symbols wrong; the cache: {}; ids {wrong_ids:?}; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), kept_counts(), &wrong[..wrong.len().min(12)]);
     }
 
     /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the
@@ -1068,7 +1073,8 @@
             // The same top counts (ties may take other values of the same count).
             let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
-            assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
+            let fan = |h: &table::HeavyCol| table::heavy_fan(table::PricedCol::new(h, None), &[table::PricedCol::new(h, None); 2]).unwrap();
+            assert!((fan(&g) / fan(&cpu) - 1.0).abs() < 1e-6);
         }
     }
     /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
@@ -1181,7 +1187,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
         // are made, not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
@@ -1277,7 +1282,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
         let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");
@@ -1333,11 +1337,10 @@
             }
         }
         assert_eq!(seen, 10);
-        // Read in place where the device's buffers have addresses, which the views' directory is of (Metal's, the
-        // CPU's); made elsewhere (decision 0440 step C: OpenCL 1.2's buffers have none), which the made branch above
-        // checked.
-        let addresses = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 1).device_address().is_some();
-        let read_in_place = if addresses { 10 } else { 0 };
+        // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
+        // of (Metal's, CUDA's, the CPU's); made elsewhere (decision 0440 step C: OpenCL's wraps have none, though
+        // its allocations may, Intel's unified shared memory), which the made branch above checked.
+        let read_in_place = if device.has_addresses() { 10 } else { 0 };
         assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
@@ -1364,18 +1367,19 @@
                 let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
                 let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its host's file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
-            // directory's addresses are Metal's, decision 0440 step C).
+            // host's lines and its placement. With the guest and without. Made where the device's buffers have no
+            // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                     let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
-                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
+                    assert_eq!(d.in_place.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
@@ -1483,7 +1487,7 @@
         assert_eq!(table_rows(1, 100, true, None, Some(2_848.0)), 100, "never more than the relation holds");
         // Never past every pairing, never empty.
         assert_eq!(table_rows(10, 3, false, None, Some(1e9)), 30);
-        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16.min(30));
+        assert_eq!(table_rows(10, 3, false, None, Some(0.0)), 16);
     }
 
     /// A spec's estimates are not the rule: two specs that differ in them alone are one rule (the same digest, under

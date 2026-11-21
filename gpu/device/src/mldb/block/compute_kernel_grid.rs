@@ -446,6 +446,11 @@ pub trait GridBindContext {
     /// Lets the kernel read and write `buffer` through an address another buffer holds (`Buffer::device_address`):
     /// Metal's `useResource`; elsewhere the buffer is kept until the launch completes.
     fn use_buffer(&mut self, _buffer: &BufferRef) {}
+    /// `use_buffer` of a buffer the kernel only reads through the address (a slab's, a view's directory): what a
+    /// watch of the queue holds it as (decision 0487).
+    fn use_buffer_read(&mut self, buffer: &BufferRef) {
+        self.use_buffer(buffer)
+    }
     /// A launch of as many threadgroups of `block` threads as the three u32s at byte `offset` of `groups` say when
     /// the launch runs (work before it may write them), at most `max_groups` (decision 0440 step B): Metal's
     /// indirect dispatch; on the CPU the counts are read when the launch runs; CUDA and OpenCL launch `max_groups`
@@ -586,12 +591,12 @@ pub fn solve(knowns: &mut Knowns, constraints: &[&KernelConstraint]) {
                     knowns.insert(c.lhs.clone(), v);
                     learnt = true;
                 }
-            } else if let Expr::Name(n) = &c.rhs {
-                if !knowns.contains_key(n) {
-                    let v = knowns[&c.lhs].clone();
-                    knowns.insert(n.clone(), v);
-                    learnt = true;
-                }
+            } else if let Expr::Name(n) = &c.rhs
+                && !knowns.contains_key(n)
+            {
+                let v = knowns[&c.lhs].clone();
+                knowns.insert(n.clone(), v);
+                learnt = true;
             }
         }
         if !learnt {

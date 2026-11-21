@@ -242,7 +242,7 @@ fn multiple_consumers_union_their_safe_demands() {
     }
     // A second reader of `result`'s rule, at another key.
     let result = rules(&p, |h| h == "result")[0];
-    let head: Vec<T<'_>> = result.head().args().map(|t| t_of(&p, result, t)).collect();
+    let head: Vec<T<'_>> = result.head().args().map(|t| t_of(result, t)).collect();
     let mut second = b.rule().head("result", &head);
     for l in result.body().filter(|l| l.atom().is_none_or(|a| p.rel_name(a.rel()) != demand)) {
         second = second.lit(&p, result, l);
@@ -303,18 +303,21 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 /// A guard that reads a key only through a comparison (`byte(q, 92)` with `q = p - 1`) restricts the demand too: the
 /// demand of "the last byte before p that is not a backslash", asked where the byte before p is a backslash, is those
 /// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
+/// That is the aggregate as written (`RERAIL_ASOF=off`): by default it is bounded by its probe (decision 0511), one
+/// helper of the bytes alone, and asks no demand.
 #[test]
 fn a_guard_reached_through_a_comparison_restricts_the_demand() {
-    let p = rr::parse_version(
-        r#"
+    let src = r#"
 .decl byte(i: number, v: number)
 .input byte
 .decl odd(p: number)
 .output odd
 odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
-"#,
-    )
-    .unwrap();
+"#;
+    let bounded = rr::parse_version(src).unwrap();
+    assert!(rules(&bounded, |h| h.starts_with("rr_demand_agg")).is_empty(), "a bounded aggregate asks no demand: {}", bounded.show());
+    let _as_written = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ASOF", "off")]);
+    let p = rr::parse_version(src).unwrap();
     let demand = *rules(&p, |h| h.starts_with("rr_demand_agg")).first().unwrap_or_else(|| panic!("no demand: {}", p.show()));
     assert!(
         atoms(&p, demand).iter().any(|(rel, _, args)| *rel == "byte" && matches!(args[1], TermRef::Int(92))),

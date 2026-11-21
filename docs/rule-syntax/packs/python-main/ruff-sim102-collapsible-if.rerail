@@ -1,5 +1,4 @@
 .policy "ruff-sim102-collapsible-if" revision 1
-.guests off
 .description "Collapse an if whose only statement is another if without else into one if joined with and; version, platform and TYPE_CHECKING checks are exempt."
 .language python
 .mode steer

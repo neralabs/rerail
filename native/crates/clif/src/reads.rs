@@ -101,6 +101,10 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
     Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
+    // A blocked Bloom filter's (decision 0488): the descriptor is a `bloom::Bloom`.
+    Read { family: Family::Relation, name: "bloom_hash", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_hash },
+    Read { family: Family::Relation, name: "bloom_mask", params: &[I64], ret: I64, hot: true, body: crate::relation::bloom_mask },
+    Read { family: Family::Relation, name: "bloom_may", params: &[I64], ret: I32, hot: true, body: crate::relation::bloom_may },
     // A projection's numbering's (decision 0353 step 2): the descriptor is an `ids::Numbering`.
     Read { family: Family::Relation, name: "num_is", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::is },
     Read { family: Family::Relation, name: "num_rank", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::rank },
@@ -144,20 +148,15 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_find", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_find },
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
+    // The cache's two lookups, each written once and called (decision 0310): the verdicts' (an entry made with its
+    // masks empty) and the texts' open one. Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
+    Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
 ];
-
-/// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.
-const HOST_ONLY: &[&str] = &["tape_lz4"];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
 /// block).
 pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select", "tape_lz4"];
-
-/// The reads a reader of the tape crate calls (the rest are the reads' own: a side list's value takes a list's
-/// number, which is the reads' to give).
-pub fn public(name: &str) -> bool {
-    name != "tape_f16_side" && name != "tape_line_select"
-}
 
 /// The read named `name`.
 pub fn read(name: &str) -> Option<&'static Read> {
@@ -193,20 +192,9 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
 
 /// `build_for`, and with `z` a 16z tape too (decision 0353 step 4b) where the body reads either format: its block
 /// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
-/// Rust reads a block at a time itself (`F16Z`), and the kernels' reads do not yet.
+/// Rust reads a block at a time itself (`F16Z`). The kernels' reads of the same are written by hand (decision 0524):
+/// `<ukl/reads/tape_body.h>`.
 pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
-    build_split(read, call_conv, name, callee, format, z, false).0
-}
-
-/// A 16z body's id in a source that calls it apart (`build_split`): past every read's.
-pub(crate) const Z_APART: u32 = 1 << 16;
-
-/// `build_formats`, and with `split` a 16z tape's body called apart (`<read>_z`, the read built for
-/// `F16Z_FORMAT`), not inlined: with whether the read called it. The kernels' source (decision 0353 step 4b): a
-/// read inlined where a kernel reads carries format 15's and 16's bodies and the call, and the kernel one 16z body
-/// of each read, which its tape format folds away (inlined, every read's 16z body at every call site made a label
-/// kernel's compile 18 s at format 15 and 33 s at 16z, against 1.8 s without).
-fn build_split(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool, split: bool) -> (Function, bool) {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(&mut func, &mut context);
@@ -220,69 +208,19 @@ fn build_split(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mu
         Family::Relation | Family::Lines => (None, None, None),
         Family::View => (None, Some((params[1], params[2])), Some(params[3])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None, name: read.name, split, apart: false };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None };
     let value = (read.body)(&mut b);
-    let apart = b.apart;
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
     b.f.finalize();
-    (func, apart)
-}
-
-/// The reads as Rust (decision 0310's Rust backend): a module a format (`f16`, `f15`), each read built for
-/// it (`build_for`) and translated (`rust::translate_reads`), a hot one inlined where it is called, as the
-/// JIT's pass inlines it; the source ends with its fingerprint. The tape crate holds it, made again by its
-/// test (`the_tape_crates_reads_are_these`).
-pub fn rust_source() -> Result<String, String> {
-    let mut out = String::from(
-        "// Generated by rerail_clif::reads::rust_source from the tape's reads in CLIF (decision 0310). Do not edit:\n\
-         // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these` writes it again.\n\
-         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]\n",
-    );
-    for (module, format) in [("f16", 16), ("f15", 15)] {
-        // Format 15 has no side lists.
-        let reads: Vec<(u32, &Read)> = READS
-            .iter()
-            .enumerate()
-            .filter(|(_, read)| read.family == Family::Tape && read.name != "tape_z_block" && (format == 16 || !F16_ONLY.contains(&read.name)))
-            .map(|(k, read)| (k as u32, read))
-            .collect();
-        let funcs: Vec<(u32, Function, bool)> =
-            reads.iter().map(|&(k, read)| (k, build_for(read, CallConv::SystemV, UserFuncName::user(0, k), &mut ByIndex, Some(format)), read.hot)).collect();
-        let entries: Vec<(u32, &str)> = reads.iter().filter(|(_, read)| public(read.name)).map(|&(k, read)| (k, read.name)).collect();
-        let body = crate::rust::translate_reads(&funcs, &entries, Family::Tape).map_err(|e| format!("format {format}: {e}"))?;
-        out.push_str(&format!("\n/// The reads of a format {format} tape.\npub mod {module} {{\n"));
-        for line in body.lines() {
-            if line.is_empty() {
-                out.push('\n');
-            } else {
-                out.push_str(&format!("    {line}\n"));
-            }
-        }
-        out.push_str("}\n");
-    }
-    let h = crate::rust::fingerprint(&out);
-    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
-    Ok(out)
-}
-
-/// The reads as UKL (decisions 0310, 0440 §3.3), for every GPU's kernels: each read built for either format, as its
-/// view says (a batch holds documents of both), `clif_` before its name. The library's `<ukl/reads/tape.h>`, which
-/// `device_tape.h`'s readers call; made again by `the_kernels_reads_are_these`.
-pub fn tape_ukl_source() -> Result<String, String> {
-    tape_ukl(false)
-}
-
-/// The reads as UKL that read a 16z tape too (decision 0353 step 4b): a block decoded into the cache the view names
-/// (`view::cache`) where a read falls, the same functions as `tape_ukl_source`'s, for the kernels that read a 16z
-/// batch's views in place to include in its stead: `<ukl/reads/tape_z.h>`, made again by
-/// `the_16z_kernels_reads_are_these`.
-pub fn tape_z_ukl_source() -> Result<String, String> {
-    tape_ukl(true)
+    func
 }
 
 /// Where the reads' UKL is held: the library's `ukl/reads/`, which every kernel includes them from.
-pub const UKL_READS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/reads");
+#[cfg(test)]
+fn ukl_reads() -> String {
+    format!("{}/../ukl/lib/ukl/reads", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+}
 
 /// A generated header's first lines: what made it, and how to make it again.
 fn generated(function: &str, decision: &str, test: &str) -> String {
@@ -290,43 +228,6 @@ fn generated(function: &str, decision: &str, test: &str) -> String {
         "// Generated by rerail_clif::reads::{function} from {decision}. Do not edit:\n\
          // `RERAIL_WRITE_READS=1 cargo test -p rerail-clif {test}` writes it again.\n"
     )
-}
-
-fn tape_ukl(z: bool) -> Result<String, String> {
-    let built: Vec<(u32, Function, bool)> = READS
-        .iter()
-        .enumerate()
-        .filter(|(_, read)| read.family == Family::Tape && !HOST_ONLY.contains(&read.name) && (z || read.name != "tape_z_block"))
-        .map(|(k, read)| {
-            let (f, apart) = build_split(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z, z);
-            (k as u32, f, apart)
-        })
-        .collect();
-    // Each read's 16z body that a read calls apart: the read built for 16z alone.
-    let apart: Vec<(u32, Function, String)> = built
-        .iter()
-        .filter(|(.., apart)| *apart)
-        .map(|&(k, ..)| {
-            let read = &READS[k as usize];
-            let (f, _) = build_split(read, CallConv::SystemV, UserFuncName::user(0, Z_APART + k), &mut ByIndex, Some(F16Z_FORMAT), true, false);
-            (Z_APART + k, f, format!("{}_z", read.name))
-        })
-        .collect();
-    let funcs: Vec<(u32, Function, &str)> = apart
-        .into_iter()
-        .map(|(k, f, n)| (k, f, &*Box::leak(n.into_boxed_str())))
-        .chain(built.into_iter().map(|(k, f, _)| (k, f, READS[k as usize].name)))
-        .collect();
-    let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Tape)?;
-    let (function, test) = if z { ("tape_z_ukl_source", "the_16z_kernels_reads_are_these") } else { ("tape_ukl_source", "the_kernels_reads_are_these") };
-    // The two are one set of functions: a kernel includes one of them.
-    let other = if z { "TAPE" } else { "TAPE_Z" };
-    let this = if z { "TAPE_Z" } else { "TAPE" };
-    let (head, rest) = body.split_at(crate::ukl::HELPERS.len());
-    Ok(format!(
-        "{}{head}#ifdef CLIF_READS_{other}\n#error \"the tape's reads twice: <ukl/reads/tape.h> and <ukl/reads/tape_z.h> are one set\"\n#endif\n#define CLIF_READS_{this} 1\n{rest}",
-        generated(function, "the tape's reads in CLIF (decision 0310)", test)
-    ))
 }
 
 /// The views' reads as UKL (decision 0353 step 4c), after their entry's declaration (`view_reads::ukl`):
@@ -354,11 +255,7 @@ pub fn view_ukl_source() -> Result<String, String> {
 struct ByIndex;
 impl Callee for ByIndex {
     fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
-        // A read's 16z body called apart (`build_split`): its read's place past `Z_APART`.
-        let index = match READS.iter().position(|read| read.name == name) {
-            Some(k) => k as u32,
-            None => Z_APART + READS.iter().position(|read| name.strip_suffix("_z") == Some(read.name)).expect("a read") as u32,
-        };
+        let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
         let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
         let signature = func.import_signature(signature.clone());
         func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
@@ -386,52 +283,12 @@ fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Re
         .collect()
 }
 
-/// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
-/// `Relation` read through, made again by `the_blocks_reads_are_these`.
-pub fn relation_rust_source() -> Result<String, String> {
-    // `rows_put` is the device's writer (decision 0463): the host writes rows through `Rows::put`, which checks them.
-    let funcs: Vec<_> = relation_funcs().into_iter().filter(|(_, _, read)| read.name != "rows_put").collect();
-    let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
-    let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
-    let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
-    let mut out = String::from(
-        "// Generated by rerail_clif::reads::relation_rust_source from a relation's reads in CLIF (decision 0325). Do not\n\
-         // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these` writes it again.\n\
-         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]\n\n",
-    );
-    out.push_str(&body);
-    let h = crate::rust::fingerprint(&out);
-    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
-    Ok(out)
-}
-
 /// A relation's reads as UKL (decision 0325): `<ukl/reads/relation.h>`, which every kernel that reads a relation in
 /// place includes, made again by `the_blocks_kernels_reads_are_these`.
 pub fn relation_ukl_source() -> Result<String, String> {
     let funcs: Vec<(u32, Function, &str)> = relation_funcs().into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
     let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Relation)?;
     Ok(format!("{}{body}", generated("relation_ukl_source", "a relation's reads in CLIF (decision 0325)", "the_blocks_kernels_reads_are_these")))
-}
-
-/// A projection's numbering's reads as Rust (decision 0353 step 2): the facts crate's `id_reads.rs`, which its
-/// `Ranks` and `granules::Table` read through, made again by `the_facts_id_reads_are_these`.
-pub fn ids_rust_source() -> Result<String, String> {
-    let funcs = family_funcs(numbering);
-    let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
-    let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
-    let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
-    let mut out = String::from(
-        "// Generated by rerail_clif::reads::ids_rust_source from a projection's numbering's reads in CLIF (decision 0353
-         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these` writes it
-         // again.
-         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]
-
-",
-    );
-    out.push_str(&body);
-    let h = crate::rust::fingerprint(&out);
-    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
-    Ok(out)
 }
 
 /// A projection's numbering's reads as UKL, after its descriptor's declaration (`ids::ukl`): `<ukl/reads/ids.h>`,
@@ -467,11 +324,6 @@ pub struct B<'a, 'c> {
     z: bool,
     /// The 16z block being read (`in_block`): its cache entry is the tape, which the cache's writers write.
     slot: Option<Slot>,
-    /// The read being built.
-    name: &'static str,
-    /// Whether a 16z tape's body is called apart (`build_split`), and whether it was.
-    split: bool,
-    apart: bool,
 }
 
 /// A 16z block read in its cache entry (`B::in_block`): the reader's tape and view, the block's first node, and the
@@ -618,25 +470,10 @@ impl B<'_, '_> {
                 }
                 self.either(ty, f16, sixteen, |b| {
                     let z = b.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
-                    if b.split {
-                        return b.either(ty, z, B::zed_apart, fifteen);
-                    }
                     b.either(ty, z, zed, fifteen)
                 })
             }
         }
-    }
-    /// This read's 16z body, called apart (`build_split`) with the read's own arguments.
-    fn zed_apart(&mut self) -> Value {
-        self.apart = true;
-        let read = read(self.name).expect("a read");
-        let signature = signature(read, self.call_conv);
-        let callee = self.callee.func_ref(&format!("{}_z", self.name), &signature, self.f.func);
-        let mut all = vec![self.tape];
-        all.extend(self.view);
-        all.extend_from_slice(&self.args.clone());
-        let call = self.f.ins().call(callee, &all);
-        self.f.inst_results(call)[0]
     }
     /// A format 16 read's `body` of its argument `k`'s node, of a tape of format 16 or, read too (`z`), 16z.
     fn sixteen_or_z(&mut self, ty: ir::Type, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
@@ -650,12 +487,6 @@ impl B<'_, '_> {
         let format = self.view(at::FORMAT);
         let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
         let body = &body;
-        if self.split {
-            return self.either(ty, z, B::zed_apart, |b| {
-                let i = b.arg(k);
-                body(b, i)
-            });
-        }
         self.either(ty, z, |b| b.in_block(k, body), |b| {
             let i = b.arg(k);
             body(b, i)
@@ -1426,19 +1257,22 @@ fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
     cache_add(b, cache, offset, one);
 }
 
+/// A cache entry's filler: given the entry taken, it writes the payload and gives whether it fits.
+pub(crate) type Fill<'f> = &'f dyn Fn(&mut B<'_, '_>, Value) -> Value;
+
 /// The entry of `key` in the rolling cache at `cache` (`view::cache`): looked up in its live generations, head
 /// first, a hit in the oldest copied into the head, an entry another thread writes waited for (`SPIN` times at most);
 /// on a miss, an entry of `size` bytes (an I32: its header and payload) taken from the head's arena, indexed,
 /// `fill`ed (its payload: `fill` gives whether it fits) and completed. A full head turns the spare into the head. After
 /// `TRIES` tries without room, or for a `size` past the cache's most, a failure counted and the dead entry given.
-pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+pub(crate) fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Fill<'_>) -> Value {
     cache_lookup(b, cache, key, size, Some(fill))
 }
 
 /// `cache_get`, or with no `fill` an open lookup: it waits for no writer, and on a miss takes an entry of `size`
 /// bytes (none for 0) that its caller writes and completes (`cache_done`); its result an entry and what it found
 /// (`FOUND`, `TAKEN`, `NOT_KEPT`, `PENDING`) in the low bits.
-pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Option<&dyn Fn(&mut B<'_, '_>, Value) -> Value>) -> Value {
+pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Value, fill: Option<Fill<'_>>) -> Value {
     use crate::view::cache as c;
     let open = fill.is_none();
     let gens = cache_load(b, cache, c::GENS);
@@ -1502,7 +1336,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let k = b.f.block_params(look)[0];
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
     let check = b.f.create_block();
-    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.append_block_param(miss, I32);
+    b.f.ins().brif(more, check, &[], miss, &[zero.into()]);
     b.f.switch_to_block(check);
     let want = b.f.ins().isub(epoch, k);
     let generation = gen_of(b, want);
@@ -1552,8 +1387,14 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().brif(moved, read_slot, &[], slot_wait, &[spin.into()]);
     b.f.switch_to_block(slot_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
+    // A fence between the slot's number and its entry's offset, key and completion: the writer's fence before it put
+    // the number is half of the pair; without this half a reader on a weakly ordered device (Metal's relaxed atomics)
+    // can see the number with an older offset, key or completion, take the entry for another key's, and decode the
+    // block into a second entry, splitting what the block's users add to it.
     b.f.switch_to_block(candidate);
+    b.f.ins().fence();
     let n = b.f.ins().iadd_imm(number, -1);
     let e = entry_of(b, generation, n);
     let k64 = b.f.ins().iadd_imm(e, i64::from(c::KEY));
@@ -1602,7 +1443,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
     b.f.switch_to_block(run_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     b.f.switch_to_block(probe_on);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
@@ -1621,7 +1463,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.switch_to_block(copy);
     // An entry's own bytes: what its copy takes and copies.
     let len = cache_load(b, e, c::LEN);
-    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, Some(&|b, to| {
+    let not_own = b.c32(0);
+    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, not_own, Some(&|b, to| {
         // The payload, a word at a time, and the source's completion read again after it.
         let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
         b.f.append_block_param(head, I64);
@@ -1653,6 +1496,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again. An
     // entry past the most is never taken: no generation turns for it.
     b.f.switch_to_block(miss);
+    // Whether its wait ran out: an entry of its own, past the pending one's slot.
+    let own = b.f.block_params(miss)[0];
     let (sized, take_it, too_big, find_only) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     let nothing = b.f.ins().icmp_imm(IntCC::Equal, size, 0);
     b.f.ins().brif(nothing, find_only, &[], sized, &[]);
@@ -1660,7 +1505,7 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let over = b.f.ins().icmp(IntCC::UnsignedGreaterThan, size, max);
     b.f.ins().brif(over, too_big, &[], take_it, &[]);
     b.f.switch_to_block(take_it);
-    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, fill);
+    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, own, fill);
     let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
     let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.ins().brif(got, hit_miss, &[], retry, &[]);
@@ -1737,7 +1582,8 @@ fn cache_take(
     h: Value,
     slot_mask: Value,
     size: Value,
-    fill: Option<&dyn Fn(&mut B<'_, '_>, Value) -> Value>,
+    own: Value,
+    fill: Option<Fill<'_>>,
 ) -> Value {
     use crate::view::cache as c;
     let rw = MemFlags::new().with_notrap();
@@ -1751,8 +1597,9 @@ fn cache_take(
     let (take, full) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(current, take, &[], done, &[none.into()]);
     // Its slot in the head's index claimed first, pending (its tag, no entry yet), so a thread that misses the same
-    // block at once finds it and waits rather than taking an entry too. A slot of the same block already: none
-    // (the lookup, tried again, finds it). No slot free in its probes: the head full.
+    // block at once finds it and waits rather than taking an entry too. A slot of the same block already, unless
+    // `own` (the lookup's wait for it ran out: an entry of its own, at a slot past it): none (the lookup, tried
+    // again, finds it). No slot free in its probes: the head full.
     b.f.switch_to_block(take);
     let (probe, place, check, theirs, mine_already, next, slotted) =
         (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
@@ -1776,13 +1623,17 @@ fn cache_take(
     b.f.switch_to_block(check);
     let its = b.f.ins().band_imm(was, !i64::from(c::NUMBER));
     let same_tag = b.f.ins().icmp(IntCC::Equal, its, tag);
+    let not_own = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
+    let same_tag = b.f.ins().band(same_tag, not_own);
     b.f.ins().brif(same_tag, theirs, &[], next, &[]);
     b.f.switch_to_block(theirs);
     let number = b.f.ins().band_imm(was, i64::from(c::NUMBER));
     let none_yet = b.f.ins().icmp_imm(IntCC::Equal, number, 0);
     let keyed = b.f.create_block();
     b.f.ins().brif(none_yet, mine_already, &[], keyed, &[]);
+    // The fence pairing with the writer's before its number (as in the lookup): its entry's offset and key as written.
     b.f.switch_to_block(keyed);
+    b.f.ins().fence();
     let other = b.f.ins().iadd_imm(number, -1);
     let other = entry_of(b, head, other);
     let held = b.f.ins().load(I64, rw, other, c::KEY);
@@ -1863,9 +1714,13 @@ fn cache_take(
     let fits = fill(b, e);
     let (complete, unfit) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(fits, complete, &[], unfit, &[]);
-    // Too large for an entry: the entry given back.
+    // Not filled (too large for an entry, or a promotion whose source turned under its copy): the entry given back,
+    // its slot no key's (its number, no tag: every tag has bit 16), so it neither stops a probe nor blocks the next
+    // claim of the block (decision 0540).
     b.f.switch_to_block(unfit);
     cache_store(b, e, c::READY, zero);
+    b.f.ins().fence();
+    b.f.ins().atomic_store(MemFlags::trusted(), number, slot);
     b.f.ins().fence();
     cache_add(b, head, c::WRITERS, minus);
     b.f.ins().jump(done, &[none.into()]);
@@ -2699,22 +2554,10 @@ fn line_start(b: &mut B<'_, '_>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_facts_id_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
-        let source = super::ids_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
-    }
-
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {
-        let path = format!("{}/ids.h", super::UKL_READS);
+        let path = format!("{}/ids.h", super::ukl_reads());
         let source = super::ids_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2723,22 +2566,10 @@ mod tests {
         assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
     }
 
-    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
-        let source = super::relation_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
-    }
-
     /// The relation's kernels' reads are these, as UKL (`<ukl/reads/relation.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_kernels_reads_are_these() {
-        let path = format!("{}/relation.h", super::UKL_READS);
+        let path = format!("{}/relation.h", super::ukl_reads());
         let source = super::relation_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2747,34 +2578,10 @@ mod tests {
         assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
     }
 
-    /// The kernels' reads are these, as UKL (`<ukl/reads/tape.h>`): written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_kernels_reads_are_these() {
-        let path = format!("{}/tape.h", super::UKL_READS);
-        let source = super::tape_ukl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(&path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
-    }
-
-    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_tape_crates_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
-        let source = super::rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
-    }
-
     /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = format!("{}/view.h", super::UKL_READS);
+        let path = format!("{}/view.h", super::ukl_reads());
         let source = super::view_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2782,16 +2589,107 @@ mod tests {
         let held = std::fs::read_to_string(&path).unwrap_or_default();
         assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these");
     }
+}
 
-    /// The 16z kernels' reads are these, as UKL (`<ukl/reads/tape_z.h>`): written again with `RERAIL_WRITE_READS=1`.
+/// The kernels' tape reads are written by hand (decision 0524): their constants are the view's, the formats' and the
+/// cache's here.
+#[cfg(test)]
+mod ukl_header {
+    use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, cache as c, z};
+
+    /// `<ukl/reads/tape_body.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
+    /// entry's layout and the rolling cache's (`view::cache`), and it defines no other.
     #[test]
-    fn the_16z_kernels_reads_are_these() {
-        let path = format!("{}/tape_z.h", super::UKL_READS);
-        let source = super::tape_z_ukl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(&path, &source).unwrap();
+    fn the_tape_headers_constants_are_the_views() {
+        let header = include_str!("../../ukl/lib/ukl/reads/tape_body.h");
+        let defined: std::collections::HashMap<&str, u64> = header
+            .lines()
+            .filter_map(|line| line.strip_prefix("#define CLIF_T_"))
+            .filter_map(|rest| rest.split_once(' '))
+            // The reads' argument list and the format's test, not numbers.
+            .filter(|(name, _)| *name != "ARGS" && !name.contains('('))
+            .map(|(name, value)| {
+                let value = value.trim().trim_end_matches(['u', 'l']);
+                (name, value.parse().unwrap_or_else(|_| panic!("CLIF_T_{name}: not a number")))
+            })
+            .collect();
+        let off = |v: i32| v as u64;
+        let expected: &[(&str, u64)] = &[
+            ("NODES", off(at::NODES)),
+            ("FORMAT", off(at::FORMAT)),
+            ("WIDTHS", off(at::WIDTHS)),
+            ("COLUMNS", off(at::COLUMNS)),
+            ("STRIDE", off(at::STRIDE)),
+            ("SIDE", off(at::SIDE)),
+            ("PARTS", off(at::PARTS)),
+            ("CUT", off(at::CUT)),
+            ("PER", off(at::PER)),
+            ("SOURCE_LEN", off(at::SOURCE_LEN)),
+            ("LINES", off(at::LINES)),
+            ("LINE_COUNT", off(at::LINE_COUNT)),
+            ("PRESENCE", off(at::PRESENCE)),
+            ("NONE", super::NONE as u64),
+            ("F16Z_FORMAT", F16Z_FORMAT.into()),
+            ("K", F16_K.into()),
+            ("BLOCK", F16_BLOCK.into()),
+            ("PART", F16_PART.into()),
+            ("SUB", F16_SUB.into()),
+            ("F15_STRIDE_SHIFT", F15_STRIDE_SHIFT.into()),
+            ("F15_TAIL_FROM_START", F15_TAIL_FROM_START.into()),
+            ("LINES_HEAD", super::HEAD_LINES as u64),
+            ("LINES_SAMPLE_SHIFT", super::LINES_SAMPLE_SHIFT as u64),
+            ("Z_BLOCK", F16Z_BLOCK.into()),
+            ("Z_PIECES", F16Z_PIECES.into()),
+            ("SLOT_VIEW", off(z::SLOT_VIEW)),
+            ("SLOT_BYTES", off(z::SLOT_BYTES)),
+            ("SLACK", z::SLACK as u64),
+            ("RAW", z::RAW.into()),
+            ("LZ4", z::LZ4.into()),
+            ("REPEAT", z::REPEAT.into()),
+            ("C_EPOCH", off(c::EPOCH)),
+            ("C_GENS", off(c::GENS)),
+            ("C_ENTRIES", off(c::ENTRIES)),
+            ("C_MAX", off(c::MAX)),
+            ("C_SLOTS", off(c::SLOTS)),
+            ("C_GEN_STRIDE", off(c::GEN_STRIDE)),
+            ("C_FIRST_ENTRY", off(c::FIRST_ENTRY)),
+            ("C_DEAD", off(c::DEAD)),
+            ("C_FAILED", off(c::FAILED)),
+            ("C_MISSES", off(c::MISSES)),
+            ("C_PROMOTED", off(c::PROMOTED)),
+            ("C_ROTATED", off(c::ROTATED)),
+            ("C_STATS", off(c::STATS)),
+            ("C_HITS", off(c::HITS)),
+            ("C_WAITED", off(c::WAITED)),
+            ("C_DUPLICATES", off(c::DUPLICATES)),
+            ("C_HEAD", c::HEAD as u64),
+            ("G_STAMP", off(c::STAMP)),
+            ("G_USED", off(c::USED)),
+            ("G_BUMP", off(c::BUMP)),
+            ("G_WRITERS", off(c::WRITERS)),
+            ("G_INDEX", off(c::INDEX)),
+            ("E_KEY", off(c::KEY)),
+            ("E_READY", off(c::READY)),
+            ("E_LEN", off(c::LEN)),
+            ("E_PAYLOAD", off(c::PAYLOAD)),
+            ("C_ALIGN", c::ALIGN as u64),
+            ("C_CLEARING", c::CLEARING.into()),
+            ("C_WRITING", c::WRITING.into()),
+            ("C_PROBES", c::PROBES.into()),
+            ("C_TRIES", c::TRIES.into()),
+            ("C_SPIN", c::SPIN.into()),
+            ("C_TAG_SHIFT", c::TAG_SHIFT.into()),
+            ("C_NUMBER", c::NUMBER.into()),
+            // A probe's outcomes, the header's own.
+            ("C_NOT_HERE", 0),
+            ("C_FOUND", 1),
+            ("C_PENDING", 2),
+        ];
+        for &(name, value) in expected {
+            assert_eq!(defined.get(name), Some(&value), "CLIF_T_{name}");
         }
-        let held = std::fs::read_to_string(&path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these");
+        let names: std::collections::HashSet<&str> = expected.iter().map(|(name, _)| *name).collect();
+        let extra: Vec<&&str> = defined.keys().filter(|name| !names.contains(**name)).collect();
+        assert!(extra.is_empty(), "constants the test does not hold: {extra:?}");
     }
 }

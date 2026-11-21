@@ -137,7 +137,8 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
     Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
 }
 
-/// Whether no process `pid` exists on this host.
+/// Whether no process `pid` exists on this host: never this process, and on Windows when the system knows no
+/// running process of that id.
 pub fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
@@ -826,7 +827,9 @@ impl ContentStore {
             // Each lane is a store session (decision 0450 §2, kind 2): its protected runs are its latest data, and a lane
             // none of whose runs is protected ended at its last run. Rewritten by each decision from the kept manifests.
             {
-                let mut lanes: HashMap<(i64, Option<&[u8]>), (i64, i64, bool)> = HashMap::new();
+                // A lane (its root and name): its latest manifest, that one's last use, and whether a run of it is protected.
+                type Lane<'a> = (i64, Option<&'a [u8]>);
+                let mut lanes: HashMap<Lane<'_>, (i64, i64, bool)> = HashMap::new();
                 for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
                     // Newest first: a lane's first manifest is its latest.
                     let lane = lanes.entry((m.root, m.lane.as_deref())).or_insert((m.id, m.last_time, false));

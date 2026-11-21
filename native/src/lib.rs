@@ -55,7 +55,7 @@ pub use rerail_logic::threads;
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
-pub mod tree_watch;
+pub use rerail_tree_watch::tree_watch;
 
 use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
@@ -405,19 +405,28 @@ fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapsho
     }
 }
 
+/// What a policy scan reads and where it writes: the policy files, the checkout's root, the content store, the output
+/// directory, and the source paths it is held to.
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct RrScanTarget {
+    pub paths: Vec<String>,
+    pub root: String,
+    pub store: String,
+    pub output: String,
+    pub source_paths: Option<Vec<String>>,
+}
+
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn scan_rr_policies_async(
-    paths: Vec<String>,
-    root: String,
-    store: String,
-    output: String,
+    target: RrScanTarget,
     analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source_paths: Option<Vec<String>>,
     source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
     policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
+    let RrScanTarget { paths, root, store, output, source_paths } = target;
     let policy_snapshot = policy_source.map(|source| source.pinned_snapshot());
     let policies = loaded.map(|loaded| {
         let programs = loaded.programs.lock().unwrap_or_else(|error| error.into_inner());

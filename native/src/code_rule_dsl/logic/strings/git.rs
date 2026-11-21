@@ -57,7 +57,7 @@ fn tracking_index(repo: &Repo) -> Option<(gix::index::File, String)> {
     let mut digest = sha2::Sha256::new();
     for entry in file.entries() {
         let path = entry.path(&file);
-        digest.update(&(path.len() as u64).to_le_bytes());
+        digest.update((path.len() as u64).to_le_bytes());
         digest.update(path.as_bytes());
     }
     Some((file, crate::content_store::observe::hex(&digest.finalize().into())))

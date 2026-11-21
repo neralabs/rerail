@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -192,7 +192,7 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
         lowered - mismatched.len(),
         tapes.len(),
     );
-    slowest.sort_by(|left, right| right.0.cmp(&left.0));
+    slowest.sort_by_key(|s| std::cmp::Reverse(s.0));
     eprintln!("S1 time: W's matcher {oracle_time:?}, lowered {lowered_time:?}; slowest lowered: {:?}", &slowest[..slowest.len().min(5)]);
     for mismatch in &mismatched {
         eprintln!("  mismatch {mismatch}");
@@ -532,7 +532,7 @@ fn facts_on_metal_are_read_in_their_block() {
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_metal() {
     use super::compile_matcher::Backend;
@@ -602,7 +602,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// passes mark their bits as they publish (`packed_batch::MARKS`). A clause refused for the
 /// interpreter's per-lane workspace or the launch bound (5 of 39, O38; the packed batch refused the
 /// same ones) is counted, not compared: it runs as walks in production.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
@@ -654,7 +654,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
 /// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
 /// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
 /// until they finish, and it finds the full budget's roots.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
@@ -860,7 +860,7 @@ fn replan_finds_the_full_budgets_roots_on_the_pack() {
     replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
 }
 
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
     // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
@@ -871,7 +871,7 @@ fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
 /// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
 /// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
 /// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
     use super::compile_matcher::{Backend, LoweredWave};
@@ -950,7 +950,7 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
 
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
     let tapes = widened_tapes();
@@ -1029,11 +1029,8 @@ fn anchored_walks_find_the_unanchored_roots() {
         unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let cpu = || {
-            // SAFETY: getrusage writes the struct it is given.
-            let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-            let time = |t: libc::timeval| std::time::Duration::from_micros(t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64);
-            time(usage.ru_utime) + time(usage.ru_stime)
+            let (user, system) = crate::code_rule_dsl::prof::process_usage();
+            std::time::Duration::from_secs_f64(user + system)
         };
         let cpu_before = cpu();
         let started = std::time::Instant::now();
@@ -1062,7 +1059,9 @@ fn anchored_walks_find_the_unanchored_roots() {
     let (anchored, with, kept, dropped, swept) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
-    let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
+    // A run's roots by clause and text, and the (clause, text)s it gave to W.
+    type Found = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
+    let settled = |found: &Found, w: usize, c: usize, t: usize| -> BTreeSet<u32> {
         if !found.1.contains(&(c, t)) {
             return found.0[c][t].clone();
         }
@@ -1101,7 +1100,7 @@ fn anchored_walks_find_the_unanchored_roots() {
 /// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
 /// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
 /// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn on_metal_anchored_walks_find_the_unanchored_roots() {
     use super::compile_matcher::Backend;
@@ -1499,7 +1498,9 @@ fn anchor_rows_per_answer() {
             per.push((name.clone(), candidates, roots, steps, label_rows, clause.labels.defs.len(), anchor_rows));
         }
     }
-    let total = |f: fn(&(String, u64, u64, u64, u64, usize, u64)) -> u64| per.iter().map(f).sum::<u64>();
+    // A clause's name, candidates, roots, steps, label rows, labels and anchor rows (`per`).
+    type Per = (String, u64, u64, u64, u64, usize, u64);
+    let total = |f: fn(&Per) -> u64| per.iter().map(f).sum::<u64>();
     let (candidates, roots, steps, label_rows, anchor_rows) = (total(|p| p.1), total(|p| p.2), total(|p| p.3), total(|p| p.4), total(|p| p.6));
     eprintln!("anchored root walks: {anchor_rows} starts for {roots} roots ({:.2} a root), of {candidates}", anchor_rows as f64 / roots.max(1) as f64);
     eprintln!(
@@ -1683,7 +1684,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
 /// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
@@ -1718,7 +1719,7 @@ fn sibling_shape(words: &[u32]) -> bool {
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
 /// its limit where the other does not). A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn spilled_walks_find_the_cpus_roots() {
     use super::compile_matcher::Backend;
@@ -1832,7 +1833,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {

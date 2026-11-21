@@ -1,10 +1,10 @@
 import { isUtf8 } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import {
-  existsSync,
   chmodSync,
   closeSync,
   constants as fsConstants,
+  existsSync,
   fstatSync,
   linkSync,
   lstatSync,
@@ -744,6 +744,8 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
  * file cannot be written (a read-only repository), the stable id stands.
  */
 function gitCloneId(location: RepositoryIdentityLocation): string {
+  // A marker is the id. Else the stable one ({@link checkoutIdentity}) is written as the marker; where the folder
+  // cannot be written, it is the id still.
   const { id: stable, marked } = checkoutIdentity(location);
   if (stable !== undefined && marked) return stable;
   try {

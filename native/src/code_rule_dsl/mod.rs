@@ -775,7 +775,7 @@ mod demand {
     }
 }
 // Metal as the engine's device (`rerail-device-metal`): registered as the library loads (`install_devices`).
-#[cfg(target_os="macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use rerail_device_metal::code_rule_dsl::device_metal;
 #[cfg_attr(test, path = "embed")]
 mod embed {
@@ -1728,7 +1728,7 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         use std::time::Instant;
     }
-    #[path = "plan"]
+    #[cfg_attr(test, path = "plan")]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
         // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -1741,7 +1741,8 @@ pub(crate) mod logic {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[path = "corpus"]
+        // Only its tests are files of their own.
+        #[cfg_attr(test, path = "corpus")]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             // The base tests compile and evaluate rule documents through the engine (`test_support`).
@@ -1798,7 +1799,6 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod tests;
             }
-            pub mod references;
             // The corpus runner's tests: they parse files, so they run where the languages are registered.
             #[cfg(test)]
             pub mod tests;
@@ -1848,6 +1848,8 @@ pub(crate) mod logic {
         pub mod tests;
         #[cfg(test)]
         pub mod coverage;
+        #[cfg(test)]
+        pub mod first_tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{AggOp, Value};
         #[allow(unused_imports)]
@@ -2866,7 +2868,6 @@ mod matcher {
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::matcher::analysis::RequiredText;
     #[allow(unused_imports)]
-    #[cfg_attr(not(test), allow(unused_imports))]
     pub(super) use crate::code_rule_dsl::matcher::lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
     #[allow(unused_imports)]
     pub(crate) use crate::code_rule_dsl::matcher::analysis::{calls_positive_only, reads_import_targets};
@@ -3271,7 +3272,7 @@ mod residency {
         }
     }
     // The slabs' tests store parsed documents: they run where the languages are registered.
-    #[cfg(target_os="macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub mod slabs {
         pub use rerail_device_metal::code_rule_dsl::residency::slabs::*;
         #[cfg(test)]
@@ -3636,7 +3637,6 @@ mod tape {
     #[allow(unused_imports)]
     use tree_sitter::{Language, Node as TsNode, TreeCursor};
     #[allow(unused_imports)]
-    #[allow(unused_imports)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::tape::wire::index_span;
@@ -3773,7 +3773,7 @@ mod transducer {
         pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
         pub mod compile_matcher {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
-            #[cfg(target_os="macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::transducer::packed::*;
@@ -3790,7 +3790,7 @@ mod transducer {
         // Read by simdjson's registration (not wasm: `install_languages`) and the tests.
         #[cfg(any(test, feature = "test-hooks", not(target_family = "wasm")))]
         pub use rerail_lang_json::code_rule_dsl::transducer::packed::json_parser;
-        #[cfg(target_os="macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub mod metal_backend {
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_backend::*;
@@ -3798,10 +3798,10 @@ mod transducer {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
         #[allow(unused_imports)]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
-        #[cfg(target_os="macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         #[cfg_attr(test, path = ".")]
         pub mod metal_program_backend {
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_program_backend::*;
@@ -3811,11 +3811,11 @@ mod transducer {
             pub mod tape_tests;
         }
         // Metal's semantic fixtures parse documents: they run where the languages are registered.
-        #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
         pub mod metal_semantic_conformance;
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_sort;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tape::TapeDoc;
@@ -3841,26 +3841,25 @@ mod transducer {
         use std::ops::Range;
         #[allow(unused_imports)]
         use std::sync::Arc;
-        #[allow(unused_imports)]
         #[cfg(test)]
         #[allow(unused_imports)]
         use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
         #[allow(unused_imports)]
-        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
         pub(super) use crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope as MetalTestScope;
         #[allow(unused_imports)]
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::set_steps;
         #[allow(unused_imports)]
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::lattice as metal_lattice;
         #[allow(unused_imports)]
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::nearest as metal_nearest;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{RootJobs, RootsFound};
         #[allow(unused_imports)]
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
@@ -3871,13 +3870,11 @@ mod transducer {
         #[allow(unused_imports)]
         use rerail_compiler::native_cpu_codegen;
         #[allow(unused_imports)]
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::block;
-        #[allow(unused_imports)]
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
         #[allow(unused_imports)]
@@ -4698,6 +4695,12 @@ pub(crate) fn install_languages() {
         (language::Via::CallArgument, &embed::call_argument::CallArgument),
         #[cfg(feature = "lang-markdown")]
         (language::Via::InlineContent, &embed::inline_content::InlineContent),
+        #[cfg(all(feature = "lang-rr", feature = "lang-json"))]
+        (language::Via::JsonObject, &embed::json_object::JsonObject),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::MatchRegex, &embed::match_regex::MatchRegex),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
@@ -4783,9 +4786,6 @@ pub(crate) fn install_languages() {
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
-    // Python's reference graph, a program's cross-file relations.
-    logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
-    logic::plan::corpus::reference_facts::install(logic::plan::corpus::references::summarize_tape);
     workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
         logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
             .map_err(|error| error.to_string())
@@ -4796,7 +4796,7 @@ pub(crate) fn install_languages() {
         Ok(snapshot.files.into_iter().map(|f| sql_executor::documents::File { path: f.path, language: f.language, source: f.source }).collect())
     });
     // The candidate compiler's audit of a compiled rule.
-    let _ = rule_api::FRONTIER_AUDIT.set(|rule| prefilter::candidate_frontier_audit(rule).into());
+    let _ = rule_api::FRONTIER_AUDIT.set(prefilter::candidate_frontier_audit);
     // What compiles and launches a span pattern's prefilter (the transducer's block programs).
     facts::span_prefilter::install_span_prefilter(transducer::packed::regex_block::compile_span, transducer::packed::regex_block::launch_spans);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
@@ -4813,6 +4813,7 @@ pub(crate) fn install_languages() {
         literal::scanf::GRAMMAR,
         literal::phpdoc::GRAMMAR,
         literal::rust_format::GRAMMAR,
+        literal::regex::GRAMMAR,
         #[cfg(test)]
         literal::CHARS,
     ]);
@@ -4836,6 +4837,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
         }
+        // Regular expressions in the engine's dialect (decision 0495 §2): a rule file's `match` regexes, and any
+        // string a rule parses as one.
+        parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Regex, name: "regexes (the Rust dialect, hand-written)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::Regex); &P } });
         // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
         if cfg!(feature = "lang-typescript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });
@@ -4925,9 +4929,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
-            // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
+            // simdjson where it builds (not wasm or MSVC: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(target_family = "wasm"))]
+            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
         }
         tape::install_parsers(parsers);
@@ -4939,7 +4943,7 @@ pub(crate) fn install_languages() {
 /// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
 /// `transducer::packed::device`). Called as the library loads, before any run.
 pub(crate) fn install_devices() {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     device_metal::register();
 }
 

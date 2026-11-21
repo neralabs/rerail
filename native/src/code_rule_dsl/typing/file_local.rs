@@ -186,7 +186,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, locate_all};
+pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -323,16 +323,15 @@ pub fn assemble(
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    let local_inputs: Vec<String> = f.inputs().filter(|i| !matches!(*i, "reference_edge" | "reference_open")).map(str::to_owned).collect();
+    let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
     let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = version.part(&local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
-        let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        let local = version.part(local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
     crate::code_rule_dsl::logic::version_trace::note("split.local", &version, &versions.local);
@@ -457,7 +456,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
         for native in &natives {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
-                if key.contains_key(r) && semi.remove(&root(r)) {
+                if key.contains_key(r) {
+                    semi.remove(&root(r));
                 }
                 if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
                     tainted.insert(v.rel_name(native.rel).to_owned());
@@ -499,7 +499,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
                 tainted.insert(name(head).to_owned());
             }
         }
-        if outputs.iter().any(|o| tainted.contains(*o)) && semi.remove("node") {
+        if outputs.iter().any(|o| tainted.contains(*o)) {
+            semi.remove("node");
         }
         if semi.len() == semi_before && tainted.len() == tainted_before {
             break;

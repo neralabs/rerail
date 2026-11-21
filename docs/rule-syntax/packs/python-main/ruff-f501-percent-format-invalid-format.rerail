@@ -1,5 +1,4 @@
 .policy "ruff-f501-percent-format-invalid-format" revision 1
-.guests off
 .description "Fix malformed %-format strings, such as incomplete specifiers or unclosed %(key) names; they raise an error at run time."
 .language python
 .mode steer

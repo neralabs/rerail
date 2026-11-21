@@ -352,14 +352,26 @@ impl Analysis for Proofs {
     const NAME: &'static str = "well-founded components";
     const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Proofs, String> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "well-founded components (decision 0364 §5)".into());
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(cx.v(), &d);
         let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
         let rules = rules_of(cx.v());
         let helpers = summarize(&rules, &types);
         let comps = cx.get::<Components>()?;
-        let recursive = |c: &BTreeSet<String>| rules.iter().any(|r| c.contains(&r.head.rel) && r.atoms.iter().any(|a| c.contains(&a.rel)));
-        let comps = comps.0.iter().filter(|c| recursive(c)).map(|c| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
+        // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
+        // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
+        // against 0458); checking the recursive ones takes under 1 ms.
+        let of: HashMap<&str, usize> = comps.0.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r.as_str(), i))).collect();
+        let mut recursive = vec![false; comps.0.len()];
+        for r in &rules {
+            if let Some(&c) = of.get(r.head.rel.as_str())
+                && r.atoms.iter().any(|a| of.get(a.rel.as_str()) == Some(&c))
+            {
+                recursive[c] = true;
+            }
+        }
+        let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { comps })
     }
 }
@@ -498,7 +510,8 @@ mod tests {
 "#;
 
     fn check_of(text: &str, comp: &[&str]) -> Result<Measure, String> {
-        let placed = super::super::body::Placed::whole(crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}{text}")).expect("parses"));
+        let p = crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}{text}")).expect("parses");
+        let placed = super::super::body::Placed::whole(p.clone());
         let f = placed.fields().expect("fields");
         let comp: BTreeSet<String> = comp.iter().map(|s| (*s).to_owned()).collect();
         check(&placed.v, &|r: &str| f.types(r).into_iter().map(str::to_owned).collect(), &comp)
@@ -575,7 +588,7 @@ mod tests {
              .decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n.output below\n.output reach\n"
         ))
         .expect("parses");
-        let placed = super::super::body::Placed::whole(p);
+        let placed = super::super::body::Placed::whole(p.clone());
         let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<Proofs>(&placed.v).expect("proofs");
         let set = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
         assert_eq!(proofs.counts(), (1, 1));

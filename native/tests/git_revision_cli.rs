@@ -552,7 +552,10 @@ errors(id,why) :- git_content_error(_,id,why).
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         assert!(f.run("csv", &[&out], None).status.success());
         let read = |name: &str| fs::read_to_string(out.join(format!("{name}.csv"))).unwrap();
-        if failure.is_none() {
+        if let Some(failure) = failure {
+            assert_eq!(read("errors").trim_end(), format!("{blob}\t{failure}"));
+            for name in ["acquired","signature","git_content_bytes"] { assert!(read(name).is_empty(), "{name}"); }
+        } else {
             assert_eq!(read("acquired").trim_end(), format!("{blob}\tblob\t{handle}\t5"));
             assert_eq!(read("signature").trim_end(), "00ff1325");
             let bytes = read("git_content_bytes");
@@ -561,9 +564,6 @@ errors(id,why) :- git_content_error(_,id,why).
             assert_eq!(rows, [format!("{handle}\t0\t4\t00ff1325"), format!("{handle}\t3\t100\t2541"), format!("{handle}\t9\t2\t")]);
             assert_eq!(read("git_content_read_error").trim_end(), format!("{handle}\t-1\t2\tinvalid-range"));
             assert!(read("errors").is_empty());
-        } else {
-            assert_eq!(read("errors").trim_end(), format!("{blob}\t{}", failure.unwrap()));
-            for name in ["acquired","signature","git_content_bytes"] { assert!(read(name).is_empty(), "{name}"); }
         }
         profile_decisions(&profile, "Git payload verified")
     };

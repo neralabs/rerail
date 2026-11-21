@@ -124,7 +124,8 @@ fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
 
 /// The tree of `spans`, breadth first.
 fn breadth(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
-    let mut out = vec![0..len];
+    let mut out = Vec::with_capacity(400);
+    out.push(0..len);
     let mut at = 0;
     while at < out.len() && out.len() < 400 {
         let span = out[at].clone();
@@ -222,7 +223,7 @@ fn backreferences_run_once_per_string() {
 #[test]
 fn serverplan_quality_s_regexes_lower() {
     let relative = "packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json";
-    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("..").join(relative);
+    let path = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("..").join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \

@@ -241,7 +241,7 @@ pub use ops::*;
 #[cfg(feature = "ir")]
 mod ops {
     use super::*;
-    use crate::reads::{Callee, Family};
+    use crate::reads::Callee;
     use cranelift_codegen::ir::condcodes::IntCC;
     use cranelift_codegen::ir::types::{I32, I64};
     use cranelift_codegen::ir::{self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value};
@@ -266,7 +266,7 @@ mod ops {
         Op { name: "w_open", params: &[I32, I64], ret: I32, public: true, hot: false, body: open },
         Op { name: "w_close", params: &[I64], ret: I32, public: true, hot: false, body: close },
         Op { name: "w_leaf", params: &[I32, I64, I64], ret: I32, public: true, hot: false, body: leaf },
-        Op { name: "w_commit", params: &[], ret: I32, public: true, hot: false, body: commit },
+        Op { name: "w_commit", params: &[], ret: I32, public: true, hot: true, body: commit },
         Op { name: "w_retag", params: &[I32, I32], ret: I32, public: true, hot: false, body: retag },
         Op { name: "w_set_start", params: &[I32, I64], ret: I32, public: true, hot: false, body: set_start },
         Op { name: "w_finish", params: &[], ret: I32, public: true, hot: false, body: finish },
@@ -291,6 +291,7 @@ mod ops {
         Op { name: "w_lz4_find", params: &[I64, I64, I64, I64, I64], ret: I64, public: false, hot: true, body: lz4_find },
         Op { name: "w_hash", params: &[I64, I64], ret: I64, public: false, hot: false, body: hash },
         Op { name: "w_eq", params: &[I64, I64, I64], ret: I32, public: false, hot: false, body: eq },
+        Op { name: "w_commit_blocks", params: &[I32, I32], ret: I32, public: false, hot: false, body: commit_blocks },
     ];
 
     pub fn op(name: &str) -> Option<&'static Op> {
@@ -299,18 +300,21 @@ mod ops {
 
     /// Every op declared in `module` with `linkage` and defined there, each calling the others by its id there (as
     /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
-    /// decision 0434 §6, R17). Each op's id and signature, by name.
-    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
+    /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena, so a
+    /// call between the ops is a direct branch (`colocated`); else each is long-range, as a module's code can be
+    /// mapped farther apart than a branch reaches.
+    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
         use cranelift_module::FuncId;
         // An op's call of another: the module's function of that name, by its id.
         struct ByName<'m> {
             ids: &'m std::collections::HashMap<&'static str, (FuncId, Signature)>,
+            near: bool,
         }
         impl Callee for ByName<'_> {
             fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
                 let name = func.declare_imported_user_function(ir::UserExternalName::new(0, self.ids[name].0.as_u32()));
                 let signature = func.import_signature(signature.clone());
-                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
+                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: self.near })
             }
         }
         let cc = module.isa().default_call_conv();
@@ -322,7 +326,7 @@ mod ops {
         }
         for op in OPS {
             let id = ids[op.name].0;
-            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids });
+            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids, near });
             let mut context = module.make_context();
             context.func = func;
             module.define_function(id, &mut context).map_err(|e| format!("{}: {e:?}", op.name))?;
@@ -372,36 +376,6 @@ mod ops {
             let signature = func.import_signature(signature.clone());
             func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
         }
-    }
-
-    /// The ops as Rust: the tape crate's `generated_writer.rs`, made again by `the_tape_crates_writer_is_this`.
-    pub fn rust_source() -> Result<String, String> {
-        let funcs = funcs();
-        let entries: Vec<(u32, &str)> = funcs.iter().filter(|(_, _, op)| op.public).map(|(k, _, op)| (*k, op.name)).collect();
-        let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, op)| (k, f, op.hot)).collect();
-        let body = crate::rust::translate_ops(&funcs, &entries)?;
-        let mut out = String::from(
-            "// Generated by rerail_clif::writer::rust_source from the tape's writer in CLIF (decision 0434 §6). Do not\n\
-             // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_is_this` writes it again.\n\
-             #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]\n\n",
-        );
-        out.push_str(&body);
-        let h = crate::rust::fingerprint(&out);
-        out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
-        Ok(out)
-    }
-
-    /// The ops as UKL (decisions 0434 §6 R15, 0440 §3.3): the library's `<ukl/writer.h>`, which a kernel that writes a
-    /// tape includes, made again by `the_tape_crates_writer_kernels_are_these`. Each takes the region's buffer and the
-    /// state's offset in it, as a relation's reads take theirs.
-    pub fn ukl_source() -> Result<String, String> {
-        let funcs: Vec<(u32, Function, &str)> = funcs().into_iter().map(|(k, f, op)| (k, f, op.name)).collect();
-        let body = crate::ukl::translate_reads(&funcs, "clif_", Family::Relation)?;
-        Ok(format!(
-            "// Generated by rerail_clif::writer::ukl_source from the tape's writer in CLIF (decision 0434 §6). Do not\n\
-             // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_kernels_are_these` writes\n\
-             // it again.\n#pragma once\n#include <ukl/memory.h>\n#include <ukl/clif.h>\n{body}"
-        ))
     }
 
     /// A body's builder: the state's address `p`, the op's arguments.
@@ -520,6 +494,14 @@ mod ops {
         /// The cell of `w` bytes (an i64) at `a`, written as a word: its bytes `v`'s, the bytes past it kept.
         fn cell_put(&mut self, a: Value, w: Value, v: Value) {
             let m = self.mask(w);
+            let old = self.ld(I64, a, 0);
+            let keep = self.f.ins().band_not(old, m);
+            let v = self.f.ins().band(v, m);
+            let new = self.f.ins().bor(keep, v);
+            self.st(new, a, 0);
+        }
+        /// `cell_put`, its mask given: the cell's bytes (all ones in them) `m`.
+        fn cell_put_masked(&mut self, a: Value, m: Value, v: Value) {
             let old = self.ld(I64, a, 0);
             let keep = self.f.ins().band_not(old, m);
             let v = self.f.ins().band(v, m);
@@ -790,8 +772,25 @@ mod ops {
     fn put(w: &mut W<'_, '_>) {
         let (a, i, v) = (w.arg(0), w.arg(1), w.arg(2));
         let (b, j) = w.node_block(i);
-        let esc = w.get64_at(at::ESC, a);
         let area = w.area_of(b);
+        let room = w.room_of(b);
+        put_at(w, a, j, v, Block { room, area });
+        w.ok();
+    }
+
+    /// A node's block, as its ops use it: its room's address and its side area's, made once an op (the loads that
+    /// make them come after the op's stores to cells, which neither the JIT nor rustc moves them past).
+    #[derive(Clone, Copy)]
+    struct Block {
+        room: Value,
+        area: Value,
+    }
+
+    /// Node `j` of `block`'s value `v` in array `a` (`put`). A cell's mask is its array's escape (`State::esc`, the
+    /// widest value of its width).
+    fn put_at(w: &mut W<'_, '_>, a: Value, j: Value, v: Value, block: Block) {
+        let Block { room, area } = block;
+        let esc = w.get64_at(at::ESC, a);
         let q = w.f.ins().iadd_imm(a, 1);
         let (count_at, js, vs) = w.list(area, q);
         let count = w.ld(I32, count_at, 0);
@@ -801,7 +800,7 @@ mod ops {
             escaped,
             |w| {
                 // Entries come in row order but for an ancestor's late close.
-                let k = w.call("w_find", &[js, count, j]);
+                let k = place(w, js, count, j);
                 let inside = w.f.ins().icmp(IntCC::UnsignedLessThan, k, count);
                 let ka = w.index(js, k, 2);
                 let found = w.ld16(ka, 0);
@@ -837,14 +836,31 @@ mod ops {
             },
         );
         let wa = w.width(a);
-        let room = w.room_of(b);
         let col = w.col(q);
         let j64 = w.u64of(j);
         let off = w.f.ins().imul(j64, wa);
         let cell = w.f.ins().iadd(room, col);
         let cell = w.f.ins().iadd(cell, off);
-        w.cell_put(cell, wa, cellv);
-        w.ok();
+        w.cell_put_masked(cell, esc, cellv);
+    }
+
+    /// Where entry `j` goes in a list of `count` whose offsets are at `js` (`w_find`, the first not below it): past
+    /// the last where the last is below it, as entries come in row order but for a late close or a retag, with no
+    /// search.
+    fn place(w: &mut W<'_, '_>, js: Value, count: Value, j: Value) -> Value {
+        let k = w.var(I32, count);
+        let some = w.f.ins().icmp_imm(IntCC::NotEqual, count, 0);
+        w.if_(some, |w| {
+            let last = w.f.ins().iadd_imm(count, -1);
+            let la = w.index(js, last, 2);
+            let lj = w.ld16(la, 0);
+            let behind = w.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, lj, j);
+            w.if_(behind, |w| {
+                let found = w.call("w_find", &[js, count, j]);
+                w.set(k, found);
+            });
+        });
+        w.get(k)
     }
 
     /// Entry `(j, v)` inserted at `k` of a list of `count`, the ones from `k` moved up one.
@@ -938,8 +954,16 @@ mod ops {
     fn put_code(w: &mut W<'_, '_>) {
         let (i, number) = (w.arg(0), w.arg(1));
         let (b, j) = w.node_block(i);
-        let cut = w.get32(at::CUT);
         let room = w.room_of(b);
+        let area = w.area_of(b);
+        put_code_at(w, j, number, Block { room, area });
+        w.ok();
+    }
+
+    /// Node `j` of `block`'s code (`put_code`).
+    fn put_code_at(w: &mut W<'_, '_>, j: Value, number: Value, block: Block) {
+        let Block { room, area } = block;
+        let cut = w.get32(at::CUT);
         let j64 = w.u64of(j);
         let code_at = w.f.ins().iadd(room, j64);
         let low = w.f.ins().icmp(IntCC::UnsignedLessThan, number, cut);
@@ -954,16 +978,14 @@ mod ops {
                 let d = w.f.ins().udiv(t, per);
                 let byte = w.f.ins().iadd(cut, d);
                 w.st8(byte, code_at, 0);
-                let area = w.area_of(b);
                 let zero = w.zero32();
                 let (count_at, js, vs) = w.list(area, zero);
                 let count = w.ld(I32, count_at, 0);
                 // Entries come in row order but for a retag.
-                let k = w.call("w_find", &[js, count, j]);
+                let k = place(w, js, count, j);
                 insert(w, count_at, js, vs, count, k, j, r);
             },
         );
-        w.ok();
     }
 
     /// `w_new_block(b)`: room for block `b` at its place in the tape (zeroed), a side area, its table entry.
@@ -1088,6 +1110,13 @@ mod ops {
     /// `w_open(number, start)`: a node at the end, in preorder, open.
     fn open(w: &mut W<'_, '_>) {
         let (number, start) = (w.arg(0), w.arg(1));
+        open_node(w, number, start, true);
+        w.ok();
+    }
+
+    /// Node `N`, of `number`, opened at `start`: its code, its gap, its checkpoint, the slot of the node before it.
+    /// Pushed on the open nodes where `push` (`open`); a leaf (`leaf`) is closed at once, so it never is. Its index.
+    fn open_node(w: &mut W<'_, '_>, number: Value, start: Value, push: bool) -> (Value, Value, Block) {
         let i = w.get32(at::N);
         let prev = w.get64(at::PREV_START);
         let len = w.get64(at::SOURCE_LEN);
@@ -1113,6 +1142,10 @@ mod ops {
             let r = w.call("w_new_block", &[b]);
             w.ret_if(r);
         });
+        // The node's block, made above where it is the block's first: its room and side area once.
+        let room = w.room_of(b);
+        let area = w.area_of(b);
+        let block = Block { room, area };
         // The node before is a leaf unless it is the parent: its slot describes this node.
         let any = w.f.ins().icmp_imm(IntCC::NotEqual, open_len, 0);
         w.if_(any, |w| {
@@ -1140,34 +1173,44 @@ mod ops {
                 let c = w.f.ins().bor_imm(c, 1);
                 let v = w.f.ins().select(checkpoint, a, c);
                 let zero = w.zero32();
-                let r = w.call("w_put", &[zero, im1, v]);
-                w.ret_if(r);
+                // In this node's block but where this node is its block's first.
+                w.if_else(
+                    first,
+                    |w| {
+                        let r = w.call("w_put", &[zero, im1, v]);
+                        w.ret_if(r);
+                    },
+                    |w| {
+                        let jm1 = w.f.ins().iadd_imm(j, -1);
+                        put_at(w, zero, jm1, v, block);
+                    },
+                );
             });
         });
-        let r = w.call("w_put_code", &[i, number]);
-        w.ret_if(r);
+        put_code_at(w, j, number, block);
         let gap = w.f.ins().isub(start, prev);
         let root = w.f.ins().icmp_imm(IntCC::Equal, i, 0);
         let z64 = w.c64(0);
         let gap = w.f.ins().select(root, z64, gap);
         let one = w.c32(1);
-        let r = w.call("w_put", &[one, i, gap]);
-        w.ret_if(r);
+        put_at(w, one, j, gap, block);
         let mk = w.f.ins().band_imm(j, i64::from(K - 1));
         let checkpoint = w.f.ins().icmp_imm(IntCC::Equal, mk, 0);
-        w.if_(checkpoint, |w| put_checkpoint(w, b, j, start));
+        w.if_(checkpoint, |w| put_checkpoint(w, room, j, start));
         w.set64(at::PREV_START, start);
         w.set32(at::N, i1);
-        let opens = w.part(part::OPEN);
-        let t = w.index(opens, open_len, i64::from(OPEN));
-        w.st(i, t, 0);
-        let z = w.zero32();
-        w.st(z, t, 4);
-        let none = w.c32(i64::from(NONE));
-        w.st(none, t, 8);
-        w.st(start, t, 16);
-        let ol = w.f.ins().iadd_imm(open_len, 1);
-        w.set32(at::OPEN_LEN, ol);
+        if push {
+            let opens = w.part(part::OPEN);
+            let t = w.index(opens, open_len, i64::from(OPEN));
+            w.st(i, t, 0);
+            let z = w.zero32();
+            w.st(z, t, 4);
+            let none = w.c32(i64::from(NONE));
+            w.st(none, t, 8);
+            w.st(start, t, 16);
+            let ol = w.f.ins().iadd_imm(open_len, 1);
+            w.set32(at::OPEN_LEN, ol);
+        }
         let later = w.f.ins().icmp_imm(IntCC::NotEqual, b, 0);
         let settle = w.f.ins().band(first, later);
         w.if_(settle, |w| {
@@ -1176,12 +1219,11 @@ mod ops {
             let r = w.call("w_settle", &[pb]);
             w.ret_if(r);
         });
-        w.ok();
+        (i, j, block)
     }
 
     /// Node `j` of block `b`'s checkpoint: `start` at the checkpoints' width.
-    fn put_checkpoint(w: &mut W<'_, '_>, b: Value, j: Value, start: Value) {
-        let room = w.room_of(b);
+    fn put_checkpoint(w: &mut W<'_, '_>, room: Value, j: Value, start: Value) {
         let four = w.c32(4);
         let col = w.col(four);
         let cw = w.get32(at::CW);
@@ -1212,20 +1254,28 @@ mod ops {
         let past = w.f.ins().icmp(IntCC::UnsignedGreaterThan, end, len);
         let bad = w.f.ins().bor(before, past);
         w.fail_if(bad, fail::BOUNDS, i);
+        // The node's block: its room and side area once, for its length and its slot.
+        let (b, j) = w.node_block(i);
+        let room = w.room_of(b);
+        let area = w.area_of(b);
+        let block = Block { room, area };
         let two = w.c32(2);
         let l = w.f.ins().isub(end, start);
-        let r = w.call("w_put", &[two, i, l]);
-        w.ret_if(r);
+        put_at(w, two, j, l, block);
         let size = w.f.ins().isub(n, i);
         let inner = w.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, size, 1);
         w.if_(inner, |w| {
             let s = w.u64of(size);
             let s = w.f.ins().ishl_imm(s, 1);
             let zero = w.zero32();
-            let r = w.call("w_put", &[zero, i, s]);
-            w.ret_if(r);
+            put_at(w, zero, j, s, block);
         });
-        let (b, _) = w.node_block(i);
+        // The node's block is final only once a node past its end is made (`settle`): until then, no call.
+        let b1 = w.f.ins().iadd_imm(b, 1);
+        let end = w.f.ins().imul_imm(b1, i64::from(Z));
+        let short = w.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, n, end);
+        let z = w.zero32();
+        w.if_(short, |w| w.ret(z));
         let r = w.call("w_settle", &[b]);
         w.f.ins().return_(&[r]);
         let after = w.f.create_block();
@@ -1234,26 +1284,43 @@ mod ops {
         w.f.ins().return_(&[z]);
     }
 
-    /// `w_leaf(number, start, end)`: a closed node with no children.
+    /// `w_leaf(number, start, end)`: a closed node with no children: `open` then `close`, as one. It is never on the
+    /// open nodes, it holds no inner slot (its size is 1), and its block is not final at its close (the node count is
+    /// one past it, inside its block), so neither push nor pop nor settle.
     fn leaf(w: &mut W<'_, '_>) {
         let (number, start, end) = (w.arg(0), w.arg(1), w.arg(2));
-        let r = w.call("w_open", &[number, start]);
-        w.ret_if(r);
-        let r = w.call("w_close", &[end]);
-        w.f.ins().return_(&[r]);
-        let after = w.f.create_block();
-        w.f.switch_to_block(after);
-        let z = w.zero32();
-        w.f.ins().return_(&[z]);
+        // The block's room and side area are the open's: settling the block before (`open_node`) moves neither.
+        let (i, j, block) = open_node(w, number, start, false);
+        let len = w.get64(at::SOURCE_LEN);
+        let before = w.f.ins().icmp(IntCC::UnsignedLessThan, end, start);
+        let past = w.f.ins().icmp(IntCC::UnsignedGreaterThan, end, len);
+        let bad = w.f.ins().bor(before, past);
+        w.fail_if(bad, fail::BOUNDS, i);
+        let two = w.c32(2);
+        let l = w.f.ins().isub(end, start);
+        put_at(w, two, j, l, block);
+        w.ok();
     }
 
-    /// `w_commit()`: the nodes so far final but for the open ones.
+    /// `w_commit()`: the nodes so far final but for the open ones. Called at every node (tier 2's), so hot: the
+    /// frontier moved, and the blocks it passed settled (`w_commit_blocks`) only where it passed a block's end.
     fn commit(w: &mut W<'_, '_>) {
         let frontier = w.get32(at::FRONTIER);
         let was = w.f.ins().ushr_imm(frontier, Z.trailing_zeros() as i64);
         let n = w.get32(at::N);
         w.set32(at::FRONTIER, n);
         let to = w.f.ins().ushr_imm(n, Z.trailing_zeros() as i64);
+        let passed = w.f.ins().icmp(IntCC::UnsignedLessThan, was, to);
+        w.if_(passed, |w| {
+            let r = w.call("w_commit_blocks", &[was, to]);
+            w.ret(r);
+        });
+        w.ok();
+    }
+
+    /// `w_commit_blocks(was, to)`: blocks `was..to` settled, the frontier past them (`commit`).
+    fn commit_blocks(w: &mut W<'_, '_>) {
+        let (was, to) = (w.arg(0), w.arg(1));
         let b = w.var(I32, was);
         w.while_(
             |w| {
@@ -1712,7 +1779,10 @@ mod ops {
         let (b, j) = w.node_block(i);
         let mk = w.f.ins().band_imm(j, i64::from(K - 1));
         let checkpoint = w.f.ins().icmp_imm(IntCC::Equal, mk, 0);
-        w.if_(checkpoint, |w| put_checkpoint(w, b, j, start));
+        w.if_(checkpoint, |w| {
+            let room = w.room_of(b);
+            put_checkpoint(w, room, j, start)
+        });
         w.st(start, t, 16);
         w.ok();
     }
@@ -3219,30 +3289,6 @@ mod ops {
 
 #[cfg(all(test, feature = "ir"))]
 mod tests {
-    /// The tape crate's writer is the ops' Rust (decision 0434 §6).
-    #[test]
-    fn the_tape_crates_writer_is_this() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_writer.rs");
-        let source = super::rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the writer's Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_is_this");
-    }
-
-    /// The kernels' writer is the ops' UKL, the library's `<ukl/writer.h>` (decisions 0434 §6 R15, 0440 §3.3).
-    #[test]
-    fn the_tape_crates_writer_kernels_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/writer.h");
-        let source = super::ukl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(&path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the writer's UKL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_writer_kernels_are_these");
-    }
-
     /// Every op's function passes Cranelift's verifier.
     #[test]
     fn the_ops_verify() {
@@ -3252,5 +3298,112 @@ mod tests {
                 panic!("{}: {e}\n{}", op.name, f.display());
             }
         }
+    }
+}
+
+/// The kernels' writer is written by hand, `<ukl/writer.h>` (decision 0524): its layout constants are these ops'.
+#[cfg(test)]
+mod ukl_header {
+    use super::*;
+
+    /// Every `#define CLIF_W_<name> <value>` of the header is the value here of the same name, and every name here
+    /// is defined there: the state's field offsets, the parts' numbers, format 16's constants and the failures.
+    #[test]
+    fn the_writer_headers_constants_are_the_ops() {
+        let header = include_str!("../../ukl/lib/ukl/writer.h");
+        let defined: std::collections::HashMap<&str, u64> = header
+            .lines()
+            .filter_map(|line| line.strip_prefix("#define CLIF_W_"))
+            .filter_map(|rest| rest.split_once(' '))
+            .map(|(name, value)| {
+                let value = value.trim().trim_end_matches(['u', 'l']);
+                let value = value.strip_prefix("0x").map_or_else(|| value.parse(), |hex| u64::from_str_radix(hex, 16));
+                (name, value.unwrap_or_else(|_| panic!("CLIF_W_{name}: not a number")))
+            })
+            .collect();
+        let off = |v: i32| v as u64;
+        let expected: &[(&str, u64)] = &[
+            ("Z", Z.into()),
+            ("K", K.into()),
+            ("BLOCK", BLOCK.into()),
+            ("HEAD16", HEAD16.into()),
+            ("MAX_NODES", MAX_NODES.into()),
+            ("NONE", NONE.into()),
+            ("MAGIC16", MAGIC16),
+            ("MAGIC16Z", MAGIC16Z),
+            ("OPEN", OPEN.into()),
+            ("TABLE", TABLE.into()),
+            ("LAID_AT", LAID_AT.into()),
+            ("SIDE_LIST", SIDE_LIST.into()),
+            ("SIDE_AREA", SIDE_AREA.into()),
+            ("PIECE", PIECE.into()),
+            ("RAW", RAW.into()),
+            ("LZ4", LZ4.into()),
+            ("REPEAT", REPEAT.into()),
+            ("REPEAT_MIN", REPEAT_MIN.into()),
+            ("LZ4_MIN", LZ4_MIN.into()),
+            ("LZ_HASH_LOG", LZ_HASH_LOG.into()),
+            ("LZ_ATTEMPTS", LZ_ATTEMPTS.into()),
+            ("BOUNDS", fail::BOUNDS.into()),
+            ("OUTSIDE", fail::OUTSIDE.into()),
+            ("FINAL", fail::FINAL.into()),
+            ("NOT_OPEN", fail::NOT_OPEN.into()),
+            ("NO_OPEN", fail::NO_OPEN.into()),
+            ("UNCLOSED", fail::UNCLOSED.into()),
+            ("FULL", fail::FULL.into()),
+            ("PART_KINDS", part::KINDS.into()),
+            ("PART_OPEN", part::OPEN.into()),
+            ("PART_OUT", part::OUT.into()),
+            ("PART_TABLE", part::TABLE.into()),
+            ("PART_SIDES", part::SIDES.into()),
+            ("PART_FREE", part::FREE.into()),
+            ("PART_LAID", part::LAID.into()),
+            ("PART_LAID_AT", part::LAID_AT.into()),
+            ("PART_PRESENCE", part::PRESENCE.into()),
+            ("PART_LINES", part::LINES.into()),
+            ("PART_ROOMS", part::ROOMS.into()),
+            ("PART_ROOM_FREE", part::ROOM_FREE.into()),
+            ("PART_PIECES", part::PIECES.into()),
+            ("PART_SEEN", part::SEEN.into()),
+            ("PART_CKPT", part::CKPT.into()),
+            ("PART_LZ", part::LZ.into()),
+            ("AT_ESC", off(at::ESC)),
+            ("AT_SOURCE_LEN", off(at::SOURCE_LEN)),
+            ("AT_PREV_START", off(at::PREV_START)),
+            ("AT_W", off(at::W)),
+            ("AT_CW", off(at::CW)),
+            ("AT_VW", off(at::VW)),
+            ("AT_CUT", off(at::CUT)),
+            ("AT_PER", off(at::PER)),
+            ("AT_STRIDE", off(at::STRIDE)),
+            ("AT_AT", off(at::AT)),
+            ("AT_FLAGS", off(at::FLAGS)),
+            ("AT_KW", off(at::KW)),
+            ("AT_FW", off(at::FW)),
+            ("AT_TAG", off(at::TAG)),
+            ("AT_MARK", off(at::MARK)),
+            ("AT_NEWLINES", off(at::NEWLINES)),
+            ("AT_N", off(at::N)),
+            ("AT_FRONTIER", off(at::FRONTIER)),
+            ("AT_BAD", off(at::BAD)),
+            ("AT_BAD_NODE", off(at::BAD_NODE)),
+            ("AT_OPEN_LEN", off(at::OPEN_LEN)),
+            ("AT_BLOCKS", off(at::BLOCKS)),
+            ("AT_ZBUCKETS", off(at::ZBUCKETS)),
+            ("AT_ZBASE", off(at::ZBASE)),
+            ("AT_ZPREV", off(at::ZPREV)),
+            ("AT_ZNEXT", off(at::ZNEXT)),
+            ("AT_ZOFF", off(at::ZOFF)),
+            ("AT_ZBACK", off(at::ZBACK)),
+            ("AT_PARTS", off(at::PARTS)),
+            ("AT_PART", off(at::PART)),
+            ("AT_P_AT", off(at::P_AT)),
+            ("AT_P_CAP", off(at::P_CAP)),
+            ("AT_P_LEN", off(at::P_LEN)),
+        ];
+        for &(name, value) in expected {
+            assert_eq!(defined.get(name).copied(), Some(value), "<ukl/writer.h>'s CLIF_W_{name}");
+        }
+        assert_eq!(defined.len(), expected.len(), "<ukl/writer.h> defines CLIF_W_ names the ops do not have: {:?}", defined.keys().filter(|k| !expected.iter().any(|(n, _)| n == *k)).collect::<Vec<_>>());
     }
 }
