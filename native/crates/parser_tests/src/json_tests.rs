@@ -1143,7 +1143,7 @@ fn json_rust_is_current() {
     // An empty object or array one leaf, at its call (decision 0553): at every call of each, a value's arm.
     for (opener, kind) in [("0x7b", "object"), ("0x5b", "array")] {
         // A call's arm: the depth's test, or first the root's closer's.
-        let calls = tier2.matches(&format!("{opener} => {{\nif stack.len() == DEPTH {{")).count() + tier2.matches(&format!("{opener} => {{\nif src[starts[count - 1]")).count();
+        let calls = tier2.matches(&format!("{opener} => {{\nif depth == DEPTH {{")).count() + tier2.matches(&format!("{opener} => {{\nif src[starts[count - 1]")).count();
         assert!(calls > 0 && tier2.matches(&format!("// `{kind}`, empty.")).count() == calls, "every call of {kind} peeks for its closer");
     }
     // A value's decision once a site of the grammar's, not once a word of the number's row: the root's, a pair's

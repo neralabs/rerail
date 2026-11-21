@@ -23,8 +23,11 @@ returns by the container's kind at the depth below.
    sequence whose decision found the token, or that is written with a key: its head reads the token as unfound.
 2. **A bracketed level's optional middle is there.** Each call takes `O C` as the empty level (0553), so the body after
    the opener reads `M` without deciding it.
-3. A close still returns to the place its level's call pushed. With 1, that place is the continue place of the
+3. A close returns to the place its level's call left at its depth. With 1, that place is the continue place of the
    container below it. That is the lean parser's return by kind.
+   - Later, the same day: the return places are a fixed array by depth (`ret[depth]`, `depth`), as the lean parser's
+     `object[d]`, not a `Vec` pushed and popped. A level ends only inside its call, so the pop has no empty case. The
+     tape test's deep nests past the depth limit pass.
 
 ## Checks
 

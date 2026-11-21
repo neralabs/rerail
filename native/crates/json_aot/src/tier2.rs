@@ -300,10 +300,11 @@ fn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {
 // The records, then the index's three last entries; their count; the file's length (`src` is it padded).
 let (starts, count, n) = (&lx.starts[..], lx.count, lx.len);
 let m = &lx.masks;
-// The next record, the last token's end, the places the open levels return to, the place.
+// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.
 let mut i = 0usize;
 let mut e = 0usize;
-let mut stack: Vec<u8> = Vec::with_capacity(64);
+let mut ret: [u8; DEPTH] = [0; DEPTH];
+let mut depth = 0usize;
 let mut st: u8 = 0;
 'run: loop {
 match st {
@@ -319,7 +320,7 @@ continue 'run;
 if src[starts[count - 1] as usize] != 0x7d {
 return Err(at(src, starts, i));
 }
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x7d {
@@ -332,7 +333,8 @@ st = 1;
 continue 'run;
 }
 open(d, 15, at(src, starts, i) as u64);
-stack.push(1);
+ret[depth] = 1;
+depth += 1;
 st = 2;
 continue 'run;
 }
@@ -340,7 +342,7 @@ continue 'run;
 if src[starts[count - 1] as usize] != 0x5d {
 return Err(at(src, starts, i));
 }
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x5d {
@@ -353,7 +355,8 @@ st = 1;
 continue 'run;
 }
 open(d, 16, at(src, starts, i) as u64);
-stack.push(1);
+ret[depth] = 1;
+depth += 1;
 st = 6;
 continue 'run;
 }
@@ -400,7 +403,7 @@ st = 5;
 continue 'run;
 }
 0x7b => {
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x7d {
@@ -413,12 +416,13 @@ st = 5;
 continue 'run;
 }
 open(d, 14, at(src, starts, i) as u64);
-stack.push(5);
+ret[depth] = 5;
+depth += 1;
 st = 2;
 continue 'run;
 }
 0x5b => {
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x5d {
@@ -431,7 +435,8 @@ st = 5;
 continue 'run;
 }
 open(d, 17, at(src, starts, i) as u64);
-stack.push(5);
+ret[depth] = 5;
+depth += 1;
 st = 6;
 continue 'run;
 }
@@ -454,10 +459,9 @@ let s = starts[i] as usize;
 i += 1;
 e = s + 1;
 close(d, e as u64);
-st = match stack.pop() {
-Some(p) => p,
-None => return Err(at(src, starts, i)),
-};
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+depth -= 1;
+st = ret[depth];
 continue 'run;
 }
 _ => {
@@ -485,7 +489,7 @@ st = 8;
 continue 'run;
 }
 0x7b => {
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x7d {
@@ -498,12 +502,13 @@ st = 8;
 continue 'run;
 }
 open(d, 15, at(src, starts, i) as u64);
-stack.push(8);
+ret[depth] = 8;
+depth += 1;
 st = 2;
 continue 'run;
 }
 0x5b => {
-if stack.len() == DEPTH {
+if depth == DEPTH {
 return Err(at(src, starts, i));
 }
 if peek(src, starts, i + 1) == 0x5d {
@@ -516,7 +521,8 @@ st = 8;
 continue 'run;
 }
 open(d, 16, at(src, starts, i) as u64);
-stack.push(8);
+ret[depth] = 8;
+depth += 1;
 st = 6;
 continue 'run;
 }
@@ -539,10 +545,9 @@ let s = starts[i] as usize;
 i += 1;
 e = s + 1;
 close(d, e as u64);
-st = match stack.pop() {
-Some(p) => p,
-None => return Err(at(src, starts, i)),
-};
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+depth -= 1;
+st = ret[depth];
 continue 'run;
 }
 _ => {
