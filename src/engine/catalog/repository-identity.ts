@@ -31,7 +31,7 @@ import {
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitResult } from "../git.js";
+import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitReadOptions, type GitResult } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -117,12 +117,73 @@ function placed(requested: string, lastAnswer: boolean): RepositoryIdentityLocat
 
 /** {@link placed} for a folder whose placement inputs were read: the kept answer, else the files' or Git's. */
 function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer: boolean): RepositoryIdentityLocation {
+  return keptOrFromFiles(requested, inputs, lastAnswer) ?? settled(requested, inputs, locatedByGit(requested));
+}
+
+/** {@link placedFromInputs} where no Git is asked: the kept answer, else the files' answer, held; undefined when Git is to be asked. */
+function keptOrFromFiles(requested: string, inputs: PlacementInputs, lastAnswer: boolean): RepositoryIdentityLocation | undefined {
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
-  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false, searched: [] };
+  return fromFiles === undefined ? undefined : settled(requested, inputs, { location: fromFiles, byGit: false, searched: [] });
+}
+
+/** `located`, held under `inputs` when it answers them ({@link holdTopLevel}). */
+function settled(requested: string, inputs: PlacementInputs, located: Located): RepositoryIdentityLocation {
   holdTopLevel(requested, inputs, located);
   return { ...located.location };
+}
+
+/** The placements asking Git without blocking, by folder: two asks for one folder meanwhile share one Git process. */
+const placingWithoutBlocking = new Map<string, Promise<RepositoryIdentityLocation>>();
+
+/**
+ * {@link repositoryIdentityLocation} of `workspace` without blocking the caller's thread: the same kept answers and
+ * files, and where Git is to be asked, Git run as a process no thread waits on ({@link runGitAsync}), its answer kept
+ * as {@link placed} keeps it, so the placements and the worktree registry after it find it. Undefined, with no Git
+ * started, where no placement after it could take Git's answer ({@link keptForPlacements}). Once `options.signal` is
+ * aborted it starts no Git, and an answer from a Git that did not run to its end is kept by nothing.
+ */
+export function placeWithoutBlocking(workspace: string, options: GitReadOptions = {}): Promise<RepositoryIdentityLocation | undefined> {
+  const requested = resolve(workspace);
+  const inputs = placementInputs(requested);
+  if (!keptForPlacements(inputs)) return Promise.resolve(undefined);
+  const known = inputs === undefined ? undefined : keptOrFromFiles(requested, inputs, false);
+  if (known !== undefined) return Promise.resolve(known);
+  let asking = placingWithoutBlocking.get(requested);
+  if (asking === undefined) {
+    asking = inputs === undefined ? acceptedWithoutBlocking(requested, options) : locatedWithoutBlocking(requested, options).then(located => settled(requested, inputs, located));
+    placingWithoutBlocking.set(requested, asking);
+    void asking.finally(() => placingWithoutBlocking.delete(requested)).catch(() => undefined);
+  }
+  return asking.then(location => ({ ...location }));
+}
+
+/**
+ * Whether Git's placement of a folder with `inputs` could serve the asks after it: not while a lookup variable moves
+ * Git's lookup, when each placement asks Git, and not for a folder another account owns, each of whose placements asks
+ * Git. A folder whose files cannot describe it is placed by Git each time too, and its answer still names the checkout
+ * above it, which the worktree registry keeps ({@link acceptedByGit}).
+ */
+function keptForPlacements(inputs: PlacementInputs | undefined): boolean {
+  return inputs === undefined ? lookupEnvironment() === undefined : inputs.owned;
+}
+
+/** {@link acceptedByGit} with Git run as a process no thread waits on. */
+async function acceptedWithoutBlocking(requested: string, options: GitReadOptions): Promise<RepositoryIdentityLocation> {
+  heldTopLevels.delete(requested);
+  const facts = ownFacts(requested);
+  const located = await locatedWithoutBlocking(requested, options);
+  keepAcceptance(requested, facts, located);
+  return { ...located.location };
+}
+
+/** {@link locatedByGit} with Git run as a process no thread waits on; what Git's search reads is read before it runs. */
+async function locatedWithoutBlocking(requested: string, options: GitReadOptions): Promise<Located> {
+  const searched = searchedUp(requested);
+  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, options).catch(noGitInstalled);
+  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  return { location, byGit: true, searched };
 }
 
 /** An answer for a folder, and whether Git gave it (else the folder's files did). */
@@ -564,10 +625,51 @@ function upToTop(searched: readonly Searched[], top: string): readonly Searched[
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
-  const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  return listed(commonDirectory, contents, runGit(checkout, WORKTREE_LIST_ARGS));
+}
+
+const WORKTREE_LIST_ARGS: readonly string[] = ["worktree", "list", "--porcelain"];
+
+/** The registry `git worktree list --porcelain` gave in `result`; undefined when Git did not answer. */
+function listed(commonDirectory: string, contents: string, result: GitResult): WorktreeRegistry & { readonly contents: string } | undefined {
   if (result.status !== 0) return undefined;
   const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
   return { commonDirectory, worktrees, contents };
+}
+
+/**
+ * {@link worktreeRegistry} of `checkout` learnt without blocking the caller's thread: the checkout placed
+ * ({@link placeWithoutBlocking}) and Git's list read as a process no thread waits on, stored as the registry stores it
+ * ({@link keepList}), so the registry after it starts no Git while the registry's contents stand. Nothing is learnt
+ * where that placement is left to the calls after it, for a checkout placed by an acceptance kept with no stamp, which
+ * Git lists at each ask ({@link storedList}), nor from a list of another repository's registry ({@link listsRegistryOf}).
+ */
+export async function learnWorktreeRegistry(checkout: string, options: GitReadOptions = {}): Promise<WorktreeRegistry | undefined> {
+  if (!existsSync(checkout) || (await placeWithoutBlocking(checkout, options))?.git !== true) return undefined;
+  const place = registryPlace(checkout);
+  if (place === undefined || place.unstamped) return undefined;
+  const { commonDirectory } = place;
+  let listing = listingWithoutBlocking.get(commonDirectory);
+  if (listing === undefined) {
+    listing = listedWithoutBlocking(checkout, place, options).finally(() => listingWithoutBlocking.delete(commonDirectory));
+    listingWithoutBlocking.set(commonDirectory, listing);
+  }
+  return await listing;
+}
+
+/** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process. */
+const listingWithoutBlocking = new Map<string, Promise<WorktreeRegistry | undefined>>();
+
+async function listedWithoutBlocking(checkout: string, place: RegistryPlace, options: GitReadOptions): Promise<WorktreeRegistry | undefined> {
+  // Read before Git runs, as the registry reads it.
+  const contents = registryContents(place.commonDirectory);
+  const known = storedList(place, contents);
+  if (known !== undefined) return known;
+  const registry = listed(place.commonDirectory, contents, await runGitAsync(checkout, WORKTREE_LIST_ARGS, options));
+  // A Git that did not answer, or listed another repository's registry, leaves the registry to the calls after it.
+  if (registry === undefined || !listsRegistryOf(registry)) return undefined;
+  keepList(place, registry);
+  return registry;
 }
 
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */
@@ -702,6 +804,16 @@ export function readRemoteAddress(root: string): RemoteAddress | undefined {
   const answers: GitResult[] = [];
   for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
   return keepRemote(source, answers);
+}
+
+/** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
+export async function learnRemoteAddress(root: string, options: GitReadOptions = {}): Promise<void> {
+  const source = remoteSource(root);
+  if (source === undefined || keptRemotes.get(source.key)?.facts === source.facts) return;
+  const answers: GitResult[] = [];
+  // Each question depends on the answer before it.
+  for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(await runGitAsync(root, step.ask, options));
+  keepRemote(source, answers);
 }
 
 /** A remote Git named, "none" included, and the facts it rested on. */

@@ -23,6 +23,7 @@ import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/c
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { declaredSubmodulePaths } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import {
+  placeWithoutBlocking,
   readRemoteAddress,
   repositoryIdentityLocation,
   resolveCloneId,
@@ -31,7 +32,7 @@ import {
 } from "../../../../src/engine/catalog/repository-identity.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { gitText, runGit } from "../../../../src/engine/git.js";
+import { gitText, runGit, runGitAsync } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
@@ -39,7 +40,7 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
+  return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText), runGitAsync: vi.fn(actual.runGitAsync) };
 });
 
 vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOriginal => {
@@ -329,6 +330,30 @@ describe("every other folder, and every worktree whose files Git might read othe
     await rename(`${config}.away`, config);
     expect(gitsRegistry(main)).toEqual([]);
     expect(worktreeRegistry(main)).toBeUndefined();
+  });
+});
+
+describe("a placement asked without blocking the caller's thread", () => {
+  it("asks Git as a process no thread waits on, shares one ask per folder, and holds its answer for the placements after it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const folders = [main, main, join(root, "linked")];
+    const [blocking, waiting] = [vi.mocked(runGit).mock.calls.length, vi.mocked(runGitAsync).mock.calls.length];
+
+    expect(await Promise.all(folders.map(folder => placeWithoutBlocking(folder)))).toEqual(folders.map(folder => gitsAnswer(folder)));
+    expect({ blocking: vi.mocked(runGit).mock.calls.length - blocking, waiting: vi.mocked(runGitAsync).mock.calls.length - waiting }).toEqual({ blocking: 0, waiting: 2 });
+    expect(expectGitsAnswers(...folders)).toBe(0);
+  });
+
+  it("starts no Git once its signal is aborted, and holds nothing for the placements after it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const stopped = new AbortController();
+    stopped.abort();
+
+    await placeWithoutBlocking(main, { signal: stopped.signal });
+    expect(expectGitsAnswers(main, main)).toBe(1);
   });
 });
 

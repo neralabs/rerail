@@ -8,7 +8,7 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { fileText, placementInputs, type PlacementInputs } from "./git-placement.js";
-import { runGit, type GitResult } from "../../git.js";
+import { runGit, runGitAsync, type GitReadOptions, type GitResult } from "../../git.js";
 
 /** Each checkout's declared submodule paths, relative to its top level, with the facts Git's answer rested on. */
 const kept = new Map<string, { readonly facts: string; readonly paths: readonly string[] }>();
@@ -24,6 +24,21 @@ export function declaredSubmodulePaths(root: string): readonly string[] {
   if (known !== undefined && known.facts === facts) return known.paths;
   const answers: GitResult[] = [];
   for (let step = submoduleStep(answers); "ask" in step; step = submoduleStep(answers)) answers.push(runGit(root, step.ask));
+  return keep(root, facts, answers);
+}
+
+/**
+ * {@link declaredSubmodulePaths} of `root` learnt without blocking the caller's thread: Git asked as processes no thread
+ * waits on, unless a kept answer stands, and kept for the calls after it.
+ * The paths learnt, or none where Git's answer is left to the calls after it.
+ */
+export async function learnDeclaredSubmodules(root: string, options: GitReadOptions = {}): Promise<readonly string[]> {
+  const facts = submoduleFacts(root);
+  if (facts === undefined || facts === NONE) return [];
+  const known = kept.get(root);
+  if (known?.facts === facts) return known.paths;
+  const answers: GitResult[] = [];
+  for (let step = submoduleStep(answers); "ask" in step; step = submoduleStep(answers)) answers.push(await runGitAsync(root, step.ask, options));
   return keep(root, facts, answers);
 }
 
