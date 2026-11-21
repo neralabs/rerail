@@ -255,8 +255,9 @@ const runningChecks = (sessionId: string) => (database: Database.Database): bool
 
 describe("the records a power cut leaves, once the next daemon has started", () => {
   // The check's start reached the disk, its finish did not: today it reads as running until the session's evaluator
-  // opens again, and for a session that never opens again, for good.
-  it("closes as interrupted a check whose finish the cut took, its daemon gone, and leaves its finished ones", { timeout: 120_000 }, async () => {
+  // opens again, and for a session that never opens again, for good. It finishes when its session ends, however late
+  // the next start comes.
+  it("closes as interrupted, at its session's end, a check whose finish the cut took, its daemon gone, and leaves its finished ones", { timeout: 120_000 }, async () => {
     const { root, databasePath, checkout } = await records();
     const { start, writes } = events(checkout);
     const daemon = await daemonProcess(root, databasePath);
@@ -266,10 +267,11 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     await daemon.stop();
     cutPower(databasePath, latestCommitWhere(databasePath, database => runningChecks("s")(database)
       && (database.prepare("SELECT count(*) AS n FROM audits WHERE session_id = 's' AND status = 'completed'").get() as { n: number }).n === 1));
-    await nextDaemon(root, databasePath);
+    await nextDaemon(root, databasePath, () => Date.now() + 24 * 60 * 60_000);
     const { audits } = await dashboard(databasePath, "/api/audits?sessionId=s") as { audits: Array<{ status: string; finishedAt: number | null }> };
     expect(audits.map(audit => audit.status).sort()).toEqual(["completed", "interrupted"]);
     expect(audits.every(audit => audit.finishedAt !== null)).toBe(true);
+    expect(audits.find(audit => audit.status === "interrupted")?.finishedAt).toBe(sessionRow(databasePath, "s")?.endedAt);
   });
 
   // A check of a session another daemon still runs is that daemon's to finish. Both kinds of check run when the next
