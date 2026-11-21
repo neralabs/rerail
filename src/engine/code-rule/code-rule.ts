@@ -1595,6 +1595,14 @@ export interface CodeRuleAuditor {
    * Absent: a file's checkout does not change while a session runs.
    */
   refreshOwners?(paths: readonly string[]): void;
+  /**
+   * Before a tool call's files are filtered at its start: builds the rules of the checkouts that own `paths` (as for
+   * `acceptsPath`), compiling them off the daemon's thread, and settles once they are built, so `acceptsPath`
+   * compiles nothing on it. Absent: `acceptsPath` builds them itself.
+   */
+  prepareRules?(paths: readonly string[]): Promise<void>;
+  /** Settles once the rules `openWorkspace` builds ahead of any call are built. Absent: it builds none. */
+  rulesBuiltAhead?(): Promise<void>;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
