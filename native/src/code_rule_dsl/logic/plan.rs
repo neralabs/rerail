@@ -729,6 +729,18 @@ impl Stats {
         self.steps_cache.0.lock().clear();
     }
 
+    /// The tree's nodes by kind atom, exactly: `node`'s kind column's value counts (decision 0458: kept and patched
+    /// by document, as every base relation's are). They replace `tree`'s, whose counts are a sample's, scaled. The
+    /// planner reads `kind`'s values against `node`'s statistics (`view_stats_held`), so the two must be counted
+    /// together. A kind's mean subtree size stays `tree`'s: it is a mean, not a count.
+    pub fn kinds_counted(&mut self, counts: impl IntoIterator<Item = (i64, i64)>) {
+        let mut counts: Vec<(i64, i64)> = counts.into_iter().filter(|&(_, n)| n > 0).collect();
+        counts.sort_unstable();
+        self.nodes = counts.iter().map(|&(_, n)| n).sum::<i64>() as f64;
+        self.kfreq = Arc::new(counts.into_iter().map(|(k, n)| (k.to_string(), n)).collect());
+        self.steps_cache.0.lock().clear();
+    }
+
     /// Whether any column of `rel` has statistics (read or measured).
     /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
     /// item 5).

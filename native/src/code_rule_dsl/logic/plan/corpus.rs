@@ -8902,6 +8902,9 @@ fn run_observed_within(
             totals.add_rows(rel, 0, empty.as_ref(), &types);
         }
     }
+    // `node`'s kind column's value counts, as its statistics were had (kept, patched or counted): the tree's kinds
+    // exactly (`Stats::kinds_counted`), which the cross part's plans read beside `node`'s own statistics.
+    let node_kinds: parking_lot::Mutex<Option<Vec<(i64, i64)>>> = parking_lot::Mutex::new(None);
     // A memoised run's base relations, as the cross-file part reads them: every file's rows, read from the memo or
     // evaluated, measured once (a file read from the memo has no chunk to measure them in).
     if memoised {
@@ -9251,6 +9254,12 @@ fn run_observed_within(
                 k.documents_scanned(source, &from, 1);
                 (k, "counted", true)
             });
+            if rel == "node"
+                && let Some(kind) = names.iter().position(|c| c == "kind")
+                && let Some(counts) = counted.exact(kind)
+            {
+                *node_kinds.lock() = Some(counts.collect());
+            }
             let by_name: HashMap<String, Stat> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
             // The corpus batch's probes of it estimated by them before its rows are made (decision 0494).
             if let Some(batch) = &corpus_batch {
@@ -9471,6 +9480,9 @@ fn run_observed_within(
     if own {
         if memo_tree_stats {
             own_totals.apply(&mut cross_stats);
+            if let Some(counts) = node_kinds.lock().take() {
+                cross_stats.kinds_counted(counts);
+            }
         } else {
             cross_stats.nodes = nodes as f64;
             cross_stats.docs = Some(own_totals.docs);

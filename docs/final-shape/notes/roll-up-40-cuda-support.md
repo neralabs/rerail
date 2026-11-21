@@ -297,6 +297,10 @@ ours starts the child in the idle priority class, and theirs keeps the parent's 
   Each is the kind the list holds as `stays` (code registered at load, a test lock, a constant read once), and is
   now listed as such. `mod.rs::MIBS` is cut.
 - **An unused variable** in a file-local test: the switch is read once, and the assertion reads it.
+- **Hiding's #862 test** (`an_axis_over_a_folded_kind_set_reads_the_original_set`, rerail-logic, which the checks
+  above did not run whole) failed. Its code and test are both theirs. Its output showed `t`, a node inside an annotation's
+  body, so item 4's rule rightly drops the clone the test reads. The fixture now shows `t`'s text: the clone reads the
+  annotation's axis inside its body and stays, so the test checks #862's folding again. rerail-logic: 568 of 568.
 
 ## Measured
 
