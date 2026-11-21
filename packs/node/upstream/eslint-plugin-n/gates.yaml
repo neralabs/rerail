@@ -54,6 +54,9 @@ rules:
   "n/no-deprecated-api":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt:
+      runs: { member_expression: 4, subscript_expression: 3 }
+      reason: "Each member_expression or subscript_expression step (a.b or a['b']) is the object, or the callee, of the step before it in one access chain, such as globalThis.process.getBuiltinModule('events').EventEmitter.listenerCount. Each step checks a different property name, so no step is a copy of another."
   "n/no-exports-assign":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -117,6 +120,9 @@ rules:
   "n/no-unsupported-features/node-builtins":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt:
+      runs: { member_expression: 5, object_pattern: 3, subscript_expression: 4 }
+      reason: "Each member_expression or subscript_expression step (a.b or a['b']) is the object, or the callee, of the step before it in one access chain, such as globalThis.process.getBuiltinModule('perf_hooks').performance.nodeTiming.uvMetricsInfo, and each object_pattern step is the next level of a nested destructuring of that chain, such as const { webcrypto: { subtle } } = crypto. Each step checks a different property name, so no step is a copy of another."
   "n/prefer-global/buffer":
     deprecated: null
     recommended: null

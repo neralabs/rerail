@@ -46,8 +46,22 @@ export interface SizeMetrics {
   repeatedShare: number;
   /** The most times one node kind (or pattern) definitely occurs along a single nesting path, through utilities and `count`. */
   nestingRun: number;
+  /** Each node kind (`pattern:<text>` for a pattern) whose run reaches `NESTING_RUN_LIMIT`, with its run. */
+  longRuns: NestingRuns;
   /** Utilities that reach themselves through `matches`. Reported, not judged: recursion is how the DSL walks trees. */
   recursiveUtils: string[];
+}
+
+/** Runs of one node kind along a nesting path, by kind: a pattern's key is `pattern:<text>`. */
+export type NestingRuns = Record<string, number>;
+
+/**
+ * A rule's declared exemption from no-written-out-repetition: `reason`, why its runs are not a copy written out, and
+ * `runs`, the runs it excuses, which must be the runs the check measures (`NestingRuns`, those at the limit or over).
+ */
+export interface RepetitionExemption {
+  reason: string;
+  runs: NestingRuns;
 }
 
 export interface CompactResult {
@@ -142,7 +156,7 @@ function repeatedStructureBytes(clauses: unknown): number {
 }
 
 function nodeLabel(node: Record<string, unknown>): string | undefined {
-  if (typeof node.kind === "string") return `kind:${node.kind}`;
+  if (typeof node.kind === "string") return node.kind;
   if (typeof node.pattern === "string") return `pattern:${node.pattern}`;
   return undefined;
 }
@@ -158,57 +172,113 @@ function calledUtilities(node: Record<string, unknown>): string[] {
   return isRecord(matches) ? Object.keys(matches) : [];
 }
 
+/** A `define` clause's utilities and the language whose queries may call them. */
+function definedUtilities(clause: unknown): { language: string; utils: Record<string, unknown> } | undefined {
+  const define = isRecord(clause) ? clause.define : undefined;
+  return isRecord(define) && typeof define.language === "string" && isRecord(define.utils) ? { language: define.language, utils: define.utils } : undefined;
+}
+
 /**
- * The most times one node kind (or pattern) occurs along a single nesting path. A path counts what each node
- * definitely is: its own kind, its `all` parts, a one-item `any`, and the utilities it calls (each at most once per
- * path, so recursion walks a tree instead of counting). Each alternative of a larger `any` is its own branch, and
- * `not` says what a node is not, so neither is merged into the node. `has`, `inside`, `follows`, `precedes` and
- * their `count` forms move to the next node.
+ * Each language's shared utilities: the `utils` of the document's `define` clauses, which every ast query of that
+ * language may call as if it listed them in its own `utils`.
  */
-function longestNestingRun(clauses: unknown): number {
-  let longest = 0;
-  const walkLevel = (start: Record<string, unknown>, utils: Record<string, unknown>, counts: Map<string, number>, level: Set<string>, onPath: Set<string>): void => {
-    const definite: Record<string, unknown>[] = [];
-    const alternatives: Record<string, unknown>[][] = [];
-    const called = new Set(onPath);
-    const queue = [start];
-    while (queue.length > 0) {
-      const part = queue.pop()!;
-      definite.push(part);
-      if (Array.isArray(part.all)) for (const item of part.all) if (isRecord(item)) queue.push(item);
-      if (Array.isArray(part.any)) {
-        const items = part.any.filter(isRecord);
-        if (items.length === 1) queue.push(items[0]!);
-        else if (items.length > 1) alternatives.push(items);
-      }
-      for (const name of calledUtilities(part)) {
-        const body = utilityBody(utils[name]);
-        if (body === undefined || called.has(name)) continue;
-        called.add(name);
-        queue.push(body);
-      }
-    }
+function sharedUtilities(clauses: unknown): Map<string, Record<string, unknown>> {
+  const shared = new Map<string, Record<string, unknown>>();
+  for (const clause of Array.isArray(clauses) ? clauses : []) {
+    const defined = definedUtilities(clause);
+    if (defined !== undefined) shared.set(defined.language, { ...shared.get(defined.language), ...defined.utils });
+  }
+  return shared;
+}
+
+/** A query's own `utils`. */
+function ownUtilities(query: Record<string, unknown>): Record<string, unknown> {
+  return isRecord(query.utils) ? query.utils : {};
+}
+
+/** An ast query: a `rule` in a `language`, with optional `utils` of its own. */
+function isAstQuery(value: Record<string, unknown>): value is Record<string, unknown> & { rule: Record<string, unknown>; language: string } {
+  return isRecord(value.rule) && typeof value.language === "string";
+}
+
+/** A node's `any`: a one-item `any` is part of the node; the items of a larger one are its `alternatives`, each a branch. */
+function soleAlternative(part: Record<string, unknown>, alternatives: Record<string, unknown>[][]): Record<string, unknown>[] {
+  const items = Array.isArray(part.any) ? part.any.filter(isRecord) : [];
+  if (items.length < 2) return items;
+  alternatives.push(items);
+  return [];
+}
+
+/** The bodies of the utilities `part` calls that the path has not `called` yet, which it marks called. */
+function calledBodies(part: Record<string, unknown>, utils: Record<string, unknown>, called: Set<string>): Record<string, unknown>[] {
+  const bodies: Record<string, unknown>[] = [];
+  for (const name of calledUtilities(part)) {
+    const body = utilityBody(utils[name]);
+    if (body === undefined || called.has(name)) continue;
+    called.add(name);
+    bodies.push(body);
+  }
+  return bodies;
+}
+
+/**
+ * Everything the node `start` definitely is: itself, its `all` parts, a one-item `any`, and the utilities it calls
+ * that the path has not called yet; and the larger `any`s it branches on.
+ */
+function definiteParts(start: Record<string, unknown>, utils: Record<string, unknown>, onPath: Set<string>) {
+  const definite: Record<string, unknown>[] = [];
+  const alternatives: Record<string, unknown>[][] = [];
+  const called = new Set(onPath);
+  const queue = [start];
+  while (queue.length > 0) {
+    const part = queue.pop()!;
+    definite.push(part);
+    queue.push(...(Array.isArray(part.all) ? part.all.filter(isRecord) : []), ...soleAlternative(part, alternatives), ...calledBodies(part, utils, called));
+  }
+  return { definite, alternatives, called };
+}
+
+/** The nodes `part` moves to: its `has`, `inside`, `follows` and `precedes`, and their `count` forms. */
+function nextNodes(part: Record<string, unknown>): Record<string, unknown>[] {
+  const holders = isRecord(part.count) ? [part, part.count] : [part];
+  return holders.flatMap((holder) => RELATIONS.map((relation) => holder[relation]).filter(isRecord));
+}
+
+/**
+ * Each node kind's (or pattern's) longest run: the most times it occurs along a single nesting path. A path counts
+ * what each node definitely is (`definiteParts`): its own kind, its `all` parts, a one-item `any`, and the utilities
+ * it calls (each at most once per path, so recursion walks a tree instead of counting), its own or its language's
+ * shared ones. Each alternative of a larger `any` is its own branch, and `not` says what a node is not, so neither is
+ * merged into the node. `has`, `inside`, `follows`, `precedes` and their `count` forms move to the next node.
+ */
+function nestingRuns(clauses: unknown): Map<string, number> {
+  const shared = sharedUtilities(clauses);
+  const longest = new Map<string, number>();
+  /** Counts each label once per node, onto the runs along the path (`counts`, and `level`'s labels already counted). */
+  const countLevel = (definite: Record<string, unknown>[], counts: Map<string, number>, level: Set<string>) => {
     const next = new Map(counts);
     const here = new Set(level);
     for (const part of definite) {
       const label = nodeLabel(part);
       if (label === undefined || here.has(label)) continue;
       here.add(label);
-      next.set(label, (next.get(label) ?? 0) + 1);
-      longest = Math.max(longest, next.get(label)!);
+      const run = (next.get(label) ?? 0) + 1;
+      next.set(label, run);
+      longest.set(label, Math.max(longest.get(label) ?? 0, run));
     }
-    for (const part of definite) {
-      for (const relation of RELATIONS) if (isRecord(part[relation])) walkLevel(part[relation] as Record<string, unknown>, utils, next, new Set(), called);
-      if (isRecord(part.count)) {
-        for (const relation of RELATIONS) if (isRecord(part.count[relation])) walkLevel(part.count[relation] as Record<string, unknown>, utils, next, new Set(), called);
-      }
-    }
-    for (const group of alternatives) for (const alternative of group) walkLevel(alternative, utils, next, here, called);
+    return { next, here };
+  };
+  const walkLevel = (start: Record<string, unknown>, utils: Record<string, unknown>, counts: Map<string, number>, level: Set<string>, onPath: Set<string>): void => {
+    const { definite, alternatives, called } = definiteParts(start, utils, onPath);
+    const { next, here } = countLevel(definite, counts, level);
+    for (const node of definite.flatMap(nextNodes)) walkLevel(node, utils, next, new Set(), called);
+    for (const alternative of alternatives.flat()) walkLevel(alternative, utils, next, here, called);
   };
   const queries = (value: unknown): void => {
     if (Array.isArray(value)) value.forEach(queries);
     else if (isRecord(value)) {
-      if (isRecord(value.rule) && typeof value.language === "string") walkLevel(value.rule, isRecord(value.utils) ? value.utils : {}, new Map(), new Set(), new Set());
+      // A query's own utilities and the shared ones it reaches are one namespace: the engine refuses an id in both.
+      if (isAstQuery(value)) walkLevel(value.rule, { ...shared.get(value.language), ...ownUtilities(value) }, new Map(), new Set(), new Set());
       for (const [key, child] of Object.entries(value)) if (key !== "violation") queries(child);
     }
   };
@@ -258,26 +328,76 @@ function recursiveUtilities(clauses: unknown): string[] {
   return [...recursive].sort();
 }
 
+/** `runs` as text, by kind: `call_expression 3, pair 4`. */
+function runsText(runs: NestingRuns): string {
+  return Object.keys(runs)
+    .sort()
+    .map((kind) => `${kind} ${runs[kind]}`)
+    .join(", ");
+}
+
+/** The runs the walk measured, against their limit: what a no-written-out-repetition detail reports. */
+function measuredRun(metrics: SizeMetrics): string {
+  const long = Object.keys(metrics.longRuns).length === 0 ? "" : `; runs of ${NESTING_RUN_LIMIT} or more: ${runsText(metrics.longRuns)}`;
+  return `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})${long}`;
+}
+
+/** Whether `declared` names exactly the `measured` runs, kind and length. */
+function sameRuns(declared: NestingRuns, measured: NestingRuns): boolean {
+  const kinds = Object.keys(measured);
+  return Object.keys(declared).length === kinds.length && kinds.every((kind) => declared[kind] === measured[kind]);
+}
+
+/**
+ * A declared exemption on a flagged document whose runs reach the limit: it passes only while its runs are exactly the
+ * runs measured, since a run it does not name, or a longer one, was not judged, and one it names that shrank or went
+ * away no longer needs excusing.
+ */
+function exemptRuns(metrics: SizeMetrics, exempt: RepetitionExemption): Check {
+  if (sameRuns(exempt.runs, metrics.longRuns)) return { id: "no-written-out-repetition", ok: true, detail: `exempt (${exempt.reason}); ${measuredRun(metrics)}` };
+  const detail = `the exemption (${exempt.reason}) excuses ${runsText(exempt.runs)}, not the runs measured; ${measuredRun(metrics)}; set its runs to those measured if they are not copies either, or rewrite the repetition`;
+  return { id: "no-written-out-repetition", ok: false, detail };
+}
+
+/**
+ * no-written-out-repetition, or nothing for an unflagged document with no exemption. A declared exemption is judged
+ * on the runs it excuses (`exemptRuns`), and fails as stale where the check would pass without it: under the flag, or
+ * under the limit, the runs it excused are gone.
+ */
+function repetitionCheck(metrics: SizeMetrics, exempt: RepetitionExemption | undefined): Check[] {
+  const needed = metrics.flagged && metrics.nestingRun >= NESTING_RUN_LIMIT;
+  if (exempt === undefined) return metrics.flagged ? [{ id: "no-written-out-repetition", ok: !needed, detail: measuredRun(metrics) }] : [];
+  if (needed) return [exemptRuns(metrics, exempt)];
+  const now = metrics.flagged ? measuredRun(metrics) : `${metrics.rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag`;
+  return [{ id: "no-written-out-repetition", ok: false, detail: `stale exemption (${exempt.reason}): ${now}; remove the exemption` }];
+}
+
 /**
  * compact: a document over 15 KiB is flagged and inspected. It goes back for a rewrite when a third or more of its
  * clauses is structure written out over and over (three or more same-shaped siblings, or verbatim copies), or when one
  * node kind occurs three or more times along a single nesting path (repetition `count` or a regex quantifier would express).
- * Otherwise the size is justified.
+ * Otherwise the size is justified. `repetitionExempt`, a rule's declared reason that its runs are not copies (each
+ * step is a separate lookup or a different node, not one copy per nesting level), excuses the runs it names
+ * (`repetitionCheck`).
  */
-export function compactGate(rawBytes: number, document: { clauses?: unknown }): CompactResult {
+export function compactGate(rawBytes: number, document: { clauses?: unknown }, repetitionExempt?: RepetitionExemption): CompactResult {
   const clausesText = canonicalJson(document.clauses ?? null);
   const repeatedBytes = repeatedStructureBytes(document.clauses);
+  const runs = nestingRuns(document.clauses);
+  const longRuns: NestingRuns = {};
+  for (const [kind, run] of runs) if (run >= NESTING_RUN_LIMIT) longRuns[kind] = run;
   const metrics: SizeMetrics = {
     rawBytes,
     canonicalBytes: canonicalJson(document).length,
     flagged: rawBytes > SIZE_FLAG_BYTES,
     repeatedBytes,
     repeatedShare: clausesText.length === 0 ? 0 : repeatedBytes / clausesText.length,
-    nestingRun: longestNestingRun(document.clauses),
+    nestingRun: Math.max(0, ...runs.values()),
+    longRuns,
     recursiveUtils: recursiveUtilities(document.clauses),
   };
   if (!metrics.flagged) {
-    return { checks: [{ id: "size", ok: true, detail: `${rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag` }], metrics };
+    return { checks: [{ id: "size", ok: true, detail: `${rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag` }, ...repetitionCheck(metrics, repetitionExempt)], metrics };
   }
   const percent = (metrics.repeatedShare * 100).toFixed(1);
   return {
@@ -288,11 +408,7 @@ export function compactGate(rawBytes: number, document: { clauses?: unknown }): 
         ok: metrics.repeatedShare < REPEATED_SHARE_LIMIT,
         detail: `${percent}% of the clauses is structure written out over and over (limit ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}%)`,
       },
-      {
-        id: "no-written-out-repetition",
-        ok: metrics.nestingRun < NESTING_RUN_LIMIT,
-        detail: `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})`,
-      },
+      ...repetitionCheck(metrics, repetitionExempt),
     ],
     metrics,
   };

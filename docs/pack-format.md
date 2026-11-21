@@ -300,7 +300,12 @@ It records:
   `conformance` need an upstream tool to compare with. Lacking a tool-pack's file types, `loads`'s in-scope check asks
   the rule to apply to its `pack.json` examples' paths. The tool-pack run does not report them as unmapped and the
   not-gated check does not ask for them on the frozen list. Each must ship in `pack.json` with examples, which are
-  their proof, must set no `violation.suppress` (check 2), and must have no port entry.
+  their proof, must set no `violation.suppress` (check 2), and must have no port entry;
+- `repetitionExemptions`: own rules, by `rule`, each with its `runs` (each node kind whose run along a nesting path
+  reaches three, with its length) and a non-empty `reason` why they are not copies written out, which the `compact`
+  gate's `no-written-out-repetition` then passes while they are exactly the runs measured; an exemption the rule no
+  longer needs fails it as stale. A port declares the same in its `gates.yaml` entry
+  (`repetition_exempt`).
 
 A port whose document is under `candidates/` is scored on the fixtures, whose expected findings must cover it, and
 reported; its scores never fail a check. A port may also set:
@@ -382,7 +387,7 @@ its overfit evidence from its samples alone.
 #### gates.yaml
 
 `upstream/<tool>/gates.yaml` is a gated tool-pack's upstream manifest: pins, linted file types, and each upstream rule's
-deprecation and recommended configuration ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
+deprecation and recommended configuration, and any `rename_exempt` or `repetition_exempt` reason ([conformance/README.md](../conformance/README.md#declared-upstream-facts-gatesyaml)).
 Its `watch:` block says what the nightly upstream report ([docs/upstream.md](upstream.md)) compares between the pinned
 commit and upstream's latest release:
 
