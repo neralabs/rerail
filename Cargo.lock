@@ -4850,6 +4850,7 @@ dependencies = [
 name = "rerail-tree-watch"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "indexmap",
  "libc",
  "napi",
