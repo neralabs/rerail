@@ -2496,6 +2496,39 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     assert_eq!(lead(&order).as_deref(), Some("ann_str"), "2,455 fragments, each scanning every string, are searched again");
 }
 
+/// A kept plan's price is a prediction, and its line's run is what it cost: one that ran far over its kept price is
+/// not reused at that price. corpus0 (2026-11-21): `open_tuple`'s seed was kept at 753 rows of work, ran 41 M rows a
+/// stratum, and was reused at 753 by each of its 7 strata, since no size it read moved 2x. `r(x) :- a(x, y), c(y)`,
+/// priced over a search (so decision 0123 §7's misprice, for orders priced under one, does not hold it): its line
+/// ran a million times its price, and the next planning, its sizes moved under 2x, does not take the kept price.
+#[test]
+fn a_kept_plan_whose_line_ran_far_over_its_price_is_not_reused_at_it() {
+    let p = parse(".decl a(x: number, y: number)\n.decl c(y: number)\n.decl r(x: number)\nr(x) :- a(x, y), c(y).\n.output r\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("a", 1_000_000.0, vec![1_000_000.0, 100_000.0]), ("c", 1_000.0, vec![1_000.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), (rows / n).max(1.0));
+        }
+    }
+    model.stats.nodes = 1_000_000.0;
+    let _plans = KeepPlans::start(None);
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let own = body::nth(&p, 0);
+    let ((_, work, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert!(work > search_rows(&own, None), "priced over a search, so the misprice rule does not apply: {work}");
+    model.ran_as_planned(&own, None, work * 1e6);
+    // `a` grows half again, under the 2x that keeps a price near: a re-pricing prices that, the kept price does not.
+    model.stats.card.insert("a", 1_500_000.0);
+    model.stats.fan.insert(("a", 1), 15.0);
+    let ((_, again, _), _) = model.plan_rule_reused(fields, &own, None).unwrap();
+    assert_ne!(again, work, "a line that ran a million times its kept price is not reused at that price");
+}
+
 /// A recheck (decision 0364 stage 3) runs a rule once per candidate row, its head's variables bound before its first
 /// step: the planner prices its orders from that binding and one row (Q208), and keeps the order apart from the
 /// rule's own. `r(x) :- a(x, y), c(y).`: alone, `c`'s 10 rows lead and probe `a`'s million by `y`; with `x` bound,
