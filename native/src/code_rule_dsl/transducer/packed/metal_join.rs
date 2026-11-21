@@ -870,6 +870,9 @@ struct Building {
     /// The relation's descriptor as it was once the index was reserved (Q265): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
     before: Vec<u8>,
+    /// Its builder's work all encoded in the batch: one that is not (an error between its dispatches) gives its room
+    /// back when the batch is done, never marked built.
+    encoded: bool,
 }
 
 impl Building {
@@ -1281,14 +1284,33 @@ impl Batch {
         }
         if failed > 0 {
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
-            self.building.clear();
+            // Its indexes are half written: their room goes back (the batch's work is done, so nothing writes it).
+            for b in self.building.drain(..) {
+                let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+                b.check("its batch failed");
+                // SAFETY: the batch's work has completed, and no reader was given the index outside it.
+                unsafe { (*b.rel).give_back_index(&b.home.block, &b.room) };
+            }
             return Err(Error::BackendFailure);
         }
         for b in self.building.drain(..) {
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
             b.check("its batch done");
+            let (r, room) = (unsafe { &*b.rel }, &b.room);
+            // Another batch built the same index meanwhile (each found none, and built its own, on another thread),
+            // or this batch's builder was not all encoded: it goes back, its room the block's again, and a later
+            // probe finds the one built.
+            let other = r.find_index_from(&room.key[..room.ncols], room.from, room.rows_n).is_some_and(|i| i != room.index);
+            if other || !b.encoded {
+                if other {
+                    crate::code_rule_dsl::prof::count_named("device.index built twice, given back".into(),4 * room.rows_n as usize);
+                }
+                // SAFETY: the batch's work has completed; its stages, which read it, are done.
+                unsafe { r.give_back_index(&b.home.block, room) };
+                continue;
+            }
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
-            unsafe { (*b.rel).index_built(&b.room) };
+            unsafe { r.index_built(room) };
         }
         Ok(std::mem::take(&mut self.done))
     }
@@ -1343,15 +1365,16 @@ impl Batch {
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(i) = r.find_index(&key, rel.rows as u32) {
+            // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows.
+            if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32) {
                 return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
-            if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
+            if let Some(b) = self.building.iter().find(|b| b.encoded && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.rows) {
                 return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
-            unsafe { r.try_reserve_index(&home.block, &key, rel.rows as u32) }
+            unsafe { r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32) }
         };
         let Some(room) = room else {
             if rel.dead != 0 {
@@ -1388,7 +1411,8 @@ impl Batch {
                     // Each entry's key, `o` an order (decision 0478 step 5b), `?` not built.
                     r.indexes.as_slice().iter().take(r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).map(|ix| {
                         let k: Vec<String> = ix.key[..(ix.ncols as usize).min(8)].iter().map(u16::to_string).collect();
-                        format!("[{}]{}", k.join(","), if ix.ncols == 0 { "?" } else if ix.ordered != 0 { "o" } else { "" })
+                        let what = if ix.state == rerail_blocks::relation::DEAD { "x" } else if ix.ncols == 0 { "?" } else if ix.ordered != 0 { "o" } else { "" };
+                        format!("[{}]{what}{}", k.join(","), if ix.from != 0 { format!("@{}", ix.from) } else { String::new() })
                     }).collect::<Vec<_>>().join(" "),
                     if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
                     (home.block.reserved() >> 20).next_power_of_two(),
@@ -1402,6 +1426,11 @@ impl Batch {
             return Ok(DevIndex { moved: Some(copy), ..ix });
         };
         let n = rel.rows;
+        // Held by the batch from here: an error before its builder is all encoded gives the room back when the batch
+        // is done (`finish`), as the batch's work may already write it.
+        let held = self.building.len();
+        let before = Building::descriptor(std::ptr::from_ref(r));
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false });
         let buffer = bound(&home)?;
         assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n > 0 {
@@ -1433,10 +1462,8 @@ impl Batch {
             pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32, rel.from],
                      &[room.offs as i64, room.rows as i64], groups(n));
         }
-        let index = room.index as u32;
-        let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
+        self.building[held].encoded = true;
+        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
