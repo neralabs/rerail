@@ -177,6 +177,30 @@ pub fn map_file(file: &File, len: usize, writable: bool) -> io::Result<*mut u8> 
     if view.Value.is_null() { Err(error) } else { Ok(view.Value.cast()) }
 }
 
+/// Makes `file` sparse: a block's file is extended to its reservation (`Block::file`), and room not written then
+/// takes no disk, as on Unix.
+pub fn sparse(file: &File) -> io::Result<()> {
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::FSCTL_SET_SPARSE;
+    let mut returned = 0u32;
+    // SAFETY: the file's own handle, open for the call; the control takes no buffers.
+    let ok = unsafe {
+        DeviceIoControl(file.as_raw_handle(), FSCTL_SET_SPARSE, std::ptr::null(), 0, std::ptr::null_mut(), 0, &mut returned, std::ptr::null_mut())
+    };
+    if ok == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
+
+/// Cuts `file` to `len` bytes, where Windows lets it: it refuses while a view maps the file
+/// (`ERROR_USER_MAPPED_FILE`), and the file then stays longer, its tail sparse (`sparse`), the header saying the
+/// block's length (`Block::open_file` reads that).
+pub fn cut(file: &File, len: u64) -> io::Result<()> {
+    const ERROR_USER_MAPPED_FILE: i32 = 1224;
+    match file.set_len(len) {
+        Err(e) if e.raw_os_error() == Some(ERROR_USER_MAPPED_FILE) => Ok(()),
+        r => r,
+    }
+}
+
 /// Makes `len` bytes from `base` (a region `anon` made) read-only: its committed pages now, those committed later as
 /// they are (the region frozen).
 pub fn read_only(base: *mut u8, len: usize) -> io::Result<()> {

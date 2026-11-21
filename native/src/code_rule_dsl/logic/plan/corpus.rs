@@ -3139,7 +3139,7 @@ fn run_handed(
     // `World`'s, the run's reuse and constants keys): a root named by an alias (`/tmp`, `/var` on macOS) was read
     // by the alias and watched by both names, and the run after a cold one wrote the alias's first cursor
     // (`RERAIL_WARM`), the cold run having watched the directory above it, the store's own.
-    let root = &std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = &dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
     let git_batch = crate::git_workspace::snapshot::StorageBatch::begin(root).map_err(|error| Error::Plan(error.to_string()))?;
@@ -3160,7 +3160,7 @@ fn run_handed(
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
-    let library = std::fs::canonicalize(&library).unwrap_or(library);
+    let library = dunce::canonicalize(&library).unwrap_or(library);
     // Phase 0's root is an empty placeholder (`phase0`): asked up front, the journal waited for a cookie of a busy
     // temporary directory every run (2 s when the event came late). A read under it is watched as it comes
     // (`watch_above`).
@@ -4071,7 +4071,7 @@ fn run_observed_within(
     let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The last run's, found through the root's newest manifest, which named them.
     let last_named: Vec<[u8; 32]> = if durable.is_some() {
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         store.corpus_run_also(&root.to_string_lossy()).map_err(|e| Error::Plan(e.to_string()))?
     } else {
         Vec::new()
@@ -4182,7 +4182,7 @@ fn run_observed_within(
             // the last runs of its lane, as that run's manifest named them. Named by the preparing run alone, they made
             // the next run's record differ (Q101), and a manifest recorded without them lost them to the run after.
             if durable.is_some() {
-                let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+                let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
                 for d in store.corpus_lane_also(&root.to_string_lossy(), &lane).map_err(|e| Error::Plan(e.to_string()))? {
                     let sources = |name: &'static str| crate::code_rule_dsl::logic::program_text::run_sources(store, &preparation::run_key(name, &d)).map_err(Error::Plan);
                     if let (Some(front), Some(prepared)) = (sources(preparation::FRONT)?, sources(preparation::PREPARATION)?) {
@@ -11730,7 +11730,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
     observe(|o| {
         o.preload(root);
-        if let Ok(real) = std::fs::canonicalize(root)
+        if let Ok(real) = dunce::canonicalize(root)
             && real != root
         {
             o.preload(&real);
@@ -11749,7 +11749,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             if !path.is_file() {
                 continue;
             }
-            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
+            let relative = slashed(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?);
             // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
             let grammar = crate::code_rule_dsl::language::label_of_path(&relative);
             classify(relative, grammar);
@@ -12207,7 +12207,7 @@ pub mod tests {
             let _run = super::ObservedBatch::begin();
             assert_eq!(super::git_files(&root), None, "Git sees no file under an ignored directory");
         }
-        let real = std::fs::canonicalize(&root).unwrap();
+        let real = dunce::canonicalize(&root).unwrap();
         let record = super::observe(|o| o.run_record(&format!("git-files:{}", real.display())));
         // As `git_files` writes it: the overlays' count (eight bytes), then the files' list.
         let mut empty = 0u64.to_le_bytes().to_vec();
@@ -12779,4 +12779,14 @@ fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, 
             map.insert(key, once);
         }
     }
+}
+
+/// A path under a root as a document's path is spelled on every OS, Git's way: its parts joined with `/` (Windows'
+/// `\` separators are `/`; elsewhere a `\` is a name's own).
+pub(super) fn slashed(relative: &Path) -> String {
+    let text = relative.to_string_lossy();
+    #[cfg(windows)]
+    return text.replace('\\', "/");
+    #[cfg(not(windows))]
+    text.into_owned()
 }

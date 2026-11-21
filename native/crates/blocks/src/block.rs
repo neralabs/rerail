@@ -6,7 +6,7 @@
 
 use crate::structure;
 use std::fs::File;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
@@ -170,26 +170,24 @@ impl Block {
         b
     }
 
-    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix only: elsewhere
-    /// `Unsupported`.
-    #[cfg(not(unix))]
+    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix and Windows (a
+    /// shared mapping): elsewhere `Unsupported`.
+    #[cfg(not(any(unix, windows)))]
     pub fn file(_path: &Path, _kind: u32, _reserved: usize) -> io::Result<Block> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "a block in a file needs a shared mapping"))
     }
 
     /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`).
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        // NTFS allocates a file's length unless it is sparse; a Unix file system leaves a hole.
+        #[cfg(windows)]
+        crate::windows::sparse(&f)?;
         f.set_len(reserved as u64)?;
-        let p = unsafe {
-            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
-        };
-        if p == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
-        let b = Block::make(p.cast(), reserved, 0, Some(f), true, None);
+        let p = map_shared(&f, reserved, true)?;
+        let b = Block::make(p, reserved, 0, Some(f), true, None);
         b.init(kind);
         Ok(b)
     }
@@ -617,7 +615,7 @@ impl Block {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         if let Some(f) = &self.file {
-            f.set_len(len as u64).expect("truncate a journal block");
+            cut(f, len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
@@ -679,7 +677,7 @@ impl Block {
     /// others read up to an end they are told, decision 0401): its magic and kind checked, its whole file mapped,
     /// writable or not. Read-only, it keeps no descriptor: the mapping outlives it, and a store's reader holds none of
     /// its files open. Without shared mappings (WASI) the file is read into memory, and a writer writes it back itself
-    /// (`bytes`).
+    /// (`bytes`). On Windows a view's length is the file's, which a frozen block's may pass (`cut`).
     pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
         let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
@@ -687,20 +685,16 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(invalid(format!("{len} bytes, shorter than a header")));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let b = {
-            let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error());
-            }
-            let mut b = Block::make(p.cast(), len, len, Some(f), writable, None);
+            let p = map_shared(&f, len, writable)?;
+            let mut b = Block::make(p, len, len, Some(f), writable, None);
             if !writable {
                 b.file = None;
             }
             b
         };
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let b = {
             let mut f = f;
             let reserved = len.div_ceil(PAGE) * PAGE;
@@ -723,7 +717,7 @@ impl Block {
     /// What is written in a block mapped from its file on the disk, with `Flush::Synced`: its dirty pages written
     /// back, then the file flushed (a barrier on macOS, `fdatasync` elsewhere). Otherwise nothing: the OS writes the
     /// pages back at its own pace (decision 0481). Nothing to do for a block with no file.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
         if !flush.waits() {
             return Ok(());
@@ -731,19 +725,32 @@ impl Block {
         // The pages written: nothing past `used` is (a kept file's reservation is hundreds of MB, its facts a few;
         // asked of the whole, the kernel walked every page of it, Q361).
         let written = self.used().next_multiple_of(PAGE).min(self.reserved);
-        // SAFETY: the block's own mapping, its first `written` bytes.
-        if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
-            return Err(io::Error::last_os_error());
+        // Windows: the view's dirty pages written, then the file's buffers flushed (`FlushViewOfFile` waits for no
+        // disk).
+        #[cfg(windows)]
+        {
+            crate::windows::flush_view(self.base, written)?;
+            return match &self.file {
+                Some(f) => f.sync_data(),
+                None => Ok(()),
+            };
         }
-        let Some(f) = &self.file else { return Ok(()) };
-        #[cfg(target_os = "macos")]
-        let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
-        #[cfg(not(target_os = "macos"))]
-        let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
-        if done != 0 {
-            return Err(io::Error::last_os_error());
+        #[cfg(unix)]
+        {
+            // SAFETY: the block's own mapping, its first `written` bytes.
+            if unsafe { libc::msync(self.base.cast(), written, libc::MS_SYNC) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let Some(f) = &self.file else { return Ok(()) };
+            #[cfg(target_os = "macos")]
+            let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
+            #[cfg(not(target_os = "macos"))]
+            let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
+            if done != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// The file a block maps, when it maps one.
@@ -759,16 +766,13 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let b = {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error().to_string());
-            }
-            Block::make(p.cast(), len, len, Some(f), false, None)
+            let p = map_shared(&f, len, false).map_err(|e| e.to_string())?;
+            Block::make(p, len, len, Some(f), false, None)
         };
-        // No mapping: the file read into a reservation of its own.
-        #[cfg(not(unix))]
+        // No mapping (WASI): the file read into a reservation of its own.
+        #[cfg(not(any(unix, windows)))]
         let b = {
             let mut f = f;
             let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
@@ -778,8 +782,8 @@ impl Block {
             Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None)
         };
         let at = frozen_at(unsafe { std::slice::from_raw_parts(b.base, len) }, kind).map_err(|e| format!("{}: {e}", path.display()))?;
-        // Windows cuts a deferrable block's file only once its last view goes (`deferrable`'s module doc): until then
-        // the file is longer than the block it holds.
+        // Windows cuts no file a view maps (`cut`; `deferrable`'s module doc): a frozen block's file can be longer than
+        // the block it holds, its header saying the block's length.
         #[cfg(windows)]
         let len = if at.length <= len { at.length } else { len };
         if at.length != len {
@@ -805,12 +809,37 @@ impl Drop for Block {
                     // A file's mapping was never `reserve`'s: it is unmapped without counting.
                     if mapped {
                         crate::mem::uncounted(reserved);
+                        unsafe { crate::mem::release_mapping(base as *mut u8, reserved) };
+                    } else {
+                        unsafe { crate::mem::release(base as *mut u8, reserved) };
                     }
-                    unsafe { crate::mem::release(base as *mut u8, reserved) };
                 }
             }
         }));
     }
+}
+
+/// `len` bytes of `f` mapped shared: read and written (`writable`), or read.
+#[cfg(any(unix, windows))]
+fn map_shared(f: &File, len: usize, writable: bool) -> io::Result<*mut u8> {
+    #[cfg(unix)]
+    {
+        let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+        // SAFETY: the file's own descriptor, open for the call; the system picks the address.
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        if p == libc::MAP_FAILED { Err(io::Error::last_os_error()) } else { Ok(p.cast()) }
+    }
+    #[cfg(windows)]
+    crate::windows::map_file(f, len, writable)
+}
+
+/// `f` cut to `len` bytes; on Windows, where a view maps no file it may cut, only once no view maps it
+/// (`windows::cut`).
+pub(crate) fn cut(f: &File, len: u64) -> io::Result<()> {
+    #[cfg(windows)]
+    return crate::windows::cut(f, len);
+    #[cfg(not(windows))]
+    f.set_len(len)
 }
 
 /// A frozen block: read-only, shared by any number of readers.

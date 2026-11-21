@@ -349,13 +349,13 @@ pub(in crate::code_rule_dsl) struct Dirs {
 
 impl Dirs {
     pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
-        Some(Dirs { lib: std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
+        Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
     }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.
 pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
-    std::fs::canonicalize(super::phases::builtin_dir()).ok()
+    dunce::canonicalize(super::phases::builtin_dir()).ok()
 }
 
 /// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
@@ -372,7 +372,7 @@ struct Images {
 
 impl Images {
     fn here() -> Option<Images> {
-        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
         Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: crate::code_rule_dsl::logic::rr::image_store() })
     }
 
@@ -481,7 +481,7 @@ impl Graph {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
         let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         let mut candidate = |from: &str, name: &str| {
             if let Some(l) = &lib {
@@ -570,7 +570,7 @@ impl Graph {
 /// Runs `bootstrap.rerail` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
 pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
-    let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
+    let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rerail");
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
@@ -618,7 +618,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         .into_iter()
         .flatten()
         .chain(dirs.iter().cloned())
-        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .filter_map(|d| dunce::canonicalize(d).ok())
         .collect();
     for dir in dirs {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&bootstrap_spelling(&dir.to_string_lossy()))));
@@ -654,7 +654,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         // library) was refused, not looked at: its listing came back empty. It is no absent file the graph depends
         // on, and `holds`, which stats it, found it whenever it was there: such a graph never held, and phase 0 ran
         // again on every run, warm ones too (its first wave read every frame of the store, 250 MB).
-        g.absent.retain(|p| p.parent().and_then(|d| std::fs::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
+        g.absent.retain(|p| p.parent().and_then(|d| dunce::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
         for r in outputs.rows("p0_phase") {
             if let (V::Text(from), V::Text(phase), V::Text(path)) = (r.get(0), r.get(1), r.get(2)) {
                 g.phases.entry(host_spelling(from)).or_default().push((phase.to_owned(), PathBuf::from(host_spelling(path))));

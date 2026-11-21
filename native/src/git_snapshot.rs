@@ -804,7 +804,7 @@ impl Snapshot {
     fn open(source: &Path, revision: &str, scope: Option<String>, invocation: &Path) -> Result<Self, String> {
         let repo = physical_objects(crate::git_access::opener::open(source).map_err(|e| e.to_string())?);
         let directories = identity::Directories::open(&repo).map_err(|e| e.to_string())?;
-        let work = repo.workdir().map(std::fs::canonicalize).transpose().map_err(|e| e.to_string())?;
+        let work = repo.workdir().map(dunce::canonicalize).transpose().map_err(|e| e.to_string())?;
         let relative = |path: &Path| -> Result<PathBuf, String> {
             let Some(work) = &work else { return Ok(PathBuf::new()); };
             path.canonicalize().map_err(|e| e.to_string())?.strip_prefix(work)

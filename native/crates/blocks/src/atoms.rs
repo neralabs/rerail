@@ -149,7 +149,7 @@ pub struct AtomsW {
     raw: Raw,
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
     /// anonymous memory.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     file: Option<std::fs::File>,
     /// How its write-backs reach the disk (`sync`, decision 0481).
     flush: Flush,
@@ -163,14 +163,14 @@ impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
     pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
         let need = Self::need(cap, bytes_cap);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let block = Block::file(path, kind::ATOMS, need)?;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let block = Block::anon(kind::ATOMS, need);
         let w = AtomsW {
             raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
             flush,
         };
@@ -185,7 +185,7 @@ impl AtomsW {
         AtomsW {
             raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: None,
             // Never written to a file: nothing to wait for.
             flush: Flush::None,
@@ -236,7 +236,7 @@ impl AtomsW {
         let mut w = AtomsW {
             block: std::sync::Arc::new(block),
             raw,
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
             flush,
         };
@@ -356,9 +356,9 @@ impl AtomsW {
     /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
     /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         return self.block.sync_mapped(self.flush);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
@@ -385,11 +385,13 @@ impl AtomsW {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         self.sync()?;
-        #[cfg(unix)]
-        if let Some(f) = self.block.mapped_file() {
-            f.set_len(len)?;
+        // The file cut once this writer's view is gone: Windows cuts no file a view maps (`block::cut`).
+        #[cfg(any(unix, windows))]
+        if let Some(f) = self.block.mapped_file().map(std::fs::File::try_clone).transpose()? {
+            drop(self);
+            crate::block::cut(&f, len)?;
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
             f.set_len(len)?;
         }
@@ -750,15 +752,17 @@ mod tests {
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }
-        // Frozen: the file is what it holds, and still reads. A mapped file (Unix) is the whole reservation until
-        // then, so it shrinks; elsewhere the file was written only to the block's end (`sync`).
+        // (Windows cuts no file a view maps: the readers' views go first.)
+        drop((v, old));
+        // Frozen: the file is what it holds, and still reads. A mapped file (Unix, Windows) is the whole reservation
+        // until then, so it shrinks; elsewhere the file was written only to the block's end (`sync`).
         again.sync().unwrap();
         let before = std::fs::metadata(&path).unwrap().len();
         again.freeze().unwrap();
         let after = std::fs::metadata(&path).unwrap().len();
         let frozen = AtomsV::open(&path, 4).unwrap();
         assert_eq!(after, frozen._block.header().length, "the frozen file is its header's length");
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         assert!(after < before, "the mapping's unwritten tail is given back");
         let _ = before;
         assert_eq!(frozen.find("e", h("e")), Some(3));
