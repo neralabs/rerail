@@ -177,8 +177,12 @@ impl Drop for Fence {
     }
 }
 
-/// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the pool's, a
-/// stream's worker, or a thread that waits and takes it (a wait that helps, rayon's own waits).
+/// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the jobs started
+/// through [`as_job`] (the engine's named jobs and the jobs beside a caller) and through a stream (a run's strata,
+/// [`crate::stream::Stream`]), which, beside a run's own thread, are the only work that queues device launches or
+/// flushes a wave. The chunks of
+/// rayon's own data-parallel loops (`par_iter`, `join`) are not fenced, and need not be: they queue and flush nothing,
+/// and a fenced job one of them takes while it waits is fenced on its own.
 pub fn fenced<R>(f: impl FnOnce() -> R) -> R {
     let _fence = JOB_FENCE.get().map(|calls| {
         (calls.enter)();

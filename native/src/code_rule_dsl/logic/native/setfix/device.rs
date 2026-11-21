@@ -32,6 +32,7 @@ use super::{InRel, Interner, JoinRule, Key, Src, Step, Store, Term, Fresh, is_de
 use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
+use crate::code_rule_dsl::logic::lanes::wave::{self, OpenWaves};
 use crate::code_rule_dsl::logic::profile;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -1954,10 +1955,10 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
 }
 
 thread_local! {
-    /// The level's open command buffer (decision 0113 §3's wave): the strata placed on the device encode their joins
-    /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
-    /// whether it is open.
-    static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
+    /// The level's open command buffers (decision 0113 §3's wave): the strata placed on the device encode their joins
+    /// into the one of their job's fence depth and wait for the wave, so a level's small strata go out in one commit
+    /// and one wait. By number, while open (`lanes::wave::OpenWaves`: a job run inside another's opens its own).
+    static WAVE: RefCell<OpenWaves<mj::Batch>> = const { RefCell::new(OpenWaves::new()) };
     static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
@@ -1990,10 +1991,24 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
 
 /// The thread's open wave, committed (`direct_batch`).
 fn commit_wave() -> Result<(), String> {
-    WAVE.with_borrow_mut(|w| match w {
-        Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
-        None => Ok(()),
-    })
+    WAVE.with_borrow_mut(|w| w.each_mut().try_for_each(|wave| wave.commit_open().map_err(|e| format!("{e:?}"))))
+}
+
+/// Opens this job's command buffer for the level's wave (`OpenWaves`, at its fence depth), its commit deferred to
+/// this job's flush: its number.
+fn open_wave() -> Result<u64, String> {
+    let n = WAVES.get() + 1;
+    WAVES.set(n);
+    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    WAVE.with_borrow_mut(|w| w.open(wave::depth(), n, batch));
+    wave::defer(Box::new(move || {
+        let Some(mut batch) = WAVE.with_borrow_mut(|w| w.take(n)) else { return Ok(()) };
+        let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
+        // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
+        FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
+        Ok(())
+    }));
+    Ok(n)
 }
 
 /// A stratum's joins encoded into the level's open command buffer, to wait for the wave (`lanes::wave::flush`
@@ -2013,31 +2028,19 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    let opened = WAVE.with_borrow(Option::is_none);
-    if opened {
-        let n = WAVES.get() + 1;
-        WAVES.set(n);
-        WAVE.with_borrow_mut(|w| -> Result<(), String> {
-            *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
-            Ok(())
-        })?;
-        crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
-            let Some((n, mut batch)) = WAVE.with_borrow_mut(Option::take) else { return Ok(()) };
-            let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
-            // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
-            FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
-            Ok(())
-        }));
-    }
+    let n = match WAVE.with_borrow(|w| w.mine(wave::depth())) {
+        Some(n) => n,
+        None => open_wave()?,
+    };
     let encoded = WAVE.with_borrow_mut(|w| {
-        let (n, batch) = w.as_mut().expect("the open wave");
-        encode_runs(rules, batch, &mut rep, names).map(|runs| (*n, runs))
+        let batch = w.get_mut(n).expect("the open wave");
+        encode_runs(rules, batch, &mut rep, names).map(|runs| (n, runs))
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
         // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
         // which the wave keeps until it is done (back in the pool, another job's would be written).
-        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        WAVE.with_borrow_mut(|w| w.get_mut(n).expect("the open wave").hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;

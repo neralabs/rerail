@@ -103,6 +103,10 @@ pub mod wave {
     thread_local! {
         static SUSPENDABLE: Cell<u32> = const { Cell::new(0) };
         static QUEUED: RefCell<Vec<(&'static str, u64, Kernel)>> = const { RefCell::new(Vec::new()) };
+        /// The outputs of the launches this thread's flushes ran, by ticket. Fencing it is not needed: tickets are
+        /// unique in the process (`NEXT`), a flush adds only the launches its own job queued (`flush` splits `QUEUED`
+        /// at the job's fence), and `take` removes only the tickets its caller holds; so a job never reads another
+        /// job's outputs, and its own are where its own flush left them (`take_outputs` moves them with the job).
         static DONE: RefCell<HashMap<u64, Output>> = RefCell::new(HashMap::new());
         /// Waves flushed on this thread and the launches they held (for tests).
         static FLUSHED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
@@ -113,14 +117,67 @@ pub mod wave {
         static FENCES: RefCell<Vec<Mark>> = const { RefCell::new(Vec::new()) };
     }
 
-    /// A job may run on a thread inside another's work (a wait that helps the pool, rayon's own waits): from here until
-    /// `unfence`, a `flush` on this thread runs only what this job queued, not the launches and submissions the job
-    /// around it left for its own wave. Without it the inner job ran them into its own outputs, and the outer job's
-    /// stratum, resumed on another thread, found none ("launch has not run"). Called around every job
-    /// (`rerail_accel::exec::fenced`).
+    /// A job may run on a thread inside another's work (a wait that helps the pool, or one of rayon's that takes a
+    /// queued job): from here until `unfence`, a `flush` on this thread runs only what this job queued, not the
+    /// launches and submissions the job around it left for its own wave. Without it the inner job ran them into its
+    /// own outputs, and the outer job's stratum, resumed on another thread, found none ("launch has not run"). Called
+    /// around every job started through `rerail_accel::exec::as_job` or a stream (`rerail_accel::exec::fenced`).
     pub fn fence() {
         let at = mark();
         FENCES.with_borrow_mut(|f| f.push(at));
+    }
+
+    /// How many jobs this thread is running one inside another (`fence`): 0 on a thread's own work. A form that keeps
+    /// an open submission of its own for the wave keeps one per depth (`OpenWaves`).
+    pub fn depth() -> usize {
+        FENCES.with_borrow(Vec::len)
+    }
+
+    /// A thread's open submissions for its waves (the device joins' command buffers, `setfix::device`), each with the
+    /// depth (`depth`) of the job that opened it. A job encodes into the one of its own depth and commits it at its own
+    /// flush (the commit it `defer`red takes it by number): an inner job that found the outer job's submission open
+    /// and encoded into it deferred no commit, so its fenced flush committed nothing and its stratum found its wave
+    /// unflushed, and the outer job's commit then ran the inner's work.
+    pub struct OpenWaves<B> {
+        open: Vec<(usize, u64, B)>,
+    }
+
+    impl<B> Default for OpenWaves<B> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<B> OpenWaves<B> {
+        pub const fn new() -> Self {
+            OpenWaves { open: Vec::new() }
+        }
+
+        /// The number of the submission a job at `depth` encodes into, if one is open.
+        pub fn mine(&self, depth: usize) -> Option<u64> {
+            self.open.iter().rev().find(|(d, ..)| *d == depth).map(|(_, n, _)| *n)
+        }
+
+        /// Opens submission `n` for a job at `depth`.
+        pub fn open(&mut self, depth: usize, n: u64, b: B) {
+            self.open.push((depth, n, b));
+        }
+
+        /// Submission `n`, while open.
+        pub fn get_mut(&mut self, n: u64) -> Option<&mut B> {
+            self.open.iter_mut().find(|(_, m, _)| *m == n).map(|(.., b)| b)
+        }
+
+        /// Submission `n`, closed: its job's deferred commit.
+        pub fn take(&mut self, n: u64) -> Option<B> {
+            let at = self.open.iter().position(|(_, m, _)| *m == n)?;
+            Some(self.open.remove(at).2)
+        }
+
+        /// Every open submission, oldest first.
+        pub fn each_mut(&mut self) -> impl Iterator<Item = &mut B> {
+            self.open.iter_mut().map(|(.., b)| b)
+        }
     }
 
     /// Ends the innermost `fence`: what is queued above it is the waiter's again.
@@ -350,11 +407,88 @@ mod wave_tests {
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
     }
 
-    /// A job a waiting thread runs for the pool (`rerail_accel::exec::help_once`) is fenced off the wave the waiter
-    /// left on that thread: the job's flush runs only what the job queued, and the waiter's submission waits for the
-    /// waiter's own flush. Without the fence the job's flush ran the waiter's too, and the waiter's stratum, resumed
-    /// on another thread, found no output ("launch has not run: its wave was not flushed", 1 run in 8 of the Django
-    /// pack over linkding at 4 threads).
+    /// A job run on a thread inside another's work (`rerail_accel::exec::fenced`) is fenced off the wave the outer job
+    /// left on that thread: the inner job's flush runs only the submission it deferred, and the outer job's waits for
+    /// its own flush.
+    /// The launches an outer job queued stay its own across a fenced inner job: the inner flush runs the inner
+    /// launch alone, the outer launch has not run until the outer job's own flush. Without the fence the inner flush
+    /// ran both, and the outer job's stratum, resumed on another thread, found its output gone ("launch 26 has not
+    /// run: its wave was not flushed": the Django pack over linkding at 4 threads failed, or fell back to one run per
+    /// policy at 4x the time, in about 1 run in 8).
+    #[test]
+    fn a_flush_inside_a_fence_runs_only_the_launches_queued_inside_it() {
+        let histogram = || rerail_accel::Kernel::Histogram { off: std::sync::Arc::from([0u32, 2]), codes: std::sync::Arc::from([0u16, 1]), width: 2 };
+        std::thread::spawn(move || {
+            let outer = wave::queue("a test's outer job", vec![histogram()]);
+            wave::fence();
+            let inner = wave::queue("a test's inner job", vec![histogram()]);
+            assert_eq!(wave::flush(1).unwrap(), 1, "the inner job's flush runs its own launch alone");
+            assert!(wave::take(&inner).is_ok(), "the inner launch ran");
+            assert!(wave::take(&outer).is_err(), "the outer launch waits for the outer job's flush");
+            wave::unfence();
+            assert_eq!(wave::flush(1).unwrap(), 1, "the outer job's flush runs its launch");
+            assert!(wave::take(&outer).is_ok(), "the outer launch ran");
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// A thread's open submissions and what their commits committed, as `setfix::device` keeps its command buffers.
+    #[derive(Default)]
+    struct Submissions {
+        open: std::cell::RefCell<wave::OpenWaves<Vec<&'static str>>>,
+        committed: std::cell::RefCell<Vec<(u64, Vec<&'static str>)>>,
+        numbers: std::cell::Cell<u64>,
+    }
+
+    /// `setfix::device::submit`'s steps over a thread's open submissions: the one of this job's depth, else a new one
+    /// whose commit is deferred to this job's flush; `work` encoded into it. Its number.
+    fn submit(subs: &std::rc::Rc<Submissions>, work: &'static str) -> u64 {
+        let depth = wave::depth();
+        let mine = subs.open.borrow().mine(depth);
+        let n = match mine {
+            Some(n) => n,
+            None => {
+                let n = subs.numbers.get() + 1;
+                subs.numbers.set(n);
+                subs.open.borrow_mut().open(depth, n, Vec::new());
+                let at = std::rc::Rc::clone(subs);
+                wave::defer(Box::new(move || {
+                    let done = at.open.borrow_mut().take(n).expect("its submission open until its commit");
+                    at.committed.borrow_mut().push((n, done));
+                    Ok(())
+                }));
+                n
+            }
+        };
+        subs.open.borrow_mut().get_mut(n).expect("the open submission").push(work);
+        n
+    }
+
+    /// An inner job that submits while the outer job's submission is open (on Metal, the device joins' command
+    /// buffer) opens its own: its fenced flush commits exactly its work, and the outer job's flush exactly the outer's.
+    /// With one submission per thread, the inner job encoded into the outer's, deferred no commit, and its flush
+    /// committed nothing ("a stratum's wave was not flushed").
+    #[test]
+    fn open_submissions_follow_the_fence() {
+        std::thread::spawn(|| {
+            let subs = std::rc::Rc::new(Submissions::default());
+            let outer = submit(&subs, "outer, first");
+            wave::fence();
+            let inner = submit(&subs, "inner");
+            assert_ne!(inner, outer, "the inner job opens a submission of its own");
+            wave::flush(1).unwrap();
+            assert_eq!(*subs.committed.borrow(), [(inner, vec!["inner"])], "the inner flush commits the inner work alone");
+            assert!(subs.open.borrow_mut().get_mut(outer).is_some(), "the outer submission stays open");
+            wave::unfence();
+            assert_eq!(submit(&subs, "outer, second"), outer, "back at its depth, the outer job encodes into its own");
+            wave::flush(1).unwrap();
+            assert_eq!(*subs.committed.borrow(), [(inner, vec!["inner"]), (outer, vec!["outer, first", "outer, second"])]);
+        })
+        .join()
+        .unwrap();
+    }
+
     #[test]
     fn a_flush_inside_a_fence_runs_only_what_was_queued_inside_it() {
         std::thread::spawn(|| {
