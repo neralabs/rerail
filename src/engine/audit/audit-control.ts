@@ -447,9 +447,10 @@ export class SqliteAuditControlStore {
   /**
    * Ends each open session whose owner row's writer has ended (`writerEnded`), as a daemon stopped by a machine
    * restart, its heap limit or a kill leaves every session it held or had let go of while quiet: its scans still queued
-   * are interrupted and its owner released, as when its owner is found gone, and its record ends `idleMs` after it was
-   * last heard from (its newest recorded event, else its start), as the idle close of a daemon still running would have
-   * ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
+   * and its checks still running are interrupted (a check whose finish a power cut took would read as running for
+   * good otherwise, as would one a kill stopped, in a session that never opens again) and its owner released, as when
+   * its owner is found gone, and its record ends `idleMs` after it was last heard from (its newest recorded event, else
+   * its start), as the idle close of a daemon still running would have ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
    * returns how many sessions it ended.
    */
   endSessionsOfEndedOwners(idleMs: number, now: number): number {
@@ -483,6 +484,8 @@ export class SqliteAuditControlStore {
     const at = Date.now();
     this.#database.update(auditRequests).set({ status: "interrupted", finishedAt: at, error: "Owning runtime exited before scan could complete" })
       .where(and(inArray(auditRequests.sessionId, ids), inArray(auditRequests.status, ["queued", "running"]))).run();
+    this.#database.update(audits).set({ status: "interrupted", finishedAt: at })
+      .where(and(inArray(audits.sessionId, ids), eq(audits.status, "running"))).run();
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: at }).where(inArray(policySessionOwners.sessionId, ids)).run();
     for (const { sessionId, heardAt } of ended) {
       this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
