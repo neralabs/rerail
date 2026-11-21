@@ -85,9 +85,14 @@ export function watchHeap({ read = v8Heap, collect = collectGarbage, relieve, ra
     }
     if (relieve === undefined || relieved) return atCeiling(use);
     relieved = true;
-    void relieve().catch(() => undefined).then(afterRelief);
+    void relieve().catch(toldReliefFailed).then(afterRelief);
   };
   const timer = setInterval(look, intervalMs);
   timer.unref();
   return stop;
+}
+
+/** Says in daemon.log why the relief before a restart failed: the reading after it then decides alone. */
+function toldReliefFailed(error: unknown): void {
+  process.stderr.write(`rerail daemon: freeing what no session uses failed before a heap restart: ${error instanceof Error ? error.message : String(error)}\n`);
 }

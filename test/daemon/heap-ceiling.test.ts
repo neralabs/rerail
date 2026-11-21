@@ -134,6 +134,19 @@ describe("the daemon's heap ceiling", () => {
     expect(onStopped).not.toHaveBeenCalled();
   });
 
+  it("says in daemon.log why a relief before a restart failed", async () => {
+    vi.useFakeTimers();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const stop = watchHeap({ read: () => ({ used: 900, limit: 1_000 }), collect: () => {}, relieve: async () => await Promise.reject(new Error("a runtime failed to close")), ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling: () => {} });
+      await vi.advanceTimersByTimeAsync(1_000);
+      stop();
+      expect(stderr).toHaveBeenCalledWith("rerail daemon: freeing what no session uses failed before a heap restart: a runtime failed to close\n");
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   // A relief that never settled, then a heap back under the ceiling: when it passes the ceiling again, what no session
   // uses by then is freed first, as at the first pass, before any restart.
   it("relieves again at the next pass of the ceiling once a reading found the heap back under it, though the last relief never settled", async () => {
