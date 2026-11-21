@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 
-// The packed runtime (05 Phase 4, from scale-test-the-re-railer): every backend over one
+// The packed runtime (05 Phase 4, from N): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub mod packed;

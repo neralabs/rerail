@@ -466,6 +466,9 @@ pub(in crate::code_rule_dsl) struct Cut {
     pub(in crate::code_rule_dsl) strata: (usize, usize),
     /// Inputs whose rows changed since the last run.
     pub(in crate::code_rule_dsl) changed: Vec<String>,
+    /// The relations the program derives as a view of an input's columns (Q37, `input_view_shape`), by its rules:
+    /// never kept as rows, whatever form a run held them in (`after`, Q421).
+    pub(in crate::code_rule_dsl) views: BTreeSet<String>,
 }
 
 /// The relations a `nearest` literal reads.
@@ -551,7 +554,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
             clean.extend(scc.iter().cloned());
         }
     }
-    Ok(Cut { clean, strata: (ran, sccs.len()), changed })
+    Ok(Cut { clean, strata: (ran, sccs.len()), changed, views: views.into_keys().collect() })
 }
 
 impl Cut {
@@ -662,9 +665,12 @@ pub(in crate::code_rule_dsl) fn after(
         // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained. A kept
         // relation read where it lies (decision 0456 step 6b), which a round's maintain mode passes on unchanged, is
         // a relation's rows: kept (dropped, it was neither held nor current, and the next round gave up, "not kept").
-        if (held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
+        // A view by the program's rules (`Cut::views`) is a view whatever form this run held it in: a run that made
+        // its rows (a maintain mode deriving it from its input's versions) keeps none of them either (Q421, 0353).
+        let by_rules = cut.views.contains(&rel);
+        if (by_rules || held.view.is_some() || held.viewed) && !held.kept_in_place() && !(indexes && held.held_source().is_some()) {
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
-                eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: a view ({} rows; viewed {}, over a source {})", held.rows(), held.viewed, held.view.is_some());
+                eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: a view ({} rows; viewed {}, over a source {}, by its rules {by_rules})", held.rows(), held.viewed, held.view.is_some());
             }
             continue;
         }
@@ -2079,49 +2085,170 @@ pub(in crate::code_rule_dsl) fn base_stats(store: &ContentStore, space: [u8; 32]
     Ok(out)
 }
 
-/// The views' counts of each document of the cross part's corpus batch (decision 0494), kept beside the documents'
-/// table: by key, its digest (`Document::digest`) and its counts, as the batch made or was given them.
-pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>;
+/// A document's row of the counts kept beside the documents' table (decision 0494): its digest (`Document::digest`),
+/// views' counts and facts' size as the corpus batch made or was given them, and the content they were counted of (a
+/// file's own tree; none for a guest, or a content held in memory alone). Of the content a file has now, its document
+/// is made when first read (`syntax::Pending`, Q332): its digest and size are these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct BaseCount {
+    pub(in crate::code_rule_dsl) digest: [u8; 32],
+    pub(in crate::code_rule_dsl) counts: crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts,
+    pub(in crate::code_rule_dsl) size: crate::code_rule_dsl::facts::vtab::syntax::FactsSize,
+    pub(in crate::code_rule_dsl) content: Option<super::memo::Content>,
+}
+
+/// The counts kept beside the documents' table, by document key.
+pub(in crate::code_rule_dsl) type BaseCounts = HashMap<u32, BaseCount>;
 
 const BASE_COUNTS: &str = "#base-counts";
 
-/// The views' counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept.
+/// A counts row's words: key, digest (4), views' counts (4), facts' size (2), content (its kind, then 4 words: as the
+/// documents' table's, 2 for none).
+const COUNTS_WIDTH: usize = 16;
+
+/// The counts the store's frames in `space` keep for the cross part of `binds`; empty when none are kept (or kept in
+/// an earlier width, which a run counts again).
 pub(in crate::code_rule_dsl) fn base_counts(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<BaseCounts> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
     let Some(entry) = bound.entry(BASE_COUNTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(HashMap::new()) };
-    if entry.width() != 9 {
+    if entry.width() != COUNTS_WIDTH {
         return Ok(HashMap::new());
     }
-    let mut words: Vec<i64> = Vec::with_capacity(entry.len() * 9);
+    let mut words: Vec<i64> = Vec::with_capacity(entry.len() * COUNTS_WIDTH);
     entry.each_rows(&mut |r| words.extend_from_slice(r));
     let mut out = HashMap::with_capacity(entry.len());
-    for r in words.as_chunks::<9>().0 {
-        let (Ok(key), counts) = (u32::try_from(r[0]), [r[5], r[6], r[7], r[8]].map(|c| u32::try_from(c).ok())) else { continue };
-        let [Some(a), Some(b), Some(c), Some(d)] = counts else { continue };
+    let small = |w: i64| u32::try_from(w).ok();
+    for r in words.as_chunks::<COUNTS_WIDTH>().0 {
+        let (Some(key), [Some(a), Some(b), Some(c), Some(d)], [Some(nodes), Some(codes)]) = (small(r[0]), [r[5], r[6], r[7], r[8]].map(small), [r[9], r[10]].map(small)) else { continue };
         let mut digest = [0u8; 32];
         for (i, w) in r[1..5].iter().enumerate() {
             digest[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
         }
-        out.insert(key, (digest, [a, b, c, d]));
+        let content = match r[11] {
+            0 => Some(super::memo::Content::Stored(crate::content_store::SourceId::from_raw(r[12]))),
+            1 => {
+                let mut d = [0u8; 32];
+                for (i, w) in r[12..16].iter().enumerate() {
+                    d[i * 8..i * 8 + 8].copy_from_slice(&w.to_le_bytes());
+                }
+                Some(super::memo::Content::Unstored(d))
+            }
+            _ => None,
+        };
+        out.insert(key, BaseCount { digest, counts: [a, b, c, d], size: [nodes, codes], content });
     }
     Ok(out)
 }
 
-/// Queues the views' counts `counts` (key, digest, counts) of the corpus batch's documents, of digest `digest`,
-/// beside the documents' table.
-pub(in crate::code_rule_dsl) fn put_base_counts(store: &ContentStore, was: &InKept, binds: [u8; 32], counts: &[(u32, [u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)], digest: u64) {
-    let mut rows: Vec<i64> = Vec::with_capacity(counts.len() * 9);
-    for (key, d, c) in counts {
-        rows.push(i64::from(*key));
-        rows.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
-        rows.extend(c.iter().map(|&c| i64::from(c)));
+/// Queues the counts `counts` of the corpus batch's documents (`Batch::kept_counts`), of digest `digest`, beside the
+/// documents' table: each file's with its content now, `content_of` its path's.
+pub(in crate::code_rule_dsl) fn put_base_counts(
+    store: &ContentStore,
+    was: &InKept,
+    binds: [u8; 32],
+    counts: &[crate::code_rule_dsl::facts::vtab::syntax::made::Kept],
+    content_of: &dyn Fn(&str) -> Option<super::memo::Content>,
+    digest: u64,
+) {
+    let mut rows: Vec<i64> = Vec::with_capacity(counts.len() * COUNTS_WIDTH);
+    for k in counts {
+        rows.push(i64::from(k.key));
+        rows.extend(k.digest.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+        rows.extend(k.counts.iter().map(|&c| i64::from(c)));
+        rows.extend(k.size.iter().map(|&c| i64::from(c)));
+        match k.file.then(|| content_of(&k.path)).flatten() {
+            Some(super::memo::Content::Stored(id)) => rows.extend([0, id.raw(), 0, 0, 0]),
+            // A content the store does not hold yet, by its digest (a later run finds it stored by it).
+            Some(super::memo::Content::Unstored(d) | super::memo::Content::Held(d)) => {
+                rows.push(1);
+                rows.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+            }
+            None => rows.extend([2, 0, 0, 0, 0]),
+        }
     }
     let name = KeptRel { name: BASE_COUNTS.to_owned(), ident: base_documents_ident(&binds) };
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; 9], rows, counts.len())]);
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; COUNTS_WIDTH], rows, counts.len())]);
 }
 
 fn base_stats_name(rel: &str) -> String {
     format!("#base-stats/{rel}")
+}
+
+fn semijoin_stats_name(rel: &str) -> String {
+    format!("#semijoin-stats/{rel}")
+}
+
+/// A semi-join's statistics at the nodes the exports hold (`keptstats::SemijoinCounts`): by column, its name, rows,
+/// distinct values, and the two bounds the planner reads.
+pub(in crate::code_rule_dsl) type SemijoinStats = Vec<(String, i64, i64, i64, i64)>;
+
+/// Each semi-join relation `rels`' statistics at the held nodes that the store's frames in `space` keep for the cross
+/// part of `binds`, with the digest they were counted at (the relation's documents' and the held nodes'): kept beside
+/// the documents' table as the base relations' are, so a run whose documents and exports are the last one's counts
+/// none of them, which would make every document they lie in (Q332).
+pub(in crate::code_rule_dsl) fn semijoin_stats(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[String]) -> Result<HashMap<String, (u64, SemijoinStats)>> {
+    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
+    let ident = base_documents_ident(&binds);
+    let mut out = HashMap::new();
+    for rel in rels {
+        let Some(entry) = bound.entry(&semijoin_stats_name(rel), &ident, DOCS_PART) else { continue };
+        let mut words: Vec<i64> = Vec::with_capacity(entry.len());
+        entry.each_rows(&mut |r| words.extend_from_slice(r));
+        if let Some(stats) = decode_semijoin_stats(&words) {
+            out.insert(rel.clone(), (entry.digest(), stats));
+        }
+    }
+    Ok(out)
+}
+
+/// A semi-join's statistics as words: their count, then each column's name length, its bytes (eight a word) and its
+/// four numbers.
+fn encode_semijoin_stats(stats: &[(String, i64, i64, i64, i64)]) -> Vec<i64> {
+    let mut words = vec![stats.len() as i64];
+    for (name, a, b, c, d) in stats {
+        words.push(name.len() as i64);
+        words.extend(name.as_bytes().chunks(8).map(|c| {
+            let mut w = [0u8; 8];
+            w[..c.len()].copy_from_slice(c);
+            i64::from_le_bytes(w)
+        }));
+        words.extend([*a, *b, *c, *d]);
+    }
+    words
+}
+
+fn decode_semijoin_stats(words: &[i64]) -> Option<SemijoinStats> {
+    let (&n, mut rest) = words.split_first()?;
+    let mut out = Vec::with_capacity(usize::try_from(n).ok()?);
+    for _ in 0..n {
+        let (&len, r) = rest.split_first()?;
+        let len = usize::try_from(len).ok()?;
+        let name_words = len.div_ceil(8);
+        let (name, r) = r.split_at_checked(name_words)?;
+        let bytes: Vec<u8> = name.iter().flat_map(|w| w.to_le_bytes()).take(len).collect();
+        let (nums, r) = r.split_at_checked(4)?;
+        out.push((String::from_utf8(bytes).ok()?, nums[0], nums[1], nums[2], nums[3]));
+        rest = r;
+    }
+    rest.is_empty().then_some(out)
+}
+
+/// Queues semi-join `rel`'s statistics at the held nodes `stats`, counted at digest `digest`, beside the documents'
+/// table.
+pub(in crate::code_rule_dsl) fn put_semijoin_stats(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, stats: &[(String, i64, i64, i64, i64)]) {
+    let words = encode_semijoin_stats(stats);
+    let name = KeptRel { name: semijoin_stats_name(rel), ident: base_documents_ident(&binds) };
+    let n = words.len();
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
+}
+
+#[cfg(test)]
+#[test]
+fn a_semijoins_kept_statistics_read_back_as_written() {
+    let stats = vec![("n".to_owned(), 3, 3, 1, 9), ("a_longer_column_name".to_owned(), 7, 2, -4, 1 << 40), (String::new(), 0, 0, 0, 0)];
+    assert_eq!(decode_semijoin_stats(&encode_semijoin_stats(&stats)), Some(stats));
+    assert_eq!(decode_semijoin_stats(&encode_semijoin_stats(&[])), Some(Vec::new()));
+    assert_eq!(decode_semijoin_stats(&[2, 1]), None, "a cut row is no statistics");
 }
 
 /// Queues base relation `rel`'s statistics `stats`, of the rows of digest `digest`, beside the documents' table.

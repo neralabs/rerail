@@ -31,9 +31,9 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
-/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
-const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+/// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
+/// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(any(unix, windows), target_pointer_width = "64"));
 
 /// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
 /// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
@@ -72,6 +72,12 @@ pub fn moved() -> (u64, u64) {
 
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
+
+/// The least block of a relation alone in it outside a run (`Part::try_new_with`'s `unowned`): its address space,
+/// whose pages are taken as they are written, so that its tail and its tables (a key map, its pending rows) grow in
+/// it as in a run's open block (decision 0384), where a block of twice its first rows moved its tail out at once and
+/// left its tables behind. A thousand of them reserve 64 GiB, not the 16 TiB a run's size each did.
+const UNOWNED_ROOM: usize = 64 << 20;
 
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
@@ -380,9 +386,14 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
 /// may read it in place (a pool slab when one is spare), a CPU run's never (Q58); its relations are made and
 /// dropped, so it keeps a free list.
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
+    lease_room(bytes.max(life.block_bytes()))
+}
+
+/// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
+fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -1084,12 +1095,18 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
+        // Outside a run and a chunk (a session's work between its runs, decision 0442) the open block is no one's: a
+        // value of its own each time it is asked for, so every relation leased a block of the run's size, 16 GiB of
+        // address space where blocks reserve it (decision 0445), held while it lived. A session's 1,000 one-document
+        // batches' relations reserved all of it (mmap refused at 256 TiB). It is alone in a block of its room, with
+        // room for its tail to double, and at least `UNOWNED_ROOM`.
+        let unowned = !alone && chunk.is_none() && crate::code_rule_dsl::logic::profile::run_own().is_none();
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone => {
-                    let block = lease_exact(need + extra, life)?;
+                _ if alone || unowned => {
+                    let block = if unowned { lease_room((2 * need + MARGIN).max(UNOWNED_ROOM))? } else { lease_exact(need + extra, life)? };
                     let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }, life));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
@@ -1130,21 +1147,28 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Device, k, rows)
+        Part::for_device_indexed(k, rows, 1)
+    }
+
+    /// `for_device` with room for `indexes` indexes of its rows, one for each key its readers probe it by (a
+    /// recursive component's relation, decision 0353 step 6): no key of those copies it.
+    pub fn for_device_indexed(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::claimed(Life::Device, k, rows, indexes)
     }
 
     /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
     /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
     /// budget refuses it.
     pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Run, k, rows)
+        Part::claimed(Life::Run, k, rows, 1)
     }
 
-    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for one
-    /// index of its rows.
-    fn claimed(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
+    /// `indexes` indexes of its rows.
+    fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         let part = Part::try_new_with(life, k, rows, index, false)?;
         // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };

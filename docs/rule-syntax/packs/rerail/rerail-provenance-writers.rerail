@@ -1,0 +1,89 @@
+.policy "rerail-provenance-writers" revision 2
+.description "Leave licence records to their owners: write per-file provenance only through the shared writer, never write a project's licence record, and keep no second Not copied parser or copyleft list."
+.mode steer
+.scope include "scripts/**/*.ts", "scripts/**/*.mts", "scripts/**/*.mjs", "scripts/**/*.js", "scripts/**/*.py", "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.mjs", "conformance/**/*.js", "conformance/**/*.py", "packs/*/upstream/**/*.mjs", "packs/*/upstream/**/*.js", "packs/*/upstream/**/*.ts", "packs/*/upstream/**/*.py"
+.scope text "scripts/**/*.ts", "scripts/**/*.mts", "scripts/**/*.mjs", "scripts/**/*.js", "scripts/**/*.py", "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.mjs", "conformance/**/*.js", "conformance/**/*.py", "packs/*/upstream/**/*.mjs", "packs/*/upstream/**/*.js", "packs/*/upstream/**/*.ts", "packs/*/upstream/**/*.py"
+.scope exclude "**/test/**", "**/tests/**", "**/*.test.*", "**/__tests__/**", "**/fixtures/**", "**/publish/**", "**/node_modules/**", "scripts/pack-data/provenance.mjs", "scripts/s3/pack-fixtures.mjs", "scripts/samples/licences.ts", "scripts/upstream/bump.ts", "scripts/check/check-licenses.mjs"
+// Licence records have owners: per-file provenance is written by writeProvenance (scripts/pack-data/provenance.mjs;
+// Python: write_provenance), licenses/<project>/UPSTREAM.md is kept by hand, Not copied paths are read by
+// readUpstreamSources and copyleft paths are recorded as Not copied lines. Text searches over each script, in
+// TypeScript, JavaScript and Python alike, as the JSON's regex clauses (a finding where the match starts):
+//   writeFileSync(join(out, "provenance.json"), text)       PROVENANCE_WRITE
+//   (root / "LICENSES.md").write_text(text)                 PROVENANCE_WRITE
+//   (licence_dir / "UPSTREAM.md").write_text(text)          LICENCE_RECORD_WRITE (Python's path forms)
+//   if (/^- Not copied/.test(line)) …                       NOT_COPIED_PARSER
+//   const NOT_COPIED = ["src/gpl.js"];                      NOT_COPIED_LIST
+//   COPYLEFT = {"GPL-3.0", "AGPL-3.0"}                      COPYLEFT_LIST
+//   writeProvenance({ pack, tool, entries, commits })       not reported
+// The files are read as text, so a script that does not parse is still searched. The regexes are the JSON's, copied
+// exactly. The JSON's tree clause for TypeScript and JavaScript writes of UPSTREAM.md is
+// rerail-provenance-writers.typescript.rerail, the same policy.
+
+.violation PROVENANCE_WRITE(at: span) "Describe these files in writeProvenance's entries (scripts/pack-data/provenance.mjs; Python: write_provenance) instead; a provenance.json or LICENSES.md outside packs/<pack>/upstream/<tool>/ may stay."
+PROVENANCE_WRITE(m) :- source(_, sp), match_all("(?m)^[ \\t]*(?:[^*/#\\s][^\\n]*?)?(?:(?:\\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\\s*\\(\\s*|\\b(?:renameSync|rename|copyFileSync|copyFile|cpSync)\\s*\\((?:[^,()\\n]|\\([^()\\n]*\\))*,\\s*)(?:(?:path\\.)?(?:join|resolve)\\((?:[^()\\n]|\\([^()\\n]*\\))*?|[^,()\\n]*?)[\"'`](?:[^\"'`\\n]*/)?(?:provenance\\.json|LICENSES\\.md)[\"'`]|\\b(?:writeFileSync|writeFile)\\s*\\(\\s*(?:path\\.)?(?:join|resolve)\\((?:[^()\\n]|\\([^()\\n]*\\))*?,\\s*(?:PROVENANCE\\w*|LICENSES)\\s*\\)|[\"'](?:[^\"'\\n]*/)?(?:provenance\\.json|LICENSES\\.md)[\"']\\s*\\)\\s*\\.(?:write_(?:text|bytes)\\s*\\(|open\\s*\\(\\s*(?:mode\\s*=\\s*)?[\"'][wax])|\\bopen\\s*\\([^\\n]*?[\"'](?:provenance\\.json|LICENSES\\.md)[\"']\\s*\\)?\\s*,\\s*(?:mode\\s*=\\s*)?[\"'][wax][bt+]*[\"'])", sp, m).
+
+.violation LICENCE_RECORD_WRITE(at: span) "Leave licenses/<project>/UPSTREAM.md hand-kept and describe copies through writeProvenance (Python: write_provenance); reading it, or writing the tool's own upstream/<tool>/UPSTREAM.md, is fine."
+LICENCE_RECORD_WRITE(m) :- source(_, sp), match_all("(?im)^[ \\t]*(?:[^#\\s][^\\n]*?)?(?:(?:\\b\\w*licen[cs]\\w*|[\"']licenses[\"'])\\s*/[^\\n]*[\"']UPSTREAM\\.md[\"']\\s*\\)\\s*\\.(?:write_(?:text|bytes)\\s*\\(|open\\s*\\(\\s*(?:mode\\s*=\\s*)?[\"'][wa])|\\bopen\\s*\\(\\s*(?:\\w*licen[cs]\\w*|[^\\n]*[\"']licenses[\"'])[^\\n]*?[\"']UPSTREAM\\.md[\"']\\s*\\)?\\s*,\\s*(?:mode\\s*=\\s*)?[\"'][wa])", sp, m).
+
+.violation NOT_COPIED_PARSER(at: span) "Let writeProvenance (Python: write_provenance) refuse Not copied paths, or read them with readUpstreamSources in scripts/s3/pack-fixtures.mjs, instead of matching the record's lines here."
+NOT_COPIED_PARSER(m) :- source(_, sp), match_all("(?im)^[ \\t]*(?:[^*/#\\s][^\\n]*?)?(?:(?:[=(,:!&|?>\\[{;]|\\breturn)\\s*/(?:\\^|[^/\\n]{0,4}-)[^/\\n]{0,12}(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied|(?:\\bre\\.\\w+|\\bRegExp)\\s*\\(\\s*r?(?:\"\"\"|'''|[\"'`])(?:\\(\\?\\w+\\))?(?:\\^|[^\"'`\\n]{0,4}-)[^\"'`\\n]{0,12}(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied|(?:[=(,:?!&|\\[]|\\b(?:if|in|return|and|or|not))\\s*(?:\"(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*\"|'(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*'|`(?:-\\s*(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:?|(?:n|\\[Nn\\])ot(?: |\\\\s[+*]?|\\[ \\])copied\\s*:)\\s*`))", sp, m).
+
+.violation NOT_COPIED_LIST(at: span) "Read Not copied paths with readUpstreamSources (scripts/s3/pack-fixtures.mjs), or let writeProvenance refuse them, instead of listing them here."
+NOT_COPIED_LIST(m) :- source(_, sp), match_all("(?m)^[ \\t]*(?:(?:export|static|readonly|private|public|protected)[ \\t]+)*(?:(?:const|let|var)[ \\t]+)?\\w*(?:NOT_COPIED|[Nn]ot_copied|[Nn]otCopied)\\w*[ \\t]*(?::[^=\\n]*)?=[ \\t]*(?:Object\\.freeze\\(\\s*)?(?:[\\[{]\\s*[\\\"'`]|\\(\\s*[\\\"'][^\\\"'\\n]*[\\\"']\\s*,|new Set(?:<[^>\\n]*>)?\\(\\s*\\[\\s*[\\\"'`]|(?:frozenset|set|tuple|list)\\(\\s*[\\[{(]?\\s*[\\\"'])", sp, m).
+
+.violation COPYLEFT_LIST(at: span) "Record copyleft upstream paths as Not copied lines in licenses/<project>/UPSTREAM.md, and copyleft sample repositories in scripts/samples/licences.ts; a dependency-licence check may keep its own."
+COPYLEFT_LIST(m) :- source(_, sp), match_all("(?m)^[ \\t]*(?:(?:export|static|readonly|private|public|protected)[ \\t]+)*(?:(?:const|let|var)[ \\t]+)?\\w*(?:COPYLEFT|[Cc]opyleft|GPL)\\w*[ \\t]*(?::[^=\\n]*)?=[ \\t]*(?:(?:Object\\.freeze\\(\\s*)?(?:[\\[{]\\s*[\\\"'`]|\\(\\s*[\\\"'][^\\\"'\\n]*[\\\"']\\s*,|new Set(?:<[^>\\n]*>)?\\(\\s*\\[\\s*[\\\"'`]|(?:frozenset|set|tuple|list)\\(\\s*[\\[{(]?\\s*[\\\"'])|/[^\\n]*\\\\/|(?:re\\.compile|new RegExp)\\(\\s*r?[\\\"'][^\\\"'\\n]*/)", sp, m).
+
+.test javascript_writers_and_lists_are_reported exactly
+    .fixture "scripts/pack-data/recipes/vue.mjs" ```
+        writeFileSync(join(out, "provenance.json"), JSON.stringify(record));
+        copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSES.md"));
+        if (/^- Not copied/.test(line)) skipped.push(line);
+        const NOT_COPIED = ["src/gpl.js"];
+        export const COPYLEFT_LICENSES = new Set(["GPL-3.0", "AGPL-3.0"]);
+        // writeFileSync(join(out, "provenance.json"), text) in a comment
+        ```
+    .expect PROVENANCE_WRITE at "scripts/pack-data/recipes/vue.mjs":1
+    .expect PROVENANCE_WRITE at "scripts/pack-data/recipes/vue.mjs":2
+    .expect NOT_COPIED_PARSER at "scripts/pack-data/recipes/vue.mjs":3
+    .expect NOT_COPIED_LIST at "scripts/pack-data/recipes/vue.mjs":4
+    .expect COPYLEFT_LIST at "scripts/pack-data/recipes/vue.mjs":5
+.end
+
+.test python_writers_and_lists_are_reported exactly
+    .fixture "packs/python/upstream/ruff/generate.py" ```
+        (root / "LICENSES.md").write_text(text)
+        (licence_dir / "UPSTREAM.md").write_text(record)
+        with open(licence_dir / "UPSTREAM.md", "w") as out:
+            pass
+        if re.match(r"^- Not copied", line):
+            pass
+        COPYLEFT = {"GPL-3.0", "AGPL-3.0"}
+        # (licence_dir / "UPSTREAM.md").write_text(record) in a comment
+        ```
+    .expect PROVENANCE_WRITE at "packs/python/upstream/ruff/generate.py":1
+    .expect LICENCE_RECORD_WRITE at "packs/python/upstream/ruff/generate.py":2
+    .expect LICENCE_RECORD_WRITE at "packs/python/upstream/ruff/generate.py":3
+    .expect NOT_COPIED_PARSER at "packs/python/upstream/ruff/generate.py":5
+    .expect COPYLEFT_LIST at "packs/python/upstream/ruff/generate.py":7
+.end
+
+// The pack's passing example, a read of the record, and the owners the scope leaves out.
+.test the_shared_writers_pass exactly
+    .fixture "packs/vue/upstream/eslint-plugin-vue/generate.mjs" ```
+        function writeLicenseAndProvenance(checkout, kept) {
+          const dir = join(HERE, "../../licenses/eslint-plugin-vue");
+          copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
+          writeProvenance({ pack: "vue", tool: "eslint-plugin-vue", entries: entriesOf(kept), commits: { "eslint-plugin-vue": UPSTREAM_COMMIT } });
+        }
+        ```
+    .fixture "packs/python/upstream/ruff/read.py" ```
+        record = (licence_dir / "UPSTREAM.md").read_text()
+        ```
+    .fixture "scripts/pack-data/provenance.mjs" ```
+        writeFileSync(join(out, "provenance.json"), JSON.stringify(record));
+        ```
+    .fixture "scripts/samples/licences.ts" ```
+        export const COPYLEFT = new Set(["GPL-3.0"]);
+        ```
+.end

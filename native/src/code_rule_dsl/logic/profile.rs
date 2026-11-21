@@ -397,6 +397,7 @@ pub struct GpuTotal {
     pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
+    pub moved: u64,
     pub rows: u64,
     pub distinct: u64,
     /// Head rows written in place into their head's block (decision 0325 step 4).
@@ -437,6 +438,7 @@ impl GpuTotal {
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
+        self.moved += o.moved;
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.placed += o.placed;
@@ -1858,6 +1860,17 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Runs `f`, the command's own store bookkeeping around its run (an analysis scope's begin before the run, its
+/// publication after it: `AnalysisRun`), as the store's writer does its work: outside the waves it writes as a writer
+/// may (decision 0104: a run reads once before its first wave and writes behind it, and this is neither the run's read
+/// nor its write). Inside the waves it is the run's own write, which the strict mode refuses.
+pub fn around_the_run<T>(f: impl FnOnce() -> T) -> T {
+    if strict() && waves_here() && !is_behind() {
+        violation("inside the waves", "the command's own bookkeeping (`around_the_run`)");
+    }
+    behind(f)
+}
+
 /// Whether this thread works behind the run (`behind`, `behind_the_run`).
 pub fn is_behind() -> bool {
     BEHIND.with(std::cell::Cell::get)
@@ -2208,8 +2221,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -3119,6 +3132,8 @@ pub struct Report {
     pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
+    /// Indexes that copied their relation, its block having no room for them (`DevIndex::moved`, 0353 step 6).
+    pub moved: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,

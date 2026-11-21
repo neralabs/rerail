@@ -506,7 +506,7 @@ program, planner fix on both:
 
 ## Prior work and how each approach relates to it
 
-The ast-index-spike indexes (design index, history index) and the lessons ledger
+The SQL index prototype indexes (design index, history index) and the lessons ledger
 have no topic on in-memory relation indexes for a Datalog fixpoint. The nearest
 entries:
 

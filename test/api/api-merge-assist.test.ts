@@ -50,7 +50,7 @@ describe("the Merge Assist operations", () => {
     checkout = gitRepository(join(root, "app"), "git@github.com:acme/app.git");
     mkdirSync(join(checkout, "src", "api"), { recursive: true });
     worktree = join(root, "app-export");
-    git(checkout, "worktree", "add", "-q", "-b", "tbelanger/export-api", worktree);
+    git(checkout, "worktree", "add", "-q", "-b", "akim/export-api", worktree);
     other = gitRepository(join(root, "lib"), "git@github.com:acme/lib.git");
     const databasePath = join(root, "rerail.sqlite");
     service = new RecordingMergeAssistService();

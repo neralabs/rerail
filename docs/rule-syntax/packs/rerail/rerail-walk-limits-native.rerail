@@ -1,0 +1,51 @@
+.policy "rerail-walk-limits-native" revision 2
+.description "Pass a Rust repository walk its skipped folders and file and byte limits in the host's index options instead of restating them; budgets for other inputs may differ."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "**/tests.rs", "**/*_tests.rs", "**/tests/**", "**/test_support/**"
+// rerail-walk-limits for the engine's Rust: a walk takes its skipped folders and its file and byte limits from the
+// host's RepositoryIndexOptions. Two text searches over each file, as the JSON's regex clauses:
+//   const SKIP: [&str; 2] = ["node_modules", ".git"];    WALK_FOLDERS_RESTATED (a list naming node_modules and another)
+//   matches!(name, "node_modules" | ".git")              WALK_FOLDERS_RESTATED
+//   const MAX_GRAPH_ENTRIES: usize = 100_000;            WALK_LIMIT_RESTATED
+//   options.ignored_directories.iter().any(…)            not reported
+// A finding sits where the match starts. The regexes are the JSON's, copied exactly.
+
+.violation WALK_FOLDERS_RESTATED(at: span) "Thread the host's RepositoryIndexOptions.ignored_directories into this walk instead of naming skipped folders here; leave names not about a repository walk, or in a test corpus loader."
+WALK_FOLDERS_RESTATED(m) :- source(_, sp), match_all("\\[[^\\]\\[;()]{0,400}?\"(?:node_modules|__pycache__)\"[^\\]\\[;()]{0,400}?\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\\[[^\\]\\[;()]{0,400}?\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"[^\\]\\[;()]{0,400}?\"(?:node_modules|__pycache__)\"|matches!\\s*\\(\\s*[^,;{}]{1,120},\\s*(?:\"[^\"\\n]*\"\\s*\\|\\s*){0,15}(?:\"(?:node_modules|__pycache__)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:node_modules|__pycache__)\")|(?:\"(?:node_modules|__pycache__)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\|\\s*\"(?:node_modules|__pycache__)\")(?:\\s*\\|\\s*\"[^\"\\n]*\"){0,15}\\s*\\)?\\s*(?:if\\b[^=;{}]{0,80})?=>|(?:(?:==|!=)\\s*\"(?:node_modules|__pycache__)\"|\"(?:node_modules|__pycache__)\"\\s*(?:==|!=))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:==|!=)\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"\\s*(?:==|!=)|\\.starts_with\\(\\s*['\"]\\.['\"]\\s*\\))|(?:(?:==|!=)\\s*\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"|\"(?:\\.git|\\.hg|\\.svn|\\.rerail|\\.venv|__pycache__|node_modules|dist|build|\\.next|\\.turbo|coverage|target|vendor)\"\\s*(?:==|!=)|\\.starts_with\\(\\s*['\"]\\.['\"]\\s*\\))[^;{}(),]{0,200}?(?:\\|\\||&&)[^;{}(),]{0,200}?(?:(?:==|!=)\\s*\"(?:node_modules|__pycache__)\"|\"(?:node_modules|__pycache__)\"\\s*(?:==|!=))", sp, m).
+
+.violation WALK_LIMIT_RESTATED(at: span) "Thread the host's RepositoryIndexOptions (max_files, max_source_bytes, max_file_bytes) into this walk instead of restating its bound; leave a bound that is not the repository walk's alone."
+WALK_LIMIT_RESTATED(m) :- source(_, sp), match_all("(?i:\\b\\w*(?:max|limit|budget|cap|bound|ceiling)\\w*(?:files|entries|bytes)\\w*|\\b\\w*(?:files?|entr(?:y|ies)|bytes)\\w*(?:max|limit|budget|cap|bound|ceiling)\\w*)\\s*(?::\\s*[\\w<>\\[\\]&' ]{1,40})?\\s*[=:]\\s*(?:100_?000|32_?000_?000|512\\s*\\*\\s*1024\\s*\\*\\s*1024|1024\\s*\\*\\s*1024\\s*\\*\\s*512|512\\s*<<\\s*20|1\\s*<<\\s*29|536_?870_?912|0x2000_?0000)(?:_?[ui](?:8|16|32|64|128|size))?\\b", sp, m).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_restated_limit_is_reported exactly
+    .fixture "native/src/code_rule_dsl/module_graph.rs" ```
+        /// the host's audit bound (`AUDIT_MAX_FILES`).
+        const MAX_GRAPH_ENTRIES: usize = 100_000;
+        ```
+    .expect WALK_LIMIT_RESTATED at "native/src/code_rule_dsl/module_graph.rs":2
+.end
+
+.test restated_folders_are_reported exactly
+    .fixture "native/src/walk.rs" ```
+        const SKIP: [&str; 2] = ["node_modules", ".git"];
+        fn skipped(name: &str) -> bool {
+            matches!(name, "node_modules" | ".git")
+        }
+        ```
+    .expect WALK_FOLDERS_RESTATED at "native/src/walk.rs":1
+    .expect WALK_FOLDERS_RESTATED at "native/src/walk.rs":3
+.end
+
+// The pack's passing example, and the same text in a test module.
+.test threaded_options_and_tests_pass exactly
+    .fixture "native/src/code_rule_dsl/module_graph.rs" ```
+        fn skipped_folder(name: &str, options: &RepositoryIndexOptions) -> bool {
+            name.starts_with('.') || options.ignored_directories.iter().any(|skip| skip == name)
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/tests.rs" ```
+        const MAX_GRAPH_ENTRIES: usize = 100_000;
+        ```
+.end

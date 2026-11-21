@@ -6,7 +6,7 @@
 
 use crate::structure;
 use std::fs::File;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
@@ -122,7 +122,20 @@ pub struct Block {
     gpu: std::sync::Mutex<Option<(rerail_device::device::Buffer, usize)>>,
     /// Its ledger (decision 0487): its live chunks, the GPU's queued uses, and when chunks and memory may go.
     ledger: Arc<crate::ledger::Ledger>,
+    /// Windows: the bytes from its base that are committed (`mem::commit`), as its top passes them (`commit_to`); all
+    /// of a mapping's or a slab's. Unix commits a page on its first touch, and keeps no count.
+    #[cfg(windows)]
+    committed: AtomicUsize,
+    /// Windows: the length its file is truncated to once its view is unmapped, 0 for none (Windows truncates no file a
+    /// view maps: `truncate_file`). A block's file is never shorter than its header.
+    #[cfg(windows)]
+    trim: std::sync::atomic::AtomicU64,
 }
+
+/// Windows: what a block commits at once as its top passes its committed bytes, so a run of small allocations makes
+/// one call (`Block::commit_to`).
+#[cfg(windows)]
+const COMMIT_STEP: usize = 1 << 20;
 
 unsafe impl Send for Block {}
 unsafe impl Sync for Block {}
@@ -176,9 +189,9 @@ impl Block {
         b
     }
 
-    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix only: elsewhere
-    /// `Unsupported`.
-    #[cfg(not(unix))]
+    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix and Windows only:
+    /// elsewhere `Unsupported`.
+    #[cfg(not(any(unix, windows)))]
     pub fn file(_path: &Path, _kind: u32, _reserved: usize) -> io::Result<Block> {
         Err(io::Error::new(io::ErrorKind::Unsupported, "a block in a file needs a shared mapping"))
     }
@@ -200,11 +213,26 @@ impl Block {
         Ok(b)
     }
 
+    /// A block backed by the file at `path`: sparse (`windows::sparse`), its whole reservation one view, written back
+    /// by the OS (no flush).
+    #[cfg(windows)]
+    pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
+        let reserved = round_up(reserved.max(PAGE), PAGE);
+        let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        crate::windows::sparse(&f)?;
+        f.set_len(reserved as u64)?;
+        let p = crate::windows::map_file(&f, reserved, true)?;
+        let b = Block::make(p, reserved, 0, Some(f), true, None);
+        b.init(kind);
+        Ok(b)
+    }
+
     fn make(base: *mut u8, reserved: usize, top: usize, file: Option<File>, writable: bool, backing: Option<Box<dyn Backing>>) -> Block {
         let dirty = backing.is_some();
         let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
         // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
-        let ledger = crate::ledger::Ledger::new(base, reserved, file.is_none() && backing.is_none(), ext.clone());
+        let anon = file.is_none() && backing.is_none();
+        let ledger = crate::ledger::Ledger::new(base, reserved, anon, ext.clone());
         Block {
             base,
             reserved,
@@ -219,7 +247,31 @@ impl Block {
             was_free_listed: false,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: std::sync::Mutex::new(None),
+            #[cfg(windows)]
+            committed: AtomicUsize::new(if anon { 0 } else { reserved }),
+            #[cfg(windows)]
+            trim: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Windows: commits the reservation's first `end` bytes (whole steps of `COMMIT_STEP`, within the reservation)
+    /// when its committed bytes do not reach them, before they are written. Allocations racing commit what they each
+    /// lack, overlapping or not: a page committed twice is committed once. Elsewhere nothing.
+    #[inline]
+    fn commit_to(&self, end: usize) {
+        #[cfg(windows)]
+        {
+            let have = self.committed.load(Acquire);
+            if end > have {
+                let to = round_up(end, COMMIT_STEP).min(self.reserved);
+                // SAFETY: the block's own reservation, from its committed bytes' last whole page.
+                let from = have / PAGE * PAGE;
+                unsafe { crate::mem::commit(self.base.add(from), to - from) };
+                self.committed.fetch_max(to, AcqRel);
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = end;
     }
 
     /// This block, keeping a free list (decision 0342): chunks given back (`free_chunk`) are taken again by the
@@ -441,6 +493,8 @@ impl Block {
             eprintln!("RERAIL_DEVICE_TRACE a block wrapped, {} MB:\n{}", len >> 20, std::backtrace::Backtrace::force_capture());
         }
         // SAFETY: the block's pages outlive the wrap: it is kept by the block, and let go before they are unmapped.
+        // The device reads and writes the wrapped extent, past the top too: committed first (Windows).
+        self.commit_to(len);
         let b = unsafe { rerail_device::device::wrap_host_memory(device, self.base, len)? };
         *kept = Some((b.clone(), len));
         Ok(b)
@@ -448,6 +502,7 @@ impl Block {
 
     fn init(&self, kind: u32) {
         self.ext.top.store(round_up(size_of::<Header>(), 64), Relaxed);
+        self.commit_to(size_of::<Header>());
         let h = unsafe { &mut *(self.base as *mut Header) };
         h.magic = MAGIC;
         h.kind = kind;
@@ -507,6 +562,7 @@ impl Block {
             }
             match self.ext.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
                 Ok(_) => {
+                    self.commit_to(end);
                     if self.listed {
                         self.ledger.taken_front(start, size);
                     }
@@ -610,8 +666,8 @@ impl Block {
             fence(Release);
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
-        if let Some(f) = &self.file {
-            f.set_len(len as u64).expect("truncate a journal block");
+        if self.file.is_some() {
+            self.truncate_file(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
@@ -626,7 +682,12 @@ impl Block {
                 self.reserved = keep;
                 self.ledger.resized(keep);
             }
-            unsafe { crate::mem::protect_read(self.base, self.reserved) };
+            // Windows protects committed pages only; the rest of the reservation faults on any access already.
+            #[cfg(windows)]
+            let protected = self.committed.load(Acquire).min(self.reserved);
+            #[cfg(not(windows))]
+            let protected = self.reserved;
+            unsafe { crate::mem::protect_read(self.base, protected) };
         }
         let mut b = self;
         // Unix: nothing is left to truncate, and the mapping outlives the file's descriptor: it is closed.
@@ -691,7 +752,16 @@ impl Block {
             }
             b
         };
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        let b = {
+            let p = crate::windows::map_file(&f, len, writable)?;
+            let mut b = Block::make(p, len, len, Some(f), writable, None);
+            if !writable {
+                b.file = None;
+            }
+            b
+        };
+        #[cfg(not(any(unix, windows)))]
         let b = {
             let mut f = f;
             let reserved = len.div_ceil(PAGE) * PAGE;
@@ -735,9 +805,35 @@ impl Block {
         Ok(())
     }
 
+    /// `sync_mapped` on Windows: the view's written pages flushed, then the file's buffers.
+    #[cfg(windows)]
+    pub fn sync_mapped(&self, flush: Flush) -> io::Result<()> {
+        if !flush.waits() {
+            return Ok(());
+        }
+        let written = self.used().next_multiple_of(PAGE).min(self.reserved);
+        crate::windows::flush_view(self.base, written, self.file.as_ref())
+    }
+
     /// The file a block maps, when it maps one.
     pub fn mapped_file(&self) -> Option<&File> {
         self.file.as_ref()
+    }
+
+    /// Truncates the file the block maps writable to `len` bytes (its frozen length): at once, or on Windows, which
+    /// truncates no file a view maps, once its view is unmapped (`drop`), and only if no other view (a reader's)
+    /// maps it then. A reader meanwhile reads the length from the header (`open_file`). Nothing for a block with no
+    /// file.
+    pub fn truncate_file(&self, len: u64) -> io::Result<()> {
+        let Some(f) = &self.file else { return Ok(()) };
+        #[cfg(windows)]
+        {
+            let _ = f;
+            self.trim.store(len, Relaxed);
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        f.set_len(len)
     }
 
     /// Maps a block's file read-only, valid only if it was frozen whole: magic, kind, state, and the length its
@@ -767,8 +863,17 @@ impl Block {
         Ok(b)
     }
 
+    /// Windows: the whole of `f`, `len` bytes, mapped read-only, holding no handle: the view outlives it.
+    #[cfg(windows)]
+    fn map_read(f: File, len: usize) -> Result<Block, String> {
+        let p = crate::windows::map_file(&f, len, false).map_err(|e| e.to_string())?;
+        let mut b = Block::make(p, len, len, Some(f), false, None);
+        b.file = None;
+        Ok(b)
+    }
+
     /// No mapping: the whole of `f`, `len` bytes, read into a reservation of its own.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn map_read(mut f: File, len: usize) -> Result<Block, String> {
         let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
         std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
@@ -779,7 +884,10 @@ impl Block {
     /// length its header says is the file's.
     fn check_frozen(&self, len: usize, kind: u32) -> Result<(), String> {
         let at = frozen_at(unsafe { std::slice::from_raw_parts(self.base, len) }, kind)?;
-        if at.length != len {
+        // Windows truncates a frozen block's file only once its writer's view is unmapped (`freeze`, `drop`): until
+        // then the file runs past the header's length, by its unwritten reservation.
+        let whole = if cfg!(windows) { at.length <= len } else { at.length == len };
+        if !whole {
             return Err(format!("header says {} bytes, the file has {len}", at.length));
         }
         Ok(())
@@ -791,6 +899,9 @@ impl Drop for Block {
     fn drop(&mut self) {
         let backing = self.backing.take();
         let (base, reserved, mapped) = (self.base as usize, self.reserved, self.mapped);
+        // Windows: a frozen file block's file is truncated once its view is unmapped (`freeze`).
+        #[cfg(windows)]
+        let trim = Some(*self.trim.get_mut()).filter(|&len| len > 0).and_then(|len| Some((self.file.take()?, len)));
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let wrap = self.gpu.get_mut().unwrap_or_else(|e| e.into_inner()).take();
         self.ledger.let_go(Box::new(move || {
@@ -802,6 +913,15 @@ impl Drop for Block {
                     // A file's mapping was never `reserve`'s: it is unmapped without counting.
                     if mapped {
                         crate::mem::uncounted(reserved);
+                    }
+                    #[cfg(windows)]
+                    if mapped {
+                        crate::windows::unmap_view(base as *mut u8);
+                        // Another view of the file (a reader's) keeps it whole: its length is the header's anyway.
+                        if let Some((f, len)) = trim {
+                            let _ = f.set_len(len);
+                        }
+                        return;
                     }
                     unsafe { crate::mem::release(base as *mut u8, reserved) };
                 }

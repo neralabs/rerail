@@ -825,7 +825,10 @@ mod tests {
     fn watched() -> (Box<Watched>, Arc<AtomicBool>) {
         let gone = Arc::new(AtomicBool::new(false));
         let len = 4 * PAGE;
-        (Box::new(Watched { base: crate::mem::reserve(len), len, gone: gone.clone() }), gone)
+        let base = crate::mem::reserve(len);
+        // SAFETY: the reservation just made: a slab is memory throughout (committed on Windows).
+        unsafe { crate::mem::commit(base, len) };
+        (Box::new(Watched { base, len, gone: gone.clone() }), gone)
     }
 
     /// R5 for memory of no block's (a pool's lease, `Tracked`): a fence that binds its bytes, found by address, holds it;

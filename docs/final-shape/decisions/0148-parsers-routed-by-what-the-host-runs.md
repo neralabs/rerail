@@ -27,7 +27,7 @@ engine                   the router: each format's implementations, ranked; the 
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed with tree-sitter only, one parser a language. It has no
+- **SQL index prototype indexes:** the spike parsed with tree-sitter only, one parser a language. It has no
   per-host choice of parser to compare with.
 - **Lessons ledger #10** (measure the code that runs). **Agrees:** the oracle test runs every kernel the
   test's CPU runs, not only the one the router takes.

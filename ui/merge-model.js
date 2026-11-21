@@ -63,7 +63,7 @@ export function conflictSections(status, dismissing = new Set()) {
   return { open, dismissed };
 }
 
-/** A side's heading: "PR #398 · Tim", or the label alone when no author is known. */
+/** A side's heading: "PR #398 · Sam", or the label alone when no author is known. */
 export const sideHeading = side => (side.author ? `${side.label} · ${side.author}` : side.label);
 
 /** A unified-diff hunk as lines to colour: `add`, `del`, `meta` (`@@` headers) or `ctx`. A hunk has no file headers. */
@@ -162,7 +162,7 @@ export function settingsSummary(settings) {
 
 /* ---------- the status strip ---------- */
 
-/** "tbelanger/export-api" over "main", or what is missing. */
+/** "akim/export-api" over "main", or what is missing. */
 export function branchText(status) {
   return {
     branch: status.branch ?? "Detached HEAD",

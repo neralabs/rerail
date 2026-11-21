@@ -247,6 +247,20 @@ UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, false); }
 #define UKL_NATIVE_SG_SEG 1
 UKL_INLINE uint32_t ukl_sg_seg_inclusive_native(bool add, uint32_t f, uint32_t v, uint32_t* fin __UKL_PARAMS) { return __ukl_cpu_seg(add, f, v, fin); }
+// The scans with the SIMD group's whole aggregate, read from the same operation's results.
+#define UKL_NATIVE_SG_TOTALS 1
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_total_native(uint32_t v, uint32_t* total __UKL_PARAMS) { return __ukl_cpu_prefix_total(v, total); }
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_total_native(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* tv, uint32_t* tf __UKL_PARAMS)
+{
+    return __ukl_cpu_seg_total(add, f, v, fin, tv, tf);
+}
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_ex_native(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* ev, uint32_t* ef, uint32_t* tv,
+                                                  uint32_t* tf __UKL_PARAMS)
+{
+    return __ukl_cpu_seg_ex(add, f, v, fin, ev, ef, tv, tf);
+}
+// A scan's tile is 16 values a thread: each of the group's operations switches all its threads.
+#define UKL_SCAN_VT 16u
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }

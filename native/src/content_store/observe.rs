@@ -730,7 +730,7 @@ impl Observer {
         match self.canonical_kept(path) {
             Ok(answer) => answer,
             Err(path) => {
-                let c = std::fs::canonicalize(&path).ok()?;
+                let c = dunce::canonicalize(&path).ok()?;
                 Some(self.canonical_resolved(path, c))
             }
         }
@@ -769,7 +769,7 @@ impl Observer {
         if source::contains(&path) { return Ok(source::canonicalize(&path).ok()); }
         if self.is_own(&path) {
             // rerail's own file (decision 0284): answered here, and never recorded (`canonical_resolved` is not reached).
-            return Ok(std::fs::canonicalize(&path).ok());
+            return Ok(dunce::canonicalize(&path).ok());
         }
         self.ensure(&path);
         self.watch_above(&path);
@@ -861,7 +861,7 @@ impl Observer {
         // A clean Git file whose stat is its index entry's holds its blob: the digest of bytes seen before under
         // that blob, unread; or read once, and the blob remembered.
         // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
-        let canonical = if self.git.is_empty() { None } else { std::fs::canonicalize(path).ok() };
+        let canonical = if self.git.is_empty() { None } else { dunce::canonicalize(path).ok() };
         let blob = canonical.as_ref().and_then(|c| {
             self.git.iter().find_map(|(_, g)| {
                 let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
@@ -968,7 +968,7 @@ impl Observer {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
                     let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
                     self.forget(&root, &paths, volume, &next);
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
+                    self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
                 }
                 super::journal::Since::Lost { cursor, why } => {
                     if super::journal::late(why) {
@@ -1007,7 +1007,7 @@ impl Observer {
                         checked.extend(r.checked);
                         resolved.extend(r.resolved);
                     }
-                    self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked, resolved, listed: false });
+                    self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: pending.as_ref().map(|(_, c)| c.clone()), path: root, asked: self.flushes, trusted: false, pending, checked, resolved, listed: false });
                 }
             }
         }
@@ -1035,13 +1035,13 @@ impl Observer {
             if stored.and_then(listing_cursor).is_none() {
                 self.store_listing_cursor(&root, volume, &next);
             }
-            self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
+            self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
             return;
         }
         self.generation += 1;
         let next = format!("L{}", self.generation);
         self.forget_named(&root, &exact, &whole, &stale, volume, &next);
-        self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
+        self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
     }
 
     /// A larger root whose replay was `Behind` (decision 0400, step 2): checked by its listings as a small root is,
@@ -1056,7 +1056,7 @@ impl Observer {
             self.generation += 1;
             self.forget_named(&root, &exact, &whole, &stale, volume.unwrap_or([0; 16]), next);
         }
-        self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
+        self.roots.push(Root { real: dunce::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
     }
 
     /// The answers under `root` that no longer hold, by its directories' listings: those to forget alone (`exact`),
@@ -1374,7 +1374,7 @@ impl Observer {
             .iter()
             .filter_map(|r| {
                 let at = self.abs(r);
-                let real = self.roots.iter().find(|x| x.path == at).map(|x| x.real.clone()).or_else(|| std::fs::canonicalize(&at).ok())?;
+                let real = self.roots.iter().find(|x| x.path == at).map(|x| x.real.clone()).or_else(|| dunce::canonicalize(&at).ok())?;
                 (real != at).then_some((at, real))
             })
             .collect();
@@ -1523,7 +1523,7 @@ impl Observer {
 
     /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
     pub fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
-        let root = std::fs::canonicalize(self.abs(root)).ok()?;
+        let root = dunce::canonicalize(self.abs(root)).ok()?;
         if let Some((_, g)) = self.git.iter().find(|(under, _)| root.starts_with(under)) {
             return Some(Arc::clone(g));
         }
@@ -2070,7 +2070,7 @@ pub fn own(path: &Path) {
 /// `path` absolute, and with its directory's canonical form (the journal names paths by their real names).
 fn spellings(path: &Path) -> Vec<PathBuf> {
     let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
-    let real = abs.parent().zip(abs.file_name()).and_then(|(dir, name)| Some(std::fs::canonicalize(dir).ok()?.join(name)));
+    let real = abs.parent().zip(abs.file_name()).and_then(|(dir, name)| Some(dunce::canonicalize(dir).ok()?.join(name)));
     std::iter::once(abs.clone()).chain(real.filter(|r| *r != abs)).collect()
 }
 
@@ -2120,7 +2120,7 @@ pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
         dirs
             .par_iter()
             .map(|(dir, files)| {
-                let canonical = std::fs::canonicalize(dir).ok();
+                let canonical = dunce::canonicalize(dir).ok();
                 // The names as on disk, and which are symlinks (the listing's entry type: no stat).
                 let names: HashMap<std::ffi::OsString, bool> = match (&canonical, std::fs::read_dir(dir)) {
                     (Some(_), Ok(entries)) => entries.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_symlink()))).collect(),
@@ -2132,7 +2132,7 @@ pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
                         let name = paths[i].file_name().expect("a file name");
                         let found = match (&canonical, names.get(name)) {
                             (Some(c), Some(false)) => Some(c.join(name)),
-                            _ => std::fs::canonicalize(paths[i]).ok(),
+                            _ => dunce::canonicalize(paths[i]).ok(),
                         };
                         (i, found)
                     })
@@ -2145,7 +2145,7 @@ pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
         out[i] = c;
     }
     for i in alone {
-        out[i] = std::fs::canonicalize(paths[i]).ok();
+        out[i] = dunce::canonicalize(paths[i]).ok();
     }
     out
 }
@@ -2193,7 +2193,6 @@ type KeptRoot = (String, PathBuf, PathBuf, Option<(u8, u64)>);
 ///   root (`watch_above`), so one under none is of a name no run uses;
 /// - a revision constant after the last manifest that owns its derivation goes away;
 /// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
-///
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
@@ -2214,7 +2213,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
             .filter_map(|(key, value)| {
                 let mut parts = key.splitn(3, ':');
                 let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
-                let real = plain(&root).then(|| std::fs::canonicalize(&root).ok()).flatten();
+                let real = plain(&root).then(|| dunce::canonicalize(&root).ok()).flatten();
                 let cursor = text_cursor(&value).and_then(|c| c.parse().ok().map(|n| (0, n)).or_else(|| listing_cursor(&c).map(|g| (1, g))));
                 Some((key, volume, root, real, cursor))
             })
@@ -2759,7 +2758,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("rerail-own-files-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("root/pkg")).unwrap();
-        let root = std::fs::canonicalize(base.join("root")).unwrap();
+        let root = dunce::canonicalize(base.join("root")).unwrap();
         let source = root.join("pkg/m.py");
         std::fs::write(&source, "x = 1\n").unwrap();
         aged(&source);
@@ -2830,7 +2829,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("rerail-own-record-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("root")).unwrap();
-        let real = std::fs::canonicalize(&base).unwrap();
+        let real = dunce::canonicalize(&base).unwrap();
         let (root, elsewhere) = (real.join("root"), real.join("scratch/out"));
         let store = real.join("store.files");
         journal_observer(&store).written();
@@ -2864,7 +2863,7 @@ mod tests {
     fn an_inner_root_is_answered_by_the_root_above_it() {
         let base = std::env::temp_dir().join(format!("rerail-inner-root-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let root = std::fs::canonicalize({
+        let root = dunce::canonicalize({
             std::fs::create_dir_all(base.join("root/lib")).unwrap();
             base.join("root")
         })
@@ -2928,7 +2927,7 @@ mod tests {
     fn a_first_run_keeps_what_it_checked_under_nested_roots() {
         let base = std::env::temp_dir().join(format!("rerail-nested-roots-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let root = std::fs::canonicalize({
+        let root = dunce::canonicalize({
             std::fs::create_dir_all(base.join("root/lib")).unwrap();
             base.join("root")
         })
@@ -2969,7 +2968,7 @@ mod tests {
     fn a_first_process_keeps_what_an_earlier_run_checked_under_an_inner_root() {
         let base = std::env::temp_dir().join(format!("rerail-nested-runs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        let root = std::fs::canonicalize({
+        let root = dunce::canonicalize({
             std::fs::create_dir_all(base.join("root/lib")).unwrap();
             base.join("root")
         })
@@ -3026,7 +3025,7 @@ mod tests {
         };
         let (first, got) = run(0);
         assert_eq!(first.resolved, 3, "{first}");
-        let real = std::fs::canonicalize(&root).unwrap();
+        let real = dunce::canonicalize(&root).unwrap();
         assert_eq!(got, vec![Some(real.join("pkg/m1.py")), Some(real.join("pkg/m0.py")), Some(real.join("pkg/m2.py"))]);
         std::thread::sleep(std::time::Duration::from_millis(300));
         let (middle, _) = run(0);
@@ -3425,7 +3424,7 @@ mod tests {
         }
         let asked: Vec<PathBuf> = ["d/a.py", "d/e/b.py", "d/link.py", "d/dirlink/b.py", "d/missing.py", "d/A.py", "d/e/../a.py"].iter().map(|p| given.join(p)).collect();
         let refs: Vec<&Path> = asked.iter().map(PathBuf::as_path).collect();
-        let one_by_one: Vec<Option<PathBuf>> = asked.iter().map(|p| std::fs::canonicalize(p).ok()).collect();
+        let one_by_one: Vec<Option<PathBuf>> = asked.iter().map(|p| dunce::canonicalize(p).ok()).collect();
         assert_eq!(realpaths(&refs), one_by_one, "as `realpath` gives each: symlinks, a missing file, another case, `..`");
         let _ = std::fs::remove_dir_all(&given);
     }
@@ -3435,7 +3434,7 @@ mod tests {
         let given = std::env::temp_dir().join(format!("rerail-observer-collect-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&given);
         std::fs::create_dir_all(given.join("root/inner")).unwrap();
-        let real = std::fs::canonicalize(&given).unwrap();
+        let real = dunce::canonicalize(&given).unwrap();
         let store = real.join("store.files");
         journal_observer(&store).written();
         let (root, inner, gone) = (real.join("root"), real.join("root/inner"), real.join("gone"));

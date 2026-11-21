@@ -59,7 +59,7 @@ tape-cache = ["rerail-device-metal/tape-cache", "rerail-facts/tape-cache", "rera
 # macOS's `malloc_history` and `heap` see every live allocation with its stack. Never on for a build that ships.
 system-allocator = ["rerail-device-metal/system-allocator", "rerail-facts/system-allocator", "rerail-lang/system-allocator", "rerail-lang-ecma/system-allocator", "rerail-lang-json/system-allocator", "rerail-lang-php/system-allocator", "rerail-lang-python/system-allocator", "rerail-lang-rust/system-allocator", "rerail-lang-sql/system-allocator", "rerail-logic/system-allocator", "rerail-rr/system-allocator", "rerail-sessions/system-allocator", "rerail-transducer/system-allocator", "rerail-classic/system-allocator", "rerail-boot/system-allocator"]
 code-rule-profile = ["rerail-device-metal/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-lang-ecma/code-rule-profile", "rerail-lang-json/code-rule-profile", "rerail-lang-php/code-rule-profile", "rerail-lang-python/code-rule-profile", "rerail-lang-rust/code-rule-profile", "rerail-lang-sql/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-sessions/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-classic/code-rule-profile", "rerail-boot/code-rule-profile"]
-# P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
+# P's workspace anchor path (PIAT@cbee7a03): its anchor corpus prepared for every
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
 # the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
 p-anchor-corpus = ["rerail-device-metal/p-anchor-corpus", "rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-lang-ecma/p-anchor-corpus", "rerail-lang-json/p-anchor-corpus", "rerail-lang-php/p-anchor-corpus", "rerail-lang-python/p-anchor-corpus", "rerail-lang-rust/p-anchor-corpus", "rerail-lang-sql/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-sessions/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-classic/p-anchor-corpus", "rerail-boot/p-anchor-corpus"]
@@ -161,7 +161,7 @@ rustc-hash = "=2.1.3"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
 # Git blob ids, for run artifacts' input digests (`corpus::inputs`, data-layer/RUN-FACTS.md section 4).
-sha1 = "0.10"
+sha1 = "0.11"
 sha2 = "0.11"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }

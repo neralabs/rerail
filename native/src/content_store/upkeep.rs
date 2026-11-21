@@ -460,15 +460,17 @@ mod tests {
         let p = dir.join(format!("upkeep-{auto}.sqlite"));
         let db = Connection::open(&p).unwrap();
         db.execute_batch(&format!(
-            "PRAGMA auto_vacuum = {auto}; PRAGMA journal_mode = WAL;
-             CREATE TABLE rows(k INTEGER PRIMARY KEY, v TEXT); CREATE INDEX rows_v ON rows(v);
+            "PRAGMA auto_vacuum = {auto}; PRAGMA journal_mode = WAL; PRAGMA synchronous = OFF;
+             CREATE TABLE rows(k INTEGER PRIMARY KEY, v TEXT, w INTEGER); CREATE INDEX rows_w ON rows(w);
              CREATE TABLE fact_stats(tbl TEXT, col TEXT, rows INTEGER, sq INTEGER);
              CREATE TABLE facts(a INTEGER); INSERT INTO fact_stats VALUES ('facts', 'a', 1, 1);"
         ))
         .unwrap();
         let tx = db.unchecked_transaction().unwrap();
-        for i in 0..20_000 {
-            tx.execute_cached("INSERT INTO rows(v) VALUES (?1)", [format!("{i:0>1000}")]).unwrap();
+        // More than `FREE_BYTES` free once three quarters are deleted (18 MB of 24): the rows' text, its index a small
+        // column's (an index of the text doubled what the fixture wrote), unsynced (the fixture is no subject).
+        for i in 0..24_000i64 {
+            tx.execute_cached("INSERT INTO rows(v, w) VALUES (?1, ?2)", rusqlite::params![format!("{i:0>1000}"), i % 64]).unwrap();
         }
         tx.commit().unwrap();
         db.execute_batch("DELETE FROM rows WHERE k % 4 != 0; PRAGMA wal_checkpoint(TRUNCATE);").unwrap();

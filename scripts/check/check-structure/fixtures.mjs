@@ -1,4 +1,4 @@
-// Where fixture data lives (Jeff's structure metric #3) and what each fixtures/<family>/<feature> tests (#10).
+// Where fixture data lives (structure metric #3) and what each fixtures/<family>/<feature> tests (#10).
 //
 // #3: a tracked file is fixture data when
 //   - a directory in its path is named `fixtures` or `__fixtures__`,

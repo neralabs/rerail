@@ -78,6 +78,14 @@ impl CompiledCodeRuleDsl {
         self.inner.reads_text()
     }
 
+    /// Whether a finding of this code rule in one file can depend on another file's text: a host
+    /// may then check a workspace's edits in the order they came only, where it may check those of
+    /// a code rule that reads none in any order (`CompiledCodeRule::reads_other_files`).
+    #[napi]
+    pub fn reads_other_files(&self) -> bool {
+        self.inner.reads_other_files()
+    }
+
     #[napi]
     pub fn digest(&self) -> String {
         self.inner.digest.clone()

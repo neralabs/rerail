@@ -57,7 +57,7 @@ export class FakeGithub implements GithubClient {
     this.readinessReads += 1;
     if (repository === null) return { state: "not-github", login: null, repository: null };
     if (this.options.readinessError === true) return { state: "unavailable", login: null, repository: `${repository.owner}/${repository.name}` };
-    return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };
+    return this.options.readiness ?? { state: "signed-in", login: "akim", repository: `${repository.owner}/${repository.name}` };
   }
 
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
@@ -103,7 +103,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
     const repo = join(folder, "repo");
     mkdirSync(repo);
     git(repo, "init", "-q", "-b", "main");
-    git(repo, "config", "user.name", "Tim Belanger");
+    git(repo, "config", "user.name", "Alex Kim");
     if (remote !== undefined) git(repo, "remote", "add", "origin", remote);
     commit(repo, { "src/api/client.ts": "export const client = { get: (path: string) => fetch(path) };\n", ...files }, "start");
     git(repo, "switch", "-q", "-c", "mine");

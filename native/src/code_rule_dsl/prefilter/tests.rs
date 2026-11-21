@@ -154,7 +154,7 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
     assert_eq!(stored, totals.into_iter().filter(|(_, n)| *n > 0).collect::<Vec<_>>());
 }
 
-/// Decision 0026 (ast-index-spike Representation rule 1): no relation stores a row per node. Every
+/// Decision 0026 (SQL index prototype Representation rule 1): no relation stores a row per node. Every
 /// table of a store holding real tapes, with their prefilter rows, has at most 0.25 rows per node.
 #[test]
 fn no_relation_stores_a_row_per_node() {

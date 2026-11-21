@@ -135,7 +135,7 @@ impl World {
     /// unchanged is not statted. Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is
     /// watched as it comes.
     fn watch_roots(root: &Path, roots: &[PathBuf]) {
-        let placeholder = super::phase0::active().then(|| std::fs::canonicalize(root).ok()).flatten();
+        let placeholder = super::phase0::active().then(|| dunce::canonicalize(root).ok()).flatten();
         let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
         super::observe(|o| o.watch(&watched));
     }

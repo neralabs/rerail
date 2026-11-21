@@ -187,7 +187,7 @@ impl Grammar {
         self.kinds.field_name(code)
     }
 
-    /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
+    /// The tree-sitter language of this grammar's dialect (the predecessor's accessor; the packed runtime's
     /// Metal tests compile queries against it).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn language(&self) -> Language {

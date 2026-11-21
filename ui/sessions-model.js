@@ -320,7 +320,7 @@ export function violationCounts(s) {
 
 /** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
 const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps
-  ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+  ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0 };
 
 /** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
 export const droppedEvents = s => gapsOf(s).droppedEvents;
@@ -336,6 +336,15 @@ export const ignoredEdits = s => gapsOf(s).ignoredEdits;
 
 /** Changes to Git's ignore rules during the session. */
 export const ignoreRuleChanges = s => gapsOf(s).ignoreRuleChanges;
+
+/** The places the session's shell-write check could not check that its record holds, each once. */
+export const discoveryGaps = s => gapsOf(s).discoveryGaps ?? 0;
+
+/** Whether the check met more such places than the session's record takes. */
+export const discoveryGapsMore = s => gapsOf(s).discoveryGapsMore === true;
+
+/** The first of those places, each with its path and why; none until the daemon answers. */
+export const discoveryGapPlaces = s => gapsOf(s).discoveryGapPlaces ?? [];
 
 export const isOpen = s => s.endedAt === null;
 /** Open and heard from within STALE_MIN → live; open and silent → "no end recorded". */

@@ -53,7 +53,7 @@
     /// every seed's absent files, and differed from its own run's.
     #[test]
     fn a_seeds_graph_is_its_own_whatever_run_derived_it() {
-        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
         let text = super::Seed::Text { t_shape: false, includes: vec![(0, "python/env.rerail".to_owned())], phases: Vec::new() };
         let alone = super::derive(std::slice::from_ref(&text)).unwrap().of(&text, 0);
         let seeds = vec![super::Seed::File(lib.join("python/env.rerail")), super::Seed::File(lib.join("python/imports.rerail")), text.clone()];
@@ -78,7 +78,7 @@
         std::fs::create_dir_all(&packs).unwrap();
         std::fs::write(packs.join("rerail-p0-absent-table.rerail"), "t(1).\n").unwrap();
         std::fs::write(rules.join("r.rerail"), "#include \"../packs/rerail-p0-absent-table.rerail\"\n.decl x(a: number)\nx(1).\n.output x\n").unwrap();
-        let rule = std::fs::canonicalize(rules.join("r.rerail")).unwrap();
+        let rule = dunce::canonicalize(rules.join("r.rerail")).unwrap();
         let graph = super::graphs(&[super::Seed::File(rule.clone())]).unwrap().remove(0);
         let described = graph.describe();
         assert!(!described.contains("rules/../packs/rerail-p0-absent-table.rerail"), "{described}");

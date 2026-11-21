@@ -183,6 +183,6 @@ whole edit is not compared: at loads of 45–70 it varied by more than the savin
 - **Differential dataflow's arrangements** (McSherry et al., CIDR 2013): an arrangement is shared by its readers
   and carries its own index. Here a kept relation carries its statistics with its rows' identity, so a new reader
   in a new process need not rebuild them.
-- **The spike's ledger** (`docs/rule-engine-direction/prior-work/ast-index-spike-history-index.md`): "An in-memory
+- **The spike's ledger** (`docs/rule-engine-direction/prior-work/sql-index-prototype-history-index.md`): "An in-memory
   vocabulary silently fell back after reopen" (DH L2185-2189). The address-keyed statistics were this trap: a new
   process silently took the slow route.

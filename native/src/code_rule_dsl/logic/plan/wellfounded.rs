@@ -384,10 +384,12 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
         return Err("a relation with no node column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
-    let total: usize = cols.iter().map(Vec::len).product();
-    if total > 4000 {
+    // The measures to try: one node column of each relation, every choice. Stopped at the bound as it is multiplied:
+    // a component of many relations (python/calls with the typing run, about 2^64 choices) overflowed the product.
+    const MEASURES: usize = 4000;
+    let Some(total) = cols.iter().try_fold(1usize, |n, c| n.checked_mul(c.len()).filter(|&n| n <= MEASURES)) else {
         return Err("too many measures to try".into());
-    }
+    };
     for n in 0..total {
         let (mut rest, mut m) = (n, BTreeMap::new());
         for (r, c) in rels.iter().zip(&cols) {
@@ -550,6 +552,21 @@ mod tests {
         assert_eq!(reach, Err("a relation with no node column".into()));
         let linked = check_of(".decl r(a: node, b: node)\nr(a, b) :- link(a, b).\nr(a, c) :- r(a, b), link(b, c).\n", &["r"]);
         assert!(linked.unwrap_err().starts_with("an unknown step: link"));
+    }
+
+    /// A component whose measures are past the bound is refused, however many: the product of 70 relations' four node
+    /// columns each (2^140) overflowed before it was compared (python/calls with the typing run, on two threads).
+    #[test]
+    fn a_component_of_many_measures_is_refused() {
+        let n = 70;
+        let mut text = String::new();
+        for i in 0..n {
+            let next = (i + 1) % n;
+            text.push_str(&format!(".decl r{i}(a: node, b: node, c: node, d: node)\nr{i}(a, b, c, d) :- r{next}(a, b, c, d), child(a, b, _), child(c, d, _).\n"));
+        }
+        let comp: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
+        let comp: Vec<&str> = comp.iter().map(String::as_str).collect();
+        assert_eq!(check_of(&text, &comp), Err("too many measures to try".into()));
     }
 
     /// Steps both ways, and a cycle at one node, fail.

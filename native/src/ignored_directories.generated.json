@@ -1,0 +1,16 @@
+[
+  ".git",
+  ".hg",
+  ".svn",
+  ".rerail",
+  ".venv",
+  "__pycache__",
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".turbo",
+  "coverage",
+  "target",
+  "vendor"
+]

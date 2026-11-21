@@ -103,9 +103,9 @@
 
 // ---- the reads every format's bodies call back into (defined at the end) --------------------------------------------
 UKL_COLD uint64_t clif_tape_f16_side(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t k, uint32_t i);
-UKL_INLINE uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
-UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
-UKL_INLINE uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
+UKL_COLD uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
+UKL_COLD uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
+UKL_COLD uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
 UKL_INLINE uint32_t clif_tape_start(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
 UKL_INLINE uint64_t clif_tape_slot(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i);
 
@@ -1215,7 +1215,7 @@ UKL_COLD uint64_t clif_tape_f16_side(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPAC
 }
 
 // The node's subtree's size (itself and its descendants).
-UKL_INLINE uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
+UKL_COLD uint32_t clif_tape_size(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u)
@@ -1241,7 +1241,7 @@ UKL_INLINE uint32_t clif_tape_number(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPAC
 }
 
 // The node's start as the tape states it: what a check of the tape reads. A kernel's span reads `tape_start`.
-UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
+UKL_COLD uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u)
@@ -1254,7 +1254,7 @@ UKL_INLINE uint32_t clif_tape_start_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIE
 }
 
 // The node's end as the tape states it.
-UKL_INLINE uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
+UKL_COLD uint32_t clif_tape_end_stated(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u)
@@ -1358,7 +1358,7 @@ UKL_INLINE uint32_t clif_tape_length(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPAC
 
 // The node's start, given the node before's (`prev`; any value for the first node): in a scan, format 16's from the
 // one before, a gap's add, or its checkpoint.
-UKL_INLINE uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i, uint32_t prev)
+UKL_COLD uint32_t clif_tape_start_next(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t i, uint32_t prev)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u)
@@ -1382,7 +1382,7 @@ UKL_INLINE uint64_t clif_tape_slot(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE 
 }
 
 // The line byte `x` lies in (from 0). A 16z tape holds its newline index raw, as format 16 does.
-UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t x)
+UKL_COLD uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t x)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u || CLIF_T_IS_Z(f))
@@ -1391,7 +1391,7 @@ UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE 
 }
 
 // Line `k`'s first byte.
-UKL_INLINE uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t k)
+UKL_COLD uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t k)
 {
     uint32_t f = clif_view(v, CLIF_T_FORMAT);
     if (f == 16u || CLIF_T_IS_Z(f))

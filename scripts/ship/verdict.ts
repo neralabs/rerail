@@ -314,6 +314,59 @@ export function needsConfirmation(v: TimeVerdict, floorMs = RULE_FLOOR_MS): bool
   return v.overBefore && v.confirm === null && (v.finalDeltaMs ?? 0) >= floorMs;
 }
 
+/** Slice B's time of a rule on the `.rerail` side, where run-policies reports no phases: its net wall (netWalls). */
+export const RR_RULE_TIME = "net-wall";
+
+/**
+ * A `.rerail` rule's net walls: each cold wall of the rule alone less the median cold wall of the empty rule set (the
+ * fixed cost: start-up and reading the corpus), never below 0. None without an empty rule set's run to subtract.
+ */
+export function netWalls(walls: readonly number[], emptyWalls: readonly number[]): number[] {
+  if (emptyWalls.length === 0) return [];
+  const fixed = median(emptyWalls);
+  return walls.map((wall) => Math.max(0, wall - fixed));
+}
+
+// ---------------------------------------------------------------- the `.rerail` side's gate
+
+/** docs/rule-syntax/packs/<pack>/equivalence.json's format: the translation suite's declaration of a pack. */
+export const EQUIVALENCE_FORMAT = "rerail.translation-equivalence/v1";
+
+/**
+ * Whether the `.rerail` side's verdict on a pack counts toward the exit status: only where the pack's equivalence.json
+ * (`declaration`, its parsed JSON; undefined when the file is missing) is of EQUIVALENCE_FORMAT, names the pack, and
+ * says `equivalent: true`. Otherwise it is reported only, with the reason.
+ */
+export function translationGate(pack: string, declaration: unknown): { counted: boolean; reason: string } {
+  const file = `docs/rule-syntax/packs/${pack}/equivalence.json`;
+  if (declaration === undefined) return { counted: false, reason: `reported only: no ${file}` };
+  if (!declaresPack(declaration, pack)) return { counted: false, reason: `reported only: ${file} is not a ${EQUIVALENCE_FORMAT} declaration of ${pack}` };
+  if (!declaration.equivalent) return { counted: false, reason: `reported only: ${file} says the translations are not equivalent` };
+  return { counted: true, reason: countedReason(file, declaration.different) };
+}
+
+/** equivalence.json's fields translationGate reads. */
+interface EquivalenceDeclaration {
+  format: typeof EQUIVALENCE_FORMAT;
+  pack: string;
+  equivalent: boolean;
+  different?: unknown;
+}
+
+/** Whether `declaration` is an EQUIVALENCE_FORMAT declaration of `pack` saying whether it is equivalent. */
+function declaresPack(declaration: unknown, pack: string): declaration is EquivalenceDeclaration {
+  if (typeof declaration !== "object" || declaration === null) return false;
+  const d = declaration as { format?: unknown; pack?: unknown; equivalent?: unknown };
+  return d.format === EQUIVALENCE_FORMAT && d.pack === pack && typeof d.equivalent === "boolean";
+}
+
+/** A counted pack's reason: its declaration, and how many rules `different` (rule ids to why) lists where it lists any. */
+function countedReason(file: string, different: unknown): string {
+  const count = typeof different === "object" && different !== null ? Object.keys(different).length : 0;
+  if (count === 0) return `counted: ${file} says equivalent`;
+  return `counted: ${file} says equivalent (${count} rule${count === 1 ? "" : "s"} declared different)`;
+}
+
 /** The nearest-rank percentile `p` (0–100) of `values`. */
 export function percentile(values: readonly number[], p: number): number {
   if (values.length === 0) throw new Error("percentile of no values");

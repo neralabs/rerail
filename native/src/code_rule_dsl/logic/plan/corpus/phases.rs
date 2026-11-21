@@ -22,7 +22,7 @@
 //! handed to the reader as input rows, and the reader's run takes their delta as it takes any input's. There is no
 //! store, record or version of a phase's own.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use super::super::{Error, Result};
@@ -457,6 +457,32 @@ pub(super) fn observed_source_digests() -> Vec<[u8; 32]> {
                 _ => None,
             })
             .collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    })
+}
+
+/// The files handed down to the innermost phase under way on this thread (phase 1's `observer__source_file`, with
+/// `observer__source_path`), known before its first wave: each one's paths (as given, and as loaded where that is
+/// another), its module and its content's digest.
+pub(super) fn handed_files() -> Vec<(Vec<String>, String, [u8; 32])> {
+    crate::code_rule_dsl::logic::profile::with_bound(|handed: &HandedDown| {
+        let Some((_, facts)) = handed.0.last() else { return Vec::new() };
+        let text = |v: Option<&Value>| match v {
+            Some(Value::Str(s)) => Some(s.to_string()),
+            _ => None,
+        };
+        let loaded: HashMap<String, String> = facts.get("observer__source_path").into_iter().flatten().filter_map(|r| Some((text(r.first())?, text(r.get(1))?))).collect();
+        facts
+            .get("observer__source_file")
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                let path = text(r.first())?;
+                let digest = crate::content_store::observe::unhex(&text(r.get(3))?)?;
+                let mut paths = vec![path.clone()];
+                paths.extend(loaded.get(&path).filter(|f| **f != path).cloned());
+                Some((paths, text(r.get(1))?, digest))
+            })
+            .collect()
     })
 }
 

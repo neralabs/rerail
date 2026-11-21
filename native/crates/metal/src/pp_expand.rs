@@ -42,6 +42,8 @@ pub struct Defs {
     bscan: Scan,
     pub pkeys: Buf,
     pub items: Buf,
+    /// Each body leaf's place in a `__VA_OPT__` (`VA_*` in `pp_expand.uglykl`; decision 0527 §2).
+    pub vai: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
     pub room: Buf,
     cap: u32,
@@ -68,19 +70,22 @@ impl Defs {
             bscan: Scan::new(arena)?,
             pkeys: arena.zeroed::<u64>(nodes)?,
             items: words(nodes)?,
+            vai: words(nodes)?,
             room: words(1)?,
             cap: nodes as u32,
         })
     }
 
     /// The definitions' slots of the layout: S1 (`pd_defs`, a thread a row), the scans of the
-    /// counts, S2 (`pd_params`, a thread a parameter list's leaf) and S4 (`pd_items`, a thread a
-    /// body leaf), as phases of `pp_setup`.
+    /// counts, S2 (`pd_params`, a thread a parameter list's leaf), S4 (`pd_items`, a thread a
+    /// body leaf) and the `__VA_OPT__`s (`pd_va_opt`, a thread a body leaf), as phases of
+    /// `pp_setup`.
     pub fn lay(&self, l: &mut Lay) {
         let va = name_key(b"__VA_ARGS__");
+        let vo = name_key(b"__VA_OPT__");
         l.at("DEFS", &self.defs).at("PCOUNT", &self.pcount).at("BCOUNT", &self.bcount).at("PFIRST", &self.pfirst).at("IFIRST", &self.ifirst);
-        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("ROOM", &self.room);
-        l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32);
+        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("VAI", &self.vai).at("ROOM", &self.room);
+        l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32).word("VO_LO", vo as u32).word("VO_HI", (vo >> 32) as u32);
     }
 }
 
@@ -1010,8 +1015,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 37 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 37;
+/// A list (`PxList` in the UKL): 39 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 39;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1057,8 +1062,8 @@ const K_LITERAL: u32 = 30;
 /// - by top token (`top`): its stretch head, depth change and depth, its `)` flag and place, the
 ///   close table and its sort, its call's end, the reach's max scan, its state, the outermost
 ///   flags and their scan, its piece of the output and that piece's place;
-/// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the queue (two
-///   items a list);
+/// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the rounds'
+///   items (decision 0527);
 /// - the output (refs), and the control words (the arena's tops, the refusals).
 pub struct Exp {
     list_cap: u32,
@@ -1127,6 +1132,11 @@ pub struct Exp {
     pub out: Buf,
     /// A round's scan (decision 0527 §2): the lists (`q` of them) and their tokens (`sc_cap`).
     scans: Buf,
+    /// The lists a round substitutes (decision 0527 §2), and their `SB_COLS` columns of `q` words.
+    subs: Buf,
+    sb_l: Buf,
+    /// The calls a round reads (decision 0527 §2); their columns are `sb_l`'s.
+    calls: Buf,
     /// The lists a round's walks make final and place (decision 0527 §2): two halves of `q` each.
     fins: Buf,
     places: Buf,
@@ -1141,7 +1151,14 @@ pub struct Exp {
     sc_sort: Sort,
     sc_first: Buf,
     sc_cap: u32,
+    /// The definitions each list's chain disables (`px_link`): a trie of their ids, 2 bits a
+    /// level, `trie_lv` levels of 4 words a list.
+    trie: Buf,
+    trie_lv: u32,
 }
+
+/// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
+const SB_COLS: usize = 11;
 
 /// A round's scan's stores a token (`Exp::sc_tok`), by slot.
 const SC_TOK: [&str; 12] = ["SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK"];
@@ -1156,6 +1173,8 @@ impl Exp {
             return Err(Error::BackendCapacity);
         }
         let va_opt = name_key(b"__VA_OPT__");
+        // A definition's id is below the unit's rows: 2 bits of it a level of the trie.
+        let trie_lv = (usize::BITS - unit.dir_bound.max(2).saturating_sub(1).leading_zeros()).div_ceil(2).max(1);
         // The scratch: bytes and tokens, in one buffer: the tokens (an
         // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
         // each are the files' `__FILE__` literals, the configuration's three, then the files'
@@ -1255,7 +1274,7 @@ impl Exp {
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
             // A round's items and the next's (decision 0527).
             slots: zeroed(2 * q)?,
-            qctl: zeroed(6)?,
+            qctl: zeroed(10)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1274,6 +1293,9 @@ impl Exp {
             // The output's pieces: five columns, `out` words each (decision 0520 §3).
             out: zeroed(5 * out)?,
             scans: zeroed(q)?,
+            subs: zeroed(q)?,
+            sb_l: zeroed(SB_COLS * q)?,
+            calls: zeroed(q)?,
             fins: zeroed(2 * q)?,
             places: zeroed(2 * q)?,
             sc_n: zeroed(q)?,
@@ -1285,15 +1307,19 @@ impl Exp {
             sc_lscan: Scan::new(arena)?,
             sc_ckeys: arena.zeroed::<u64>(x.sc.max(1))?,
             sc_sort: Sort::new(arena, x.sc.max(1))?,
-            sc_first: zeroed(1)?,
+            // The scan's block of ids (0), the walks' claims' count and the exits' (1), the exits
+            // climbing (2).
+            sc_first: zeroed(3)?,
             sc_cap: x.sc as u32,
+            trie: zeroed(lists * 4 * trie_lv as usize)?,
+            trie_lv,
         })
     }
 
     /// The expansion's slots of the layout: the top level's passes (`pp_setup`'s last phases:
     /// its depth, a segmented scan by stretch; the close table, a scan and a 40-bit sort; the
-    /// calls; the outermost, a max scan of the reach and a scan; the lists and the queue's seed),
-    /// the queue and the top level's rollback and places (in `pp_setup`), and the check.
+    /// calls; the outermost, a max scan of the reach and a scan; the lists and the rounds' seed),
+    /// the rounds and the top level's rollback and places (in `pp_setup`), and the check.
     pub fn lay(&self, l: &mut Lay) {
         l.at("THEADS", &self.theads).at("DELTA", &self.delta).at("DEPTH", &self.depth).at("CLOSE", &self.close).at("CLOSE_AT", &self.close_at);
         l.at("CLOSE_TOTAL", &self.close_scan.total).at("CLOSE_KEYS", &self.close_keys);
@@ -1305,10 +1331,11 @@ impl Exp {
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
+        l.at("TRIE", &self.trie).word("TRIE_LV", self.trie_lv);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
-        l.at("SCANS", &self.scans).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
+        l.at("SCANS", &self.scans).at("SUBS", &self.subs).at("SB_L", &self.sb_l).at("CALLS", &self.calls).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
         for (name, b) in SC_TOK.iter().zip(&self.sc_tok) {
             l.at(name, b);
         }
@@ -1332,6 +1359,11 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
+    pub fn gives(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` 16 counts the givings back (decision 0486 §10).
+        unsafe { *self.ctl.host().cast::<u32>().add(16) }
+    }
+
     pub fn rounds(&self) -> u32 {
         // SAFETY: the device finished; `ctl` 25 counts the rounds.
         unsafe { *self.ctl.host().cast::<u32>().add(25) }
@@ -1345,7 +1377,7 @@ impl Exp {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            // The queue's ring: its positions past its base (decision 0486 §10).
+            // The rounds' items: a round's most (decision 0527).
             let qc = self.qctl.host().cast::<u32>();
             let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
@@ -1469,6 +1501,8 @@ pub struct Expanded {
     pub passes: (u32, u32),
     /// The expansion's rounds (decision 0527 §1), every top's (a measurement).
     pub rounds: u32,
+    /// The givings back between rounds (decision 0486 §10), every top's.
+    pub gives: u32,
     pub def_rung: u32,
 }
 
@@ -1560,7 +1594,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs);
@@ -1573,7 +1607,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1581,7 +1615,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
     }
 }
 
@@ -1689,7 +1723,7 @@ pub fn relex(texts: &[Vec<u8>], options: u32) -> Result<Vec<u32>, Error> {
     let n = texts.len() as u32;
     let args = crate::pp_arena::ProbeArgs([n, options, 0, 0]);
     crate::pp_eval::run(|enc| {
-        enc.run("pd_relex_test", &[("bytes", &b), ("offsets", &o), ("out", &out)], Some(args), u64::from(n).div_ceil(crate::pp_arena::TG));
+        enc.run("pd_relex_test", &[("bytes", &b), ("offsets", &o), ("out", &out)], Some(args), u64::from(n).div_ceil(crate::pp_arena::tg()));
         Ok(())
     })?;
     // SAFETY: the device finished writing `out`.

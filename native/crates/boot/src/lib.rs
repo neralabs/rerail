@@ -1883,7 +1883,9 @@ pub mod code_rule_dsl {
         // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
         #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
         pub mod component_loop {
-            #[cfg(any(test, feature = "headless", feature = "test-hooks"))]
+            // Read by the tests alone: a headless build's comparison is rerail-sessions' own (`verification`).
+            // The test crates read it through `test-hooks`.
+            #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
             #[allow(unused_imports)]
             use super::*;

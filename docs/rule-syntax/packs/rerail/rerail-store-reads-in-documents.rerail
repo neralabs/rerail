@@ -1,0 +1,38 @@
+.policy "rerail-store-reads-in-documents" revision 2
+.description "Read a stored file's source or tape only through the workspace document contract, not by calling the content store from other engine code."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "native/src/content_store/**", "native/src/*/workspace/documents.rs", "**/tests.rs", "**/*_tests.rs", "**/test_support.rs", "**/tests/**"
+// A stored file's source or tape is loaded through workspace/documents.rs. A text search over each file, as the JSON's
+// regex clause: a call of one of the content store's readers on a line, before any `//` on it.
+//   let bytes = store.get_source(source)?;             STORE_READ_OUTSIDE_DOCUMENTS
+//   ContentStore::get_tapes_bulk(&store, &hashes)      STORE_READ_OUTSIDE_DOCUMENTS
+//   // store.get_tape(hash) in a comment                not reported
+//   documents::load(&storage, &version)?               not reported
+// A finding sits where the match starts (the line's start). The regex is the JSON's, copied exactly.
+
+.violation STORE_READ_OUTSIDE_DOCUMENTS(at: span) "Load this file's source or tape through a function in workspace/documents.rs, adding one there if none fits, instead of calling the store here. Leave the facts graph's own tape storage alone."
+STORE_READ_OUTSIDE_DOCUMENTS(m) :- source(_, sp), match_all("(?m)^(?:[^/\\n]|/[^/\\n])*?(?:\\.|\\bContentStore::)(?:get_source\\(\\s*[^)\\s]|get_sources_bulk\\(|get_sources_by_hash_bulk\\(|get_tape\\(|get_tape_with_status\\(|get_tapes_bulk\\(|file_documents_bulk\\()", sp, m).
+
+// The pack's example (packs/rerail/pack.json), a bulk read, and a comment.
+.test store_reads_are_reported exactly
+    .fixture "native/src/code_rule_dsl/facts/families.rs" ```
+            let bytes = store.get_source(source)?;
+            // store.get_tape(hash) is read in documents.rs
+            let tapes = ContentStore::get_tapes_bulk(&store, &hashes);
+        ```
+    .expect STORE_READ_OUTSIDE_DOCUMENTS at "native/src/code_rule_dsl/facts/families.rs":1
+    .expect STORE_READ_OUTSIDE_DOCUMENTS at "native/src/code_rule_dsl/facts/families.rs":3
+.end
+
+// The pack's passing example, and the owner itself.
+.test the_documents_contract_passes exactly
+    .fixture "native/src/code_rule_dsl/workspace/evaluate.rs" ```
+                        let document = documents::load(&storage, &version)?;
+                        let unanswered = !file.candidates.regex.is_empty();
+        ```
+    .fixture "native/src/code_rule_dsl/workspace/documents.rs" ```
+        let bytes = store.get_source(source)?;
+        ```
+.end
