@@ -1,4 +1,6 @@
 //! Clone identity for history and worktree identity for ref and index requests.
+#[allow(unused_imports)]
+use crate::source_tree::Canonical as _;
 use sha2::{Digest as _, Sha256};
 use std::fs;
 use std::io::{self, Read as _};
@@ -247,7 +249,7 @@ fn clone_id(repo: &gix::Repository, publish_id: bool) -> io::Result<String> {
 impl Identity {
     pub fn of(repo: &gix::Repository, publish_id: bool) -> io::Result<Self> {
         let id = clone_id(repo, publish_id)?;
-        Ok(Self::from_id(&id, &repo.git_dir().canonicalize()?))
+        Ok(Self::from_id(&id, &repo.git_dir().canonical()?))
     }
 
     fn from_id(id: &str, admin: &Path) -> Self {

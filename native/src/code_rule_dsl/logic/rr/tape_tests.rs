@@ -504,17 +504,19 @@ fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alon
 }
 
 /// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
-/// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
-/// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
-/// policy that asks for other guests runs in its own pack (`rr::guest_asks`): C408 finds what it finds alone, and a
-/// policy that asks the same as C408 still shares its pack.
+/// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict()"]`, and C408 found a `dict()`
+/// call there once a policy that only includes that file ran beside it. A policy that asks for other guests runs in
+/// its own pack (`rr::guest_asks`), and a policy that asks the same as C408 still shares its pack. In that pack, C408
+/// finds what it finds alone: the file's call, and no call inside a string annotation, which its rules do not name
+/// (decision 0165). Before, hiding cloned C408's own rules for the annotations' nodes that `builtin_at` holds beside a
+/// library that reads them (O110), and the pack was refused (decision 0431 R9: a finding at a tape value's node).
 #[test]
 fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrguestpack");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("c.py"),
-        "from typing import List, Literal, cast\n\na: \"dict({})\" = 1\nb: \"dict(\" \"{})\" = 1\nc: List[\"dict({1: 2})\"] = []\nd: Literal[\"dict({})\"] = 1\ne = cast(\"(dict)({ })\", None)\n",
+        "from typing import List, Literal, cast\n\na: \"dict()\" = 1\nb: \"dict(\" \")\" = 1\nc: List[\"dict(a=2)\"] = []\nd: Literal[\"dict()\"] = 1\ne = cast(\"(dict)( )\", None)\nf = dict()\n",
     )
     .unwrap();
     let c408 = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
@@ -538,7 +540,7 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
         lines
     };
     let own = lines(&alone, "ruff-c408-unnecessary-collection-call");
-    assert!(!own.is_empty() && !own.contains(&6), "C408 alone finds the string annotations, not the `Literal`'s text: {alone:#}");
+    assert_eq!(own, [8], "C408 alone finds the file's call, none in a string annotation: {alone:#}");
     assert_eq!(lines(&batch, "ruff-c408-unnecessary-collection-call"), own, "{batch:#}");
     assert_eq!(lines(&batch, "t:c408-twin"), own, "{batch:#}");
     // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rerail` runs alone.

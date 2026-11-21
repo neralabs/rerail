@@ -50,6 +50,22 @@ pub(crate) fn uncounted(len: usize) {
     RESERVED.fetch_add(len, Relaxed);
 }
 
+/// Unmaps a file's mapping of `len` bytes at `p` (`Block::file`, `map_file`, `open_file`), which `uncounted` counted.
+///
+/// # Safety
+/// `p` and `len` are the mapping's, and nothing reads it after.
+pub(crate) unsafe fn release_mapping(p: *mut u8, len: usize) {
+    #[cfg(windows)]
+    {
+        RESERVED.fetch_sub(len, Relaxed);
+        crate::windows::unmap_view(p);
+    }
+    #[cfg(not(windows))]
+    unsafe {
+        release(p, len)
+    }
+}
+
 /// Gives back what `reserve` (or, on Unix, any mapping of `len` bytes at `p`) took.
 ///
 /// # Safety

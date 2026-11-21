@@ -636,7 +636,8 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
                     let text = std::fs::read_to_string(f).ok()?;
                     let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(text).ok()?;
                     let mut used = BTreeMap::new();
-                    ops_of(&file, &mut used, &f.display().to_string())?;
+                    // Spelled with `/` on every OS: `packs_ledger` names a file's pack by its path.
+                    ops_of(&file, &mut used, &f.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"))?;
                     Some(used)
                 })
                 .collect()

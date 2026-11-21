@@ -7,6 +7,8 @@ pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -2092,7 +2094,8 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
                         refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     };
-                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    // A document's path, with `/` on every OS.
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
                     let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
                     record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
                     record.extend_from_slice(rel.as_bytes());
@@ -2196,13 +2199,14 @@ mod git_revision_tests {
         std::fs::write(&rule, ".language python\n.violation Seen(at: node) \"identifier\"\nSeen(n) :- kind(n, \"identifier\").\n").unwrap();
         let path = fixture.path().join("store.sqlite");
         let mut caller = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:outer", "outer").unwrap();
-        corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
-            let report = run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap();
-            assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        let report = corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
+            run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap()
         });
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
         let db = rusqlite::Connection::open(&path).unwrap();
         let count = |pattern: &str| db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope GLOB ?1", [pattern], |r| r.get::<_, i64>(0)).unwrap();
-        assert!(count("pending:*") > 0);
+        // A run that could not publish says why in its cache warnings.
+        assert!(count("pending:*") > 0, "no pending rows: {}", report["cacheWarnings"]);
         assert_eq!(count("cwd:*"), 0);
         caller.finish(false).unwrap();
         assert_eq!(count("*"), 0);

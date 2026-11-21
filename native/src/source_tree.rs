@@ -59,7 +59,7 @@ pub fn rule_library() -> PathBuf {
 
 fn beside_image(directory: &str, marker: &str) -> Option<PathBuf> {
     let image = image()?;
-    let image = image.canonicalize().unwrap_or(image);
+    let image = image.canonical().unwrap_or(image);
     image.ancestors().map(|dir| dir.join(directory)).find(|dir| dir.join(marker).is_file())
 }
 

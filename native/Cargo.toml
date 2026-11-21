@@ -204,7 +204,7 @@ libc = "0.2.189"
 mimalloc = { version = "=0.1.52", default-features = false }
 libc = "0.2.189"
 
-# jemalloc does not build for MSVC targets or wasm; both keep the system allocator (`lib.rs`).
+# jemalloc does not build for MSVC targets or wasm: Windows takes mimalloc, wasm the system allocator (`lib.rs`).
 [target.'cfg(not(any(windows, target_family = "wasm")))'.dependencies]
 # The addon is dlopen'ed by Node; glibc can't fit jemalloc's initial-exec TLS in its static block.
 tikv-jemallocator = { version = "=0.7.0", features = ["disable_initial_exec_tls"] }
@@ -215,6 +215,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 [target.'cfg(windows)'.dependencies]
 # `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+# Windows' global allocator (`lib.rs`): jemalloc does not build for MSVC.
+mimalloc = { version = "=0.1.52", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"

@@ -151,6 +151,8 @@ impl ProgramPass for Hide {
         let mut specialized: BTreeMap<String, (String, BTreeMap<usize, String>)> = BTreeMap::new();
         // Rules split once already: a variable of theirs that may be a guest's node has its clone (O110).
         let mut split: BTreeSet<usize> = BTreeSet::new();
+        // The clones, by their place among the rules.
+        let mut clones: BTreeSet<usize> = BTreeSet::new();
         // The analysis kept across the rounds, each round's change applied to it (decision 0246 §3).
         let mut delta = Delta::new(&rules);
         // The rules the round before changed or added (every rule, at first).
@@ -166,7 +168,7 @@ impl ProgramPass for Hide {
             // The relations rules derive: a relation of stated facts alone is a kind set when a kind is read through it.
             let ruled = &delta.heads;
             // Each copy with the rule it was made from (the request record follows it, `asked_after`).
-            let mut copies: Vec<(W, Facts)> = Vec::new();
+            let mut copies: Vec<(W, Facts, bool)> = Vec::new();
             let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
             // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
             let mut axes: Vec<String> = Vec::new();
@@ -203,7 +205,7 @@ impl ProgramPass for Hide {
                 if !maybe.is_empty() && split.insert(i) {
                     let mut seed = seeds[i].clone();
                     seed.extend(maybe);
-                    copies.push((rule.clone(), seed));
+                    copies.push((rule.clone(), seed, true));
                     changed = true;
                 }
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
@@ -323,7 +325,7 @@ impl ProgramPass for Hide {
                                     seed.insert(*x, Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                                 }
                             }
-                            copies.push((copy, seed));
+                            copies.push((copy, seed, false));
                         }
                         if let Some(d) = prog.columns_of(orig.as_str()) {
                             decls.push((name.clone(), d));
@@ -356,7 +358,10 @@ impl ProgramPass for Hide {
                 }
             }
             let first_copy = rules.len();
-            for (rule, seed) in copies {
+            for (rule, seed, clone) in copies {
+                if clone {
+                    clones.insert(rules.len());
+                }
                 rules.push(rule);
                 seeds.push(seed);
             }
@@ -394,11 +399,22 @@ impl ProgramPass for Hide {
         // and no rule reached it through the annotation either.
         let asking = asking(&prog, &rules);
         let mut finals: Vec<Final> = vec![Final::default(); rules.len()];
+        // An annotation is a tape value (decision 0431 §3), shown to no rule that does not name a guest (decision
+        // 0165): a clone whose head would carry an annotation's node into a column an output shows (`shown_columns`)
+        // goes. A clone that reads one inside its rule stays: a call's target through a quoted `n: "Node"`. Kept, a
+        // policy's own rules found calls inside string annotations through `builtin_at` beside a library that reads
+        // them (C408), placed at nodes no file holds (R9), where alone they found none.
+        let shown = shown_columns(&rules, &v.output_names());
+        let mut gone: BTreeSet<usize> = BTreeSet::new();
         for (i, rule) in rules.iter().enumerate() {
             if VIEWS.contains(&rule.head.as_str()) || asking.contains(&rule.head) {
                 continue;
             }
             let facts: Facts = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]) } else { Facts::new() };
+            if clones.contains(&i) && shows_an_annotation(rule, &facts, &shown) {
+                gone.insert(i);
+                continue;
+            }
             finals[i] = bounded(v, rule, &facts, &base_locations, bound);
         }
         drop(bounding);
@@ -406,7 +422,7 @@ impl ProgramPass for Hide {
         // `rr_shown_agg<k>(vars) :- atom, bounds`.
         let mut helpers: Vec<Helper> = Vec::new();
         for (i, rule) in rules.iter().enumerate() {
-            if VIEWS.contains(&rule.head.as_str()) {
+            if VIEWS.contains(&rule.head.as_str()) || gone.contains(&i) {
                 continue;
             }
             let src = v.rule(rule.src).expect("a rule of the input");
@@ -477,8 +493,10 @@ impl ProgramPass for Hide {
             b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
         }
         let asked = asked_after(v, &rules);
-        for (rule, fin) in rules.iter().zip(&finals) {
-            write_rule(b, v, rule, fin)?;
+        for (i, (rule, fin)) in rules.iter().zip(&finals).enumerate() {
+            if !gone.contains(&i) {
+                write_rule(b, v, rule, fin)?;
+            }
         }
         for h in &helpers {
             let src = v.rule(h.src).expect("a rule of the input");
@@ -997,6 +1015,58 @@ fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
         }
     }
     out
+}
+
+/// Whether `rule`'s head, by its analysis (`facts`), holds an annotation's node at a column an output shows.
+fn shows_an_annotation(rule: &W, facts: &Facts, shown: &HashMap<String, BTreeSet<usize>>) -> bool {
+    let Some(cols) = shown.get(rule.head.as_str()) else { return false };
+    // Scoped is unbounded (`bounded`): a node that may be an annotation's is shown as one that is.
+    let annotation = |x: Slot| facts.get(&x).is_some_and(|f| f.scoped && f.grammar.as_deref() == Some("annotation"));
+    rule.head_args.iter().enumerate().any(|(c, t)| cols.contains(&c) && t.var().is_some_and(annotation))
+}
+
+/// The columns an output shows, by relation: an output's every column and a finding's place (what `rr_unplaced`
+/// reads), and each column of a relation a rule reads into a column its head shows, transitively. A node that reaches
+/// one is shown to the output's reader.
+fn shown_columns(rules: &[W], outputs: &[String]) -> HashMap<String, BTreeSet<usize>> {
+    let mut rules_of: HashMap<&str, Vec<&W>> = HashMap::default();
+    for r in rules {
+        rules_of.entry(r.head.as_str()).or_default().push(r);
+    }
+    let mut shown: HashMap<String, BTreeSet<usize>> = HashMap::default();
+    let mut todo: Vec<&str> = Vec::new();
+    for o in outputs {
+        let arity = rules_of.get(o.as_str()).and_then(|rs| rs.first()).map_or(0, |r| r.head_args.len());
+        shown.insert(o.clone(), (0..arity).collect());
+        todo.push(o.as_str());
+    }
+    // A finding's place: the column its `rr_unplaced` rule reads a node of (decision 0431 R9).
+    for w in rules.iter().filter(|w| w.head == crate::code_rule_dsl::logic::rr::UNPLACED) {
+        let placed: BTreeSet<Slot> = w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel == "node").filter_map(|a| a.args.get(1).and_then(S::var)).collect();
+        for a in w.body.iter().filter_map(|(_, l)| l.positive()).filter(|a| a.rel != "node") {
+            let cols: Vec<usize> = a.args.iter().enumerate().filter(|(_, t)| t.var().is_some_and(|x| placed.contains(&x))).map(|(c, _)| c).collect();
+            if !cols.is_empty() {
+                shown.entry(a.rel.clone()).or_default().extend(cols);
+                todo.push(a.rel.as_str());
+            }
+        }
+    }
+    while let Some(rel) = todo.pop() {
+        let cols = shown.get(rel).cloned().unwrap_or_default();
+        for w in rules_of.get(rel).into_iter().flatten() {
+            let vars: BTreeSet<Slot> = cols.iter().filter_map(|&c| w.head_args.get(c).and_then(S::var)).collect();
+            for a in w.body.iter().filter_map(|(_, l)| l.positive()) {
+                let more: Vec<usize> = a.args.iter().enumerate().filter(|(_, t)| t.var().is_some_and(|x| vars.contains(&x))).map(|(c, _)| c).collect();
+                let entry = shown.entry(a.rel.clone()).or_default();
+                let before = entry.len();
+                entry.extend(more);
+                if entry.len() != before {
+                    todo.push(a.rel.as_str());
+                }
+            }
+        }
+    }
+    shown
 }
 
 /// A context relation (`rr_ctx…`, a policy's copy too): what `asking` adds.

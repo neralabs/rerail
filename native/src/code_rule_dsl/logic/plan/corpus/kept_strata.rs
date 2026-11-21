@@ -19,6 +19,8 @@
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;

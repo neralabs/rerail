@@ -34,6 +34,8 @@ pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rerail` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 // The parser and the tape's tree, the `.rerail` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;

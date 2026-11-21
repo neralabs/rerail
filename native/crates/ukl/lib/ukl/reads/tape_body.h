@@ -357,8 +357,9 @@ UKL_INLINE uint32_t clif_t15_end_stated(CLIF_T_ARGS, uint32_t i)
     return clif_tape_start_stated(t, v, from) + clif_t15_cell(t, clif_t_column(t, v, r, 4u), clif_t_width(t, v, r, 2u), i);
 }
 
-// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes.
-UKL_INLINE uint32_t clif_t_hop(CLIF_T_ARGS, uint32_t c, uint32_t size) { return ukl_min(ukl_max(c + size, c + 1u), clif_view(v, CLIF_T_NODES)); }
+// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps (decision 0463): a walk at
+// or past the view's last node still steps on.
+UKL_INLINE uint32_t clif_t_hop(CLIF_T_ARGS, uint32_t c, uint32_t size) { return ukl_max(ukl_min(ukl_max(c + size, c + 1u), clif_view(v, CLIF_T_NODES)), c + 1u); }
 
 // The nearest node before whose subtree holds the node, back over at most 64 nodes, else a descent from the root
 // over the siblings' subtrees.
@@ -421,7 +422,8 @@ UKL_INLINE uint32_t clif_t_select_in_word(uint64_t x, uint32_t r)
 }
 
 // The position in the newline index's high bits of its `j`-th one (`ones` 1) or zero (0): from the sample before
-// it, a word at a time.
+// it, a word at a time, within the index's words (its field 4). Past them (a `j` the index does not hold: a line past
+// the last), the position past its last word: the walk ends there (decision 0463).
 UKL_COLD uint32_t clif_tape_line_select(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t ones, uint32_t j)
 {
     ClifTAt r = clif_t_in_place();
@@ -431,7 +433,10 @@ UKL_COLD uint32_t clif_tape_line_select(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_S
     uint32_t w = clif_t_u32(t, r, sample, 0u);
     uint32_t before = clif_t_u32(t, r, sample, 4u);
     uint32_t high = clif_t_lines_part(t, v, (zs + os) * 8u);
+    uint32_t words = clif_t_lines_field(t, v, 4u);
     for (;;) {
+        if (w >= words)
+            return words * 64u;
         uint64_t word = clif_t_word(t, r, high, w * 8u);
         uint64_t x = ones != 0u ? word : ~word;
         uint32_t through = before + ukl_popcount64(x);

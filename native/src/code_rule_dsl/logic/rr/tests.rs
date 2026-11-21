@@ -270,7 +270,7 @@ fn rr_files() -> Vec<PathBuf> {
 }
 
 fn short(p: &Path) -> String {
-    p.strip_prefix(rule_syntax()).unwrap_or(p).display().to_string()
+    p.strip_prefix(rule_syntax()).unwrap_or(p).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[test]

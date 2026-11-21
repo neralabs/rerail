@@ -4925,9 +4925,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
-            // simdjson where it builds (not wasm or MSVC: tree-sitter-json there); the Bitlex parser
-            // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
+            // simdjson where it builds (not wasm: tree-sitter-json there; on MSVC it is compiled by
+            // clang-cl); the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            #[cfg(not(target_family = "wasm"))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
         }
         tape::install_parsers(parsers);

@@ -78,3 +78,9 @@ before. Against main, the pack loses RUF060's two string annotations and C408's 
 to 83–85 s, peak 5.8 GB to 6.4 GB: 88 narrow copies are evaluated beside their originals.
 
 Test: `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`.
+
+Added 2026-11-21 (CUDA-support's 6264e89aae). Hiding drops a clone whose head would hold an annotation's node at a
+column an output shows (an output's columns and a finding's place, what `rr_unplaced` reads, carried back through the
+rules; `hide::shown_columns`). A clone used inside a rule stays: a call's target through a quoted `n: "Node"`. Kept,
+C408's own `c4_builtin` clone for `builtin_at` found calls inside string annotations beside a library that reads them
+(O110), placed at nodes no file holds (decision 0431 R9), where alone it found none.

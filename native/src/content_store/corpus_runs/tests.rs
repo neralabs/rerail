@@ -1,3 +1,5 @@
+#[allow(unused_imports)]
+use crate::source_tree::Canonical as _;
 use super::*;
 use crate::content_store::tests::store;
 
@@ -96,7 +98,7 @@ fn releasing_one_use_names_compacts_generations_and_never_revives_a_stale_owner(
 fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
     use crate::content_store::analysis_scope::{self, AnalysisRun, Publication, RunSource};
     let (file, store) = store("directory-generation-compaction");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project");
     let child = parent.join("0");
     let scope = |dir: &std::path::Path, home| analysis_scope::directory_in(dir, Some(home));
     let begin = |dir: &std::path::Path, home, id: &str, control| {
@@ -154,7 +156,7 @@ fn a_numbered_parent_stop_compacts_only_fully_covered_directory_generations() {
 fn directory_generation_compaction_preserves_an_unobserved_legacy_acquisition() {
     use crate::content_store::analysis_scope;
     let (file, store) = store("legacy-directory-generation");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project");
     let scope = analysis_scope::directory(&parent.join("child"));
     let old = store.begin_analysis_scope_at(&scope, 21).unwrap();
     {
@@ -576,7 +578,7 @@ fn numbered_directory_stops_keep_one_cutoff_per_directory() {
 fn a_parent_receipt_replaces_covered_children_and_survives_replay() {
     use crate::content_store::analysis_scope;
     let (file, store) = store("scope-parent-receipt");
-    let parent = file.parent().unwrap().canonicalize().unwrap().join("project[1]");
+    let parent = file.parent().unwrap().canonical().unwrap().join("project[1]");
     let sibling = parent.with_file_name("project[1]-other");
     let child = parent.join("0");
     let ahead = parent.join("ahead");
@@ -1419,7 +1421,7 @@ fn a_deletion_of_a_running_scope_fails_until_the_run_has_finished() {
     store.delete_analysis_scope("named:held").unwrap();
     assert!(store.completed_analysis_runs().unwrap().is_empty());
     drop(other);
-    let dir = path.parent().unwrap().canonicalize().unwrap().join("work");
+    let dir = path.parent().unwrap().canonical().unwrap().join("work");
     let begin = |control| AnalysisRun::begin_at(ContentStore::open(&path).unwrap(), &analysis_scope::directory_in(&dir, Some("home")), "watch", control).unwrap();
     let mut later = begin(30);
     store.delete_directory_analysis_scopes(&dir, Some("20:stop:home")).unwrap();
@@ -1451,7 +1453,7 @@ fn runs_that_start_a_new_scope_together_share_its_generation() {
 #[test]
 fn a_dead_runs_lease_neither_blocks_a_deletion_nor_survives_it() {
     let (path, store) = store("scope-dead-lease");
-    let dir = std::path::PathBuf::from(format!("{}.scopes", path.canonicalize().unwrap().display()));
+    let dir = std::path::PathBuf::from(format!("{}.scopes", path.canonical().unwrap().display()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("41"), "named:dead\n0\n0\n0\n").unwrap();
     store.delete_analysis_scope("named:dead").unwrap();

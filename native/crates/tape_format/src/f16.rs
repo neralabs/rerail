@@ -797,6 +797,15 @@ pub(crate) trait WriterOps: Sized {
     #[cfg_attr(not(test), allow(dead_code))]
     fn set_start(&mut self, i: usize, start: u64);
     fn finish(self) -> Result<Finished, String>;
+    /// Whether its writers are finished together (`finish_all`, the device's in one launch), not each as it is made:
+    /// a writer used again (`ops::Writer::begin`) is finished before the next is asked for.
+    #[cfg_attr(not(test), allow(dead_code))]
+    const TOGETHER: bool = false;
+    /// Each writer's `finish`, in order (the device's run in one launch, a thread a writer).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+        ws.into_iter().map(Self::finish).collect()
+    }
 }
 
 macro_rules! writer_ops {
@@ -807,7 +816,11 @@ macro_rules! writer_ops {
     ($t:ty, again) => {
         writer_ops!($t, |mut w: $t| <$t>::finish(&mut w));
     };
-    ($t:ty, $finish:expr) => {
+    // Its writers finished together by `$all` (`WriterOps::finish_all`: the device's in one launch).
+    ($t:ty, all = $all:ident) => {
+        writer_ops!($t, |w: $t| <$t>::finish(w), $all);
+    };
+    ($t:ty, $finish:expr $(, $all:ident)?) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -830,6 +843,12 @@ macro_rules! writer_ops {
             fn finish(self) -> Result<Finished, String> {
                 ($finish)(self)
             }
+            $(
+                const TOGETHER: bool = { let _ = stringify!($all); true };
+                fn $all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+                    <$t>::$all(ws)
+                }
+            )?
         }
     };
 }
@@ -837,7 +856,7 @@ writer_ops!(Writer, again);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
-writer_ops!(ops::device::DeviceOps);
+writer_ops!(ops::device::DeviceOps, all = finish_all);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
@@ -1985,6 +2004,77 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
+    /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
+    /// view whose count is short of its tape's, a byte past the source and a line past the last ask each walking read
+    /// (sizes' hops, a parent's descent, the newline index's selects) to step past what the tape holds: each step must
+    /// still move it on, and the walk end. A read that does not return within its time is reported by name, not left
+    /// to hang the run (on a GPU, nothing stops such a kernel: decision 0440). The tape lies before a zeroed tail, and
+    /// the nodes asked lie within it.
+    #[test]
+    fn every_walk_ends_whatever_it_is_asked() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
+        let v16 = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        let (image, _) = crate::tape::tests::sample();
+        let v15 = crate::tape::f15_view(&image, 0).unwrap();
+        let tail = |bytes: &[u8]| bytes.iter().copied().chain(std::iter::repeat_n(0u8, 8 << 20)).collect::<Vec<u8>>();
+        let tapes = vec![("format 16", tail(t.as_bytes()), v16), ("format 15", tail(&image), v15)];
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let (done, finished) = std::sync::mpsc::channel();
+        let at = asked.clone();
+        std::thread::spawn(move || {
+            let reads = rerail_clif::jit::Reads::new();
+            // Said on stderr too: a read that leaves the buffer faults, and the fault ends the process.
+            let ask = |what: String| {
+                eprintln!("asking {what}");
+                *at.lock().unwrap() = what;
+            };
+            for (format, bytes, view) in &tapes {
+                let n = view.nodes;
+                // Within the zeroed tail: a node further out reads its own cell outside any buffer, which no walk does.
+                let past = [n, n + 1, n + 7, n + 4096];
+                // Views whose count is short of the tape's, each asked of every node the tape holds.
+                let mut short = Vec::new();
+                for count in [0, 1, n / 2] {
+                    short.push((TapeView { nodes: count, ..*view }, (0..n).collect::<Vec<u32>>()));
+                }
+                short.push((*view, past.to_vec()));
+                for (v, nodes) in &short {
+                    for &i in nodes {
+                        for read in ["tape_size", "tape_end_of", "tape_parent", "tape_next", "tape_first_child", "tape_child_count", "tape_start", "tape_end"] {
+                            ask(format!("{format}: {read}({i}) of a view of {} nodes", v.nodes));
+                            reads.one(read, bytes, v, i as usize);
+                        }
+                        for k in [0, 1, 5, u32::MAX] {
+                            ask(format!("{format}: tape_child({i}, {k}) of a view of {} nodes", v.nodes));
+                            reads.two("tape_child", bytes, v, i as usize, k);
+                        }
+                        ask(format!("{format}: tape_next_in({i}, {}) of a view of {} nodes", u32::MAX, v.nodes));
+                        reads.two("tape_next_in", bytes, v, i as usize, u32::MAX);
+                    }
+                }
+                // Bytes past the source, lines past the last.
+                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                    ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
+                    reads.one("tape_line", bytes, view, x as usize);
+                }
+                let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
+                for k in [lines + 1, lines + 2, lines + 1000] {
+                    ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
+                    reads.one("tape_line_start", bytes, view, k as usize);
+                }
+            }
+            let _ = done.send(());
+        });
+        if finished.recv_timeout(std::time::Duration::from_secs(20)).is_err() {
+            panic!("a walk that does not end: {}", asked.lock().unwrap());
+        }
+    }
+
     /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
     /// reads do through the JIT: format 16 with every side list in use, and format 15.
     #[test]
@@ -3060,6 +3150,9 @@ DEFINE_KERNEL2(tests, t_random,
         type Case<'a> = (&'a str, &'a [(u32, u64, u64, usize)], &'a Vec<u8>);
         let mut cases: Vec<Case> = vec![("escaped", &nodes[..], &source), ("repeating", &rep[..], &rep_source), ("one node", &small[..], &source), ("none", &[][..], &source)];
         cases.extend(randoms.iter().map(|(t, src)| ("random", &t[..], src)));
+        // Each case's writer finished as it is made, or every one together (`WriterOps::TOGETHER`: the device's in
+        // one launch).
+        let (mut whats, mut refs, mut made, mut finished) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (label, nodes, source) in cases {
             for (z, every, late, blocks) in [(false, 1, false, true), (false, 1_000_000, false, false), (false, 97, false, true), (false, 1, true, false), (false, 13, true, true), (true, 1, false, true), (true, 1_000_000, false, false), (true, 13, true, true)] {
                 if late && nodes.len() < 2 {
@@ -3069,28 +3162,37 @@ DEFINE_KERNEL2(tests, t_random,
                 by_ops_of(&mut r, nodes, every, late);
                 let mut c = make(&lang, source, z, blocks, nodes.len());
                 by_ops_of(&mut c, nodes, every, late);
-                let what = format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}");
-                match (r.finish(), c.finish()) {
-                    (Ok(r), Ok(c)) => {
-                        match (&r.tape, &c.tape) {
-                            (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
-                            (Written::F16Z(rt), Written::F16Z(ct)) => {
-                                let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
-                                assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
-                                if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
-                                    panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
-                                }
-                                for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
-                                    kinds[usize::from(k)] += 1;
-                                }
-                            }
-                            _ => panic!("{what}: the formats"),
-                        }
-                        assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
-                    }
-                    (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
-                    (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
+                whats.push((format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}"), nodes.is_empty()));
+                refs.push(r.finish());
+                if W::TOGETHER {
+                    made.push(c);
+                } else {
+                    finished.push(c.finish());
                 }
+            }
+        }
+        finished.extend(W::finish_all(made));
+        for (((what, empty), r), c) in whats.into_iter().zip(refs).zip(finished) {
+            match (r, c) {
+                (Ok(r), Ok(c)) => {
+                    match (&r.tape, &c.tape) {
+                        (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
+                        (Written::F16Z(rt), Written::F16Z(ct)) => {
+                            let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
+                            assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
+                            if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
+                                panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
+                            }
+                            for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
+                                kinds[usize::from(k)] += 1;
+                            }
+                        }
+                        _ => panic!("{what}: the formats"),
+                    }
+                    assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
+                }
+                (Err(_), Err(_)) => assert!(empty, "{what}: both failed"),
+                (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
             }
         }
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");

@@ -544,7 +544,8 @@ pub(super) fn sources(
         let file = if crate::git_workspace::snapshot::contains(root) {
             p.clone()
         } else {
-            crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?.into_os_string().into_string().ok()?
+            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?.to_string_lossy(), std::path::MAIN_SEPARATOR)
         };
         Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
     }).collect();

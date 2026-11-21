@@ -67,18 +67,28 @@ pub fn simd_width() -> u32 {
 /// Each thread's stack.
 const STACK_BYTES: usize = 256 << 10;
 
-/// The host's C++ compiler: `RERAIL_CPU_CXX`, else `c++`, if it runs.
+/// The host's C++ compiler: `RERAIL_CPU_CXX`, else `c++` (Windows: clang, on the path or Visual Studio's), if it runs.
 fn compiler() -> Result<&'static str, String> {
     static CXX: OnceLock<Result<String, String>> = OnceLock::new();
     CXX.get_or_init(|| {
-        let cxx = std::env::var("RERAIL_CPU_CXX").unwrap_or_else(|_| "c++".to_string());
-        match std::process::Command::new(&cxx).arg("--version").output() {
-            Ok(o) if o.status.success() => Ok(cxx),
-            _ => Err(format!("no C++ compiler ({cxx}; set RERAIL_CPU_CXX)")),
+        let runs = |cxx: &str| std::process::Command::new(cxx).arg("--version").output().is_ok_and(|o| o.status.success());
+        if let Ok(cxx) = std::env::var("RERAIL_CPU_CXX") {
+            return if runs(&cxx) { Ok(cxx) } else { Err(format!("no C++ compiler ({cxx}, RERAIL_CPU_CXX)")) };
         }
+        // Windows: clang (the shim's assembly and builtins are clang's), on the path or Visual Studio's own.
+        let candidates: Vec<String> = if cfg!(windows) { std::iter::once("clang++".to_string()).chain(visual_studio_clang()).collect() } else { vec!["c++".to_string()] };
+        candidates.iter().find(|c| runs(c)).cloned().ok_or_else(|| format!("no C++ compiler ({}; set RERAIL_CPU_CXX)", candidates.join(", ")))
     })
     .as_deref()
     .map_err(Clone::clone)
+}
+
+/// The clang Visual Studio installs (its "C++ Clang tools" component), as its installer's `vswhere` finds it.
+fn visual_studio_clang() -> Option<String> {
+    let programs = std::env::var("ProgramFiles(x86)").ok()?;
+    let vswhere = format!("{programs}\\Microsoft Visual Studio\\Installer\\vswhere.exe");
+    let o = std::process::Command::new(vswhere).args(["-latest", "-products", "*", "-find", "VC\\Tools\\Llvm\\x64\\bin\\clang++.exe"]).output().ok()?;
+    String::from_utf8_lossy(&o.stdout).lines().next().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string)
 }
 
 /// The CPU device: the host, with its C++ compiler.
@@ -221,8 +231,15 @@ pub struct CpuComputeFunctionLibrary {
 unsafe impl Send for CpuComputeFunctionLibrary {}
 unsafe impl Sync for CpuComputeFunctionLibrary {}
 
-/// The compiler's options for a kernel library.
+/// The compiler's options for a kernel library. On Windows a DLL has no position-independent option, and no stack
+/// probes: Windows' probe walks down from the thread's own stack's limit, past which a coroutine's stack can lie.
+#[cfg(not(windows))]
 const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-fPIC", "-shared", "-fno-exceptions", "-w", "-o"];
+#[cfg(windows)]
+const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-mno-stack-arg-probe", "-shared", "-fno-exceptions", "-w", "-o"];
+
+/// A kernel library's file extension: `so` (macOS's `dlopen` takes it too), Windows' `dll`.
+const LIB_EXTENSION: &str = if cfg!(windows) { "dll" } else { "so" };
 
 /// What names the compiler's build: its `--version` (a store's key holds it, so an upgrade compiles again).
 fn compiler_version(cxx: &str) -> &'static str {
@@ -242,12 +259,12 @@ impl CpuComputeFunctionLibrary {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
         let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
-        let lib = match crate::store::path("cpu", &k, "so") {
+        let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {
                 let dir = std::env::temp_dir().join("rerail-ukl-cpu");
                 std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                dir.join(format!("{k}.so"))
+                dir.join(format!("{k}.{LIB_EXTENSION}"))
             }
         };
         let dir = lib.parent().expect("a library's directory").to_path_buf();
@@ -271,7 +288,7 @@ impl CpuComputeFunctionLibrary {
             let own = format!("{k}.{}.{}", std::process::id(), crate::store::unique());
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
-            let tmp = dir.join(format!("{own}.so"));
+            let tmp = dir.join(format!("{own}.{LIB_EXTENSION}"));
             // `-O0` last before `-o`: it overrides the flags' `-O1`.
             let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
@@ -290,9 +307,17 @@ impl CpuComputeFunctionLibrary {
             }
             // Another process may have made it meanwhile: either is the same library. Its debug information (macOS's
             // `.dSYM`, beside it) goes with it, where a debugger looks.
-            let sym = |p: &std::path::Path| p.with_extension("so.dSYM");
+            let sym = |p: &std::path::Path| p.with_extension(if cfg!(windows) { "pdb" } else { "so.dSYM" });
             let _ = std::fs::rename(sym(&tmp), sym(&lib));
-            std::fs::rename(&tmp, &lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+            if let Err(e) = std::fs::rename(&tmp, &lib) {
+                // Windows replaces no library a process has loaded ("Access is denied"): another process made and
+                // loaded this one meanwhile, the same library, which this process loads too.
+                if !lib.exists() {
+                    return Err(format!("{}: {e}", lib.display()));
+                }
+                let _ = std::fs::remove_file(&tmp);
+                let _ = std::fs::remove_file(sym(&tmp));
+            }
         }
         let handle = open_library(&lib)?;
         Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() })
@@ -359,6 +384,21 @@ const SCHED_BYTES: usize = 256 << 10;
 /// the scheduler's): the one thread-local every kernel library uses, read and written by the shim itself
 /// (`pthread_getspecific`). A library has none of its own: macOS gives each loaded image's thread-locals a pthread
 /// key, and a process runs out of them after a few hundred libraries.
+#[cfg(windows)]
+fn tls_key() -> u64 {
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        unsafe extern "system" {
+            fn TlsAlloc() -> u32;
+        }
+        // SAFETY: an index made once for the process (the shim reads and writes it by `TlsGetValue`/`TlsSetValue`).
+        let index = unsafe { TlsAlloc() };
+        assert_ne!(index, u32::MAX, "the CPU backend's thread slot: {}", std::io::Error::last_os_error());
+        u64::from(index)
+    })
+}
+
+#[cfg(not(windows))]
 fn tls_key() -> u64 {
     static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *KEY.get_or_init(|| {

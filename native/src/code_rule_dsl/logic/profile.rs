@@ -1121,13 +1121,17 @@ pub fn process_cpu() -> f64 {
         let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
         t(usage.ru_utime) + t(usage.ru_stime)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        rerail_prof::process_cpu().as_secs_f64()
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         0.0
     }
 }
 
-/// The live threads' Mach ports (macOS) or thread ids (Linux), and names; none elsewhere.
+/// The live threads' Mach ports (macOS) or thread ids (Linux, Windows), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
     {
@@ -1178,7 +1182,11 @@ fn live_threads() -> Vec<(u32, String)> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_threads().into_iter().map(|(id, name)| (id, if name.is_empty() { "unnamed".to_owned() } else { name })).collect()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         Vec::new()
     }
@@ -1231,7 +1239,9 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     // SAFETY: no arguments; the calling thread's id. The system call, not glibc's `gettid` (2.30): the Linux engine
     // links against 2.17.
     let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    let port = rerail_prof::windows_thread_id();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
         name: std::thread::current().name().unwrap_or("unnamed").to_owned(),
@@ -2708,7 +2718,7 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux) `port`, read from another thread;
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another thread;
 /// `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
@@ -2739,7 +2749,11 @@ fn thread_cpu(port: u32) -> Option<f64> {
         }
         Some(t.tv_sec as f64 + t.tv_nsec as f64 / 1e9)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_thread_cpu(port)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         let _ = port;
         None

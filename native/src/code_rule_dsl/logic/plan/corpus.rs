@@ -11499,7 +11499,8 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     // Kept when Git sees no file under the root too (a corpus in an ignored directory): unkept, every run read the
     // work tree's whole status again to find none (decision 0285).
     let found = observe(|o| o.git(root)).map(|g| {
-        let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        // With `/`, as Git spells the work tree's files.
+        let prefix = real.strip_prefix(&g.worktree_root).map(|p| slashed(&p.to_string_lossy(), std::path::MAIN_SEPARATOR)).unwrap_or_default();
         let under: Vec<String> = g
             .worktree_files()
             .into_iter()
@@ -11675,7 +11676,7 @@ fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
 /// A relative path whose parts `separator` divides (the platform's: `\` on Windows), with `/` between them, as every
 /// reader of the corpus's paths takes them (scope globs, artifact digests, Git's listing). Elsewhere a `\` is a
 /// character of a name, and is kept.
-fn slashed(relative: &str, separator: char) -> String {
+pub(super) fn slashed(relative: &str, separator: char) -> String {
     relative.split(separator).collect::<Vec<_>>().join("/")
 }
 
@@ -12737,3 +12738,4 @@ fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, 
         }
     }
 }
+

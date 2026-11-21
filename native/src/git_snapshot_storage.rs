@@ -290,6 +290,8 @@ fn hash_stat(digest: &mut Sha256, metadata: Option<&StorageMetadata>) -> Option<
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
+    use rerail_store::source_tree::Canonical as _;
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -383,7 +385,7 @@ mod tests {
         let mut ids: Vec<_> = (0..256).map(|i| repo.write_blob(i.to_string()).unwrap().detach()).collect();
         ids.push(id);
         let large = pack(&repo, &ids);
-        let alt_objects = alternate.git_dir().join("objects").canonicalize().unwrap();
+        let alt_objects = alternate.git_dir().join("objects").canonical().unwrap();
         let objects = repo.git_dir().join("objects");
         std::fs::create_dir_all(objects.join("info")).unwrap();
         std::fs::write(objects.join("info/alternates"), format!("{}\n", alt_objects.display())).unwrap();
@@ -391,8 +393,8 @@ mod tests {
         let first = layout();
         let indices = first.indices.as_ref().unwrap();
         let suppliers = indices.suppliers(id).unwrap();
-        let paths: BTreeSet<_> = suppliers.iter().map(|(path, _)| path.canonicalize().unwrap()).collect();
-        assert_eq!(paths, BTreeSet::from([small, large, other].map(|p| p.canonicalize().unwrap())));
+        let paths: BTreeSet<_> = suppliers.iter().map(|(path, _)| path.canonical().unwrap()).collect();
+        assert_eq!(paths, BTreeSet::from([small, large, other].map(|p| p.canonical().unwrap())));
         for _ in 0..10 { assert_eq!(indices.suppliers(id).unwrap(), suppliers); }
         assert!(indices.large.iter().all(|route| route.prefixes.get().is_none()));
         for _ in 0..10 { assert!(indices.suppliers(gix::ObjectId::null(repo.object_hash())).unwrap().is_empty()); }

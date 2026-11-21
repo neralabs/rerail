@@ -2312,7 +2312,6 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
 
 /// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
 /// refuses the file (`Ok` of each tape's bytes otherwise).
-#[cfg(not(all(windows, target_env = "msvc")))]
 fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(
@@ -2346,7 +2345,6 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
 /// The product reads JSON with simdjson: a JSON file's image through the engine's parse
 /// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
 /// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_product_reads_json_with_simdjson() {
     format_15();
@@ -2421,7 +2419,6 @@ fn the_lean_parsers_are_their_languages_top_tier() {
 /// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
 /// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
 /// tape, the DOM parser and the index writer included.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_router_takes_the_best_json_parser_this_cpu_runs() {
     let routes: Vec<_> = parser_routes()
@@ -2480,7 +2477,6 @@ fn the_router_takes_the_best_json_parser_this_cpu_runs() {
 /// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
 /// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
 /// tree-sitter-json; the refused files are only counted.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn json_tapes_from_simdjson_are_tree_sitters() {
     format_15();
@@ -2617,13 +2613,12 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
     assert!(equal > 1000, "{equal} files");
 }
 
-/// MSVC's JSON parser (`json_parser::fallback`: the Bitlex parser, then tree-sitter-json past trailing commas, then
+/// The route of a file simdjson refuses (`json_parser::fallback`: the Bitlex parser, then tree-sitter-json past trailing commas, then
 /// tree-sitter-json) reads every file as simdjson's route does where simdjson builds: the same image, byte for byte,
 /// and the same digest, or the same refusal. Over the cases `json_tapes_from_simdjson_are_tree_sitters` reads, every
 /// `.json` file of the repository, and the files `RERAIL_JSON_FILES` lists (one path a line), when set.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
-fn the_msvc_json_fallback_reads_as_simdjson_does() {
+fn the_json_fallback_reads_as_simdjson_does() {
     use crate::code_rule_dsl::transducer::packed::json_parser::fallback::Fallback;
     assert!(
         tree_parser(GrammarDialect::Json).is_some(),
@@ -2781,7 +2776,6 @@ fn json_tapes_over_files() {
 /// a line (say a `node_modules`' `.json` files, its `tsconfig.json`s with comments). Each file simdjson
 /// reads, strictly or as JSONC, has tree-sitter-json's tape; what it refuses is counted, by whether it
 /// has a comment.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
 fn simdjson_tapes_over_files() {
@@ -2908,7 +2902,6 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 /// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
 /// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
 /// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
@@ -7692,8 +7685,6 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
-    // Not on MSVC, which builds none of simdjson's C++.
-    #[cfg(not(all(windows, target_env = "msvc")))]
     use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
@@ -7724,9 +7715,7 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
         // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
-        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
-        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();
