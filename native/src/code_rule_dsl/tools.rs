@@ -2185,13 +2185,14 @@ mod git_revision_tests {
         std::fs::write(&rule, ".language python\n.violation Seen(at: node) \"identifier\"\nSeen(n) :- kind(n, \"identifier\").\n").unwrap();
         let path = fixture.path().join("store.sqlite");
         let mut caller = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:outer", "outer").unwrap();
-        corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
-            let report = run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap();
-            assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        let report = corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
+            run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap()
         });
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
         let db = rusqlite::Connection::open(&path).unwrap();
         let count = |pattern: &str| db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope GLOB ?1", [pattern], |r| r.get::<_, i64>(0)).unwrap();
-        assert!(count("pending:*") > 0);
+        // A run that could not publish says why in its cache warnings.
+        assert!(count("pending:*") > 0, "no pending rows: {}", report["cacheWarnings"]);
         assert_eq!(count("cwd:*"), 0);
         caller.finish(false).unwrap();
         assert_eq!(count("*"), 0);
