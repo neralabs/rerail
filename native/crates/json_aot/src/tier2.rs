@@ -19,16 +19,16 @@ pub const ENTRIES: &[(u16, u16, &[u16])] = &[
     (1, 0, &[9]),
     (3, 0, &[]),
     (4, 0, &[]),
-    (5, 0, &[9]),
     (6, 0, &[9]),
     (7, 0, &[9]),
     (8, 0, &[9]),
+    (5, 0, &[9]),
     (19, 2, &[9]),
     (1, 2, &[9]),
-    (5, 2, &[9]),
     (6, 2, &[9]),
     (7, 2, &[9]),
     (8, 2, &[9]),
+    (5, 2, &[9]),
     (1, 1, &[]),
 ];
 
@@ -145,61 +145,34 @@ _ => 0,
 fn check_number(b: &[u8]) -> bool {
 let mut j = 0usize;
 if matches!(b.get(j), Some(0x2d)) {
-if !matches!(b.get(j), Some(0x2d)) {
-return false;
-}
 j += 1;
 }
 if matches!(b.get(j), Some(0x30)) {
-if !matches!(b.get(j), Some(0x30)) {
-return false;
-}
 j += 1;
 } else if matches!(b.get(j), Some(0x31..=0x39)) {
-if !matches!(b.get(j), Some(0x31..=0x39)) {
-return false;
-}
 j += 1;
 while matches!(b.get(j), Some(0x30..=0x39)) {
-if !matches!(b.get(j), Some(0x30..=0x39)) {
-return false;
-}
 j += 1;
 }
 } else {
 return false;
 }
 if matches!(b.get(j), Some(0x2e)) {
-if !matches!(b.get(j), Some(0x2e)) {
-return false;
-}
 j += 1;
 if !matches!(b.get(j), Some(0x30..=0x39)) {
 return false;
 }
 j += 1;
 while matches!(b.get(j), Some(0x30..=0x39)) {
-if !matches!(b.get(j), Some(0x30..=0x39)) {
-return false;
-}
 j += 1;
 }
 }
 if matches!(b.get(j), Some(0x45 | 0x65)) {
-if !matches!(b.get(j), Some(0x45 | 0x65)) {
-return false;
-}
 j += 1;
 if matches!(b.get(j), Some(0x2b | 0x2d)) {
 if matches!(b.get(j), Some(0x2b)) {
-if !matches!(b.get(j), Some(0x2b)) {
-return false;
-}
 j += 1;
 } else if matches!(b.get(j), Some(0x2d)) {
-if !matches!(b.get(j), Some(0x2d)) {
-return false;
-}
 j += 1;
 } else {
 return false;
@@ -210,9 +183,6 @@ return false;
 }
 j += 1;
 while matches!(b.get(j), Some(0x30..=0x39)) {
-if !matches!(b.get(j), Some(0x30..=0x39)) {
-return false;
-}
 j += 1;
 }
 }
@@ -258,7 +228,7 @@ return Err(at(src, starts, i));
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x7b && peek(src, starts, i + 1) == 0x7d {
+if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -281,7 +251,7 @@ return Err(at(src, starts, i));
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x5b && peek(src, starts, i + 1) == 0x5d {
+if peek(src, starts, i + 1) == 0x5d {
 // `array`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -298,10 +268,6 @@ st = 6;
 continue 'run;
 }
 0x22 => {
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -343,99 +309,37 @@ let s = starts[i] as usize;
 let end = run_last(&m.run_number, s) + 1;
 match word_number(&src[s..end]) {
 10 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
+leaf(d, 8, s as u64, e as u64);
+commit(d);
+st = 1;
+continue 'run;
+}
+11 => {
+i += 1;
+e = end;
 leaf(d, 9, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 1;
 continue 'run;
 }
-11 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-11 => {
-let s = starts[i] as usize;
+12 => {
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 leaf(d, 10, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 1;
-continue 'run;
-}
-12 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-12 => {
-let s = starts[i] as usize;
-i += 1;
-e = run_last(&m.run_number, s) + 1;
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 1;
 continue 'run;
 }
 _ => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 if !check_number(&src[s..e]) {
 return Err(s as u32);
 }
-leaf(d, 8, s as u64, e as u64);
+leaf(d, 11, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 1;
 continue 'run;
 }
@@ -454,24 +358,13 @@ return Err(at(src, starts, i));
 return Ok(());
 }
 2 => {
-match peek(src, starts, i) {
-0x7b => {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 match peek(src, starts, i) {
 0x22 => {
 open(d, 1, at(src, starts, i) as u64);
 commit(d);
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -519,19 +412,19 @@ match peek(src, starts, i) {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x7b && peek(src, starts, i + 1) == 0x7d {
+if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
 leaf(d, 2, s as u64, e as u64);
 commit(d);
-st = 10;
+st = 9;
 continue 'run;
 }
 open(d, 2, at(src, starts, i) as u64);
 commit(d);
-stack.push(10);
+stack.push(9);
 st = 2;
 continue 'run;
 }
@@ -539,27 +432,23 @@ continue 'run;
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x5b && peek(src, starts, i + 1) == 0x5d {
+if peek(src, starts, i + 1) == 0x5d {
 // `array`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
 leaf(d, 12, s as u64, e as u64);
 commit(d);
-st = 10;
+st = 9;
 continue 'run;
 }
 open(d, 12, at(src, starts, i) as u64);
 commit(d);
-stack.push(10);
+stack.push(9);
 st = 6;
 continue 'run;
 }
 0x22 => {
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -592,7 +481,7 @@ p += 2;
 }
 e = c + 1;
 close(d, e as u64);
-st = 10;
+st = 9;
 continue 'run;
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
@@ -601,100 +490,38 @@ let s = starts[i] as usize;
 let end = run_last(&m.run_number, s) + 1;
 match word_number(&src[s..end]) {
 10 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
+leaf(d, 14, s as u64, e as u64);
+commit(d);
+st = 9;
+continue 'run;
+}
+11 => {
+i += 1;
+e = end;
 leaf(d, 15, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 10;
+st = 9;
 continue 'run;
 }
-11 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-11 => {
-let s = starts[i] as usize;
+12 => {
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 leaf(d, 16, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 10;
-continue 'run;
-}
-12 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-12 => {
-let s = starts[i] as usize;
-i += 1;
-e = run_last(&m.run_number, s) + 1;
-leaf(d, 17, s as u64, e as u64);
-commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 10;
+st = 9;
 continue 'run;
 }
 _ => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 if !check_number(&src[s..e]) {
 return Err(s as u32);
 }
-leaf(d, 14, s as u64, e as u64);
+leaf(d, 17, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 10;
+st = 9;
 continue 'run;
 }
 }
@@ -731,16 +558,9 @@ continue 'run;
 4 => {
 match peek(src, starts, i) {
 0x2c => {
-match peek(src, starts, i) {
-0x2c => {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 open(d, 1, at(src, starts, i) as u64);
 commit(d);
 match peek(src, starts, i) {
@@ -794,7 +614,7 @@ match peek(src, starts, i) {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x7b && peek(src, starts, i + 1) == 0x7d {
+if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -814,7 +634,7 @@ continue 'run;
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x5b && peek(src, starts, i + 1) == 0x5d {
+if peek(src, starts, i + 1) == 0x5d {
 // `array`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -831,10 +651,6 @@ st = 6;
 continue 'run;
 }
 0x22 => {
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -876,99 +692,37 @@ let s = starts[i] as usize;
 let end = run_last(&m.run_number, s) + 1;
 match word_number(&src[s..end]) {
 10 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
+leaf(d, 14, s as u64, e as u64);
+commit(d);
+st = 5;
+continue 'run;
+}
+11 => {
+i += 1;
+e = end;
 leaf(d, 15, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 5;
 continue 'run;
 }
-11 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-11 => {
-let s = starts[i] as usize;
+12 => {
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 leaf(d, 16, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 5;
-continue 'run;
-}
-12 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-12 => {
-let s = starts[i] as usize;
-i += 1;
-e = run_last(&m.run_number, s) + 1;
-leaf(d, 17, s as u64, e as u64);
-commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 5;
 continue 'run;
 }
 _ => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 if !check_number(&src[s..e]) {
 return Err(s as u32);
 }
-leaf(d, 14, s as u64, e as u64);
+leaf(d, 17, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 5;
 continue 'run;
 }
@@ -991,36 +745,27 @@ st = 4;
 continue 'run;
 }
 6 => {
-match peek(src, starts, i) {
-0x5b => {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5c | 0x5e..=0x7c | 0x7e..=0xff => {
 match peek(src, starts, i) {
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x7b && peek(src, starts, i + 1) == 0x7d {
+if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
 leaf(d, 3, s as u64, e as u64);
 commit(d);
-st = 9;
+st = 8;
 continue 'run;
 }
 open(d, 3, at(src, starts, i) as u64);
 commit(d);
-stack.push(9);
+stack.push(8);
 st = 2;
 continue 'run;
 }
@@ -1028,27 +773,23 @@ continue 'run;
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x5b && peek(src, starts, i + 1) == 0x5d {
+if peek(src, starts, i + 1) == 0x5d {
 // `array`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
 leaf(d, 4, s as u64, e as u64);
 commit(d);
-st = 9;
+st = 8;
 continue 'run;
 }
 open(d, 4, at(src, starts, i) as u64);
 commit(d);
-stack.push(9);
+stack.push(8);
 st = 6;
 continue 'run;
 }
 0x22 => {
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -1081,7 +822,7 @@ p += 2;
 }
 e = c + 1;
 close(d, e as u64);
-st = 9;
+st = 8;
 continue 'run;
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
@@ -1090,106 +831,39 @@ let s = starts[i] as usize;
 let end = run_last(&m.run_number, s) + 1;
 match word_number(&src[s..end]) {
 10 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
+leaf(d, 8, s as u64, e as u64);
+commit(d);
+st = 8;
+continue 'run;
+}
+11 => {
+i += 1;
+e = end;
 leaf(d, 9, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 9;
+st = 8;
 continue 'run;
 }
-11 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-11 => {
-let s = starts[i] as usize;
+12 => {
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 leaf(d, 10, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 9;
-continue 'run;
-}
-12 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-12 => {
-let s = starts[i] as usize;
-i += 1;
-e = run_last(&m.run_number, s) + 1;
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 9;
+st = 8;
 continue 'run;
 }
 _ => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 if !check_number(&src[s..e]) {
 return Err(s as u32);
 }
-leaf(d, 8, s as u64, e as u64);
+leaf(d, 11, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 9;
+st = 8;
 continue 'run;
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
 }
 }
 }
@@ -1220,22 +894,15 @@ continue 'run;
 8 => {
 match peek(src, starts, i) {
 0x2c => {
-match peek(src, starts, i) {
-0x2c => {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 match peek(src, starts, i) {
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x7b && peek(src, starts, i + 1) == 0x7d {
+if peek(src, starts, i + 1) == 0x7d {
 // `object`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -1255,7 +922,7 @@ continue 'run;
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
 }
-if peek(src, starts, i) == 0x5b && peek(src, starts, i + 1) == 0x5d {
+if peek(src, starts, i + 1) == 0x5d {
 // `array`, empty.
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
@@ -1272,10 +939,6 @@ st = 6;
 continue 'run;
 }
 0x22 => {
-match peek(src, starts, i) {
-0x22 => {}
-_ => return Err(at(src, starts, i)),
-}
 // `string`: read at its token, its pieces leaves.
 let s = starts[i] as usize;
 i += 1;
@@ -1317,99 +980,37 @@ let s = starts[i] as usize;
 let end = run_last(&m.run_number, s) + 1;
 match word_number(&src[s..end]) {
 10 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
+leaf(d, 8, s as u64, e as u64);
+commit(d);
+st = 8;
+continue 'run;
+}
+11 => {
+i += 1;
+e = end;
 leaf(d, 9, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 8;
 continue 'run;
 }
-11 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-11 => {
-let s = starts[i] as usize;
+12 => {
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 leaf(d, 10, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-st = 8;
-continue 'run;
-}
-12 => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-12 => {
-let s = starts[i] as usize;
-i += 1;
-e = run_last(&m.run_number, s) + 1;
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 8;
 continue 'run;
 }
 _ => {
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let s = starts[i] as usize;
 i += 1;
-e = run_last(&m.run_number, s) + 1;
+e = end;
 if !check_number(&src[s..e]) {
 return Err(s as u32);
 }
-leaf(d, 8, s as u64, e as u64);
+leaf(d, 11, s as u64, e as u64);
 commit(d);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 st = 8;
 continue 'run;
 }
@@ -1427,10 +1028,6 @@ continue 'run;
 }
 }
 9 => {
-st = 8;
-continue 'run;
-}
-10 => {
 close(d, e as u64);
 st = 4;
 continue 'run;

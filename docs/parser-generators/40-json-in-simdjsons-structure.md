@@ -593,6 +593,55 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 59: the generated Rust beside the lean parser, piece by piece
+
+The generated parser is `rerail-json-aot`: `tier1.rs` (`bitlex_lex_rust`) and `tier2.rs` (`bitlex_rust::tier2_loop`).
+The reference is `rerail-json-lean`: simdjson's arm64 stage 1 (`stage1.rs`) and the kernel's stage 2 (`stage2.rs`),
+translated line for line. Both are Rust and both go through rustc, so each difference below is a difference in the
+source the compiler writes. The order is the order of the fixes: what one unblocks comes first.
+
+### Tier 2 against `stage2.rs`'s `walk`
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A token known by the test before it | tested once | tested again: `0x22 => match peek { 0x22 => {} … }`, `0x2c => match peek { 0x2c => … }`; `0x7b` then `peek(i) == 0x7b && peek(i + 1) == 0x7d`; an atom's word decided, then its kind's bytes and its word again |
+| A value | `primitive` and `string`, one method each, called at each place | the value's code written out at each of its five places |
+| The walk | each container's cycle a loop of its own (`object_key` to `object_continue`, `array_value` to `array_continue`); only an open and a close pass the `match label` | one `'run: loop { match st }`: every place after a call an arm, every transition `st = N; continue` |
+| Where a close returns | `object[d]`, a flag by depth: `scope_end` goes to the object's or the array's continue | a `Vec<u8>` of return places, `push` and `pop` |
+| A pair's close | in `object_continue`, after the value | a place of its own (`5`, `10`), and `9` only goes on to `8` |
+| A token | `take!()`: `*next`, the index ending in three entries (`len`, `len`, 0) | `peek`, `at`, `starts[i]`: each bounds-checked, 256 or the file's length past the end |
+| An atom | a `switch` on its first byte, then `str4ncmp` and the byte after | the run of `wordbyte` from tier 1's mask (`run_last`), then `match` on the bytes as a slice |
+| A number | `number_end`: one read of its bytes | `run_last` over the mask, then `check_number`, which tests each byte twice (`if matches!(x) { if !matches!(x) { return false } }`) |
+| A string | `backslash_quote`: the bytes 32 at a time from the quote, the common case (no `\` before the closer) two nodes written at once | the closer from tier 1's mask (`first_bit(&m.q)`), each escape from another (`first_bit(&m.esc)`) |
+| A node | `open`, `leaf`, `close`: the columns' stores | the writer's ops, then `commit` after every node |
+
+### Tier 1 against `stage1.rs`'s `index`
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| A string | `prefix_xor` of the unescaped quotes, carried to the next block: in the pass | a scalar walk after the pass (`first_bit` from each opener to its closer), writing `o_str`, `f_str` and `hidden` as the file's words |
+| The masks made of the strings | in the pass: `structural_start`, `non_quote_inside_string` | about fifteen more passes over the file's words (`body`, `esc`, `code`, `word`, `t4` to `t11`) |
+| The structurals | written in the pass, a block behind (`bit_indexer::write`: the bits reversed, four indexes, then two at a time, then one) | a loop over the file's words after the passes, one `push` a bit |
+| What it writes | the indexes | the starts, and a code a token (`KINDS[src[s]]`, the same in each of three branches), which tier 2 does not read |
+| What it keeps for stage 2 | nothing | four masks of the file (`q`, `esc`, `rd0_open`, `run_number`) |
+| A block | loaded where it is; the last one copied once, padded | copied into a `[u8; 64]`; each of three stages works out its in-file bits and the byte order mark again |
+| UTF-8 | `utf8_checker`: simdjson's lookup tables on the bytes' nibbles, a block of ASCII skipped | 26 classes as bitmasks, then the grammar's expression over them with `prev`, and a second stage two blocks behind for `next` |
+| `\u`'s digits and surrogates | checked in stage 2 (`escaped_string`) | checked in tier 1, over the file's words |
+
+### The fixes, in order
+
+1. Tier 2 tests no token twice. Done (decision 0581).
+2. Tier 2 writes each rule used at several places once, as a method, as `primitive` and `string`.
+3. Tier 2's walk: a loop a container's cycle; a close returns by the container's kind at its depth.
+4. Tier 2 reads its tokens as `take!()`, and writes its nodes without a commit each.
+5. Tier 1 makes the strings and the masks made of them in its pass, and writes the structurals there.
+6. Tier 1 writes no codes tier 2 does not read, and keeps no mask that tier 2 can read from the bytes, as `walk`
+   reads a string and a number.
+7. Tier 1's UTF-8 check in simdjson's form.
+
+Steps 5 and 6 are also 0556's second step (`bitlex_lex_rust` is Kotlin's and `.rerail`'s tier 1 too); steps 1 to 4
+are `tier2_loop`'s, which only JSON's grammar reaches.
+
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 
 `simdjson_form_against_simdjson` now times `rerail-json-aot` (tier 1 and tier 2 from the grammar) against simdjson.

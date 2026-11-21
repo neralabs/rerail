@@ -24,10 +24,24 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 /// Where the code goes on: a place of the loop, or code of its own, written where it is used (once).
+#[derive(Clone)]
 enum K {
     Go(usize),
     Code(String),
 }
+
+/// What the decision an arm is reached by has already found of the token it starts at: nothing (`No`: the arm's
+/// code tests it), its first byte (`Byte`), or its word, with `s` its start and `end` its end bound (`Word`). An arm
+/// tests nothing its decision found, as `walk`'s `primitive` reads the value its `switch` took.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum T {
+    No,
+    Byte,
+    Word,
+}
+
+/// A decision's arm: its first tokens, and its code given what the decision found.
+type Arm<'s> = (Vec<First>, Box<dyn Fn(T) -> Result<String, String> + 's>);
 
 /// The key a node is written with (its code table entry): its field, and the supertypes it is reached through.
 #[derive(Clone, Default)]
@@ -160,11 +174,14 @@ impl Lp<'_, '_> {
         }
     }
 
-    /// `k` as a place: code used more than once is written once.
+    /// `k` as a place: code used more than once is written once. Code that only goes on to a place is that place.
     fn to_place(&self, k: K) -> usize {
         match k {
             K::Go(l) => l,
             K::Code(c) => {
+                if let Some(l) = c.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|l| l.parse().ok()) {
+                    return l;
+                }
                 let root = c == self.root_end;
                 let l = self.place(c);
                 if root {
@@ -282,7 +299,17 @@ impl Lp<'_, '_> {
 
     /// The code of a decision at the next record among `arms` (each its tests and its code): a `match` on its
     /// first byte (`b`); a kind split by its words, its token's word then. None passes: `none`.
-    fn decide(&self, arms: &[(Vec<First>, String)], none: &str) -> Result<String, String> {
+    fn decide(&self, arms: &[Arm<'_>], none: &str) -> Result<String, String> {
+        // Each arm's code for what it is reached by, made once.
+        let made: RefCell<BTreeMap<(usize, T), String>> = RefCell::new(BTreeMap::new());
+        let code = |a: usize, t: T| -> Result<String, String> {
+            if let Some(c) = made.borrow().get(&(a, t)) {
+                return Ok(c.clone());
+            }
+            let c = (arms[a].1)(t)?;
+            made.borrow_mut().insert((a, t), c.clone());
+            Ok(c)
+        };
         // Each byte's arm; each split kind's words' arms and its own arm.
         let mut by_byte: BTreeMap<u8, usize> = BTreeMap::new();
         let mut split: BTreeMap<u8, (String, Vec<(u8, usize)>, Option<usize>)> = BTreeMap::new();
@@ -327,24 +354,22 @@ impl Lp<'_, '_> {
             arm_bytes.entry(a).or_default().push(b);
         }
         for (a, bs) in &arm_bytes {
-            let _ = write!(out, "{} => {{\n{}}}\n", pattern(bs), arms[*a].1);
+            let _ = write!(out, "{} => {{\n{}}}\n", pattern(bs), code(*a, T::Byte)?);
         }
         for (rk, (name, words, own)) in &split {
             let (_, end) = self.token(name)?;
             let mut inner = String::new();
             for (w, a) in words {
-                let _ = write!(inner, "{w} => {{\n{}}}\n", arms[*a].1);
+                let _ = write!(inner, "{w} => {{\n{}}}\n", code(*a, T::Word)?);
             }
             let rest = match own {
                 Some(a) => {
                     // The kind's own arm: none of its hard words.
                     let hard: Vec<String> = self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)).map(|h| h.to_string()).collect();
-                    if hard.is_empty() {
-                        arms[*a].1.clone()
-                    } else {
+                    if !hard.is_empty() {
                         let _ = write!(inner, "{} => {{\n{none}}}\n", hard.join(" | "));
-                        arms[*a].1.clone()
                     }
+                    code(*a, T::Word)?
                 }
                 None => none.to_owned(),
             };
@@ -361,32 +386,34 @@ impl Lp<'_, '_> {
         Ok(out)
     }
 
-    /// The code that takes the token `g` is, a leaf of `kind` unless it is implied (`None`), with `key`.
-    fn take(&self, test: &Test, kind: Option<&str>, key: &Key) -> Result<String, String> {
-        let first: First = (test.clone(), None);
-        let (name, end) = match test {
-            Test::Kind(k) => (k.clone(), self.token(k)?.1),
-            Test::Word(w) => {
-                let (n, _, e, _) = self.word_token(*w)?;
-                (n, e)
-            }
+    /// The code that takes the token `test` is, a leaf of `kind` unless it is implied (`None`), with `key`; `t`, what
+    /// a decision found of it.
+    fn take(&self, test: &Test, kind: Option<&str>, key: &Key, t: T) -> Result<String, String> {
+        let end = match test {
+            Test::Kind(k) => self.token(k)?.1,
+            Test::Word(w) => self.word_token(*w)?.2,
             Test::Mark(_) => return self.err("marks are not written yet"),
         };
-        let mut body = String::from("let s = starts[i] as usize;\ni += 1;\n");
-        let _ = writeln!(body, "e = {};", self.end_code(&end)?);
-        if let Some(k) = kind {
-            if self.checked.iter().any(|c| c == k) {
-                let _ = writeln!(body, "if !check_{}(&src[s..e]) {{\nreturn Err(s as u32);\n}}", ident(k));
+        let body = |t: T| -> Result<String, String> {
+            // A word's decision bound its start and its end.
+            let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&end)?) };
+            if let Some(k) = kind {
+                if self.checked.iter().any(|c| c == k) {
+                    let _ = writeln!(body, "if !check_{}(&src[s..e]) {{\nreturn Err(s as u32);\n}}", ident(k));
+                }
+                let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);\ncommit(d);", self.number(k, key)?);
             }
-            let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);\ncommit(d);", self.number(k, key)?);
+            Ok(body)
+        };
+        if t != T::No {
+            return body(t);
         }
-        let _ = name;
-        self.decide(&[(vec![first], body)], "return Err(at(src, starts, i));\n")
+        self.decide(&[(vec![(test.clone(), None)], Box::new(body))], "return Err(at(src, starts, i));\n")
     }
 
     /// A region's node (`node K = OPENER (PIECES)* CLOSER`, its opener a token read in parts): read at its token,
     /// each piece a leaf (its kind's words checked where they are required), as simdjson's `parse_string`.
-    fn region(&self, kind: &str, body: &Gram, key: &Key) -> Result<Option<String>, String> {
+    fn region(&self, kind: &str, body: &Gram, key: &Key, t: T) -> Result<Option<String>, String> {
         let Gram::Seq(gs) = body else { return Ok(None) };
         let [open, Gram::Star(pieces), close] = gs.as_slice() else { return Ok(None) };
         let tok = |g: &Gram| match g {
@@ -424,9 +451,9 @@ impl Lp<'_, '_> {
         let node = self.number(kind, key)?;
         let content = self.number(&rd.content, &Key::default())?;
         let piece = self.number(part, &Key::default())?;
+        let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
         Ok(Some(format!(
-            "match peek(src, starts, i) {{\n{bytes} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n\
-             // `{kind}`: read at its token, its pieces leaves.\n\
+            "{test}// `{kind}`: read at its token, its pieces leaves.\n\
              let s = starts[i] as usize;\ni += 1;\n\
              let c = match first_bit(&m.{close}, s + 1) {{\nSome(c) => c,\nNone => return Err(s as u32),\n}};\n\
              open(d, {node}, s as u64);\ncommit(d);\n\
@@ -440,9 +467,75 @@ impl Lp<'_, '_> {
              p += {len};\n\
              }}\n\
              e = c + 1;\nclose(d, e as u64);\n",
-            bytes = pattern(&self.bytes_of(self.token(&o)?.0)),
             close = rd.close,
         )))
+    }
+
+    /// `g` as alternatives where it starts with a choice: each alternative, the key it is written with, and what
+    /// follows them in `g` (each alternative then that). None where `g` does not, or an alternative may be empty (its
+    /// first tokens would be those after it). A decision among them is the choice's own: no second one.
+    fn heads(&self, g: &Gram, key: &Key) -> Result<Option<(Vec<Gram>, Key, Vec<Gram>)>, String> {
+        Ok(match g {
+            Gram::Alt(gs) => {
+                for a in gs {
+                    if self.g.first(a)?.1 {
+                        return Ok(None);
+                    }
+                }
+                Some((gs.clone(), key.clone(), Vec::new()))
+            }
+            Gram::Sym(n) => match self.g.rules.get(n.as_str()) {
+                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.heads(body, &self.through(key, supertype.as_deref())?)?,
+                _ => None,
+            },
+            Gram::Field(f, a) => {
+                let field = (self.g.x.field)(f).ok_or_else(|| format!("no field `{f}`"))?;
+                self.heads(a, &Key { field, ..key.clone() })?
+            }
+            Gram::Seq(gs) => match gs.split_first() {
+                Some((h, rest)) => self.heads(h, key)?.map(|(alts, k, mut more)| {
+                    more.extend(rest.iter().cloned());
+                    (alts, k, more)
+                }),
+                None => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// The arms of a decision on `g`, each going on to `k` (`walk`): its alternatives where it starts with a choice
+    /// (`heads`), else `g` itself.
+    fn walk_arms<'s>(&'s self, g: &'s Gram, key: &Key, k: K) -> Result<Vec<Arm<'s>>, String> {
+        if let Some((alts, akey, rest)) = self.heads(g, key)? {
+            let k = if rest.is_empty() { k } else { K::Go(self.to_place(K::Code(self.walk(&Gram::Seq(rest), &Key::default(), k, T::No)?))) };
+            let mut arms: Vec<Arm<'s>> = Vec::new();
+            for a in alts {
+                let (first, _) = self.g.first(&a)?;
+                let (akey, k) = (akey.clone(), k.clone());
+                arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));
+            }
+            return Ok(arms);
+        }
+        let key = key.clone();
+        Ok(vec![(self.g.first(g)?.0, Box::new(move |t| self.walk(g, &key, k.clone(), t)))])
+    }
+
+    /// The arms of a decision on `g` with no call in it (`plain`): its alternatives where it is a choice alone, else
+    /// `g` itself.
+    fn plain_arms<'s>(&'s self, g: &'s Gram, key: &Key) -> Result<Vec<Arm<'s>>, String> {
+        if let Some((alts, akey, rest)) = self.heads(g, key)?
+            && rest.is_empty()
+        {
+            let mut arms: Vec<Arm<'s>> = Vec::new();
+            for a in alts {
+                let (first, _) = self.g.first(&a)?;
+                let akey = akey.clone();
+                arms.push((first, Box::new(move |t| self.plain(&a, &akey, t))));
+            }
+            return Ok(arms);
+        }
+        let key = key.clone();
+        Ok(vec![(self.g.first(g)?.0, Box::new(move |t| self.plain(g, &key, t)))])
     }
 
     /// The most nodes `g` holds open at once inside its level (a node rule written where it is used, around what
@@ -478,52 +571,55 @@ impl Lp<'_, '_> {
         }
     }
 
-    /// The code of `g` with no level's call in it, structured, with `key` for the first node it writes.
-    fn plain(&self, g: &Gram, key: &Key) -> Result<String, String> {
-        if let Some((t, kind)) = self.g.token_of(g) {
-            return self.take(&t, Some(&kind), key);
+    /// The code of `g` with no level's call in it, structured, with `key` for the first node it writes; `t`, what a
+    /// decision found of its first token.
+    fn plain(&self, g: &Gram, key: &Key, t: T) -> Result<String, String> {
+        if let Some((test, kind)) = self.g.token_of(g) {
+            return self.take(&test, Some(&kind), key, t);
         }
         Ok(match g {
             Gram::As(k, a) => {
-                let (t, _) = self.g.token_of(a).ok_or_else(|| "tier 2 as one loop: `as` of no token".to_owned())?;
-                self.take(&t, (k != ::bitlex::syntax::IMPLIED).then_some(k.as_str()), key)?
+                let (test, _) = self.g.token_of(a).ok_or_else(|| "tier 2 as one loop: `as` of no token".to_owned())?;
+                self.take(&test, (k != ::bitlex::syntax::IMPLIED).then_some(k.as_str()), key, t)?
             }
             Gram::Sym(n) => match self.g.rules.get(n.as_str()) {
                 Some(Stmt::Node { kind, body, .. }) => {
-                    if let Some(code) = self.region(kind, body, key)? {
+                    if let Some(code) = self.region(kind, body, key, t)? {
                         return Ok(code);
                     }
-                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}close(d, e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default())?)
+                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}close(d, e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default(), t)?)
                 }
-                Some(Stmt::Choice { supertype, body, .. }) => self.plain(body, &self.through(key, supertype.as_deref())?)?,
+                Some(Stmt::Choice { supertype, body, .. }) => self.plain(body, &self.through(key, supertype.as_deref())?, t)?,
                 _ => return self.err(format!("`{n}`: no rule or token")),
             },
             Gram::Seq(gs) => {
                 let (mut out, none) = (String::new(), Key::default());
                 for (k, g) in gs.iter().enumerate() {
-                    out.push_str(&self.plain(g, if k == 0 { key } else { &none })?);
+                    out.push_str(&self.plain(g, if k == 0 { key } else { &none }, if k == 0 { t } else { T::No })?);
                 }
                 out
             }
-            Gram::Opt(a) => self.decide(&[(self.g.first(a)?.0, self.plain(a, key)?)], "")?,
-            Gram::Star(a) => format!("loop {{\n{}}}\n", self.decide(&[(self.g.first(a)?.0, self.plain(a, key)?)], "break;\n")?),
+            Gram::Opt(a) => self.decide(&self.plain_arms(a, key)?, "")?,
+            Gram::Star(a) => format!("loop {{\n{}}}\n", self.decide(&self.plain_arms(a, key)?, "break;\n")?),
             Gram::Plus(a) => {
-                let one = self.plain(a, key)?;
-                format!("{one}loop {{\n{}}}\n", self.decide(&[(self.g.first(a)?.0, self.plain(a, key)?)], "break;\n")?)
+                let one = self.plain(a, key, t)?;
+                format!("{one}loop {{\n{}}}\n", self.decide(&self.plain_arms(a, key)?, "break;\n")?)
             }
             Gram::Alt(gs) => {
-                let mut arms = Vec::new();
                 let mut empty = false;
                 for g in gs {
-                    let (f, e) = self.g.first(g)?;
-                    empty |= e;
-                    arms.push((f, self.plain(g, key)?));
+                    empty |= self.g.first(g)?.1;
+                }
+                let mut arms: Vec<Arm<'_>> = Vec::new();
+                for g in gs {
+                    let (first, _) = self.g.first(g)?;
+                    arms.push((first, Box::new(move |t| self.plain(g, key, t))));
                 }
                 self.decide(&arms, if empty { "" } else { "return Err(at(src, starts, i));\n" })?
             }
             Gram::Field(f, a) => {
                 let field = (self.g.x.field)(f).ok_or_else(|| format!("no field `{f}`"))?;
-                self.plain(a, &Key { field, ..key.clone() })?
+                self.plain(a, &Key { field, ..key.clone() }, t)?
             }
             other => return self.err(format!("not written yet: {other:?}")),
         })
@@ -538,29 +634,36 @@ impl Lp<'_, '_> {
         Ok(k)
     }
 
-    /// The code of `g`, then `k`: a level's call ends its place, and the code after it is a place of its own.
-    fn walk(&self, g: &Gram, key: &Key, k: K) -> Result<String, String> {
+    /// The code of `g`, then `k`: a level's call ends its place, and the code after it is a place of its own. `t`,
+    /// what a decision found of its first token.
+    fn walk(&self, g: &Gram, key: &Key, k: K, t: T) -> Result<String, String> {
         if !self.calls(g) {
-            return Ok(self.plain(g, key)? + &Self::jump(&k));
+            return Ok(self.plain(g, key, t)? + &Self::jump(&k));
         }
         Ok(match g {
             Gram::Sym(n) => match self.g.rules.get(n.as_str()) {
-                Some(Stmt::Node { kind, nested: true, .. }) => {
+                Some(Stmt::Node { kind, nested: true, body, .. }) => {
+                    if t == T::No {
+                        // The level's first token, tested here: its body reads it as its decision found it.
+                        let (first, _) = self.g.first(body)?;
+                        let k = k.clone();
+                        return self.decide(&[(first, Box::new(move |t| self.walk(g, key, k.clone(), t)))], "return Err(at(src, starts, i));\n");
+                    }
                     let first = self.level(n)?;
                     let ret = self.to_place(k);
                     let number = self.number(kind, key)?;
                     let mut out = String::new();
-                    if let Some((open, close)) = self.brackets(n)? {
+                    if let Some((_, close)) = self.brackets(n)? {
                         // The level the root's value: the file's last record its closer, checked before the walk, as
                         // the lean parser's `last != '}'`.
                         if self.root_place.get() == Some(ret) {
                             let _ = write!(out, "if starts.last().map(|&l| src[l as usize]) != Some({close:#04x}) {{\nreturn Err(at(src, starts, i));\n}}\n");
                         }
-                        // Empty: one leaf from its opener to its closer, as the lean parser's `empty!`; its depth tested
-                        // as a level's.
+                        // Empty: one leaf from its opener (its decision's) to its closer, as the lean parser's `empty!`;
+                        // its depth tested as a level's.
                         let _ = write!(
                             out,
-                            "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i) == {open:#04x} && peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\ncommit(d);\n{}}}\n",
+                            "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\ncommit(d);\n{}}}\n",
                             Self::go(ret)
                         );
                     } else {
@@ -571,44 +674,46 @@ impl Lp<'_, '_> {
                 }
                 Some(Stmt::Node { kind, body, .. }) => {
                     let after = format!("close(d, e as u64);\n{}", Self::jump(&k));
-                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after))?)
+                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after), t)?)
                 }
-                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.walk(body, &self.through(key, supertype.as_deref())?, k)?,
+                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.walk(body, &self.through(key, supertype.as_deref())?, k, t)?,
                 _ => return self.err(format!("`{n}`: a nested choice is not written yet")),
             },
             Gram::Seq(gs) => {
                 let (mut k, none) = (k, Key::default());
                 for (j, g) in gs.iter().enumerate().rev() {
-                    k = K::Code(self.walk(g, if j == 0 { key } else { &none }, k)?);
+                    k = K::Code(self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No })?);
                 }
                 Self::jump(&k)
             }
             Gram::Opt(a) => {
                 let after = self.to_place(k);
-                self.decide(&[(self.g.first(a)?.0, self.walk(a, key, K::Go(after))?)], &Self::go(after))?
+                self.decide(&self.walk_arms(a, key, K::Go(after))?, &Self::go(after))?
             }
             Gram::Star(a) => {
                 let after = self.to_place(k);
                 let head = self.place(String::new());
-                let code = self.decide(&[(self.g.first(a)?.0, self.walk(a, key, K::Go(head))?)], &Self::go(after))?;
+                let code = self.decide(&self.walk_arms(a, key, K::Go(head))?, &Self::go(after))?;
                 self.places.borrow_mut()[head] = code;
                 Self::go(head)
             }
-            Gram::Plus(a) => self.walk(&Gram::Seq(vec![(**a).clone(), Gram::Star(a.clone())]), key, k)?,
+            Gram::Plus(a) => self.walk(&Gram::Seq(vec![(**a).clone(), Gram::Star(a.clone())]), key, k, t)?,
             Gram::Alt(gs) => {
                 let after = self.to_place(k);
-                let mut arms = Vec::new();
                 let mut empty = false;
                 for g in gs {
-                    let (f, e) = self.g.first(g)?;
-                    empty |= e;
-                    arms.push((f, self.walk(g, key, K::Go(after))?));
+                    empty |= self.g.first(g)?.1;
+                }
+                let mut arms: Vec<Arm<'_>> = Vec::new();
+                for g in gs {
+                    let (first, _) = self.g.first(g)?;
+                    arms.push((first, Box::new(move |t| self.walk(g, key, K::Go(after), t))));
                 }
                 self.decide(&arms, &if empty { Self::go(after) } else { "return Err(at(src, starts, i));\n".to_owned() })?
             }
             Gram::Field(f, a) => {
                 let field = (self.g.x.field)(f).ok_or_else(|| format!("no field `{f}`"))?;
-                self.walk(a, &Key { field, ..key.clone() }, k)?
+                self.walk(a, &Key { field, ..key.clone() }, k, t)?
             }
             other => return self.err(format!("not written yet: {other:?}")),
         })
@@ -624,7 +729,7 @@ impl Lp<'_, '_> {
         self.levels.borrow_mut().insert(rule.to_owned(), first);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
         let end = "close(d, e as u64);\nst = match stack.pop() {\nSome(p) => p,\nNone => return Err(at(src, starts, i)),\n};\ncontinue 'run;\n".to_owned();
-        let code = self.walk(body, &Key::default(), K::Code(end))?;
+        let code = self.walk(body, &Key::default(), K::Code(end), T::Byte)?;
         self.places.borrow_mut()[first] = code;
         Ok(first)
     }
@@ -632,7 +737,7 @@ impl Lp<'_, '_> {
     /// A `check K = G` as a function of the token's bytes: `G` over them, its names byte classes, its literals
     /// bytes, each decision at the next byte.
     fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
-        Ok(format!("/// `check {kind}`: its bytes match the check's grammar.\nfn check_{}(b: &[u8]) -> bool {{\nlet mut j = 0usize;\n{}j == b.len()\n}}\n\n", ident(kind), self.check_code(body)?))
+        Ok(format!("/// `check {kind}`: its bytes match the check's grammar.\nfn check_{}(b: &[u8]) -> bool {{\nlet mut j = 0usize;\n{}j == b.len()\n}}\n\n", ident(kind), self.check_code(body, false)?))
     }
 
     /// The bytes a check's grammar may start with, and whether it may match none.
@@ -687,17 +792,20 @@ impl Lp<'_, '_> {
         Ok(format!("matches!(b.get(j), Some({}))", pattern(&f)))
     }
 
-    fn check_code(&self, g: &Gram) -> Result<String, String> {
+    /// The code of a check's `g`; `tested`, whether the test before it found its first byte (an `[A]`, `A*`, `A+` or
+    /// `A | B` found it there, so its code reads it as found).
+    fn check_code(&self, g: &Gram, tested: bool) -> Result<String, String> {
         Ok(match g {
+            Gram::Lit(_) | Gram::Sym(_) if tested => "j += 1;\n".to_owned(),
             Gram::Lit(_) | Gram::Sym(_) => format!("if !{} {{\nreturn false;\n}}\nj += 1;\n", self.at_byte(g)?),
-            Gram::Seq(gs) => gs.iter().map(|g| self.check_code(g)).collect::<Result<String, String>>()?,
-            Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a)?),
-            Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a)?),
-            Gram::Plus(a) => format!("{}while {} {{\n{}}}\n", self.check_code(a)?, self.at_byte(a)?, self.check_code(a)?),
+            Gram::Seq(gs) => gs.iter().enumerate().map(|(k, g)| self.check_code(g, tested && k == 0)).collect::<Result<String, String>>()?,
+            Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
+            Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
+            Gram::Plus(a) => format!("{}while {} {{\n{}}}\n", self.check_code(a, tested)?, self.at_byte(a)?, self.check_code(a, true)?),
             Gram::Alt(gs) => {
                 let mut out = String::new();
                 for g in gs {
-                    let _ = write!(out, "if {} {{\n{}}} else ", self.at_byte(g)?, self.check_code(g)?);
+                    let _ = write!(out, "if {} {{\n{}}} else ", self.at_byte(g)?, self.check_code(g, true)?);
                 }
                 out + "{\nreturn false;\n}\n"
             }
@@ -853,7 +961,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let end = "close(d, src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
-    let code = format!("open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\n{}", lp.walk(body, &Key::default(), K::Code(end))?);
+    let code = format!("open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.
     let mut words = String::new();
