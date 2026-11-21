@@ -1,5 +1,4 @@
 .policy "ruff-tc010-runtime-string-union" revision 1
-.guests off
 .description "Avoid quoted members in X | Y union types that Python evaluates at runtime; quote the whole union or remove the quotes, since a string cannot be an operand of the | operator."
 .language python
 .mode steer

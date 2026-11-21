@@ -1,5 +1,4 @@
 .policy "ruff-pt009-pytest-unittest-assertion" revision 1
-.guests off
 .description "Use plain assert statements instead of unittest-style assertion methods; pytest rewrites them to show detailed failure output."
 .language python
 .mode steer

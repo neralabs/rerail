@@ -224,7 +224,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "a", "{work}");
     let mut bound = body::VarSet::new();
-    (0..b.len()).filter(|&i| b.atom(i).is_some()).take(1).for_each(|i| bound.extend(&b.vars(i)));
+    (0..b.len()).filter(|&i| b.atom(i).is_some()).take(1).for_each(|i| bound.extend(b.vars(i)));
     put_exact(1, b.observed_key(), vec![(b.sig(1, &bound), [50, 50_000])]);
     let ((order, work, _), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
     assert_eq!(lead(&order), "b", "exact: {work}");

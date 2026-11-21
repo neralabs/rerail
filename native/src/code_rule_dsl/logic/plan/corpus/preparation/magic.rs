@@ -222,6 +222,9 @@ fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSe
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|k| need.remove(k));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound).then(|| VarSet::of([var]))
             }
             Lit::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| lit_vars(*x)),
@@ -378,13 +381,15 @@ impl<'v> Ctx<'v, '_> {
             if pos.is_empty() {
                 return None;
             }
-            // A nullary atom is an existence test: it runs with no bindings (as the tree's `Adorn`, 614fc9a88e).
+            // A nullary atom is an existence test: it runs with no bindings.
             let first = |i: usize| match rest[i].first() {
-                None => true,
                 Some(t) if is_const(t) => true,
                 Some(Tm::Own(TermRef::Var(x))) => bound.contains(x),
                 Some(Tm::Fresh(n)) => bound.contains(fresh(r, n)),
-                _ => false,
+                Some(_) => false,
+                // A nullary atom is an existence test: it runs with no bindings (ported from cost-classifier-metal-rf's
+                // fix to the tree magic, `a_nullary_guard_is_ready_in_a_demanded_body`).
+                None => !matches!(rest[i], M::True),
             };
             let derived = |i: usize| self.idb.contains(rest[i].positive(v).expect("a positive atom"));
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !rest[i].vars(r).is_disjoint(&bound)).collect();
@@ -1246,8 +1251,8 @@ fn gate_negations<'v>(
     }
     let names: BTreeSet<String> = gates.iter().map(|(n, _)| n.clone()).collect();
     let mut done = Vec::new();
-    for i in 0..gates.len() {
-        let (name, g) = gates[i].clone();
+    for gate in &mut gates {
+        let (name, g) = gate.clone();
         // The gate's own rule: `done_N_ad` copies `magic_N_ad`, and `done_N(0)` holds once `N` has a row.
         if let Some(src) = &g.src {
             let cols = decls.iter().find(|(n, _)| n == src).map(|(_, c)| c.clone()).ok_or_else(|| Error::Syntax(format!("{src} is not declared")))?;
@@ -1286,8 +1291,8 @@ fn gate_negations<'v>(
             .filter(|rel| names.contains(*rel) && **rel != name)
             .map(str::to_owned)
             .collect();
-        gates[i].1.quiet = quiet.into_iter().collect();
-        gates[i].1.deps = deps.into_iter().collect();
+        gate.1.quiet = quiet.into_iter().collect();
+        gate.1.deps = deps.into_iter().collect();
     }
     Ok(Trial { made: rules, gates, done })
 }
@@ -1316,7 +1321,7 @@ fn write<'v>(v: &'v Version, w: RuleBuilder<'_, '_>, m: &Made<'v>) -> std::resul
     let gate_names: Vec<String> = (0..gates).map(|n| format!("_g{n}")).collect();
     let tm = |t: Tm<'v>| -> T<'_> {
         match t {
-            Tm::Own(t) => t_of(v, r, t),
+            Tm::Own(t) => t_of(r, t),
             Tm::Fresh(n) => T::Var(name_of(n)),
             Tm::Gate(n) => T::Var(gate_names.get(n as usize).map_or("_g", String::as_str)),
             Tm::Wild => T::Wild,
@@ -1338,7 +1343,7 @@ fn write<'v>(v: &'v Version, w: RuleBuilder<'_, '_>, m: &Made<'v>) -> std::resul
                 let a: Vec<T<'_>> = args.iter().map(|t| tm(*t)).collect();
                 w.atom(rel.as_str(), &a)
             }
-            M::Call(n, call) => w.cmp(T::Var(name_of(*n)), CmpOp::Eq, t_of(v, r, *call)),
+            M::Call(n, call) => w.cmp(T::Var(name_of(*n)), CmpOp::Eq, t_of(r, *call)),
             M::True => w.atom("magic_true", &[T::Int(0)]),
         };
     }

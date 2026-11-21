@@ -96,7 +96,7 @@ impl CPython {
                     let Some(nodes) = by_span.get(&(l.start, l.end)) else { continue };
                     let mut v = None;
                     for &local in nodes {
-                        if l.class.of_kind(dialect.name(f, p.node(local as u32))) {
+                        if l.class.of_kind(dialect.name(f, p.node(local))) {
                             let v = *v.get_or_insert_with(|| string(&l.json) as i64);
                             self.literals.push([p.global(local), v]);
                         }

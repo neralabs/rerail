@@ -1,5 +1,4 @@
 .policy "bandit-b310-urllib-urlopen" revision 1
-.guests off
 .description "Restrict URLs passed to urllib's urlopen, urlretrieve, and URLopener to expected schemes; file: and custom schemes can expose local files."
 .language python
 .mode steer

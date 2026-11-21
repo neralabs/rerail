@@ -212,10 +212,11 @@ fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             out.extend(over);
+            out.extend(op.bound());
             out
         }
         Lit::Nearest { n, a, .. } => [n, a].into(),
@@ -275,6 +276,8 @@ fn shape(v: &Version, r: RuleRef<'_>) -> (String, Vec<Value>) {
             Lit::Agg { var, op, over, atom: a } => {
                 let op = match op {
                     crate::code_rule_dsl::logic::program_image::AggRef::Join { by, sep } => format!("join[{:?}]({})", v.text(sep), by.map(|s| s.0.to_string()).collect::<Vec<_>>().join(",")),
+                    // A bounded aggregate's bound is a slot and its side (decision 0511): rules bounded otherwise differ.
+                    crate::code_rule_dsl::logic::program_image::AggRef::Bounded { max, bound, strict } => format!("bounded[{max},{strict},V{}]", bound.0),
                     other => format!("{:?}", std::mem::discriminant(&other)),
                 };
                 _ = write!(out, "V{} = {op} V{:?} : ", var.0, over.map(|s| s.0));
@@ -812,7 +815,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         let mut demanded = demand.rule().head_from(from, rule, rule.head());
         // The chunk's documents seed each atom's demand.
         for d in &seeds {
-            demanded = demanded.atom(WAVE, &[T::Var(*d)]);
+            demanded = demanded.atom(WAVE, &[T::Var(d)]);
         }
         for l in rule.body() {
             match (l.view(), atoms.get(&l.node())) {
@@ -933,7 +936,7 @@ fn demand_program(mut rules: Builder<'_>, atoms: usize) -> StoreResult<Option<Ar
             // The seed binds every atom's document: a key the widening unbound is demanded everywhere.
             None => {
                 needed.insert(WAVE.to_owned());
-                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(&magic, r, t)).collect::<Vec<_>>());
+                rule = rule.atom(WAVE, &r.head().args().map(|t| t_of(r, t)).collect::<Vec<_>>());
             }
         }
         rule.finish().map_err(invalid)?;

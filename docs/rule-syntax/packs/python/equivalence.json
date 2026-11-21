@@ -1,0 +1,5296 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "python",
+  "equivalent": false,
+  "untranslated": {
+    "bandit-b105-hardcoded-password-string": "no .rerail translation; recorded by the suite, not yet explained",
+    "ruff-perf403-manual-dict-comprehension": "failed: check-rr reader-failed ruff-perf403-manual-dict-comprehension.rerail: not lowered yet: flat: match_all over $e, a node or span not bound by `source`, `src_line`, `kind` or a capture",
+    "ruff-ruf034-useless-if-else": "failed: samples-python: the translation failed: rerail-engine: docs/rule-syntax/packs/python/ruff-ruf034-useless-if-else.rerail: `value` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6) (exit 1)"
+  },
+  "different": {
+    "bandit-b101-assert-used": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b102-exec-used": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b103-set-bad-file-permissions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 1
+        }
+      }
+    },
+    "bandit-b110-try-except-pass": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 14
+        }
+      }
+    },
+    "bandit-b112-try-except-continue": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b113-request-without-timeout": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "bandit-b301-pickle": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b302-marshal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b303-md5": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "bandit-b305-cipher-modes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b306-mktemp-q": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b307-eval": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b308-mark-safe": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "bandit-b310-urllib-urlopen": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b311-random": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "bandit-b312-telnetlib": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b313-xml-bad-celementtree": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b314-xml-bad-elementtree": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b315-xml-bad-expatreader": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b316-xml-bad-expatbuilder": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b317-xml-bad-sax": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "bandit-b318-xml-bad-minidom": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b319-xml-bad-pulldom": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b321-ftplib": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b323-unverified-context": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b401-import-telnetlib": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b402-import-ftplib": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b405-import-xml-etree": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b406-import-xml-sax": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "bandit-b407-import-xml-expat": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b408-import-xml-minidom": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b409-import-xml-pulldom": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b411-import-xmlrpclib": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b413-import-pycrypto": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b415-import-pyghmi": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b502-ssl-with-bad-version": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b505-weak-cryptographic-key": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b507-ssh-no-host-key-verification": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b606-start-process-with-no-shell": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b610-django-extra-used": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "bandit-b615-huggingface-unsafe-download": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-air001-airflow-variable-name-task-id-mismatch": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-air002-airflow-dag-no-schedule-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-air302-airflow3-moved-to-provider": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-air303-airflow3-incompatible-function-signature": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-air311-airflow3-suggested-update": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 17
+        }
+      }
+    },
+    "ruff-air312-airflow3-suggested-to-move-to-provider": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 16
+        }
+      }
+    },
+    "ruff-ann001-missing-type-function-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 11
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-ann002-missing-type-args": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ann003-missing-type-kwargs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ann201-missing-return-type-undocumented-public-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 48
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-ann202-missing-return-type-private-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 13
+        }
+      }
+    },
+    "ruff-ann204-missing-return-type-special-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-ann205-missing-return-type-static-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-ann206-missing-return-type-class-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-ann401-any-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-arg002-unused-method-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-arg003-unused-class-method-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-arg004-unused-static-method-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-arg005-unused-lambda-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 13,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-async100-cancel-scope-no-checkpoint": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async105-trio-sync-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async115-async-zero-sleep": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-async116-long-sleep-not-forever": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async210-blocking-http-call-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async221-run-process-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async222-wait-for-process-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async230-blocking-open-call-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async250-blocking-input-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-async251-blocking-sleep-in-async-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b002-unary-prefix-increment-decrement": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b003-assignment-to-os-environ": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b004-unreliable-callable-check": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b005-strip-with-multi-characters": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b007-unused-loop-control-variable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-b009-get-attr-with-constant": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b010-set-attr-with-constant": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b011-assert-false": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b013-redundant-tuple-in-exception-handler": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b014-duplicate-handler-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b015-useless-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b016-raise-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b020-loop-variable-overrides-iterator": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b021-f-string-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b022-useless-contextlib-suppress": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b023-function-uses-loop-variable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b025-duplicate-try-block-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b026-star-arg-unpacking-after-keyword-arg": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b028-no-explicit-stacklevel": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b029-except-with-empty-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b030-except-with-non-exception-classes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b032-unintentional-type-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 10
+        }
+      }
+    },
+    "ruff-b033-duplicate-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b034-re-sub-positional-args": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b039-mutable-contextvar-default": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-b904-raise-without-from-inside-except": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-b905-zip-without-explicit-strict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-c400-unnecessary-generator-list": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c401-unnecessary-generator-set": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c402-unnecessary-generator-dict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c403-unnecessary-list-comprehension-set": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c404-unnecessary-list-comprehension-dict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c405-unnecessary-literal-set": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c406-unnecessary-literal-dict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c408-unnecessary-collection-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 19
+        }
+      }
+    },
+    "ruff-c409-unnecessary-literal-within-tuple-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-c410-unnecessary-literal-within-list-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-c411-unnecessary-list-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c413-unnecessary-call-around-sorted": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-c414-unnecessary-double-cast-or-process": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c415-unnecessary-subscript-reversal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c416-unnecessary-comprehension": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 15,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-c417-unnecessary-map": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-c418-unnecessary-literal-within-dict-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-c419-unnecessary-comprehension-in-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c420-unnecessary-dict-comprehension-for-iterable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-c901-complex-structure": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 9
+        }
+      }
+    },
+    "ruff-com818-trailing-comma-on-bare-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 7,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-d101-undocumented-public-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 16
+        }
+      }
+    },
+    "ruff-d102-undocumented-public-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 16
+        }
+      }
+    },
+    "ruff-d103-undocumented-public-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 45
+        }
+      }
+    },
+    "ruff-d104-undocumented-public-package": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 25
+        }
+      }
+    },
+    "ruff-d105-undocumented-magic-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 8
+        },
+        "samples-python": {
+          "originalOnly": 12,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-d106-undocumented-public-nested-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d107-undocumented-public-init": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-d200-unnecessary-multiline-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d205-missing-blank-line-after-summary": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d209-new-line-after-last-paragraph": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d212-multi-line-summary-first-line": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-d300-triple-single-quotes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-d301-escape-sequence-in-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d402-signature-in-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d403-first-word-uncapitalized": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-d404-docstring-starts-with-this": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d406-missing-new-line-after-section-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "ruff-d418-overload-with-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-d419-empty-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-dtz001-call-datetime-without-tzinfo": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz002-call-datetime-today": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz003-call-datetime-utcnow": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz004-call-datetime-utcfromtimestamp": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz005-call-datetime-now-without-tzinfo": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz006-call-datetime-fromtimestamp": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz011-call-date-today": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz012-call-date-fromtimestamp": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-dtz901-datetime-min-max": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-e401-multiple-imports-on-one-line": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-e711-none-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-e721-type-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-e722-bare-except": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-e742-ambiguous-class-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-e743-ambiguous-function-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-em101-raw-string-in-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-em102-f-string-in-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-em103-dot-format-in-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-era001-commented-out-code": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 47
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 24
+        }
+      }
+    },
+    "ruff-f402-import-shadowed-by-loop-var": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f403-undefined-local-with-import-star": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 155
+        }
+      }
+    },
+    "ruff-f405-undefined-local-with-import-star-usage": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f406-undefined-local-with-nested-import-star-usage": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f407-future-feature-not-defined": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f501-percent-format-invalid-format": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f502-percent-format-expected-mapping": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f503-percent-format-expected-sequence": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f504-percent-format-extra-named-arguments": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f505-percent-format-missing-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f506-percent-format-mixed-positional-and-named": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f507-percent-format-positional-count-mismatch": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f508-percent-format-star-requires-sequence": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f509-percent-format-unsupported-format-character": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f521-string-dot-format-invalid-format": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f522-string-dot-format-extra-named-arguments": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f523-string-dot-format-extra-positional-arguments": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f524-string-dot-format-missing-arguments": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f525-string-dot-format-mixing-automatic": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f541-f-string-missing-placeholders": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 10
+        }
+      }
+    },
+    "ruff-f601-multi-value-repeated-key-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f602-multi-value-repeated-key-variable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f622-multiple-starred-expressions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f631-assert-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f632-is-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f633-invalid-print-syntax": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f634-if-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f701-break-outside-loop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f702-continue-outside-loop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f704-yield-outside-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f706-return-outside-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f707-default-except-not-last": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f722-forward-annotation-syntax-error": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 37,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-f822-undefined-export": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 34
+        }
+      }
+    },
+    "ruff-f823-undefined-local": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-f842-unused-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-f901-raise-not-implemented": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fast001-fast-api-redundant-response-model": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-fast002-fast-api-non-annotated-dependency": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fast003-fast-api-unused-path-parameter": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fbt001-boolean-type-hint-positional-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 5
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 26
+        }
+      }
+    },
+    "ruff-fbt002-boolean-default-value-positional-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-fbt003-boolean-positional-value-in-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 9,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fix001-line-contains-fixme": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-fix002-line-contains-todo": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 11
+        }
+      }
+    },
+    "ruff-fix003-line-contains-xxx": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fix004-line-contains-hack": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-fly002-static-join-to-f-string": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-g001-logging-string-format": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-g002-logging-percent-format": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-g003-logging-string-concat": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-g004-logging-f-string": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-g010-logging-warn": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-g101-logging-extra-attr-clash": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-g201-logging-exc-info": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-g202-logging-redundant-exc-info": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-icn001-unconventional-import-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-int001-f-string-in-get-text-func-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-int002-format-in-get-text-func-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-int003-printf-in-get-text-func-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-isc001-single-line-implicit-string-concatenation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-isc003-explicit-string-concatenation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-isc004-implicit-string-concatenation-in-collection-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 7,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-log001-direct-logger-instantiation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-log002-invalid-get-logger-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-log004-log-exception-outside-except-handler": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 12,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-log007-exception-without-exc-info": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-log009-undocumented-warn": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-log014-exc-info-outside-except-handler": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-log015-root-logger-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 14
+        }
+      }
+    },
+    "ruff-n801-invalid-class-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-n802-invalid-function-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-n803-invalid-argument-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-n804-invalid-first-argument-name-for-class-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-n805-invalid-first-argument-name-for-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 9
+        }
+      }
+    },
+    "ruff-n806-non-lowercase-variable-in-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-n807-dunder-function-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-n811-constant-imported-as-non-constant": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-n812-lowercase-imported-as-non-lowercase": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-n813-camelcase-imported-as-lowercase": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-n814-camelcase-imported-as-constant": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-n815-mixed-case-variable-in-class-scope": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-n816-mixed-case-variable-in-global-scope": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-n817-camelcase-imported-as-acronym": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 2
+        }
+      }
+    },
+    "ruff-n818-error-suffix-on-exception-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-npy001-numpy-deprecated-type-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-npy002-numpy-legacy-random": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-npy003-numpy-deprecated-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-npy201-numpy2-deprecation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pd002-pandas-use-of-inplace-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-pd012-pandas-use-of-dot-read-table": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pd101-pandas-nunique-constant-series-check": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-perf101-unnecessary-list-cast": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "ruff-perf102-incorrect-dict-iterator": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 4
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "ruff-perf203-try-except-in-loop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-perf401-manual-list-comprehension": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-perf402-manual-list-copy": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pgh003-blanket-type-ignore": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pgh005-invalid-mock-access": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie794-duplicate-class-field-definition": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie796-non-unique-enums": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie800-unnecessary-spread": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie804-unnecessary-dict-kwargs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie807-reimplemented-container-builtin": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pie810-multiple-starts-ends-with": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt001-pytest-fixture-incorrect-parentheses-style": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt002-pytest-fixture-positional-args": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt003-pytest-extraneous-scope-function": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt006-pytest-parametrize-names-wrong-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt007-pytest-parametrize-values-wrong-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt008-pytest-patch-with-lambda": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt009-pytest-unittest-assertion": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt010-pytest-raises-without-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-pt011-pytest-raises-too-broad": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt012-pytest-raises-with-multiple-statements": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt013-pytest-incorrect-pytest-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 18,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-pt014-pytest-duplicate-parametrize-test-cases": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt015-pytest-assert-always-false": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt016-pytest-fail-without-message": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt017-pytest-assert-in-except": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt018-pytest-composite-assertion": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt019-pytest-fixture-param-without-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt020-pytest-deprecated-yield-fixture": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt021-pytest-fixture-finalizer-callback": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt022-pytest-useless-yield-fixture": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt023-pytest-incorrect-mark-parentheses-style": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt026-pytest-use-fixtures-without-parameters": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt027-pytest-unittest-raises-assertion": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt028-pytest-parameter-with-default-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pt030-pytest-warns-too-broad": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pt031-pytest-warns-with-multiple-statements": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth100-os-path-abspath": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth101-os-chmod": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pth102-os-mkdir": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth103-os-makedirs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth104-os-rename": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth105-os-replace": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth106-os-rmdir": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth107-os-remove": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth108-os-unlink": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth109-os-getcwd": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pth110-os-path-exists": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pth111-os-path-expanduser": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth112-os-path-isdir": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth113-os-path-isfile": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth114-os-path-islink": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth115-os-readlink": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth116-os-stat": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth117-os-path-isabs": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth118-os-path-join": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth119-os-path-basename": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth120-os-path-dirname": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth121-os-path-samefile": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth122-os-path-splitext": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth123-builtin-open": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-pth124-py-path": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pth201-path-constructor-current-directory": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth202-os-path-getsize": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth203-os-path-getatime": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth204-os-path-getmtime": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth205-os-path-getctime": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth206-os-sep-split": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth207-glob": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth208-os-listdir": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth210-invalid-pathlib-with-suffix": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pth211-os-symlink": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi001-unprefixed-type-param": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi002-complex-if-statement-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-pyi003-unrecognized-version-info-check": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 9
+        }
+      }
+    },
+    "ruff-pyi004-patch-version-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi005-wrong-tuple-length-version-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi006-bad-version-info-comparison": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi007-unrecognized-platform-check": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi008-unrecognized-platform-name": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi009-pass-statement-stub-body": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi010-non-empty-stub-body": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi011-typed-argument-default-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi012-pass-in-class-body": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi013-ellipsis-in-non-empty-class-body": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi014-argument-default-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi015-assignment-default-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi017-complex-assignment-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi018-unused-private-type-var": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi019-custom-type-var-for-self": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi020-quoted-annotation-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-pyi021-docstring-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi024-collections-named-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-pyi025-unaliased-collections-abc-set-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi026-type-alias-without-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi029-str-or-repr-defined-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi030-unnecessary-literal-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi032-any-eq-ne-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi033-legacy-type-comment": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi034-non-self-return-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi035-unassigned-special-variable-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi036-bad-exit-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi041-redundant-numeric-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi042-snake-case-type-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi043-t-suffixed-type-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi044-future-annotations-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi045-iter-method-return-iterable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi046-unused-private-protocol": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi047-unused-private-type-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 8,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi048-stub-body-multiple-statements": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi049-unused-private-typed-dict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi050-no-return-argument-annotation-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi051-redundant-literal-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi052-unannotated-assignment-in-stub": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi053-string-or-bytes-too-long": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi054-numeric-literal-too-long": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi055-unnecessary-type-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-pyi056-unsupported-method-call-on-all": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 15,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi057-byte-string-usage": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi058-generator-return-from-iter-method": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi059-generic-not-last-base-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-pyi061-redundant-none-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi062-duplicate-literal-member": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi063-pep484-style-positional-only-parameter": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 5
+        },
+        "samples-python": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-pyi064-redundant-final-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-pyi066-bad-version-info-order": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret501-unnecessary-return-none": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret502-implicit-return-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret505-superfluous-else-return": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret506-superfluous-else-raise": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret507-superfluous-else-continue": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ret508-superfluous-else-break": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-rse102-unnecessary-paren-on-raise-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-ruf001-ambiguous-unicode-character-string": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 5,
+          "translationOnly": 0
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 42
+        }
+      }
+    },
+    "ruff-ruf002-ambiguous-unicode-character-docstring": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-ruf003-ambiguous-unicode-character-comment": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf005-collection-literal-concatenation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 8,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf006-asyncio-dangling-task": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf007-zip-instead-of-pairwise": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf008-mutable-dataclass-default": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-ruf009-function-call-in-dataclass-default-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf010-explicit-f-string-type-conversion": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf012-mutable-class-default": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "ruff-ruf013-implicit-optional": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 32,
+          "translationOnly": 0
+        },
+        "samples-python": {
+          "originalOnly": 18,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-ruf015-unnecessary-iterable-allocation-for-first-element": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf016-invalid-index-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf017-quadratic-list-summation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf018-assignment-in-assert": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-ruf019-unnecessary-key-check": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf020-never-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf021-parenthesize-chained-operators": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf022-unsorted-dunder-all": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-ruf023-unsorted-dunder-slots": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf024-mutable-fromkeys-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf026-default-factory-kwarg": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf028-invalid-formatter-suppression-comment": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf030-assert-with-print-message": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf032-decimal-from-float-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf033-post-init-default": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-ruf037-unnecessary-empty-iterable-within-deque-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf040-invalid-assert-message-literal-argument": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-ruf041-unnecessary-nested-literal": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf046-unnecessary-cast-to-int": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf048-map-int-version-parsing": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf049-dataclass-enum": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-ruf051-if-key-in-dict-del": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 7,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf057-unnecessary-round": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 18
+        }
+      }
+    },
+    "ruff-ruf058-starmap-zip": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf059-unused-unpacked-variable": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 7
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf060-in-empty-collection": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-ruf061-legacy-form-pytest-raises": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf063-access-annotations-from-class-dict": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 10,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf064-non-octal-permissions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ruf068-duplicate-entry-in-dunder-all": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-sim101-duplicate-isinstance-call": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim102-collapsible-if": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-sim103-needless-bool": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim107-return-in-try-except-finally": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim109-compare-with-tuple": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim112-uncapitalized-environment-variables": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim113-enumerate-for-loop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim117-multiple-with-statements": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim118-in-dict-keys": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim208-double-negation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim210-if-expr-with-true-false": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim211-if-expr-with-false-true": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim212-if-expr-with-twisted-arms": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim222-expr-or-true": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim223-expr-and-false": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim300-yoda-conditions": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim905-split-static-string": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-sim910-dict-get-with-none-default": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-slf001-private-member-access": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "ruff-slot000-no-slots-in-str-subclass": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-slot001-no-slots-in-tuple-subclass": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-slot002-no-slots-in-namedtuple-subclass": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-t100-debugger": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-t201-print": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 20
+        }
+      }
+    },
+    "ruff-t203-p-print": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-tc005-empty-type-checking-block": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-tc006-runtime-cast-value": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-tc010-runtime-string-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 2
+        }
+      }
+    },
+    "ruff-td001-invalid-todo-tag": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-td002-missing-todo-author": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 7
+        }
+      }
+    },
+    "ruff-td003-missing-todo-link": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 8
+        }
+      }
+    },
+    "ruff-td004-missing-todo-colon": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-td005-missing-todo-description": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-td006-invalid-todo-capitalization": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-td007-missing-space-after-todo-colon": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-tid252-relative-imports": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-try002-raise-vanilla-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try003-raise-vanilla-args": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try004-type-check-without-type-error": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try201-verbose-raise": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try203-useless-try-except": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try300-try-consider-else": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-try301-raise-within-try": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 6
+        },
+        "samples-python": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-try400-error-instead-of-exception": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-try401-verbose-log-message": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up001-useless-metaclass-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-up003-type-of-primitive": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-up004-useless-object-inheritance": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up005-deprecated-unittest-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up006-non-pep585-annotation": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 43,
+          "translationOnly": 5
+        },
+        "samples-python": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up007-non-pep604-annotation-union": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 25,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up008-super-call-with-parameters": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-up009-utf8-encoding-declaration": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "ruff-up010-unnecessary-future-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up011-lru-cache-without-parameters": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up012-unnecessary-encode-utf8": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 6,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up013-convert-typed-dict-functional-to-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up014-convert-named-tuple-functional-to-class": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up015-redundant-open-modes": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up018-native-literals": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up019-typing-text-str-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 8,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up020-open-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up021-replace-universal-newlines": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up022-replace-stdout-stderr": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up023-deprecated-c-element-tree": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up024-os-error-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-up025-unicode-kind-prefix": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up026-deprecated-mock-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 2
+        }
+      }
+    },
+    "ruff-up028-yield-in-for-loop": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up029-unnecessary-builtin-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-up030-format-literals": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 5
+        }
+      }
+    },
+    "ruff-up031-printf-string-formatting": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 9
+        },
+        "samples-python": {
+          "originalOnly": 7,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-up032-f-string": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 14,
+          "translationOnly": 11
+        },
+        "samples-python": {
+          "originalOnly": 8,
+          "translationOnly": 0
+        }
+      }
+    },
+    "ruff-up033-lru-cache-with-maxsize-none": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up034-extraneous-parentheses": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 16,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-up035-deprecated-import": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 15
+        }
+      }
+    },
+    "ruff-up036-outdated-version-block": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 6
+        }
+      }
+    },
+    "ruff-up039-unnecessary-class-parentheses": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up041-timeout-error-alias": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up043-unnecessary-default-type-args": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 2,
+          "translationOnly": 4
+        }
+      }
+    },
+    "ruff-up049-private-type-parameter": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-up050-useless-class-metaclass-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt101-sys-version-slice3": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt102-sys-version2": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 3,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt103-sys-version-cmp-str3": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 4,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt201-sys-version-info0-eq3": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt202-six-py3": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt203-sys-version-info1-cmp-int": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt204-sys-version-info-minor-cmp-int": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt301-sys-version0": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 1,
+          "translationOnly": 3
+        }
+      }
+    },
+    "ruff-ytt302-sys-version-cmp-str10": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "ruff-ytt303-sys-version-slice1": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 4
+        }
+      }
+    }
+  }
+}

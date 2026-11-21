@@ -1,5 +1,4 @@
 .policy "ruff-d209-new-line-after-last-paragraph" revision 1
-.guests off
 .description "Put the closing quotes of a multi-line docstring on their own line."
 .language python
 .mode steer

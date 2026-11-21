@@ -1,1 +1,0 @@
-Python rules that read the call graph (`python/calls`) or proven types (`python/types`) no longer make a row for every builtin name a file reads times every file, a cost that grew with the square of the files: on 4,459 Python files it was 130 million rows, over half the call graph's join time.

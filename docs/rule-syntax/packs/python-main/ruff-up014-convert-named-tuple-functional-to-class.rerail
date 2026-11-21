@@ -1,5 +1,4 @@
 .policy "ruff-up014-convert-named-tuple-functional-to-class" revision 1
-.guests off
 .description "Define named tuples with class syntax instead of the functional NamedTuple call; the class form is easier to read."
 .language python
 .mode steer

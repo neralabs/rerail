@@ -119,6 +119,16 @@ py_import (a loaded document's) ← load: the engine's answer, as a new wave
    uses (0048, `magic::gate_negations`), keyed by the negated atom's bound arguments. It is sound when `N(t)`
    reads only requests that `t` determines, which holds for import resolution. A directory is answered whole,
    and a new document adds new keys, not rows under an old one.
+
+   An aggregate inside the component waits the same way (the user, 2026-11-20: "Gate aggregates per key"; Q409).
+   Its key is the columns of its atom that the literals before it bind: the group it aggregates. `n = count : {
+   got(x, _) }` after `want(x)` becomes `done_got_bf(x), n = count : { got(x, _) }`, the aggregate's atom gated, so
+   the stratifier counts its edge as positive (`front::graph`, as for a gated negation). An `ask` writes the
+   literals before it as the rewrite does, so an earlier negation or aggregate of the component is gated there too.
+   Found on the 57 data-layer rule files: the shared `rr_value_req` puts `plain_str`'s `join` over a parsed
+   string's nodes inside the parse demand's component (decision 0431 §8), and a parsed string is answered whole.
+   Rejected: a request relation per reader where a shared one closes a loading cycle, and `value` kept eager for
+   the readers the demand reaches (both specific to the cycle found; the gate holds for any program).
 4. **A document's answer is the per-file part.** The per-file memo gives it by content hash, as for a workspace
    file. A miss is parsed. Both go through the run's chunk path, and the memo is read in bulk, one statement per
    batch of documents.
@@ -234,7 +244,7 @@ figure without either one.
   dependency universe's summaries.
 - **t10 §2g** (corpus profile): "run the cross-file part as one fixpoint and drop the rounds … the incremental
   case is then the memo's job".
-- **ast-index-spike:** design index §17 scopes cross-file facts out, so it offers no prior form. The ledger's
+- **SQL index prototype:** design index §17 scopes cross-file facts out, so it offers no prior form. The ledger's
   row 20 (partition by file, global machinery only where needed) holds: the fixpoint is the needed global part.
 - **0052:** the per-file memo's keys (content, path, plan), and document keys hashed from the path, so node ids
   are stable across runs.

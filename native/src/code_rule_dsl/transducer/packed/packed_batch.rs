@@ -328,9 +328,9 @@ impl PackedBatch {
     /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
     pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
         let task = &self.tasks[at];
-        // `TEMPO_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
-        if status.error != 0 && std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
+        // `RERAIL_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
+        if status.error != 0 && std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("RERAIL_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
         }
         match status_error(status, task.work_limit) {
             Some(Error::BackendCapacity)
@@ -385,8 +385,7 @@ impl PackedBatch {
         // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
-        for file in 0..file_count {
-            let tape = &files[file];
+        for tape in files.iter().take(file_count) {
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
@@ -973,7 +972,7 @@ impl PackedBatch {
                 Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks, query))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let capacities = self
+        self
             .tasks
             .iter()
             .map(|task| {
@@ -1067,8 +1066,7 @@ impl PackedBatch {
                     properties,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>();
-        capacities
+            .collect::<Result<Vec<_>, Error>>()
     }
 
     /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are
@@ -1627,9 +1625,9 @@ pub struct PackedExecution {
 
 #[track_caller]
 fn grid_result_failure() -> Error {
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_GRID_RESULT_INVARIANT {}",
+            "RERAIL_PACKED_GRID_RESULT_INVARIANT {}",
             std::panic::Location::caller()
         );
     }

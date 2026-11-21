@@ -1,5 +1,4 @@
 .policy "bandit-b301-pickle" revision 1
-.guests off
 .description "Avoid deserializing with pickle, dill, shelve, jsonpickle, or pandas.read_pickle; loading untrusted data this way can execute arbitrary code."
 .language python
 .mode steer

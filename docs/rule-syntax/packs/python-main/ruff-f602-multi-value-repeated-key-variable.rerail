@@ -1,5 +1,4 @@
 .policy "ruff-f602-multi-value-repeated-key-variable" revision 1
-.guests off
 .description "Avoid repeating the same variable as a key in a Python dict literal; the later value silently overwrites the earlier one."
 .language python
 .mode steer

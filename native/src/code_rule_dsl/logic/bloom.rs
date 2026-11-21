@@ -1,4 +1,4 @@
-//! A blocked Bloom filter of a column's keys (decision 0506): the probe screen's (`native::setfix::join_filter`) and
+//! A blocked Bloom filter of a column's keys (decision 0488): the probe screen's (`native::setfix::join_filter`) and
 //! the statistics' (a column's membership and the keys two columns share).
 //!
 //! ```text
@@ -168,7 +168,7 @@ impl Sample {
     }
 }
 
-/// A column's filter kept as its rows come (decision 0506). One writer adds to it, the column's sketch, while it is
+/// A column's filter kept as its rows come (decision 0488). One writer adds to it, the column's sketch, while it is
 /// read where it is: by the planner's statistics, the screens and the device's joins, which hold it (`Arc`) and never
 /// copy it. It lies in a block of the run's relations (`facts::rows::FactsBloom`, a `rerail_blocks::bloom::Bloom`):
 /// the device binds that block and tests it with the same read (`bloom_may`) the host makes. A word is a plain load

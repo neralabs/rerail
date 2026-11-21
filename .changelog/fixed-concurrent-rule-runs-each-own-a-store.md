@@ -1,1 +1,0 @@
-Rule runs and `rules test` runs started at the same time from one folder no longer fail with "content store writer is busy": each process now keeps a store of its own. Processes that name the same store with `RERAIL_TAPE_CACHE` take turns, and the waiting one says which process holds it.

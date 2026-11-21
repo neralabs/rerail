@@ -13,8 +13,8 @@
 //! ```
 //!
 //! A segment and the tail are relations of `rerail_blocks` (columns in doubling chunks), read through the reads
-//! written once (`rerail_clif::relation`: the host's are `rerail_blocks::generated_reads`, the kernels' the same
-//! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
+//! written once (`rerail_clif::relation`: the host's written directly in `rerail_blocks`, the kernels' the same
+//! reads in UKL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
 //! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
 //! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
 //! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
@@ -826,10 +826,15 @@ fn room_for(k: usize, rows: usize) -> usize {
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
 /// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
-/// refusal running it on the CPU). Without Metal, anonymous memory.
+/// refusal running it on the CPU). Without a device (none opened: a Linux host with no GPU, unless `RERAIL_GPU=cpu`),
+/// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device { Device::Must } else { Device::No };
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+        Device::Must
+    } else {
+        Device::No
+    };
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 
@@ -987,7 +992,7 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
-/// A column's blocked Bloom filter (decision 0506, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// A column's blocked Bloom filter (decision 0488, `rerail_blocks::bloom`) in a block of the run's relations: the
 /// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
 /// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
 pub struct FactsBloom {
@@ -1125,15 +1130,30 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        Part::reserved(Life::Device, k, rows)
+        Part::for_device_indexed(k, rows, 1)
     }
 
-    /// `for_device`'s part, its blocks of `life`: `Life::Run` for a host's reads where the process has no device.
-    pub fn reserved(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+    /// `for_device` with room for `indexes` indexes of its rows, one for each key its readers probe it by (a
+    /// recursive component's relation, decision 0353 step 6): no key of those copies it.
+    pub fn for_device_indexed(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::claimed(Life::Device, k, rows, indexes)
+    }
+
+    /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
+    /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
+    /// budget refuses it.
+    pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
+        Part::claimed(Life::Run, k, rows, 1)
+    }
+
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
+    /// `indexes` indexes of its rows.
+    fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         let part = Part::try_new_with(life, k, rows, index, false)?;
-        // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
+        // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
     }
@@ -1730,6 +1750,9 @@ impl Rows {
             self.tail = Some(t);
         }
         let tail = self.tail.as_mut().expect("opened");
+        // Decision 0487 R4 at a write's start: room lent to another writer (the device, `Part::room`) is that writer's
+        // until its loan is claimed; the host writing there would write what the device writes.
+        assert_eq!(tail.lent.load(std::sync::atomic::Ordering::Acquire), 0, "a CPU write of a relation's rows with its room lent to the device (claim the loan first)");
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
@@ -1861,8 +1884,9 @@ impl Rows {
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: k.at, kills: Some(k), part: Some(one.clone()) })
     }
 
-    /// `in_block`, never merging parts: `None` where the rows are in several parts not merged yet. A reader that can
-    /// do without the block (the CPU's probes) asks for this, so it makes no copy.
+    /// `in_block`, never merging parts: `None` where the rows are in several parts that read as no one relation and
+    /// are not merged yet. A reader that can do without the block (the CPU's probes) asks for this, so it makes no
+    /// copy.
     pub fn in_one_block(&self) -> Option<InBlock> {
         let (one, rows) = self.one_unmerged().or_else(|| self.merged.get().map(|m| (m, self.rows() as u32)))?;
         Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows, dead: 0, kills: None, part: Some(one.clone()) })
@@ -1915,7 +1939,7 @@ impl Rows {
                     let m = merged_counts();
                     m.0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     m.0[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, (rows * self.k * 8) >> 10));
                     let mut one = Part::new(self.life, self.k, rows);
                     for p in parts {
                         one.copy_from(p, 0, p.len());

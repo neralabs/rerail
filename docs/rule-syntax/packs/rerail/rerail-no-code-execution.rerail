@@ -1,0 +1,116 @@
+.policy "rerail-no-code-execution" revision 2
+.description "Read a rule pack's match and a repository's config as data without running their code, and install packs with npm's lifecycle scripts turned off."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "**/*.test.ts", "src/**/__tests__/**", "src/**/fixtures/**"
+// A rule pack's match and a repository's config are read as data. The files that read them (src/engine/catalog/,
+// the pack store, the packs and repository-setup commands, repository start) load no code runner and run no code,
+// and every npm install runs no lifecycle scripts. Five clauses, as the JSON's:
+//   import { execFile } from "node:child_process";    RUNS_CODE (a process or code-running module, in those files)
+//   await import(packEntry)                            RUNS_CODE (an import of a computed specifier, in those files)
+//   new Function(body)   eval(text)   execFile("node", …)   process.execPath   RUNS_CODE (in those files)
+//   await npm(["install", "--prefix", p, ...specs])    NPM_SCRIPTS (no --ignore-scripts) and NPM_OPTIONS (no "--")
+//   await npm(["install", "--ignore-scripts", "--", ...specs])   not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `has`
+// without `stopBy` is a child, its `inside` with `stopBy: end` any ancestor.
+
+.violation RUNS_CODE(at: node) "Read a pack's match or a repository's config as data in the matcher or the config parser, and decide from globs, dependency names and parsed values; never run their code."
+RUNS_CODE(n) :- runs_code(n), docof(n, d), reads_data(d).
+// reads_data(d): d reads a pack's match or a repository's config.
+.decl reads_data(d: number)
+reads_data(d) :- doc(d, p, _),
+    glob("src/{engine/catalog/**,setup/rule-pack-store.ts,cli/packs-cli.ts,cli/repository-setup.ts,runtime/repository-start.ts}", p).
+// runs_code(n): n loads a module that runs processes or code (child_process, vm, worker_threads, wasi, repl,
+// inspector), imports a specifier that is not a literal, or runs code: new Function/Worker/Module, eval, Function,
+// a call whose first argument is "node", process.execPath.
+.decl runs_code(n: node)
+runs_code(n) :- kind(n, "import_statement"), match("(?s:.*)(?:[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"'])(?s:.*)", n).
+runs_code(n) :- kind(n, "export_statement"), match("(?s:.*)(?:\\bfrom\\s+[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"'])(?s:.*)", n).
+runs_code(n) :- kind(n, "call_expression"), match("(?:import|require)\\s*\\(\\s*[\\\"'](?:node:)?(?:child_process|vm|worker_threads|wasi|repl|inspector)[\\\"'](?s:.*)", n).
+runs_code(n) :- kind(n, "call_expression"), match("(?:import|require)\\s*\\((?s:.*)", n), !literal_arguments(n).
+runs_code(n) :- kind(n, "call_expression"), match("createRequire\\s*\\([^)]*\\)\\s*\\((?s:.*)", n), !literal_arguments(n).
+runs_code(n) :- kind(n, "new_expression"), match("new\\s+(?:Function|Worker|Module)\\b(?s:.*)", n).
+runs_code(n) :- kind(n, "call_expression"), match("(?:\\(\\s*0\\s*,\\s*)?(?:globalThis\\.)?(?:eval|Function)\\)?\\s*\\((?s:.*)", n).
+runs_code(n) :- kind(n, "call_expression"), match("[\\w$.]+\\s*\\(\\s*[\\\"']node[\\\"'](?s:.*)", n).
+runs_code(n) :- kind(n, "member_expression"), text(n, "process.execPath").
+// literal_arguments(c): c's arguments are one quoted string: ("./x.js").
+.decl literal_arguments(c: node)
+literal_arguments(c) :- kind(c, "call_expression"), child(c, a, _), kind(a, "arguments"), match("\\(\\s*[\\\"'][^\\\"'`]*[\\\"']\\s*\\)", a).
+
+// npm_command(a): array a is an npm install-like command, ["install", …] or ["npm", "ci", …], outside the updater
+// (which installs Rerail itself); given to npm when it is inside a call of npm or starts with "npm".
+.decl npm_command(a: node)
+npm_command(a) :- kind(a, "array"), match("\\[\\s*(?:[\\\"']npm(?:\\.cmd)?[\\\"']\\s*,\\s*)?[\\\"'](?:install|i|add|ci|uninstall|remove|rm|update)[\\\"'](?s:.*)", a), docof(a, d), doc(d, p, _), p != "src/setup/updater.ts".
+.decl in_npm_call(a: node)
+in_npm_call(a) :- npm_command(a), inside(a, c, "call_expression"), match("(?i)(?:[\\w$.]*npm[\\w$]*\\s*\\(|[\\w$.]+\\s*\\(\\s*[\\w$.,\\s]*[\\[\\s]*[\\\"']npm[\\\"'])(?s:.*)", c).
+
+.violation NPM_SCRIPTS(at: node) "Install packs with npm's ignore-scripts flag, written in this array or through the pack store's shared quiet options, so no package's lifecycle scripts run on the user's machine."
+NPM_SCRIPTS(a) :- npm_command(a), (in_npm_call(a) ; match("\\[\\s*[\\\"']npm(?s:.*)", a)), !ignores_scripts(a).
+// ignores_scripts(a): a lists "--ignore-scripts" (or "=true"), or spreads the pack store's `quiet` options.
+.decl ignores_scripts(a: node)
+ignores_scripts(a) :- npm_command(a), child(a, s, _), kind(s, "string"), match("[\\\"']--ignore-scripts(?:=true)?[\\\"']", s).
+ignores_scripts(a) :- npm_command(a), child(a, s, _), kind(s, "spread_element"), match("\\.\\.\\.\\s*quiet", s).
+
+.violation NPM_OPTIONS(at: node) "End npm's options with a double dash right before the package specs, as the pack store does, so a spec someone passes in that starts with a dash is not read as an npm option."
+// A spread other than `...quiet` or `...(flag ? [ … ] : [])`, with no "--" right before a spread.
+NPM_OPTIONS(a) :- in_npm_call(a), child(a, s, _), kind(s, "spread_element"), !match("\\.\\.\\.\\s*(?:quiet|\\(\\s*[\\w$.!]+\\s*\\?\\s*\\[(?s:.*))", s),
+    !match("(?s:.*)(?:[\\\"']--[\\\"']\\s*,\\s*\\.\\.\\.)(?s:.*)", a).
+
+// The pack's example (packs/rerail/pack.json).
+.test an_install_without_ignore_scripts_is_reported exactly
+    .fixture "src/setup/rule-pack-store.ts" ```
+        await npm(["uninstall", "--prefix", prefix, "--no-audit", "--no-fund", ...ids.map(rulePackPackageName)]);
+        ```
+    .expect NPM_SCRIPTS at "src/setup/rule-pack-store.ts":1
+    .expect NPM_OPTIONS at "src/setup/rule-pack-store.ts":1
+.end
+
+.test npm_commands_are_reported exactly
+    .fixture "src/cli/install.ts" ```
+        await execFile("npm", ["ci", "--ignore-scripts", ...extra]);
+        await run(["npm", "install", pkg]);
+        ```
+    .expect NPM_OPTIONS at "src/cli/install.ts":1
+    .expect NPM_SCRIPTS at "src/cli/install.ts":2
+.end
+
+.test running_code_where_data_is_read_is_reported exactly
+    .fixture "src/engine/catalog/load.ts" ```
+        import { execFile } from "node:child_process";
+        export { runInNewContext } from "vm";
+        const worker = await import("node:worker_threads");
+        const entry = await import(packEntry);
+        const require = createRequire(import.meta.url);
+        const cfg = createRequire(import.meta.url)(configPath);
+        const fn = new Function("return 1");
+        const v = (0, eval)(text);
+        execFile("node", [script]);
+        const bin = process.execPath;
+        const data = await import("./data.js");
+        ```
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":1
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":2
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":3
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":4
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":6
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":7
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":8
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":9
+    .expect RUNS_CODE at "src/engine/catalog/load.ts":10
+.end
+
+// The pack's passing example, the same code outside the data readers, and the updater.
+.test scripts_off_and_other_files_pass exactly
+    .fixture "src/setup/rule-pack-store.ts" ```
+        await npm(["uninstall", "--prefix", prefix, "--ignore-scripts", "--no-audit", "--no-fund", "--", ...ids.map(rulePackPackageName)]);
+        await npm(["install", ...quiet, "--", ...specs]);
+        ```
+    .fixture "src/daemon/spawn.ts" ```
+        import { execFile } from "node:child_process";
+        const entry = await import(packEntry);
+        ```
+    .fixture "src/setup/updater.ts" ```
+        await npm(["install", "-g", spec]);
+        ```
+.end

@@ -1,37 +1,25 @@
-//! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every step of two
-//! Bitlex ladders, JSON's (`compiler/bitlex_ladder`) and `.rerail`'s (`rr_syntax/bitlex_ladder`), and a probe whose words
-//! edit a node the writer's ops already have (`RETAGGED_ROOT`), and Kotlin's (`kotlin_parser/bitlex_ladder`). Each
-//! step's Rust, in
-//! format 15 and in format 16 (decision 0434), is built by rustc with the rest of its ladder into one library, each
-//! step a module, run on the JIT's harness, and its tape compared with the JIT's byte for byte.
+//! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
+//! three sets: JSON's (`json_parser/`), `.rerail`'s (`rr_parser/rr.bitlex`), and probes whose words edit a node the
+//! writer's ops already have (`RETAGGED_ROOT`). Each grammar's Rust, in format 15 and in format 16 (decision 0434), is
+//! built by rustc with the rest of its set into one library, each grammar a module, run on the JIT's harness, and its
+//! tape compared with the JIT's byte for byte.
 
-use rerail_compiler::ladder::{Compiled, Lang, compile_step_as, documents_with, seed};
+use rerail_compiler::ladder::{Compiled, Lang, compile_step, documents_with, seed};
 use rerail_compiler::native_cpu_stream::Entry;
 use rerail_compiler::rust_stream;
 
-/// A ladder: its steps, the bytes its documents' mutations write, and documents of its own.
-struct Ladder {
+/// A set of grammars: each one's name and text, the bytes its documents' mutations write, and documents of its own.
+struct Set {
     name: &'static str,
-    steps: fn() -> Vec<(String, String)>,
+    grammars: fn() -> Vec<(String, String)>,
     alphabet: &'static [u8],
     fixed: fn() -> Vec<String>,
-    /// Sample texts of token kinds the generator has none of (`ladder::Lang::samples`).
-    samples: &'static [(&'static str, &'static [&'static str])],
-    /// Its steps compiled as a rules grammar's parser is (`ladder::compile_step_as`): Kotlin's, as `kotlin_parser`'s.
-    rules: bool,
 }
 
-/// Kotlin's comments (`kotlin_parser/bitlex_ladder`), with the edge cases of each.
-const KOTLIN_SAMPLES: &[(&str, &[&str])] = &[
-    ("line_comment", &["// c", "//", "// a, (1) é\r", "// /* x", "// \"x"]),
-    ("multiline_comment", &["/* c */", "/**/", "/* a\n b */", "/** x */", "/* // \" */"]),
-];
-
-const LADDERS: [Ladder; 4] = [
-    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false },
-    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false },
-    Ladder { name: "kotlin", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../kotlin_parser/bitlex_ladder")), alphabet: b"(){}[].,:;=<>!?+-*/\"'`$@ \naxZ09_", fixed: Vec::new, samples: KOTLIN_SAMPLES, rules: true },
-    Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed, samples: &[], rules: false },
+const SETS: [Set; 3] = [
+    Set { name: "json", grammars: rerail_compiler::ladder::grammars, alphabet: b" \nav9,eE-{}[]\":/*\\tu", fixed: json_fixed },
+    Set { name: "rr", grammars: || vec![("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned())], alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new },
+    Set { name: "probe", grammars: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed },
 ];
 
 /// A grammar whose words edit nodes the writer's ops already have: a `!` after the top level's lists retags the
@@ -123,28 +111,10 @@ fn probe_fixed() -> Vec<String> {
     docs
 }
 
-/// The JSON ladder's documents of `tier2_tests` (the compiler's format 16 run against `f16::write_from`): its
-/// constructs, a top level of many nodes, and depths, each past several blocks.
+/// JSON's documents: its constructs, a list of many nodes, and depths, each past several blocks.
 fn json_fixed() -> Vec<String> {
-    let mut docs: Vec<String> = [
-        "vrai",
-        "vrai fausse",
-        "(vrai;fausse;nul)",
-        "((vrai);())",
-        "<#a# = vrai; #b# = (1;2)>",
-        "#t^#x^^#",
-        "~3,14e~2",
-        "-- note\nvrai",
-        "{- note -} vrai",
-        "{\"a\": [1, 2.5e3, true, null, \"x\\n\"]}",
-        "// c\n[1]",
-    ]
-    .map(String::from)
-    .to_vec();
-    docs.push(format!("({})", vec!["vrai"; 3000].join(";")));
-    docs.push(vec!["vrai"; 3000].join(" "));
-    docs.push(format!("{}vrai{}", "(".repeat(300), ")".repeat(300)));
-    docs.push(format!("<{}>", (0..1500).map(|k| format!("#k{k}# = (1;~2,5e3;#t^#x#)")).collect::<Vec<_>>().join("; ")));
+    let mut docs: Vec<String> = ["{\"a\": [1, 2.5e3, true, null, \"x\\n\"]}", "// c\n[1]", "[true, false, null]", "\"t\\\"x\""].map(String::from).to_vec();
+    docs.push(format!("[{}]", vec!["true"; 3000].join(",")));
     docs.push(format!("[{}]", vec!["{\"a\": [1, 2.5e3, true, null, \"x\\n\"]} // c\n"; 800].join(", ")));
     docs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)));
     // Decision 0428's escape texts: a token's check that reads back (a lone low surrogate needs a high one six bytes
@@ -156,13 +126,6 @@ fn json_fixed() -> Vec<String> {
         docs.push(format!("{{\"{}\": \"{e}\"}}", "k".repeat(40)));
     }
     docs
-}
-
-/// A ladder's steps: each file's name and text, in order.
-fn steps(dir: &str) -> Vec<(String, String)> {
-    let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    paths.sort();
-    paths.iter().map(|p| (p.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned(), std::fs::read_to_string(p).expect("a step"))).collect()
 }
 
 /// The system's loader: a library opened and kept, and its symbols.
@@ -199,7 +162,8 @@ fn build(sources: &[String]) -> Vec<Entry> {
         text.push_str(&format!("mod s{k} {{\n{src}\n}}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry_{k}(ctx: u64) -> u64 {{\n    unsafe {{ s{k}::tier2_entry(ctx) }}\n}}\n"));
     }
     std::fs::write(&rs, text).expect("writes");
-    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    // With its debug assertions: a walk's invariants the reserved writer leaves unchecked (`rust_stream::reserved`).
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-C", "debug-assertions", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
     let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
     // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
@@ -219,16 +183,18 @@ fn build(sources: &[String]) -> Vec<Entry> {
     entries
 }
 
-/// A step's documents: the ladder's (`documents_with`), and its accepted ones joined, one after another, past
+/// A grammar's documents, and which are long (`documents`).
+type Docs = (Vec<Vec<u8>>, Vec<bool>);
+/// A document's tapes: format 15's image, format 16's and 16z's homes, and why either was refused.
+type Tapes = (Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>);
+
+/// A grammar's documents: drawn from it (`documents_with`), and its accepted ones joined, one after another, past
 /// several of format 16's blocks (1,024 nodes each), where the grammar takes them so. With which hold 3,000 nodes or
 /// more.
-fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bool>) {
-    let mut lang = Lang::of(&c.stmts);
-    for (kind, texts) in ladder.samples {
-        lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
-    }
-    let (mut docs, _) = documents_with(&lang, seed(name), &|b| c.parser.parse(b).is_ok(), ladder.alphabet);
-    docs.extend((ladder.fixed)().into_iter().map(String::into_bytes));
+fn documents(c: &Compiled, name: &str, set: &Set) -> (Vec<Vec<u8>>, Vec<bool>) {
+    let lang = Lang::of(&c.stmts);
+    let (mut docs, _) = documents_with(&lang, seed(name), &|b| c.parser.parse(b).is_ok(), set.alphabet);
+    docs.extend((set.fixed)().into_iter().map(String::into_bytes));
     let accepted: Vec<&Vec<u8>> = docs.iter().filter(|d| d.len() > 2 && c.parser.parse(d).is_ok()).collect();
     for sep in [&b"\n"[..], b";", b","] {
         // Only the documents that still parse joined to themselves: one that does not (its last token running on into
@@ -262,38 +228,53 @@ fn documents(c: &Compiled, name: &str, ladder: &Ladder) -> (Vec<Vec<u8>>, Vec<bo
     (docs, long)
 }
 
-/// Each step's Rust in format 16 writes the JIT's format 16 tapes (and 16z), presence and all, on every document the
+/// Each grammar's Rust in format 16 writes the JIT's format 16 tapes (and 16z), presence and all, on every document the
 /// JIT writes one for, and refuses (to the engine) every one the JIT refuses; in format 15, the JIT's image. Where the
-/// Rust backend refuses a step, the reason is named, and the test fails: it takes every step.
+/// Rust backend refuses a grammar, the reason is named, and the grammars it takes are counted.
 #[test]
-fn ladder_steps_rust_tapes_are_the_jits() {
+fn grammars_rust_tapes_are_the_jits() {
     use rerail_tape_format::f16::{Lang as F16Lang, Written};
     let home = |w: &Written| {
         assert!(w.presence_bytes().is_some(), "a format 16 run's presence");
         w.extent().to_vec()
     };
     let mut refused: Vec<String> = Vec::new();
-    let (mut taken, mut written, mut long, mut direct, mut steps) = (0, 0, 0, 0, 0);
-    // `RERAIL_AOT_LADDER`: one ladder only, by name.
-    let only = std::env::var("RERAIL_AOT_LADDER").ok();
-    // `RERAIL_AOT_STEPS`: the steps whose names hold one of these words (comma-separated), only.
-    let pick = std::env::var("RERAIL_AOT_STEPS").ok();
-    for ladder in LADDERS.iter().filter(|l| only.as_deref().is_none_or(|o| o == l.name)) {
-        let mut built: Vec<(String, Compiled, String, String)> = Vec::new();
-        for (name, source) in (ladder.steps)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
-            steps += 1;
-            let t0 = std::time::Instant::now();
-            let c = compile_step_as(&name, &source, ladder.rules);
-            eprintln!("{} {name}: compiled in {:?}", ladder.name, t0.elapsed());
+    let (mut taken, mut written, mut long, mut direct) = (0, 0, 0, 0);
+    // `RERAIL_AOT_SET`: one set only, by name.
+    let only = std::env::var("RERAIL_AOT_SET").ok();
+    // `RERAIL_AOT_GRAMMARS`: the grammars whose names hold one of these words (comma-separated), only.
+    let pick = std::env::var("RERAIL_AOT_GRAMMARS").ok();
+    let mut total = 0;
+    for set in SETS.iter().filter(|l| only.as_deref().is_none_or(|o| o == l.name)) {
+        let mut built: Vec<(String, Compiled, String, String, Docs, F16Lang)> = Vec::new();
+        for (name, source) in (set.grammars)().into_iter().filter(|(n, _)| pick.as_deref().is_none_or(|p| p.split(',').filter(|w| !w.is_empty()).any(|w| n.contains(w)))) {
+            total += 1;
+            let c = compile_step(&name, &source);
             let (widths, tag) = c.parser.tier2.widths_tag();
             let (w16, t16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-            match (rust_stream::rust_source_at(&c.native, widths, tag), rust_stream::rust_source_16(&c.native, w16, t16)) {
+            // The grammar's documents and its language, before its Rust: the language is every key a direct run writes
+            // (`rust_stream::direct_entries`), then every other key the documents' tapes hold (format 15's tables,
+            // joined), as the engine's language holds every key of its grammar, and the source's numbers are its
+            // literals (decision 0535).
+            let docs = documents(&c, &name, set);
+            let mut keys: Vec<rerail_tape_format::tape::Entry> = rust_stream::direct_entries(&c.native, w16, t16).unwrap_or_default();
+            for doc in &docs.0 {
+                let Ok(f15) = c.parser.image(doc) else { continue };
+                let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");
+                for e in table.entries() {
+                    if !keys.contains(e) {
+                        keys.push(e.clone());
+                    }
+                }
+            }
+            let lang = F16Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+            match (rust_stream::rust_source_at(&c.native, widths, tag), rust_stream::rust_source_16(&c.native, w16, t16, &lang)) {
                 (Ok(s15), Ok(s16)) => {
-                    // `RERAIL_DUMP_TIER2`: each step's sources, in that directory.
+                    // `RERAIL_DUMP_TIER2`: each grammar's sources, in that directory.
                     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
                         let at = std::path::Path::new(&dir);
-                        std::fs::write(at.join(format!("{}-{name}-15.rs", ladder.name)), &s15).expect("writes");
-                        std::fs::write(at.join(format!("{}-{name}-16.rs", ladder.name)), &s16).expect("writes");
+                        std::fs::write(at.join(format!("{}-{name}-15.rs", set.name)), &s15).expect("writes");
+                        std::fs::write(at.join(format!("{}-{name}-16.rs", set.name)), &s16).expect("writes");
                     }
                     // The JIT's run passes each node at its word (`direct`) where the Rust does (`rust_stream::direct_keys`),
                     // and then calls no step on working rows.
@@ -304,32 +285,19 @@ fn ladder_steps_rust_tapes_are_the_jits() {
                     let [f15, rows] = s.tape(1000).held();
                     assert!(f15 == 0 && (rows == 0) == s.direct, "{name}: a format 16 run's tape holds {f15} bytes of format 15's, {rows} of rows (direct {})", s.direct);
                     direct += usize::from(s.direct);
-                    built.push((name, c, s15, s16))
+                    built.push((name, c, s15, s16, docs, lang))
                 }
-                (a, b) => refused.push(format!("{} {name}: {:?}", ladder.name, a.err().or(b.err()))),
+                (a, b) => refused.push(format!("{} {name}: {:?}", set.name, a.err().or(b.err()))),
             }
         }
-        let sources: Vec<String> = built.iter().flat_map(|(_, _, a, b)| [a.clone(), b.clone()]).collect();
+        let sources: Vec<String> = built.iter().flat_map(|(_, _, a, b, ..)| [a.clone(), b.clone()]).collect();
         let entries = build(&sources);
-        for (k, (name, mut c, _, _)) in built.into_iter().enumerate() {
+        for (k, (name, mut c, _, _, (docs, longs), lang)) in built.into_iter().enumerate() {
             // Each document's tapes by the JIT, then by the Rust, in the same parser: format 15's image, and format
-            // 16's home and 16z's where the JIT writes format 15 (its table names the language).
-            let (docs, longs) = documents(&c, &name, ladder);
-            // The step's language: every key its documents' tapes hold (format 15's tables, joined), as the engine's
-            // language holds every key of its grammar; the numbers once, for every document.
-            let mut keys: Vec<rerail_tape_format::tape::Entry> = Vec::new();
-            for doc in &docs {
-                let Ok(f15) = c.parser.image(doc) else { continue };
-                let (_, table) = rerail_tape_format::tape::f15_columns(&f15).expect("a format 15 tape");
-                for e in table.entries() {
-                    if !keys.contains(e) {
-                        keys.push(e.clone());
-                    }
-                }
-            }
-            let lang = F16Lang::new(rerail_tape_format::tape::CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+            // 16's home and 16z's where the JIT writes format 15 (its table names the language); the numbers once, for
+            // every document.
             let numbers = c.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
-            let tapes = |c: &Compiled| -> Vec<(Option<Vec<u8>>, Vec<Option<Vec<u8>>>, Vec<Option<String>>)> {
+            let tapes = |c: &Compiled| -> Vec<Tapes> {
                 docs.iter()
                     .map(|doc| {
                         let image = c.parser.image(doc).ok();
@@ -340,7 +308,7 @@ fn ladder_steps_rust_tapes_are_the_jits() {
                     .collect()
             };
             let want = tapes(&c);
-            // SAFETY: this step's code, from `rust_stream`, on the JIT's harness for its format (`write16` for 16).
+            // SAFETY: this grammar's code, from `rust_stream`, on the JIT's harness for its format (`write16` for 16).
             unsafe {
                 c.parser.tier2.set_entry(entries[2 * k], 4);
                 c.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entries[2 * k + 1], 4);
@@ -349,15 +317,15 @@ fn ladder_steps_rust_tapes_are_the_jits() {
             taken += 1;
             for (d, (doc, ((w15, w16, jwhy), (g15, g16, why)))) in docs.iter().zip(want.iter().zip(&got)).enumerate() {
                 let shown = String::from_utf8_lossy(&doc[..doc.len().min(80)]).into_owned();
-                assert!(g15 == w15, "{} {name}: format 15 on {shown:?}", ladder.name);
+                assert!(g15 == w15, "{} {name}: format 15 on {shown:?}", set.name);
                 // Where the JIT writes format 15, its format 16 run writes too: a failure both runs share (an edit
                 // that finds its node passed, `fail::PASSED`) is no tape.
-                assert!(w15.is_none() || w16.iter().all(Option::is_some), "{} {name} on {shown:?}: format 15 written, the JIT's format 16 run fails: {jwhy:?}", ladder.name);
+                assert!(w15.is_none() || w16.iter().all(Option::is_some), "{} {name} on {shown:?}: format 15 written, the JIT's format 16 run fails: {jwhy:?}", set.name);
                 for (z, (w, g)) in w16.iter().zip(g16).enumerate() {
                     if g != w {
                         let (g, w) = (g.clone().unwrap_or_default(), w.clone().unwrap_or_default());
                         let first = (0..g.len().min(w.len())).find(|&i| g[i] != w[i]);
-                        panic!("{} {name} (16z {}) on {shown:?}: the Rust's format 16 home, lengths {} and the JIT's {}, first differing at {first:?}; the Rust's {:?}", ladder.name, z == 1, g.len(), w.len(), why[z]);
+                        panic!("{} {name} (16z {}) on {shown:?}: the Rust's format 16 home, lengths {} and the JIT's {}, first differing at {first:?}; the Rust's {:?}", set.name, z == 1, g.len(), w.len(), why[z]);
                     }
                     if w.is_some() {
                         written += 1;
@@ -367,7 +335,6 @@ fn ladder_steps_rust_tapes_are_the_jits() {
             }
         }
     }
-    eprintln!("{taken} steps taken ({direct} direct), {written} format 16 homes the JIT's ({long} of documents of 3,000 nodes or more); refused:\n{}", refused.join("\n"));
-    // Every step the ladders keep (0422: each its last, eight in all), taken: none refused.
-    assert!(taken == steps && taken >= 1 && long > 0, "the steps the Rust backend takes: {taken} of {steps}, {long} long");
+    eprintln!("{taken} grammars taken ({direct} direct), {written} format 16 homes the JIT's ({long} of documents of 3,000 nodes or more)");
+    assert!(refused.is_empty() && taken == total && taken > 0 && long > 0, "the Rust backend refuses:\n{}", refused.join("\n"));
 }

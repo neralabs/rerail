@@ -1,5 +1,4 @@
 .policy "ruff-sim910-dict-get-with-none-default" revision 1
-.guests off
 .description "Drop the redundant None default from dict.get() calls; get() already returns None for a missing key."
 .language python
 .mode steer

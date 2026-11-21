@@ -1,5 +1,4 @@
 .policy "ruff-t203-p-print" revision 1
-.guests off
 .description "Use a logger instead of pprint; pretty-printed output can leak sensitive data and cannot be configured by clients."
 .language python
 .mode steer

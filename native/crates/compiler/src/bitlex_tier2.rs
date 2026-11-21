@@ -1498,13 +1498,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         }
         // (words, the rule's level's kind, its states)
         let mut top: Vec<(usize, u16, usize)> = by_rule.into_iter().map(|(r, n)| (n, states.iter().find(|s| usize::from(s.rule) == r).map_or(0, |s| s.level), states.iter().filter(|s| usize::from(s.rule) == r).count())).collect();
-        top.sort_by(|a, b| b.0.cmp(&a.0));
+        top.sort_by_key(|t| std::cmp::Reverse(t.0));
         let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
         for w in &e.words {
             *ops.entry(w.0).or_default() += 1;
         }
         let mut ops: Vec<_> = ops.into_iter().collect();
-        ops.sort_by(|a, b| b.1.cmp(&a.1));
+        ops.sort_by_key(|o| std::cmp::Reverse(o.1));
         format!("{} words unshared, {} states, {} arms; by opcode {:?}; words, level kind and states by rule: {:?}", e.words.len(), states.len(), arms.len(), &ops[..ops.len().min(10)], &top[..top.len().min(12)])
     };
     // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`

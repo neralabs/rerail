@@ -1,5 +1,4 @@
 .policy "ruff-b033-duplicate-value" revision 1
-.guests off
 .description "Remove duplicate literal values from Python set literals; the repeat is dropped silently and usually hides a typo, and values like True, 1 and 1.0 count as the same."
 .language python
 .mode steer

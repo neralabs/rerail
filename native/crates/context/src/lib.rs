@@ -41,10 +41,13 @@ pub fn run_own() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 pub type AnyArc = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
+/// The place a setting is read (its file, line and column) and the type it is read as.
+type SettingPlace = (&'static str, u32, u32, std::any::TypeId);
+
 /// A run's settings, by the place that reads each, and its own values, by type (decision 0442).
 #[derive(Default)]
 pub struct RunValues {
-    settings: parking_lot::Mutex<std::collections::HashMap<(&'static str, u32, u32, std::any::TypeId), AnyArc>>,
+    settings: parking_lot::Mutex<std::collections::HashMap<SettingPlace, AnyArc>>,
     locals: parking_lot::Mutex<std::collections::HashMap<std::any::TypeId, AnyArc>>,
 }
 
@@ -314,7 +317,7 @@ fn context_here() -> Context {
 
 /// What a job made on this thread carries to the thread that runs it (rayon-core's patch, `set_job_carrier`): the
 /// run under way and its context (`job_run`). A loop's items split by rayon's `join`, and a half another thread steals
-/// runs in its maker's run, whichever runs share the pool (decision 0442, Q386). Nothing where the thread holds no
+/// runs in its maker's run, whichever runs share the pool (decision 0442, Q300). Nothing where the thread holds no
 /// run: a thread the engine gave none (in a test build, a test's own thread carries the tests' object).
 fn carry() -> Option<rayon_core::Carried> {
     if RUN.try_with(|r| r.borrow().is_none()).unwrap_or(true) {
@@ -474,6 +477,15 @@ pub fn enter(run: Option<std::sync::Arc<dyn RunOwn>>) -> impl Drop {
     Back(Some(was_run), was_context)
 }
 
+/// Runs `f` in `run` (a job's handle, `job_run`) on this thread, and ends it there: `f` and everything it captured
+/// are dropped before the run leaves the thread. A job written `move || { let _in = enter(run); … }` drops its
+/// captures after its body, when the run has left: a capture's drop that reads the run (a device lease's going back
+/// to its pool reads the machine's) then reads outside any run (Q337).
+pub fn in_run<R>(run: Option<std::sync::Arc<dyn RunOwn>>, f: impl FnOnce() -> R) -> R {
+    let _in = enter(run);
+    f()
+}
+
 /// Whether this thread holds `job`'s run and context already (a pool's item run inline on its caller's thread).
 pub fn holds(job: &Option<std::sync::Arc<dyn RunOwn>>) -> bool {
     let (run, context) = match job.as_ref().map(|j| (j, j.with_context())) {
@@ -531,6 +543,18 @@ pub fn job_run() -> Option<std::sync::Arc<dyn RunOwn>> {
 
 /// A job's handle (`job_run`): the run, and the context the job was made in.
 struct InContext(std::sync::Arc<dyn RunOwn>, Context);
+
+/// Dropped on a thread that holds no run (a pool thread whose job carried it, its guard gone): the context drops
+/// with the run's shared object on the thread (`within`), as its values' drops may read it (a store's writers). The
+/// run is dropped after, its own values likewise (`Bare`'s drop).
+impl Drop for InContext {
+    fn drop(&mut self) {
+        if run_own().is_none() {
+            let _within = within(std::sync::Arc::clone(self.0.shared()));
+            drop(std::mem::take(&mut self.1));
+        }
+    }
+}
 
 impl RunOwn for InContext {
     fn with_context(&self) -> Option<(&std::sync::Arc<dyn RunOwn>, &Context)> {
@@ -700,6 +724,27 @@ impl Caller {
 
 /// A run with nothing of its own but its values and its shared object (`within`, `test_run`).
 struct Bare(RunValues, std::sync::Arc<Shared>);
+
+/// A run's last handle dropped on a thread that holds no run: its values drop with its shared object on the thread
+/// (`within`), as a value's drop may read it. The run `within` makes holds no values, so its own drop does nothing.
+impl Drop for Bare {
+    fn drop(&mut self) {
+        self.0.end_in(&self.1);
+    }
+}
+
+impl RunValues {
+    /// Drops the values, its run ending: on a thread that holds no run, with the run's `shared` object on the thread
+    /// (`within`), as a value's drop may read it (a store's writers). Every run's drop calls it.
+    pub fn end_in(&mut self, shared: &std::sync::Arc<Shared>) {
+        let (settings, locals) = (std::mem::take(self.settings.get_mut()), std::mem::take(self.locals.get_mut()));
+        if (settings.is_empty() && locals.is_empty()) || run_own().is_some() {
+            return;
+        }
+        let _within = within(std::sync::Arc::clone(shared));
+        drop((settings, locals));
+    }
+}
 
 impl RunOwn for Bare {
     fn values(&self) -> &RunValues {
@@ -875,6 +920,77 @@ pub fn test_run() -> impl Drop {
 mod tests {
     use super::*;
 
+    /// A run's last handle dropped on a thread that holds no run (a pool thread whose job carried it): what the run
+    /// and its context hold drops with the run's shared object on the thread, so a value whose drop reads it (a
+    /// store's writers) finds it. Before, such a drop read outside any run and aborted the process (`wave0_…`, 2026-11-20).
+    #[test]
+    fn a_runs_last_handle_dropped_off_its_thread_drops_its_values_in_its_shared_object() {
+        #[derive(Default)]
+        struct Marker;
+        struct ReadsShared(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for ReadsShared {
+            fn drop(&mut self) {
+                let _ = shared::<Marker>();
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let job = std::thread::spawn({
+            let dropped = dropped.clone();
+            move || {
+                // A run of the engine's own thread, its context holding the value; the job's handle outlives both.
+                engine_thread();
+                let shared = std::sync::Arc::new(Shared::default());
+                let _run = enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))));
+                let _bound = bind(ReadsShared(dropped));
+                job_run()
+            }
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(move || {
+            engine_thread();
+            assert!(run_own().is_none());
+            drop(job);
+        })
+        .join()
+        .expect("the run's values dropped in its shared object, not outside any run");
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Q337: a job's captures end inside its run (`in_run`); with the run's guard in the job's body, a capture's drop
+    /// comes after the guard's and is outside the run.
+    #[test]
+    fn a_jobs_captures_are_dropped_inside_its_run() {
+        struct Says(std::sync::Arc<std::sync::Mutex<Option<bool>>>);
+        impl Drop for Says {
+            fn drop(&mut self) {
+                *self.0.lock().unwrap() = Some(run_own().is_some());
+            }
+        }
+        let _t = test_run();
+        let job = |seen: &std::sync::Arc<std::sync::Mutex<Option<bool>>>, carried: bool| {
+            let (says, run) = (Says(seen.clone()), job_run());
+            std::thread::spawn(move || {
+                if carried {
+                    in_run(run, move || {
+                        let _ = &says;
+                    });
+                } else {
+                    let _in = enter(run);
+                    let _ = &says;
+                }
+            })
+            .join()
+            .unwrap();
+        };
+        let (bare, carried) = (std::sync::Arc::new(std::sync::Mutex::new(None)), std::sync::Arc::new(std::sync::Mutex::new(None)));
+        job(&bare, false);
+        assert_eq!(*bare.lock().unwrap(), Some(false), "the guard's pattern: the capture outlives the run");
+        job(&carried, true);
+        assert_eq!(*carried.lock().unwrap(), Some(true), "in_run: the capture ends inside the run");
+    }
+
     #[derive(Clone, Default, PartialEq, Debug)]
     struct Depth(usize);
     #[derive(Clone, Default, PartialEq, Debug)]
@@ -1014,7 +1130,7 @@ mod tests {
 mod stolen_halves {
     use super::*;
 
-    /// Q386: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
+    /// Q300: two runs' loops in one pool at once (a corpus run's phase 0 beside its main program). Every item, the
     /// halves other threads steal included, reads its own run's value and its own caller's binding: each job carries
     /// its maker's run (rayon-core's patch, `carry`).
     #[test]

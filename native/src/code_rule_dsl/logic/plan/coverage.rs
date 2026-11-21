@@ -27,7 +27,7 @@ use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).
@@ -106,6 +106,12 @@ fn aggregate(op: &AggOp) -> Probe {
         AggOp::Max => probe("aggregate max", &["agg max"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = max v : { p(a, v) }."),
         AggOp::Product => probe("aggregate product", &["agg product"], "a: symbol, c: number", "{HEAD}(a, c) :- s(a), c = product v : { p(a, v) }."),
         AggOp::Join { .. } => probe("aggregate join", &["agg join"], "a: symbol, c: symbol", "{HEAD}(a, c) :- t(a), c = join b by b sep \", \" : { q(a, b) }."),
+        // Bounded by a probe's number (decision 0511): `max v : { p(a, v), v < x }` and its three others, over groups
+        // with values on both sides of a bound, on one side only, and none.
+        AggOp::Bounded { max, strict, .. } => {
+            let (name, op) = (if *max { "max" } else { "min" }, AggOp::bound_cmp(*max, *strict));
+            probe(format!("aggregate {name} bounded by {op}"), &[&format!("agg {name}")], "a: symbol, x: number, c: number", format!("{{HEAD}}(a, x, c) :- s(a), n(x), c = {name} v : {{ p(a, v), v {op} x }}."))
+        }
     }
 }
 
@@ -220,6 +226,9 @@ fn probes() -> Vec<Probe> {
     for op in [AggOp::Count, AggOp::Sum, AggOp::Min, AggOp::Max, AggOp::Product, AggOp::Join { by: Vec::new(), sep: String::new() }] {
         out.push(aggregate(&op));
     }
+    for (max, strict) in [(true, true), (true, false), (false, true), (false, false)] {
+        out.push(aggregate(&AggOp::Bounded { max, bound: "x".into(), strict }));
+    }
     // `@concat` of more than two texts, as the data-layer programs write it: their concatenation, left to right.
     out.push(probe("functor @concat of three texts", &["call concat"], "a: symbol", "{HEAD}(v) :- t(a), t(b), v = @concat(a, \"::\", b)."));
     // `@printf` of a constant format, as the data-layer programs write it: `%d`, `%0Nd` (never truncated) and `%s`.
@@ -296,7 +305,9 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
+    // The relation's rows, whether a native stratum made it, and where each part ran.
+    type Lowered = (Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>);
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<Lowered, String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
         // probe's run holds it (decision 0442).
@@ -334,7 +345,12 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     Ok(Verdict { native, device })
 }
 
+/// `RERAIL_COVERAGE_NO_DEVICE=1`: the probes' native verdicts alone, the device's not run (with
+/// `RERAIL_COVERAGE_ONLY`, a step built while Metal work waits, 2026-11-20).
 fn metal() -> bool {
+    if std::env::var_os("RERAIL_COVERAGE_NO_DEVICE").is_some() {
+        return false;
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -395,20 +411,18 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    let old: BTreeSet<&str> = had.lines().collect();
-    let new: BTreeSet<&str> = text.lines().collect();
-    assert!(
-        had == text,
-        "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{}\n+++ now\n{}",
-        path.display(),
-        old.difference(&new).copied().collect::<Vec<_>>().join("\n"),
-        new.difference(&old).copied().collect::<Vec<_>>().join("\n")
-    );
+    if had != text {
+        let old: BTreeSet<&str> = had.lines().collect();
+        let new: BTreeSet<&str> = text.lines().collect();
+        let gone = old.difference(&new).copied().collect::<Vec<_>>().join("\n");
+        let came = new.difference(&old).copied().collect::<Vec<_>>().join("\n");
+        panic!("the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{gone}\n+++ now\n{came}", path.display());
+    }
 }
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -467,29 +481,35 @@ fn every_operation_runs_on_every_executor() {
     }
     let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
+        // The ledger's device column is measured, never written as "no Metal device" by a host without one.
+        assert!(metal(), "RERAIL_BLESS_COVERAGE writes the device column too: bless on a host with a Metal device");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
         packs_ledger(&all, &rows);
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    // Without the device (Windows builds no device lane) its column is not measured here: the native one is compared
-    // alone, and the gaps by pack, which count the device's, are not.
-    let device_here = metal();
-    let measured = |t: &str| -> String {
-        if device_here {
-            return t.to_owned();
+    // A host with no Metal device measures the native column only: both sides are compared without the device's.
+    let measured = |text: &str| -> String {
+        if metal() {
+            return text.to_owned();
         }
-        t.lines().map(|l| l.split('\t').enumerate().filter(|(i, _)| *i != 2).map(|(_, f)| f).collect::<Vec<_>>().join("\t") + "\n").collect()
+        text.lines()
+            .map(|l| match l.splitn(4, '\t').collect::<Vec<_>>().as_slice() {
+                [name, native, _, rule] if !l.starts_with('#') => format!("{name}\t{native}\t{rule}\n"),
+                _ => format!("{l}\n"),
+            })
+            .collect()
     };
-    let (had, rows) = (measured(&had), measured(&rows));
-    // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
-    if had == rows && device_here {
-        packs_ledger(&all, &rows);
+    let (compared, now) = (measured(&had), measured(&rows));
+    // The gaps by pack follow from the matrix (the ledger's, with its device column): compared once the matrix is as
+    // the ledger says.
+    if compared == now {
+        packs_ledger(&all, &had);
     }
-    if had != rows {
-        let old: BTreeSet<&str> = had.lines().collect();
-        let new: BTreeSet<&str> = rows.lines().collect();
+    if compared != now {
+        let old: BTreeSet<&str> = compared.lines().collect();
+        let new: BTreeSet<&str> = now.lines().collect();
         let gone: Vec<&&str> = old.difference(&new).collect();
         let came: Vec<&&str> = new.difference(&old).collect();
         panic!(
@@ -583,7 +603,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {

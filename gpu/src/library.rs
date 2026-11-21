@@ -80,6 +80,11 @@ impl ScanSpace {
         Ok(ScanSpace { most, levels })
     }
 
+    /// Its levels' buffers, which its launches bind: what a caller holds until the work completes.
+    pub fn buffers(&self) -> &[Buffer] {
+        &self.levels
+    }
+
     /// The levels a sized scan of up to `most` values takes: one, and one a level of tiles' sums.
     pub fn levels(&self) -> usize {
         self.levels.len() + 1
@@ -241,6 +246,11 @@ pub struct RadixSpace {
 }
 
 impl RadixSpace {
+    /// Its buffers, which its launches bind: its histogram and its scan's levels.
+    pub fn buffers(&self) -> impl Iterator<Item = &Buffer> {
+        std::iter::once(&self.hist).chain(self.scan.buffers())
+    }
+
     pub fn new(most: u32) -> Result<RadixSpace, String> {
         RadixSpace::new_in(most, |_, words| alloc::<u32>(words))
     }
@@ -292,7 +302,7 @@ pub fn radix_sort_pairs_in<K: RadixKey>(queue: &ComputeQueue, pair: [&BufferRef;
             .run(&[tiles as u64], &[256])?;
         std::mem::swap(&mut from, &mut to);
     }
-    Ok((if passes % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp }, made))
+    Ok((if passes.is_multiple_of(2) { Sorted::InPlace } else { Sorted::InTemp }, made))
 }
 
 #[repr(C)]

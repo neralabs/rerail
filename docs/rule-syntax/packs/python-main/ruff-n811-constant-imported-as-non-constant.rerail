@@ -1,5 +1,4 @@
 .policy "ruff-n811-constant-imported-as-non-constant" revision 1
-.guests off
 .description "Keep the alias of an imported constant in UPPER_CASE; a lowercase or CamelCase alias makes readers mistake the constant for a variable or class."
 .language python
 .mode steer

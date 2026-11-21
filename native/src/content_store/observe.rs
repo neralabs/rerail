@@ -34,6 +34,7 @@
 //! (`git_alias`): a fresh clone or another worktree of the same repository is then not hashed.
 
 #[allow(unused_imports)]
+use crate::git_workspace::snapshot as source;
 use crate::content_store::connection::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
@@ -391,7 +392,7 @@ impl Observer {
         // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
         // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
         // one warm batch's first ask, all of them replayed and dropped).
-        let cookies = path.map(cookie_dir).filter(|d| private_dir(d).is_ok());
+        let cookies = path.map(cookie_dir).filter(|d| super::prepare_cache_directory(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -508,6 +509,7 @@ impl Observer {
 
     /// Reads what the store keeps under `dir` now, before a walk of it reads it a path at a time (`ensure`).
     pub fn preload(&mut self, dir: &Path) {
+        if source::contains(dir) { return; }
         let dir = self.abs(dir);
         self.ensure(&dir);
     }
@@ -520,7 +522,7 @@ impl Observer {
         if k.loaded.iter().any(|u| path.starts_with(u)) {
             return;
         }
-        let unit = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
+        let unit = match self.stored_roots.iter().filter(|r| under(path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(path).to_path_buf(),
         };
@@ -593,7 +595,7 @@ impl Observer {
     /// recording run took, so the journal names it: neither the racy rule nor a stat check is needed.
     fn trusted(&mut self, path: &Path) -> Option<Entry> {
         self.watch_above(path);
-        let Some(listed) = self.trusting_root(path) else { return None };
+        let listed = self.trusting_root(path)?;
         let e = self.known(path)?;
         // Recorded within the journal's settle window: its silence may hide a merged event (Q189). Not under a root
         // its listings checked (decision 0400): those compared each answer with the directory as it is now.
@@ -608,7 +610,7 @@ impl Observer {
     /// not the journal. `None` where none trusts them.
     fn trusting_root(&self, path: &Path) -> Option<bool> {
         let mut found = None;
-        for r in self.roots.iter().filter(|r| r.trusted && r.asked == self.flushes && under(&path, &r.path)) {
+        for r in self.roots.iter().filter(|r| r.trusted && r.asked == self.flushes && under(path, &r.path)) {
             // A root the journal answered for is the stricter: its silence is what the settle window doubts.
             found = Some(found.unwrap_or(true) && r.listed);
         }
@@ -628,11 +630,11 @@ impl Observer {
             return None;
         }
         // Every root it is under: each settles keeping only what was checked under it (nested roots, a first run's).
-        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
+        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_OBSERVED_PATHS").is_some()) {
-            let under = self.roots.iter().find(|r| under(&path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
+            let under = self.roots.iter().find(|r| under(path, &r.path)).map(|r| if r.trusted { "trusted root, no answer" } else { "untrusted root" }).unwrap_or("no root");
             eprintln!("rerail: stat {} ({under})", path.display());
         }
         self.counts.stats += 1;
@@ -652,7 +654,7 @@ impl Observer {
             return;
         }
         // Every root it is under: each settles keeping only what was checked under it (nested roots, a first run's).
-        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(&path, &r.path)) {
+        for root in self.roots.iter_mut().filter(|r| !r.trusted && under(path, &r.path)) {
             root.checked.insert(path.to_owned());
         }
         // The same answer, already trusted, is kept as it is: recording it again writes the store for nothing (a clean
@@ -676,6 +678,9 @@ impl Observer {
     /// (decision 0105): the answer kept, or for a path its directory's kept listing does not hold, missing.
     pub fn kind(&mut self, path: &Path) -> Kind {
         let path = &self.abs(path);
+        if source::contains(path) {
+            return if source::is_file(path) { Kind::File } else if source::is_dir(path) { Kind::Dir } else { Kind::Missing };
+        }
         if self.is_own(path) {
             return Self::own_stat(path).map_or(Kind::Missing, |(k, _)| k);
         }
@@ -761,6 +766,7 @@ impl Observer {
     /// `path`'s canonical form where the observer can answer for it (`Ok`), else its absolute form, to resolve (`Err`).
     fn canonical_kept(&mut self, path: &Path) -> std::result::Result<Option<PathBuf>, PathBuf> {
         let path = self.abs(path);
+        if source::contains(&path) { return Ok(source::canonicalize(&path).ok()); }
         if self.is_own(&path) {
             // rerail's own file (decision 0284): answered here, and never recorded (`canonical_resolved` is not reached).
             return Ok(dunce::canonicalize(&path).ok());
@@ -768,7 +774,7 @@ impl Observer {
         self.ensure(&path);
         self.watch_above(&path);
         let asked = self.flushes;
-        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(&p, &r.path) || under(&p, &r.real)));
+        let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (under(p, &r.path) || under(p, &r.real)));
         if plain(&path) && trusted(&path, &self.roots) {
             // An answer through a symlink is trusted only where its target is watched too.
             if let Some(c) = self.kept_canonical(&path).filter(|c| trusted(c, &self.roots)) {
@@ -806,7 +812,7 @@ impl Observer {
 
     /// Whether this trusted file is one this process checks again.
     fn checks(&self, path: &Path) -> bool {
-        self.validate_every != 0 && (fnv(path.as_os_str().as_encoded_bytes()).wrapping_add(self.epoch)) % self.validate_every == 0
+        self.validate_every != 0 && (fnv(path.as_os_str().as_encoded_bytes()).wrapping_add(self.epoch)).is_multiple_of(self.validate_every)
     }
 
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
@@ -824,6 +830,12 @@ impl Observer {
     /// which needs no observer, so many files are read at once, outside its lock) and then record (`digest_read`).
     pub fn digest_step(&mut self, path: &Path) -> DigestStep {
         let path = &self.abs(path);
+        if source::contains(path) {
+            let Some(blob) = source::blob(path) else { return DigestStep::Answered(None) };
+            let key = blob.key_bytes();
+            if let Some(digest) = self.alias(&key) { return DigestStep::Answered(Some(digest)); }
+            return DigestStep::Read(DigestRead { path: path.clone(), stat: None, started: 0, known: None, blob: Some(key) });
+        }
         if self.is_own(path) {
             return DigestStep::Answered(self.read(path).map(|(_, d)| d));
         }
@@ -837,7 +849,7 @@ impl Observer {
         if kind != Kind::File {
             return DigestStep::Answered(None);
         }
-        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: now, started, known, blob });
+        let read = |known, blob| DigestStep::Read(DigestRead { path: path.clone(), stat: Some(now), started, known, blob });
         if let Some(e) = self.known(path).filter(|e| e.kind == Kind::File && e.holds(&now)) {
             if !self.checks(path) {
                 self.counts.reused += 1;
@@ -873,7 +885,9 @@ impl Observer {
         let (len, digest) = hashed?;
         self.counts.hashed += 1;
         self.counts.bytes += len;
-        self.record_hash(&read.path, read.stat, read.started, digest);
+        if let Some(stat) = read.stat {
+            self.record_hash(&read.path, stat, read.started, digest);
+        }
         if read.known.is_some_and(|k| k != digest) {
             self.counts.mismatched += 1;
         }
@@ -908,6 +922,7 @@ impl Observer {
             return;
         }
         for root in roots {
+            if source::contains(root) { continue; }
             let root = self.outermost(&self.abs(root));
             if self.roots.iter().any(|r| r.asked == self.flushes && under(&root, &r.path)) {
                 continue;
@@ -1235,7 +1250,7 @@ impl Observer {
     /// the roots are of one, as `check_listed` keys their cursors and `collect` keeps them: collection drops an inner
     /// root's cursor as answered by the root above, so the inner root must be asked as that root.
     fn outermost(&mut self, root: &Path) -> PathBuf {
-        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(&root, r) && r.as_path() != root).cloned().collect();
+        let mut above: Vec<PathBuf> = self.stored_roots.iter().filter(|r| under(root, r) && r.as_path() != root).cloned().collect();
         above.sort_by_key(|r| r.as_os_str().len());
         let here = self.volume(root);
         // With no journal there is no volume's id (Linux, no Watchman): the same device holds both. Folded by the
@@ -1306,7 +1321,7 @@ impl Observer {
         for (i, (root, cursor)) in roots.iter().zip(cursors).enumerate() {
             // A root under another of `roots` with the same cursor (one ask gave both, `mark`: a corpus and its
             // `.git`, a `.git` named as the repository's own and its common one) is named in the other's answer.
-            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && under(&root, r) && (r != root || j < i));
+            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && under(root, r) && (r != root || j < i));
             if covered {
                 continue;
             }
@@ -1351,6 +1366,27 @@ impl Observer {
         if named.is_empty() && aged && now.iter().all(Option::is_some) {
             self.refresh_record(record, &now.into_iter().flatten().collect::<Vec<_>>());
         }
+        // A path named under one name of a root is named under its other (the root as given and its canonical form:
+        // `/var/…` and `/private/var/…` on macOS). An answer is kept under the name it was asked by, and a caller
+        // matches what it read, in either name, against these: one only, and a file changed under the other was
+        // taken as unchanged.
+        let forms: Vec<(PathBuf, PathBuf)> = roots
+            .iter()
+            .filter_map(|r| {
+                let at = self.abs(r);
+                let real = self.roots.iter().find(|x| x.path == at).map(|x| x.real.clone()).or_else(|| dunce::canonicalize(&at).ok())?;
+                (real != at).then_some((at, real))
+            })
+            .collect();
+        let other: Vec<PathBuf> = named
+            .iter()
+            .flat_map(|n| forms.iter().filter_map(move |(at, real)| n.strip_prefix(real).map(|rest| at.join(rest)).or_else(|_| n.strip_prefix(at).map(|rest| real.join(rest))).ok()))
+            .collect();
+        for p in other {
+            if !named.contains(&p) {
+                named.push(p);
+            }
+        }
         Some(named)
     }
 
@@ -1376,10 +1412,10 @@ impl Observer {
     /// store has a cursor for), else its directory, which a later run then trusts. So every path read is under a
     /// root, and asked of the journal once a run.
     fn watch_above(&mut self, path: &Path) {
-        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && under(&path, &r.path)) {
+        if self.db.is_none() || self.roots.iter().any(|r| r.asked == self.flushes && under(path, &r.path)) {
             return;
         }
-        let root = match self.stored_roots.iter().filter(|r| under(&path, r)).min_by_key(|r| r.as_os_str().len()) {
+        let root = match self.stored_roots.iter().filter(|r| under(path, r)).min_by_key(|r| r.as_os_str().len()) {
             Some(r) => r.clone(),
             None => match path.parent() {
                 Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
@@ -1500,6 +1536,14 @@ impl Observer {
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
     pub fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
         let path = &self.abs(path);
+        if source::contains(path) {
+            let bytes = source::read(path).ok()?;
+            let digest = Sha256::digest(&bytes).into();
+            self.counts.hashed += 1;
+            self.counts.bytes += bytes.len() as u64;
+            if let Some(blob) = source::blob(path) { self.record_alias(&blob.key_bytes(), digest); }
+            return Some((bytes, digest));
+        }
         if self.is_own(path) {
             let bytes = std::fs::read(path).ok().filter(|_| std::fs::metadata(path).is_ok_and(|m| m.is_file()))?;
             let digest: [u8; 32] = Sha256::digest(&bytes).into();
@@ -1535,6 +1579,7 @@ impl Observer {
     /// An entry is a directory when what it names is one, symlinks followed.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
         let dir = &self.abs(dir);
+        if source::contains(dir) { return source::listing(dir).ok().map(Arc::new); }
         let own = self.is_own(dir);
         if !own {
             self.ensure(dir);
@@ -1670,10 +1715,42 @@ impl Observer {
         found
     }
 
+    /// One dependency list per shape in a family of immutable records named
+    /// `family:<shape hash>:<result key>`. Each seek skips the other values of that shape.
+    pub fn run_record_samples(&self, family: &str) -> Vec<Vec<u8>> {
+        if !super::hazards::may_read_store() { return Vec::new(); }
+        let Some(db) = self.db.as_ref().and_then(|k| k.reader.as_ref()) else { return Vec::new() };
+        let Ok(mut seek) = db.prepare_cached("SELECT key,consulted FROM run_record WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT 1")
+            else { return Vec::new() };
+        let mut lower = format!("{family}:");
+        let upper = format!("{family};");
+        let mut lists = Vec::new();
+        while let Ok((key, list)) = seek.query_row((&lower, &upper), |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
+            let Some((group, _)) = key.rsplit_once(':') else { break };
+            lower = format!("{group};");
+            lists.push(list);
+        }
+        lists
+    }
+
+    /// Read an immutable result even if another process published it after an earlier miss.
+    pub fn stored_run_record(&self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+        if !super::hazards::may_read_store() { return None; }
+        self.db.as_ref()?.reader.as_ref()?.prepare_cached("SELECT consulted,outputs FROM run_record WHERE key=?1").ok()?
+            .query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    }
+
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
     pub fn put_run_record(&mut self, key: &str, consulted: &[u8], outputs: &[u8]) {
         if let Some(k) = self.db.as_mut() {
             k.records.insert(key.to_owned(), (consulted.to_owned(), outputs.to_owned()));
+        }
+        self.store_run_record(key, consulted, outputs);
+    }
+
+    /// Queue a durable result. The store controls the lifetime of versioned results.
+    pub fn store_run_record(&self, key: &str, consulted: &[u8], outputs: &[u8]) {
+        if let Some(k) = self.db.as_ref() {
             let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
             k.writer.send(move |db| {
                 let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
@@ -1903,10 +1980,13 @@ fn read_open(path: &Path, aliases: &mut HashMap<Vec<u8>, [u8; 32]>) -> (Option<C
     (Some(db), meta)
 }
 
+/// A write the writer runs on its connection.
+type WriterJob = Box<dyn FnOnce(&mut Connection) + Send>;
+
 /// An observer's writer: a thread of its own with its own connection, behind the run (decision 0104), running each
 /// write in the order it was queued. Dropped, it finishes what was queued.
 struct Writer {
-    jobs: Option<std::sync::mpsc::Sender<Box<dyn FnOnce(&mut Connection) + Send>>>,
+    jobs: Option<std::sync::mpsc::Sender<WriterJob>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -2080,15 +2160,6 @@ fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
-/// A folder of the observer's, created private to the user (`0700`) where it is absent.
-fn private_dir(dir: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
-}
-
 fn cookie_dir(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".cookies");
@@ -2107,6 +2178,12 @@ pub struct Swept {
     pub changes: usize,
 }
 
+/// A journal root as `collect` reads it: its key, its volume, the root, its directory's real path, and its cursor (its
+/// kind, 0 an FSEvents id or 1 a listing generation, and its number).
+type JournalRoot = (String, String, PathBuf, Option<PathBuf>, Option<(u8, u64)>);
+/// A journal root kept: its volume, the root, its directory's real path, and its cursor.
+type KeptRoot = (String, PathBuf, PathBuf, Option<(u8, u64)>);
+
 /// Collects the observer's store at `path` (`store_beside`), with the content store's collection (decision 0053),
 /// behind the run: nothing ever left it before, and every process reads all of it as it opens. Dropped:
 ///
@@ -2114,13 +2191,13 @@ pub struct Swept {
 ///   names of one directory (`/var/…`, `/private/var/…`), all but the one with the newest cursor;
 /// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
 ///   root (`watch_above`), so one under none is of a name no run uses;
-/// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
-///   whose manifests the content store no longer keeps), and one from before records named their plans.
+/// - a revision constant after the last manifest that owns its derivation goes away;
+/// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
 ///
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
-/// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
+/// Then the WAL is folded into the database and truncated.
 pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
     let mut swept = Swept::default();
     if !path.exists() {
@@ -2128,8 +2205,9 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     }
     let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
-    // The roots, by volume: (key, root, its directory's real path, cursor, the cursor's text).
-    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>, Option<String>)> = {
+    // The roots, by volume: (key, root, its directory's real path, cursor: its kind, 0 an FSEvents id, 1 a listing
+    // generation, and its number).
+    let mut roots: Vec<JournalRoot> = {
         let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
             .flatten()
@@ -2137,22 +2215,22 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 let mut parts = key.splitn(3, ':');
                 let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
                 let real = plain(&root).then(|| dunce::canonicalize(&root).ok()).flatten();
-                let text = text_cursor(&value);
-                let cursor = text.as_deref().and_then(|c| c.parse().ok());
-                Some((key, volume, root, real, cursor, text))
+                let cursor = text_cursor(&value).and_then(|c| c.parse().ok().map(|n| (0, n)).or_else(|| listing_cursor(&c).map(|g| (1, g))));
+                Some((key, volume, root, real, cursor))
             })
             .collect()
     };
-    // Newest cursor first: of two names of one directory, the first is kept.
-    roots.sort_by(|a, b| b.4.cmp(&a.4));
-    // Two names with the same cursor were asked by one run (a root reached through a symlink, its files read by
-    // their canonical paths too, `Observer::canonical`): both are in use, each with its own answers, and both are
-    // kept. Dropped, the next run asked the other name again and wrote its first cursor back (Q243).
-    let mut kept: Vec<(String, PathBuf, PathBuf, Option<String>)> = Vec::new();
+    // Newest cursor first: of two names of one directory, one whose cursor is older than the other's is no longer
+    // asked, and is dropped. Two asked by one run (a root as given and through a symlink, as `/var` and
+    // `/private/var` on macOS, its files read by their canonical paths too, `Observer::canonical`) have the same cursor
+    // and are both kept: dropped, the next run that asks it stores its cursor again, a write in a warm run (Q243).
+    roots.sort_by_key(|r| std::cmp::Reverse(r.4));
+    let mut kept: Vec<KeptRoot> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
-    for (key, volume, root, real, _, text) in &roots {
+    for (key, volume, root, real, cursor) in &roots {
+        let older = |c: &Option<(u8, u64)>| matches!((c, cursor), (Some((k, n)), Some((kc, nc))) if k == kc && nc < n);
         match real {
-            Some(real) if !kept.iter().any(|(v, _, r, t)| v == volume && r == real && (t.is_none() || t != text)) => kept.push((volume.clone(), root.clone(), real.clone(), text.clone())),
+            Some(real) if !kept.iter().any(|(v, _, r, c)| v == volume && r == real && older(c)) => kept.push((volume.clone(), root.clone(), real.clone(), *cursor)),
             _ => dropped.push(key.clone()),
         }
     }
@@ -2189,7 +2267,11 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 // before they did.
                 if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
-                    return !lists.iter().flat_map(|l| l.chunks_exact(3)).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
+                    // A revision's constants are kept by their owner's plan (`constants::keep_revision`).
+                    if key.starts_with("constants:") && let Some(owner) = lists.iter().flat_map(|l| l.as_chunks::<3>().0).find(|c| c[0] == "constants-owner") {
+                        return !unhex(&owner[2]).is_some_and(|plan| live(&plan));
+                    }
+                    return !lists.iter().flat_map(|l| l.as_chunks::<3>().0).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
                 // A cutoff's record from before they were prefixed: its key alone, a digest.
                 key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
@@ -2335,7 +2417,8 @@ pub enum DigestStep {
 /// A file `Observer::digest` reads: hashed with no observer (`hash`), then recorded (`Observer::digest_read`).
 pub struct DigestRead {
     path: PathBuf,
-    stat: Stat,
+    /// Git objects have no filesystem stat.
+    stat: Option<Stat>,
     started: i64,
     /// The digest kept for it, which the read checks.
     known: Option<[u8; 32]>,
@@ -2351,7 +2434,7 @@ impl DigestRead {
 
     /// The file's bytes, for a caller that keeps them (a run's one read of its sources, decision 0300).
     pub fn read(&self) -> Option<Vec<u8>> {
-        std::fs::read(&self.path).ok()
+        source::read(&self.path).ok()
     }
 
     /// `bytes`' length and digest, as `hash` gives a file's.
@@ -2360,8 +2443,13 @@ impl DigestRead {
     }
 
     /// The file's stat as it was before the read: the bytes are its content while the file's stat is this.
-    pub fn stat(&self) -> &Stat {
-        &self.stat
+    pub fn stat(&self) -> Option<&Stat> {
+        self.stat.as_ref()
+    }
+
+    /// Git placements with this key can share an immutable read.
+    pub fn blob_key(&self) -> Option<[u8; 40]> {
+        self.blob
     }
 }
 
@@ -2399,6 +2487,48 @@ pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
 /// A hex digest, as records keep them.
 pub fn hex(d: &[u8; 32]) -> String {
     d.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's
+/// setting). A test build may turn it off or on for its process (`set_journal`): the engine's tests do (each run of a
+/// test waits for its cookie's event, up to `journal`'s `WAIT`, and a test makes many runs), and the journal's own
+/// tests here keep it on.
+fn journal_on() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    match JOURNAL.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => return true,
+        2 => return false,
+        _ => {}
+    }
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off"))
+}
+
+/// A test build's choice of the journal (`set_journal`): 0 none (the setting's), 1 on, 2 off.
+#[cfg(any(test, feature = "test-hooks"))]
+static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Turns the observer's use of the journal on or off for a test build's process, whatever `RERAIL_JOURNAL` says.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn set_journal(on: bool) {
+    JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
+/// asks for the journal's answer whatever it costs raises it (Q221).
+/// On the shared object (decision 0442): set by its owner, read by the observers its runs make.
+struct JournalWaitLeast(std::sync::atomic::AtomicU64);
+impl Default for JournalWaitLeast {
+    fn default() -> Self {
+        JournalWaitLeast(std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS))
+    }
+}
+
+fn journal_wait_least() -> u64 {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_journal_wait_least(wait: std::time::Duration) {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -2818,7 +2948,7 @@ mod tests {
         o.watch(std::slice::from_ref(&root));
         o.digest(&file).unwrap();
         o.digest(&other).unwrap();
-        assert_eq!(o.roots.iter().map(|r| r.path.clone()).collect::<Vec<_>>(), [root.clone()], "the outer root took the inner one in");
+        assert_eq!(o.roots.iter().map(|r| r.path.clone()).collect::<Vec<_>>(), std::slice::from_ref(&root), "the outer root took the inner one in");
         o.flush();
         o.written();
         drop(o);
@@ -2873,6 +3003,7 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn a_canonical_path_is_resolved_again_only_where_the_journal_names_a_change() {
+        use std::os::unix::fs::symlink as symlink_file;
         let base = std::env::temp_dir().join(format!("rerail-canonical-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let root = base.join("root");
@@ -2881,7 +3012,7 @@ mod tests {
             std::fs::write(root.join(format!("pkg/m{i}.py")), "x = 1\n").unwrap();
         }
         let link = root.join("pkg/alias.py");
-        std::os::unix::fs::symlink("m0.py", &link).unwrap();
+        symlink_file("m0.py", &link).unwrap();
         let store = base.join("store.files");
         let asked = [root.join("pkg/m1.py"), link.clone(), root.join("pkg/../pkg/m2.py")];
         let run = |settle: i64| {
@@ -2906,7 +3037,7 @@ mod tests {
             assert_eq!((second.resolved, second.trusted), (1, 2), "nothing changed: {second}");
         }
         std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink("m2.py", &link).unwrap();
+        symlink_file("m2.py", &link).unwrap();
         let (third, mut after) = run(0);
         if journal_answered(&[&first, &middle, &second, &third], "a retargeted symlink") {
             assert!(third.resolved >= 2, "the retargeted symlink is resolved again: {third}");
@@ -3321,6 +3452,17 @@ mod tests {
         if let Some(a) = &alias {
             meta(a, "20");
         }
+        // Two names of one directory one run asked, with the same listing cursor, are both kept; a third name with an
+        // older generation is dropped.
+        std::fs::create_dir_all(real.join("listed")).unwrap();
+        let (same, older) = (real.join("same"), real.join("older"));
+        #[cfg(unix)]
+        for link in [&same, &older] {
+            std::os::unix::fs::symlink(real.join("listed"), link).unwrap();
+        }
+        meta(&real.join("listed"), "L3");
+        meta(&same, "L3");
+        meta(&older, "L1");
         let answer = |p: &Path| db.execute("INSERT INTO observed VALUES (?1, 1, 0, 0, 0, 0, 0, x'', NULL, 0)", [s(p)]).unwrap();
         answer(&root.join("a.py"));
         answer(&real.join("elsewhere/b.py"));
@@ -3356,7 +3498,11 @@ mod tests {
         let swept = collect(&store, |plan| *plan == live).unwrap();
         let db = Connection::open(&store).unwrap();
         let keys = |sql: &str| -> Vec<String> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect() };
-        assert_eq!(keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'"), [cursor_key_text("aa", &root)], "one root: inner is under it, gone is gone, dotted and the alias are other names");
+        let mut roots = keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'");
+        roots.sort();
+        let mut want = vec![cursor_key_text("aa", &real.join("listed")), cursor_key_text("aa", &root), cursor_key_text("aa", &same)];
+        want.sort();
+        assert_eq!(roots, want, "root: inner is under it, gone is gone, dotted and the alias are other names with older cursors; listed and same: one directory's two names of one run");
         let mut answers = keys("SELECT path FROM observed");
         answers.sort();
         assert_eq!(answers, [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
@@ -3365,7 +3511,7 @@ mod tests {
         assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh)), format!("{CANONICAL}{}", s(&root.join("a.py"))), "cone-rounds:live".to_owned(), "constants:live".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
         assert_eq!(keys(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'")), [format!("{OWN_OUTPUT}{}", s(&inner))]);
-        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 6, outputs: 1, changes: 0 });
+        assert_eq!(swept, Swept { cursors: 4 + n, answers: 2 + n, records: 6, outputs: 1, changes: 0 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);
@@ -3377,6 +3523,15 @@ mod tests {
         assert_eq!(decode_listing(&encode_listing(&l).unwrap()).unwrap(), l);
         assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
+    }
+
+    /// What `changed_since` names for `paths`: each under both names of its root, as given and canonical, where they
+    /// differ (a temporary directory under macOS's `/var`), sorted.
+    fn named(paths: &[&PathBuf]) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = paths.iter().flat_map(|p| spellings(p)).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// A tree for the listing tests (decision 0400): `root/pkg/m0.py` … `m4.py`, each past the racy window.
@@ -3585,11 +3740,11 @@ mod tests {
             }
             let mut o = Observer::open(Some(&store));
             o.begin();
-            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            let cursor = o.mark(std::slice::from_ref(&root)).unwrap().remove(0);
             for f in &files {
                 o.digest(f);
             }
-            let told = asked.iter().map(|c| o.changed_since("test-record", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            let told = asked.iter().map(|c| o.changed_since("test-record", std::slice::from_ref(&root), std::slice::from_ref(c)).map(|mut v| { v.sort(); v })).collect();
             o.flush();
             o.written();
             (cursor, told)
@@ -3599,11 +3754,11 @@ mod tests {
         let (c1, _) = run(None, &[]);
         assert!(listing_cursor(&c1).is_some(), "the root's cursor is the observer's own: {c1}");
         let (c2, told) = run(Some(&files[1]), std::slice::from_ref(&c1));
-        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1]]))]);
         let (_, told) = run(Some(&files[3]), &[c1.clone(), c2.clone()]);
-        assert_eq!(told, [Some(vec![files[1].clone(), files[3].clone()]), Some(vec![files[3].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1], &files[3]])), Some(named(&[&files[3]]))]);
         let (c4, told) = run(None, &[c2]);
-        assert_eq!(told, [Some(vec![files[3].clone()])], "nothing changed since: the same answer");
+        assert_eq!(told, [Some(named(&[&files[3]]))], "nothing changed since: the same answer");
         let (_, told) = run(None, &[c4]);
         assert_eq!(told, [Some(vec![])]);
         let _ = std::fs::remove_dir_all(&base);
@@ -3622,12 +3777,12 @@ mod tests {
         let run = |asked: &[String]| -> (String, Vec<Option<Vec<PathBuf>>>, Counts) {
             let mut o = Observer::open(Some(&store));
             o.begin();
-            let cursor = o.mark(&[root.clone()]).unwrap().remove(0);
+            let cursor = o.mark(std::slice::from_ref(&root)).unwrap().remove(0);
             o.listing(&pkg);
             for f in &files {
                 o.digest(f);
             }
-            let told = asked.iter().map(|c| o.changed_since("test-told", &[root.clone()], &[c.clone()]).map(|mut v| { v.sort(); v })).collect();
+            let told = asked.iter().map(|c| o.changed_since("test-told", std::slice::from_ref(&root), std::slice::from_ref(c)).map(|mut v| { v.sort(); v })).collect();
             o.flush();
             o.written();
             (cursor, told, o.counts)
@@ -3637,57 +3792,15 @@ mod tests {
         let (c1, _, _) = run(&[]);
         std::fs::write(pkg.join("new.py"), "y = 1\n").unwrap();
         let (c2, told, counts) = run(std::slice::from_ref(&c1));
-        assert_eq!(told, [Some(vec![pkg.join("new.py")])], "the entry added, not its directory");
+        assert_eq!(told, [Some(named(&[&pkg.join("new.py")]))], "the entry added, not its directory");
         assert_eq!(counts.checked_named, 1, "the directory's answer is forgotten: {counts}");
         // Written now: the next run records its answer inside the window; the one after reads it again and names
         // nothing, its bytes unchanged.
         std::fs::write(&files[1], "x = 7\n").unwrap();
         let (c3, told, _) = run(std::slice::from_ref(&c2));
-        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1]]))]);
         let (_, told, counts) = run(std::slice::from_ref(&c3));
         assert_eq!(told, [Some(vec![])], "the racy answer's bytes are still the file's: {counts}");
         let _ = std::fs::remove_dir_all(&base);
     }
-}
-
-/// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's
-/// setting). A test build may turn it off or on for its process (`set_journal`): the engine's tests do (each run of a
-/// test waits for its cookie's event, up to `journal`'s `WAIT`, and a test makes many runs), and the journal's own
-/// tests here keep it on.
-fn journal_on() -> bool {
-    #[cfg(any(test, feature = "test-hooks"))]
-    match JOURNAL.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => return true,
-        2 => return false,
-        _ => {}
-    }
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| !std::env::var("RERAIL_JOURNAL").is_ok_and(|v| v == "off"))
-}
-
-/// A test build's choice of the journal (`set_journal`): 0 none (the setting's), 1 on, 2 off.
-#[cfg(any(test, feature = "test-hooks"))]
-static JOURNAL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
-/// Turns the observer's use of the journal on or off for a test build's process, whatever `RERAIL_JOURNAL` says.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn set_journal(on: bool) {
-    JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
-/// asks for the journal's answer whatever it costs raises it (Q221).
-/// On the shared object (decision 0442): set by its owner, read by the observers its runs make.
-struct JournalWaitLeast(std::sync::atomic::AtomicU64);
-impl Default for JournalWaitLeast {
-    fn default() -> Self {
-        JournalWaitLeast(std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS))
-    }
-}
-
-fn journal_wait_least() -> u64 {
-    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-pub fn set_journal_wait_least(wait: std::time::Duration) {
-    rerail_prof::code_rule_dsl::logic::profile::shared::<JournalWaitLeast>().0.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

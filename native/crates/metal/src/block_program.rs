@@ -38,9 +38,16 @@ pub mod serial;
 /// look-backs, for the lane word the source defines in front of it (`head`).
 const COMMON: &str = include_str!("block_common.uglykl");
 /// The interpreter's source at each lane width (`LaneWidth::ALL`): the shared code, then its
-/// kernel.
-static INTERPRETER: std::sync::LazyLock<[String; 3]> =
-    std::sync::LazyLock::new(|| LaneWidth::ALL.map(|w| format!("{}{}", head(w), include_str!("block_program.uglykl"))));
+/// kernel. Made once on this machine (decision 0442: its head reads the machine's device, `poll_rmw`).
+#[derive(Default)]
+struct Interpreter([std::sync::OnceLock<String>; 3]);
+
+/// [`Interpreter`]'s source at `width`.
+fn interpreter_source(width: LaneWidth) -> std::sync::Arc<Interpreter> {
+    let made = rerail_context::machine::<Interpreter>();
+    made.0[width.index()].get_or_init(|| format!("{}{}", head(width), include_str!("block_program.uglykl")));
+    made
+}
 
 /// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
 /// (`poll_rmw`), and the shared code. Every source starts with it, the interpreter's and each generated one.
@@ -250,7 +257,7 @@ pub fn run_split(
 /// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
 /// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`kernels::ready_behind_function`).
 pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
-    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "tempo_batch", None).is_some()
+    ready().is_ok() && rerail_accel::gpu::kernels::ready_behind_function(&generate_forms(programs, width), "rerail_batch", None).is_some()
 }
 
 /// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
@@ -259,13 +266,6 @@ const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 /// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
 #[derive(Default)]
 pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
-
-/// Whether a program starts a file's stream late: a prefix (decision 0335), its positions
-/// (`prefix`) and the token loop's first state past it. `run_batch` generates it (opcode 18);
-/// the serial path (`block_serial`) does not yet, and refuses it there.
-pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
-}
 
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
@@ -435,11 +435,12 @@ pub fn run_batch(
             for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
                 buffers.push((name, block.device_buffer().clone()));
             }
-            ("block_batch", lane::kernel_fixed(&INTERPRETER[width.index()], "block_batch", None))
+            let source = interpreter_source(width);
+            ("block_batch", lane::kernel_fixed(source.0[width.index()].get().map_or("", String::as_str), "block_batch", None))
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
-            ("tempo_batch", lane::kernel(&generate_forms(&refs, width), "tempo_batch", None))
+            ("rerail_batch", lane::kernel(&generate_forms(&refs, width), "rerail_batch", None))
         }
     };
     let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: GROUP };
@@ -608,7 +609,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
     generate_forms(&[&form], width)
 }
 
-/// A group of programs (each already in the form it runs) as one kernel, `tempo_batch`: a function
+/// A group of programs (each already in the form it runs) as one kernel, `rerail_batch`: a function
 /// per program, `program_P`, that computes each instruction once, in order, with a look-back for
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
@@ -636,7 +637,7 @@ fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
          UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)\n\
          // Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
          // file's program over the group. A threadgroup is a worker: one group of 32 lanes.\n\
-         DEFINE_KERNEL2(block, tempo_batch,\n\
+         DEFINE_KERNEL2(block, rerail_batch,\n\
          \x20   ROBUFFER, uint32_t, s0, \"[slab]\", RWBUFFER, BM, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
          \x20   ROBUFFER, uint32_t, group_file, \"[2 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
          \x20   RWBUFFER, uint32_t, halos, \"[halos]\", RWBUFFER, uint32_t, ext_states, \"[ext_states]\",\n\
@@ -794,7 +795,7 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let exchanges: Vec<String> = plan.exchanges().iter().map(|(h, s)| format!("{}h+{}s", h.len(), s.len())).collect();
     let source = generate_forms(&[&form], width);
     let device = ready()?;
-    let kernel = lane::kernel(&source, "tempo_batch", None);
+    let kernel = lane::kernel(&source, "rerail_batch", None);
     // Metal's pipeline reports its limits; elsewhere the device's.
     let (threads, simd, memory) = match lane::limits(&kernel) {
         Some(l) => (l.threads, l.simd, l.threadgroup_memory),

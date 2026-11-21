@@ -180,8 +180,6 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tape<'a> {
-    /// `image` (the lean parser's tape of `src`) over `src`.
-
     pub fn kind(&self, n: u32) -> u16 {
         super::tape::kind_field(self.v.key(n as usize)).0
     }

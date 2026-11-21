@@ -1,5 +1,4 @@
 .policy "ruff-c420-unnecessary-dict-comprehension-for-iterable" revision 1
-.guests off
 .description "Use dict.fromkeys(iterable, value) instead of a dict comprehension that maps each item to the same constant value; it is clearer and faster."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-b034-re-sub-positional-args" revision 1
-.guests off
 .description "Pass count, maxsplit and flags as keyword arguments to re.sub(), re.subn() and re.split(); their positional order is easy to get wrong."
 .language python
 .mode steer

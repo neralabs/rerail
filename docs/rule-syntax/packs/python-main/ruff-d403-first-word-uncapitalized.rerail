@@ -1,5 +1,4 @@
 .policy "ruff-d403-first-word-uncapitalized" revision 1
-.guests off
 .description "Capitalize the first word of every function docstring."
 .language python
 .mode steer

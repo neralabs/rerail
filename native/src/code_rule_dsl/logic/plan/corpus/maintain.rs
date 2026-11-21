@@ -140,6 +140,7 @@ pub mod shape {
         measures_unkeyed: AtomicUsize,
         inputs_hashed: AtomicUsize,
         inputs_from_entries: AtomicUsize,
+        inputs_from_owners: AtomicUsize,
         inputs_hashed_whole: AtomicUsize,
         inputs_read_whole: AtomicUsize,
         rows_decoded: AtomicUsize,
@@ -175,6 +176,11 @@ pub mod shape {
         pub inputs_hashed: usize,
         /// R2: a session's inputs whose delta was read from the changed documents' memo entries (`input_delta`).
         pub inputs_from_entries: usize,
+        /// R2: inputs whose delta was made from their changed owners' rows gained and lost, beside them, before the run
+        /// asks for any: a kept input patched by document, or a base relation's versions (0458: the changed
+        /// documents' old and new rows, `input_delta::Before`), which a new process has where it keeps no base rows
+        /// to hash.
+        pub inputs_from_owners: usize,
         /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
         /// rows of the documents that changed (`retain::document_delta_except`).
         pub inputs_hashed_whole: usize,
@@ -198,6 +204,7 @@ pub mod shape {
             measures_unkeyed: c.measures_unkeyed.load(Relaxed),
             inputs_hashed: c.inputs_hashed.load(Relaxed),
             inputs_from_entries: c.inputs_from_entries.load(Relaxed),
+            inputs_from_owners: c.inputs_from_owners.load(Relaxed),
             inputs_hashed_whole: c.inputs_hashed_whole.load(Relaxed),
             inputs_read_whole: c.inputs_read_whole.load(Relaxed),
             rows_decoded: c.rows_decoded.load(Relaxed),
@@ -217,6 +224,7 @@ pub mod shape {
             measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
             inputs_hashed: n.inputs_hashed - before.inputs_hashed,
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
+            inputs_from_owners: n.inputs_from_owners - before.inputs_from_owners,
             inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
             inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
             rows_decoded: n.rows_decoded - before.rows_decoded,
@@ -249,6 +257,9 @@ pub mod shape {
     }
     pub fn input_hashed() {
         counts().inputs_hashed.fetch_add(1, Relaxed);
+    }
+    pub fn input_from_owners() {
+        counts().inputs_from_owners.fetch_add(1, Relaxed);
     }
     pub fn measure_unkeyed() {
         counts().measures_unkeyed.fetch_add(1, Relaxed);

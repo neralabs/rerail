@@ -121,17 +121,11 @@ pub struct Front {
     pub cached: Vec<String>,
 }
 
-/// `RERAIL_READER_DEMAND=off` (a measurement aid): a node product is bounded by its direct readers' demand only,
-/// not by demand projected from their own readers (`product_demand::rewrite`).
-pub fn reader_demand() -> bool {
-    !std::env::var("RERAIL_READER_DEMAND").is_ok_and(|v| v == "off")
-}
-
 /// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
 /// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
-/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0506): an insurance
-/// against a join over-long for its readers' demand, at 1.0% more instructions on corpus0 x B-now (961.8 G against
-/// 952.7 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
+/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0488): an insurance
+/// against a join over-long for its readers' demand, at 0.27% more instructions on corpus0 x B-now (955.9 G against
+/// 953.3 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
 /// which a new factor has none of.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Deferral {
@@ -179,7 +173,7 @@ impl Deferral {
         Some(next)
     }
 
-    fn settings(&self) -> Vec<u8> {
+    pub(super) fn settings(&self) -> Vec<u8> {
         let mut k = vec![u8::from(self.adaptive), u8::from(self.cache_pairs)];
         k.extend(self.undone.iter().map(|&r| r as u8 + 2));
         for (rel, attribute) in &self.placement {
@@ -198,30 +192,7 @@ pub struct DeferredJoins(pub Option<&'static str>);
 #[derive(Clone, Default)]
 pub struct Replans(pub Option<Arc<parking_lot::Mutex<std::collections::BTreeMap<[u8; 32], Deferral>>>>);
 
-/// The deferred joins' step (`defer_joins`).
-const DEFERRED_PASS: &str = "joins deferred to their readers' requests";
-
-/// `v` as the deferred joins pass (`product_demand::deferred`) leaves it under `d`, and what it decided: the
-/// rewrite's plans, and each rewritten join for the authors' report (a factor read placed as `d` asks).
-pub fn defer_joins(v: &Arc<Version>, d: &Deferral) -> Result<(Arc<Version>, Vec<manager::Decided>), String> {
-    use crate::code_rule_dsl::logic::profile::author_joins::{Access, TOPIC};
-    let (out, plans) = super::product_demand::deferred::defer(v, d.adaptive, d.cache_pairs)?;
-    let pass = std::borrow::Cow::Borrowed(DEFERRED_PASS);
-    let mut decided = vec![manager::Decided {
-        pass: pass.clone(),
-        what: "deferred joins".into(),
-        detail: format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross),
-    }];
-    for mut join in plans.author {
-        if let Access::Factors { cache: None } = &join.access {
-            join.placement = d.placement.get(&join.relation).cloned();
-        }
-        decided.push(manager::Decided { pass: pass.clone(), what: TOPIC.into(), detail: serde_json::to_string(&join).expect("join decision") });
-    }
-    Ok((out, decided))
-}
-
-/// `version` pruned to the rules its outputs read (`prune::Prune`), before the run prepares the program.
+/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());
@@ -232,12 +203,14 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
 /// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
+/// `deferral`: how the deferred joins pass runs (decision 0488).
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
     front_of(version, dialect, deferral, last, true)
 }
 
-/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
-/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
+/// `front`, with the node products bounded by their readers (`product_demand`), and the joins deferred to them
+/// (`product_demand::deferred`), where `whole`: a whole program's; a part's are bounded once the parts are linked
+/// (`parts::front`), where the products' readers are.
 pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
@@ -253,20 +226,22 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
     }
-    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0506): the requested pairs
-    // or endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its
-    // readers. The rounds of attributes answered on request that an earlier try made eager are undone first.
+    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0488): the requested pairs or
+    // endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its readers.
     if deferral.on && whole {
-        for &round in &deferral.undone {
-            p.made("a round of requests made eager (deferred joins)", 1, &[round as u8], |v| {
-                use crate::code_rule_dsl::logic::rr::lower::{ON_REQUEST, undo_round, undone_with};
-                Ok((undone_with(v, |head, rules| undo_round(head, rules, ON_REQUEST[round]))?, Vec::new()))
-            });
-        }
         if !deferral.undone.is_empty() {
+            let undone = deferral.undone.clone();
+            p.made("rounds the deferral makes eager", 1, &deferral.settings(), |v| {
+                let mut v = Arc::clone(v);
+                for &round in &undone {
+                    let round = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST[round];
+                    v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| crate::code_rule_dsl::logic::rr::lower::undo_round(head, rules, round))?;
+                }
+                Ok((v, Vec::new()))
+            });
             p.program(&mut prune::Prune::default());
         }
-        p.made(DEFERRED_PASS, 1, &deferral.settings(), |v| defer_joins(v, deferral));
+        p.program(&mut super::product_demand::deferred::DeferJoins::new(deferral));
     }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);

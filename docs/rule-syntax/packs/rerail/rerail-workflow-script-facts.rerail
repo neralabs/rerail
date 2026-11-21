@@ -1,0 +1,148 @@
+.policy "rerail-workflow-script-facts" revision 2
+.description "Take hook paths, what core ships, tool-pack lists and per-pack needs in workflows from the code and data that own them, not hand-kept copies or name tests; copies go stale."
+.mode log
+.scope include ".github/workflows/**/*.yml", ".github/workflows/**/*.yaml", ".github/actions/**/*.yml", ".github/actions/**/*.yaml"
+.scope text ".github/workflows/**/*.yml", ".github/workflows/**/*.yaml", ".github/actions/**/*.yml", ".github/actions/**/*.yaml"
+// A workflow or action takes facts from the code and data that own them: built entry paths from ENTRY_POINTS
+// (dist/engine/package-root.js), what core ships from scripts/release/core-paths.mjs, the tool packs from a planning
+// step's output. Five text searches over each file, as the JSON's regex clauses:
+//   - run: test -f dist/hosts/claude-hook.js           HOOK_PATH_LITERAL (at the path; not after a `#`)
+//   paths-ignore:, or a paths: entry "!docs/**"         TRIGGER_PATHS_IGNORE (at paths-ignore or paths)
+//   paths: with entries src/** and native/**            TRIGGER_PATHS_CORE (at the second core entry)
+//   pack: [php, blade], or `for pack in php blade`      HAND_LISTED_TOOL_PACKS
+//   if: matrix.pack == 'php'                            TOOL_PACK_BY_NAME (a placeholder such as 'all' passes)
+//   include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}   not reported
+// The files are read as text: the regexes need no tree. A finding sits where the match starts, or on the named group
+// the JSON anchors it at. The regexes are the JSON's, copied exactly.
+
+.violation HOOK_PATH_LITERAL(at: span) "Check built files through ENTRY_POINTS from dist/engine/package-root.js, as package.yml's smoke does, instead of naming entry paths here; they move when the build layout changes."
+HOOK_PATH_LITERAL(g) :- source(_, sp), match_group("(?m)^[^#\\n]*?(?P<lit>\\bdist(?:/|[\\\"'][ \\t]*,[ \\t]*[\\\"'])(?:hosts|harness|runtime)\\b|\\bdist/cli/daemon-entry\\.js|-hook\\.js\\b)", sp, _, "lit", g).
+
+.violation TRIGGER_PATHS_IGNORE(at: span) "If this skips changes that leave core as shipped, import coreChanges from scripts/release/core-paths.mjs in a changes job, as env-matrix.yml does; else list this workflow's own inputs."
+TRIGGER_PATHS_IGNORE(m) :- source(_, sp), match_all("(?m)(?:^ {0,6}(?P<key>paths-ignore)[ \\t]*:|^ {0,6}paths[ \\t]*:(?:[ \\t]*\\[[^\\]]*?|[ \\t]*(?:#[^\\n]*)?\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*)[\\\"']?(?P<neg>!))", sp, m).
+
+.violation TRIGGER_PATHS_CORE(at: span) "If this runs when what core ships changes, import coreChanges from scripts/release/core-paths.mjs in a changes job, as env-matrix.yml does; else list only this workflow's own inputs."
+TRIGGER_PATHS_CORE(g) :- source(_, sp), match_group("(?m)^ {0,6}paths[ \\t]*:(?:[ \\t]*\\[[^\\]]*?|[ \\t]*(?:#[^\\n]*)?\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*)[\\\"']?(?:src|native)(?:/[\\w.-]+)*/\\*(?:[^\\]]*?|[^\\n]*\\n(?:[ \\t]*(?:-[^\\n]*|#[^\\n]*)?\\n)*?[ \\t]*-[ \\t]*[\\\"']?)(?P<entry>(?:src|native)(?:/[\\w.-]+)*/\\*)", sp, _, "entry", g).
+
+.violation HAND_LISTED_TOOL_PACKS(at: span) "Plan these legs in a job step from the tree or the run's input and read them with fromJSON, as upstream-bump.yml does. Keep a fixed set another file needs, as ci.yml's test-data job does."
+HAND_LISTED_TOOL_PACKS(m) :- source(_, sp), match_all("(?m)(?:^[ \\t]*-[ \\t]+(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*[\\\"']?(?P<item>[a-z])|^[ \\t]*-[ \\t]+[\\w-]+[ \\t]*:[ \\t]*[^\\s#][^\\n]*\\n(?:[ \\t]+[\\w-]+[ \\t]*:[ \\t]*[^\\s#][^\\n]*\\n)*?[ \\t]+(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*[\\\"']?(?P<later>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\[[ \\t]*[\\\"']?(?P<flow>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\n[ \\t]*-[ \\t]*[\\\"']?(?P<block>[a-z])|^[ \\t]*(?:pack|tool-packs?|tool_packs?)[ \\t]*:[ \\t]*\\$\\{\\{[ \\t]*fromJSON\\([ \\t]*'\\[[ \\t]*\\\"(?P<fj>[a-z])|^[^\\n:'\\\"]*[\\[{(,=][ \\t\\[{]*[\\\"']?pack[\\\"']?[ \\t]*:[ \\t]*[\\\"'](?P<obj>[a-z])|\\bfor[ \\t]+(?:pack|tool|toolpack|tool_pack)[ \\t]+in[ \\t]+[\\\"']?(?P<loop>[a-z]))", sp, m).
+
+.violation TOOL_PACK_BY_NAME(at: span) "Decide this from the pack's own data (a tool-pack's gates.yaml runtime) through a planning step's output, not its name, so a new pack that needs it is covered. Leave placeholders like 'all'."
+TOOL_PACK_BY_NAME(m) :- source(_, sp), match_all("(?:\\b(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*[!=]=[ \\t]*'(?:[b-z][^'\\n]*|a|a[^l'\\n][^'\\n]*|al|al[^l'\\n][^'\\n]*|all[^'\\n]+)'|'(?:[b-z][^'\\n]*|a|a[^l'\\n][^'\\n]*|al|al[^l'\\n][^'\\n]*|all[^'\\n]+)'[ \\t]*[!=]=[ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)\\b|\\bcontains\\([^\\n]*,[ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*\\)|\\b(?:contains|startsWith|endsWith)\\([ \\t]*(?:matrix|inputs|env|needs\\.[\\w-]+\\.outputs|steps\\.[\\w-]+\\.outputs)(?:\\.[\\w-]+)*?\\.(?i:pack|tool)[ \\t]*,[ \\t]*'[a-z]|\\\"?\\$\\{?(?i:pack|tool)\\}?\\\"?[ \\t]*!?==?[ \\t]*[\\\"']?[a-z]|\\bcase[ \\t]+\\\"?\\$\\{?(?i:pack|tool)\\}?\\\"?[ \\t]+in[ \\t]*\\n[ \\t]*\\(?[\\\"']?[a-z]|\\.(?:pack|tool|toolPack)[ \\t]*[!=]=[ \\t]*\\\"[a-z])", sp, m).
+
+// The pack's examples (packs/rerail/pack.json).
+.test a_pack_named_in_a_condition_is_reported exactly
+    .fixture ".github/workflows/upstream-bump.yml" ```
+              - name: Set up the pinned PHP and Composer
+                if: matrix.pack == 'php' || matrix.pack == 'blade'
+                uses: ./.github/actions/php
+        ```
+    .expect TOOL_PACK_BY_NAME at ".github/workflows/upstream-bump.yml":2
+.end
+
+.test a_planned_matrix_passes exactly
+    .fixture ".github/workflows/upstream-bump.yml" ```
+            strategy:
+              matrix:
+                include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}
+        ```
+.end
+
+.test entry_paths_are_reported_outside_comments exactly
+    .fixture ".github/workflows/package.yml" ```
+        jobs:
+          smoke:
+            steps:
+              # dist/hosts/ is where the build puts them
+              - run: test -f dist/hosts/claude-hook.js
+              - run: node dist/cli/daemon-entry.js --version
+              - run: node -e "import('./dist/engine/package-root.js')"
+        ```
+    .expect HOOK_PATH_LITERAL at ".github/workflows/package.yml":5
+    .expect HOOK_PATH_LITERAL at ".github/workflows/package.yml":6
+.end
+
+.test skipped_paths_are_reported exactly
+    .fixture ".github/workflows/docs.yml" ```
+        on:
+          pull_request:
+            paths-ignore:
+              - "docs/**"
+          push:
+            paths:
+              - "packs/**"
+              - "!packs/**/*.md"
+        ```
+    .expect TRIGGER_PATHS_IGNORE at ".github/workflows/docs.yml":3
+    .expect TRIGGER_PATHS_IGNORE at ".github/workflows/docs.yml":6
+.end
+
+.test listing_what_core_ships_is_reported exactly
+    .fixture ".github/workflows/native.yaml" ```
+        on:
+          pull_request:
+            paths:
+              - "src/**"
+              - "native/**"
+              - "packs/**"
+        ```
+    .expect TRIGGER_PATHS_CORE at ".github/workflows/native.yaml":5
+.end
+
+.test a_workflows_own_inputs_pass exactly
+    .fixture ".github/workflows/site.yml" ```
+        on:
+          pull_request:
+            paths:
+              - "site/**"
+              - "src/site/**"
+        jobs:
+          build:
+            steps:
+              - run: npm run site:build
+        ```
+.end
+
+.test hand_listed_packs_are_reported exactly
+    .fixture ".github/workflows/matrix.yml" ```
+        jobs:
+          test:
+            strategy:
+              matrix:
+                pack:
+                  - php
+                  - blade
+            steps:
+              - run: for pack in php blade; do npm test -- --pack "$pack"; done
+        ```
+    .expect HAND_LISTED_TOOL_PACKS at ".github/workflows/matrix.yml":5
+    .expect HAND_LISTED_TOOL_PACKS at ".github/workflows/matrix.yml":9
+.end
+
+.test packs_tested_by_name_are_reported exactly
+    .fixture ".github/actions/setup/action.yml" ```
+        runs:
+          using: composite
+          steps:
+            - if: inputs.pack == 'php'
+              run: echo php
+            - if: inputs.pack != 'all'
+              run: echo some
+            - run: if [ "$TOOL" = "eslint" ]; then echo js; fi
+              shell: bash
+        ```
+    .expect TOOL_PACK_BY_NAME at ".github/actions/setup/action.yml":4
+    .expect TOOL_PACK_BY_NAME at ".github/actions/setup/action.yml":8
+.end
+
+// Outside the workflows and actions.
+.test other_yaml_is_out_of_scope exactly
+    .fixture ".github/dependabot.yml" ```
+        updates:
+          - package-ecosystem: npm
+            pack: php
+        ```
+    .fixture "docs/matrix.yml" ```
+        if: matrix.pack == 'php'
+        ```
+.end

@@ -425,6 +425,7 @@ mod wave_tests {
             }));
             let job = wave::enter();
             let mark = wave::mark();
+            assert!(!wave::deferred_since(wave::mark_at(0)), "the thread's deferred submission is not the job's");
             wave::defer(Box::new(move || {
                 second.fetch_or(2, Ordering::Relaxed);
                 Ok(())

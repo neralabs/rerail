@@ -1,5 +1,4 @@
 .policy "ruff-c405-unnecessary-literal-set" revision 1
-.guests off
 .description "Write a set literal instead of passing a list or tuple literal to set(); the call builds a throwaway sequence first."
 .language python
 .mode steer

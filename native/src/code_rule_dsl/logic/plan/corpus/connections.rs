@@ -7,7 +7,7 @@
 //! undone (`DETACH x`, only where its set-up ran), and what the process kept for that run on it is dropped; the
 //! connection's functions, symbols and what its runs left in SQL (`plan::Left`) stay.
 
-use crate::content_store::{ContentStore, StoreError};
+use crate::content_store::{ContentStore, StoreError, atoms::Atoms};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -58,7 +58,7 @@ impl Connections {
     }
 
     /// The run's connection on `path`: the kept one there, or one opened.
-    pub(super) fn take_run(&mut self, path: &Path) -> rusqlite::Result<Connection> {
+    pub(super) fn take_run(&mut self, path: &Path, arena: Option<Arc<Atoms>>) -> rusqlite::Result<Connection> {
         match self.run.take() {
             Some((p, db)) if self.kept && p == path => Ok(db),
             other => {
@@ -66,6 +66,7 @@ impl Connections {
                     super::close_beside(db);
                 }
                 let mut db = Connection::open(path)?;
+                if let Some(arena) = arena { Atoms::share_memory(&db, arena)?; }
                 // Its own store's atoms, guarded at commit (decision 0049); a kept connection already is.
                 crate::content_store::atoms::Atoms::install(&mut db)?;
                 Ok(db)
@@ -105,7 +106,7 @@ impl Drop for Connections {
 
 impl Cone {
     /// The cone's connection on `path` (the run's file): the kept one, or one opened, its functions registered once.
-    pub(super) fn take_db(slot: &parking_lot::Mutex<Cone>, path: &Path) -> super::Result<Connection> {
+    pub(super) fn take_db(slot: &parking_lot::Mutex<Cone>, path: &Path, arena: Option<Arc<Atoms>>) -> super::Result<Connection> {
         if let Some((p, db)) = slot.lock().db.take() {
             if p == path {
                 return Ok(db);
@@ -113,6 +114,7 @@ impl Cone {
             super::close_beside(db);
         }
         let mut db = Connection::open(path)?;
+        if let Some(arena) = arena { Atoms::share_memory(&db, arena)?; }
         // The atoms guarded at commit, as the run's connection's (decision 0049).
         crate::content_store::atoms::Atoms::install(&mut db)?;
         crate::code_rule_dsl::logic::native::register(&db)?;
@@ -122,8 +124,8 @@ impl Cone {
 
     /// Opens the cone's connection on `path` and its handle on the store at `store` before the run's first wave
     /// (decision 0104: opening one reads the store), kept in the slot for `take_db` and `take_store`.
-    pub(super) fn ready(slot: &parking_lot::Mutex<Cone>, path: &Path, store: Option<&Path>) -> super::Result<()> {
-        let db = Self::take_db(slot, path)?;
+    pub(super) fn ready(slot: &parking_lot::Mutex<Cone>, path: &Path, store: Option<&Path>, arena: Option<Arc<Atoms>>) -> super::Result<()> {
+        let db = Self::take_db(slot, path, arena)?;
         let handle = store.map(|p| Self::take_store(slot, p).map(|s| (p.to_path_buf(), s))).transpose().map_err(|e| super::Error::Plan(e.to_string()))?;
         let mut cone = slot.lock();
         cone.db = Some((path.to_path_buf(), db));
@@ -187,9 +189,9 @@ impl Handed {
     }
 
     /// The run's connection on `path`.
-    pub(super) fn run(&self, path: &Path) -> rusqlite::Result<&Connection> {
+    pub(super) fn run(&self, path: &Path, arena: Option<Arc<Atoms>>) -> rusqlite::Result<&Connection> {
         if self.run.get().is_none() {
-            let db = self.conns.borrow_mut().take_run(path)?;
+            let db = self.conns.borrow_mut().take_run(path, arena)?;
             let _ = self.run.set((path.to_path_buf(), db));
         }
         Ok(&self.run.get().expect("set above").1)

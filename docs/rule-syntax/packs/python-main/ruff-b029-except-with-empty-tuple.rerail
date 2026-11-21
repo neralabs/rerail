@@ -1,5 +1,4 @@
 .policy "ruff-b029-except-with-empty-tuple" revision 1
-.guests off
 .description "Don't write an except clause with an empty tuple as its type; it catches nothing, so name the exceptions to handle."
 .language python
 .mode steer

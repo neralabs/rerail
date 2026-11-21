@@ -303,7 +303,6 @@ impl Merged {
         if !self.kindsets.is_empty() {
             all.set_field(Field::Kindsets(&self.kindsets));
         }
-        drop(all);
         self.all
     }
 }

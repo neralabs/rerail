@@ -1687,8 +1687,8 @@ impl Lower<'_, '_> {
         let p = self.f.ins().iadd(base, n);
         // Eight bytes a store, then the rest one by one.
         let words = b.len() / 8;
-        for (i, w) in b.chunks_exact(8).enumerate() {
-            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w.try_into().unwrap()));
+        for (i, &w) in b.as_chunks::<8>().0.iter().enumerate() {
+            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w));
             self.f.ins().store(bytes_flags(), c, p, (i * 8) as i32);
         }
         for (i, &c) in b[words * 8..].iter().enumerate() {
@@ -2593,7 +2593,7 @@ impl Lower<'_, '_> {
         let lastp = self.f.ins().iadd(lp, ln);
         let c = self.f.ins().load(types::I8, bytes_flags(), lastp, -1);
         let mut e = self.f.ins().iconst(types::I8, 0);
-        for x in [b'e', b'E', b'p', b'P'] {
+        for x in *b"eEpP" {
             let q = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(x));
             e = self.f.ins().bor(e, q);
         }
@@ -6901,10 +6901,10 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         f.finalize();
     }
     // A debug aid: the verifier's errors, annotated on the function, written to this file.
-    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF") {
-        if let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa()) {
-            let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
-        }
+    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF")
+        && let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa())
+    {
+        let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
     }
     branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;

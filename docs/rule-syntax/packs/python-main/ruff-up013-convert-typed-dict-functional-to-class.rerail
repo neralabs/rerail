@@ -1,5 +1,4 @@
 .policy "ruff-up013-convert-typed-dict-functional-to-class" revision 1
-.guests off
 .description "Define typed dictionaries with class syntax instead of the functional TypedDict call; the class form is easier to read."
 .language python
 .mode steer

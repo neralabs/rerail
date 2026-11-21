@@ -88,7 +88,16 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
     let block = crate::alloc::host(kind, descr + words + 512);
     let root: *mut Columns = block.alloc_t(1);
     let rc: *mut RangedCol = block.alloc_t(arity.max(1));
-    let mut jobs: Vec<(usize, usize, &Choice, &mut [u64], &mut [u64])> = Vec::new();
+    /// One range of a column to pack, in parallel with the others: its column, its range there, its encoding, and its
+    /// words laid out in the block (`IntCol::lay_out`).
+    struct Job<'a> {
+        col: usize,
+        range: usize,
+        choice: &'a Choice,
+        data: &'a mut [u64],
+        runs: &'a mut [u64],
+    }
+    let mut jobs: Vec<Job<'_>> = Vec::new();
     unsafe {
         (*root).arity = arity as u32;
         (*root).n = n as u32;
@@ -99,8 +108,8 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
             (*col).parts = parts(c) as u32;
             let ic: *mut IntCol = block.alloc_t(ch.len().max(1));
             for (k, choice) in ch.iter().enumerate() {
-                let (d, r) = IntCol::lay_out(ic.add(k), &block, choice);
-                jobs.push((c, k, choice, d, r));
+                let (data, runs) = IntCol::lay_out(ic.add(k), &block, choice);
+                jobs.push(Job { col: c, range: k, choice, data, runs });
             }
             Span::set(&raw mut (*col).ranges, ic, ch.len());
         }
@@ -109,10 +118,10 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
     rerail_context::on_cores(|| {
         jobs.into_par_iter().for_each_init(
             || Vec::with_capacity(RANGE),
-            |buf, (c, k, choice, d, r)| {
-                let p = parts(c);
-                part(cols[c], k / p, split[c], k % p, buf);
-                write(choice, buf, d, r);
+            |buf, Job { col, range, choice, data, runs }| {
+                let p = parts(col);
+                part(cols[col], range / p, split[col], range % p, buf);
+                write(choice, buf, data, runs);
             },
         )
     });

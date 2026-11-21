@@ -20,11 +20,6 @@ mod image;
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
 const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
 
-/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
-/// file hands on its base rows as an evaluated one does.
-pub(super) fn base_key(rel: &str) -> String {
-    format!("base:{rel}")
-}
 
 /// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
 /// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
@@ -40,29 +35,65 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
     rel.starts_with("own:")
 }
 
-/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
-/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
-/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
-/// running the slice. Not an output: they are no relation of the file-local part.
-pub(super) const GUESTS: &str = "guests:";
+/// An entry's `outputs` key of the requests its chunk's fixpoint answered with tape values at a string of its file,
+/// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s string node and grammar, `@parse`'s and `@splice`'s
+/// requests, `Answered`), in the order answered. A chunk that reads the entry makes its values in the corpus batch
+/// from them, as the fixpoint admitted them (`Guests::admit`, `Guests::admit_value`): each tape found by its text among
+/// the root's last runs' and its source named in the manifest (0431 R6), as the run that parsed it named it. A chunk of
+/// partial hits whose cone sees guests admits them before its run, as far as the cone sees them (a cone reading a
+/// relation hiding widened to annotations, `FoldOwn`, asks none itself): no entry keeps a base relation's rows
+/// (decision 0458 step 4), so they are made again. Not an output.
+pub(super) const VALUES: &str = "values:";
 
-/// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
-pub(super) fn guest_key(round: usize, rel: &str) -> String {
-    format!("{GUESTS}{round}:{rel}")
+/// A request the fixpoint answered with a tape value (`VALUES`): a string asked as a grammar's (`rr_embed_req`), or
+/// a value `@parse` or `@splice` asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Answered {
+    /// The string at node `at`, parsed as `grammar`.
+    Embed { at: i64, grammar: String },
+    /// `@parse`'s or `@splice`'s request.
+    Value(super::guests::Request),
 }
 
-/// The round and slice relation of a `guest_key`, `None` for an output's key.
-pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
-    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
-    Some((round.parse().ok()?, rel))
-}
+impl Answered {
+    /// The node it was asked at: the files that own its document keep it.
+    pub(super) fn at(&self) -> i64 {
+        match self {
+            Self::Embed { at, .. } | Self::Value(super::guests::Request::Parse { at, .. }) => *at,
+            Self::Value(super::guests::Request::Splice { node, .. }) => *node,
+        }
+    }
 
-/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
-pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
-    let of = |e: &Entry| -> Vec<(String, Vec<Vec<String>>)> {
-        e.outputs.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, r))| (k.clone(), r.shown())).filter(|(_, l)| !l.is_empty()).collect()
-    };
-    of(a) == of(b)
+    /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
+    /// grammar and a text, a grammar, or the tape spliced in).
+    pub(super) fn rows() -> super::super::output::Rows {
+        use super::super::output::col;
+        super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
+    }
+
+    /// Its row of `rows`.
+    pub(super) fn push(&self, rows: &mut super::super::output::Rows) {
+        use super::super::output::Cell;
+        let (kind, a, b) = match self {
+            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
+            Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
+        };
+        rows.push(&[Cell::Int(kind), Cell::Int(self.at()), Cell::Text(a), Cell::Text(b)]);
+    }
+
+    /// The requests `rows` hold (`push`'s), in order.
+    pub(super) fn read(rows: &super::super::output::Rows) -> Vec<Self> {
+        use super::super::output::Cell;
+        (0..rows.len())
+            .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
+                (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// The words `identity` is held by in `COVERED`.
@@ -513,25 +544,15 @@ impl Syms {
         Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
     }
 
-    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own, a base
-    /// relation's (`base:`); the `own:` rows hold none. None for a relation the plan does not declare.
+    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own; the `own:`
+    /// rows hold none. None for a relation the plan does not declare.
     ///
     /// A posting (`own:postings:rel:col`) is a count of a program's integer constant (`Own::constants`) in a column,
     /// as the column's source encodes it: a kind's or a field's is the grammar's code (`field`'s `f`, 65555), not an
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
-    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
-    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
-        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
-        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
-        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
-    }
-
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
-        if let Some(rel) = key.strip_prefix("base:") {
-            return self.0.get(rel).cloned();
-        }
         if key.starts_with("own:") {
             return Some(vec![false; width]);
         }
@@ -1304,9 +1325,6 @@ pub mod tests {
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
         entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
-        entry.rows.insert("base:named".into(), (2, vec![1, -1]));
-        entry.rows.insert("named".into(), (2, vec![1, 3]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("base:named".to_owned(), -1)));
     }
 
     /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
@@ -1318,7 +1336,6 @@ pub mod tests {
         let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
         let syms = Syms::of(&domains);
         assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
-        assert_eq!(syms.columns("base:field", 3), Some(vec![false, false, false]), "a field's code is no atom");
         assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
         let mut entry = Entry { key: 1, ..Entry::default() };
         entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));

@@ -1,5 +1,4 @@
 .policy "ruff-ruf003-ambiguous-unicode-character-comment" revision 1
-.guests off
 .description "Avoid look-alike Unicode characters in comments; they read like ASCII letters or punctuation but are different characters."
 .language python
 .mode steer

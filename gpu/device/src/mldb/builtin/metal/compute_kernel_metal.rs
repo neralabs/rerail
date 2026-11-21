@@ -449,7 +449,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> m
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &DeviceRef, ptr: *mut u8, len: usize) -> Result<metal::Buffer, String> {
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
-    if (ptr as usize) % page != 0 || len % page != 0 || len == 0 {
+    if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(page) || len == 0 {
         return Err(format!("Metal: a no-copy buffer at {ptr:p} ({len} bytes) is not page-aligned"));
     }
     Ok(pooled(|| device.new_buffer_with_bytes_no_copy(ptr.cast(), len as u64, metal::MTLResourceOptions::StorageModeShared, None)))

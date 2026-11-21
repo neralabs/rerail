@@ -1,5 +1,4 @@
 .policy "ruff-pt027-pytest-unittest-raises-assertion" revision 1
-.guests off
 .description "Use pytest.raises instead of assertRaises-style methods such as assertRaises and assertRaisesRegex; it is the exception-testing style pytest recommends."
 .language python
 .mode steer

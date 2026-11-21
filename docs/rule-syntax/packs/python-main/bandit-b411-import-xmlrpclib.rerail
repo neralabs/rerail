@@ -1,5 +1,4 @@
 .policy "bandit-b411-import-xmlrpclib" revision 1
-.guests off
 .description "Avoid importing xmlrpc unprotected; its XML parsing is open to XML attacks unless patched with defusedxml."
 .language python
 .mode steer

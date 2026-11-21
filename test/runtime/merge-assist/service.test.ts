@@ -36,9 +36,9 @@ class HeldGithub extends FakeGithub {
   }
 }
 
-/** A conflict in the workspace: branch `jbarnes-orders` changes the line `mine` changes. */
+/** A conflict in the workspace: branch `jdoe-orders` changes the line `mine` changes. */
 function overlap(ws: Workspace): void {
-  commit(ws.worktree("jbarnes-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
+  commit(ws.worktree("jdoe-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
 }
 
 /** Set a hook command on the service's repository that logs each event it hears; returns the log's lines. */
@@ -97,7 +97,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.setEnabled(ws.repo, true);
     const reads = github.readinessReads;
 
-    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app" });
+    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "akim", repository: "acme/app" });
     await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
     // Another process over the same database reuses it too.
     await ws.service({ github, now: () => now }).status(ws.repo);
@@ -183,12 +183,12 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
 
   it("records each scan: when, how many branches and pull requests it compared, and what it could not read", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
-    const theirs = ws.worktree("jbarnes-orders");
+    const theirs = ws.worktree("jdoe-orders");
     const head = commit(theirs, { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
-    commit(ws.worktree("jbarnes-docs"), { "README.md": "app\n" }, "Readme");
+    commit(ws.worktree("jdoe-docs"), { "README.md": "app\n" }, "Readme");
     const pull: PullRequestSummary = {
-      number: 12, title: "Version the API", url: "https://github.com/acme/app/pull/12", headRefName: "jbarnes-orders", headCommit: head,
-      baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
+      number: 12, title: "Version the API", url: "https://github.com/acme/app/pull/12", headRefName: "jdoe-orders", headCommit: head,
+      baseRefName: "main", author: "jdoe", isDraft: false, updatedAt: "2026-11-03T14:00:00Z", crossRepository: false, headOwner: "acme",
     };
     const now = Date.parse("2026-11-03T14:00:00Z");
     const service = ws.service({ github: new FakeGithub({ pullRequests: [pull] }), now: () => now });
@@ -197,7 +197,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     // A pull request's head counts once, as the pull request: the branch holding it is not counted again.
     const status = await service.scan(ws.repo);
     expect(status.lastScan).toEqual({ at: "2026-11-03T14:00:00Z", peers: { branches: 1, pullRequests: 1 }, problems: [] });
-    expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jbarnes" }) })]);
+    expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jdoe" }) })]);
 
     // gh failing leaves the worktrees' branches compared (remote-tracking ones too), and says why the pull requests are not.
     const failed = await ws.service({ github: new FakeGithub({ pullsError: true }), now: () => now }).scan(ws.repo);

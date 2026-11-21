@@ -1,0 +1,85 @@
+.policy "rerail-origin-ranges" revision 2
+.description "Use the Origin trait to place ranges of parsed literals and embedded programs in their file, not host_range or host_span mappers; those widen or misplace reported spans."
+.language rust
+.mode log
+.scope include "native/src/code_rule_dsl/**/*.rs"
+.scope exclude "native/src/code_rule_dsl/origin.rs", "native/src/code_rule_dsl/literal/offsets.rs", "native/src/code_rule_dsl/embed/segments.rs", "**/*tests.rs", "**/tests/**", "**/test_support.rs"
+// A parsed literal's or embedded program's ranges are placed in their file through its `impl Origin` (of_node,
+// of_range); a host_range or host_span mapper widens or misplaces spans. Two clauses, as the JSON's:
+//   self.segments.host_span(node.byte_range())         RANGE_MAPPED_OUTSIDE_ORIGIN (a method host_range / host_span)
+//   Segments::host_range(&segments, range)             RANGE_MAPPED_OUTSIDE_ORIGIN (a path ending in one)
+//   fn host_span(&self, range: Range<usize>) -> …      RANGE_MAPPER_OUTSIDE_ORIGIN (a text search: such a mapper)
+//   tree.of_node(found.node_id(), found.range())       not reported
+// A use is not reported in a function named map_range, in an `impl …Origin for …`, or in a `mod tests`.
+
+.violation RANGE_MAPPED_OUTSIDE_ORIGIN(at: node) "Place this range in its file through the document's Origin (of_node, of_range) or InFile instead of mapping it here; a new kind of nested document gets its own impl Origin beside its type."
+RANGE_MAPPED_OUTSIDE_ORIGIN(n) :- mapper_name(n), !inside_origin(n).
+
+// mapper_name(n): the name host_range or host_span, as the method of `x.host_span` or the last segment of a path.
+.decl mapper_name(n: node)
+mapper_name(n) :- kind(n, "field_identifier"), glob("host_{range,span}", n), child(p, n, _), kind(p, "field_expression").
+mapper_name(n) :- kind(n, "identifier"), glob("host_{range,span}", n), child(p, n, _), kind(p, "scoped_identifier").
+
+// inside_origin(n): n is in the Origin's own code: a map_range function, an Origin impl, or a tests module.
+.decl inside_origin(n: node)
+inside_origin(n) :- mapper_name(n), inside(n, f, "function_item"), field(f, "name", x), text(x, "map_range").
+inside_origin(n) :- mapper_name(n), inside(n, i, "impl_item"), field(i, "trait", t), glob("{Origin,*::Origin}", t).
+inside_origin(n) :- mapper_name(n), inside(n, m, "mod_item"), field(m, "name", x), text(x, "tests").
+
+.violation RANGE_MAPPER_OUTSIDE_ORIGIN(at: span) "Don't add a mapper from this nested document to its file; implement Origin for the document beside its type so callers use of_node and of_range."
+RANGE_MAPPER_OUTSIDE_ORIGIN(m) :- source(_, sp), match_all("\\bfn\\s+host_(?:range|span)\\s*[<(]", sp, m).
+
+// The pack's example (packs/rerail/pack.json), a path call, and a mapper.
+.test mapping_outside_origin_is_reported exactly
+    .fixture "native/src/code_rule_dsl/vue/view.rs" ```
+        impl View {
+            fn file_range(&self, node: &Node<'_, StrDoc<Vue>>) -> Range<usize> {
+                return self.segments.host_span(node.byte_range());
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/embed/place.rs" ```
+        fn place(segments: &Segments, range: Range<usize>) -> Range<usize> {
+            Segments::host_range(segments, range)
+        }
+        impl Segments {
+            pub fn host_range<T>(&self, range: Range<usize>) -> Range<usize> {
+                range
+            }
+        }
+        ```
+    .expect RANGE_MAPPED_OUTSIDE_ORIGIN at "native/src/code_rule_dsl/vue/view.rs":3
+    .expect RANGE_MAPPED_OUTSIDE_ORIGIN at "native/src/code_rule_dsl/embed/place.rs":2
+    .expect RANGE_MAPPER_OUTSIDE_ORIGIN at "native/src/code_rule_dsl/embed/place.rs":5
+.end
+
+// The pack's passing example, the Origin's own code, and the owner file.
+.test origin_code_passes exactly
+    .fixture "native/src/code_rule_dsl/matcher/format_args.rs" ```
+        fn exports(tree: &SubTree, found: &Found, out: &mut Vec<Range<usize>>) {
+            if let Some(range) = tree.of_node(found.node_id(), found.range()) {
+                out.push(range);
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/embed/view.rs" ```
+        impl crate::code_rule_dsl::origin::Origin for View {
+            fn of_range(&self, range: Range<usize>) -> Option<Range<usize>> {
+                Some(self.segments.host_span(range))
+            }
+        }
+        fn map_range(view: &View, range: Range<usize>) -> Range<usize> {
+            view.segments.host_range(range)
+        }
+        mod tests {
+            fn t(view: &View) {
+                view.segments.host_span(0..1);
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/origin.rs" ```
+        fn host_span(&self, range: Range<usize>) -> Range<usize> {
+            self.segments.host_span(range)
+        }
+        ```
+.end

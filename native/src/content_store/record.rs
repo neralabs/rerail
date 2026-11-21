@@ -133,7 +133,7 @@ pub(super) struct Record {
 
 impl Record {
     fn push(&mut self, kind: &'static str, keys: &[Key], body: codec::Body, pieces: Vec<Bytes>) {
-        let range = (!pieces.is_empty()).then(|| (self.pieces.len(), pieces.len()));
+        let range = (!pieces.is_empty()).then_some((self.pieces.len(), pieces.len()));
         self.pieces.extend(pieces);
         self.items.push(codec::Item { kind: kind.to_owned(), body, bytes: range });
         self.keys.extend_from_slice(keys);

@@ -148,7 +148,11 @@ fn case(family: &'static str, head: &'static str, rule: String, must: bool) -> C
 type Rows = Vec<(String, String)>;
 
 /// The stratum run once: its rows (by name for a symbol column), its counts per step, and the device's report.
-fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String, Option<super::Report>), String> {
+/// Per rule, its steps' (in, out) counts (`step_counts`), and by step whether the CPU's probe read a range there
+/// (`step_ranged`).
+type Counts = (Vec<Vec<(i64, i64)>>, Vec<Vec<bool>>);
+
+fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, Counts, Option<super::Report>), String> {
     let db = &fx.db;
     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
     let name = format!("par_{id}_{}", u8::from(device));
@@ -167,8 +171,8 @@ fn run(fx: &Fixture, c: &Case, id: usize, device: bool) -> Result<(Rows, String,
     let tails = super::super::step_tails(db, &name).unwrap_or_default();
     let counts = super::super::step_counts(db, &name)
         .map(|c| c.into_iter().zip(tails.iter().copied().chain(std::iter::repeat(usize::MAX))).map(|(mut c, t)| { c.truncate(t); c }).collect::<Vec<_>>())
-        .map(|c| format!("{c:?}"))
         .unwrap_or_default();
+    let counts = (counts, super::super::step_ranged(db, &name).unwrap_or_default());
     super::super::close(db, &name).map_err(|e| format!("close: {e}"))?;
     ran?;
     let col = |k: usize| if c.head.as_bytes()[k] == b's' { format!("sym_text(c{k})") } else { format!("CAST(c{k} AS TEXT)") };
@@ -235,10 +239,10 @@ fn check(fx: &Fixture, cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, T
             let only_d: Vec<_> = drows.iter().filter(|r| !crows.contains(r)).take(3).collect();
             let only_c: Vec<_> = crows.iter().filter(|r| !drows.contains(r)).take(3).collect();
             failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}", what(), drows.len(), crows.len()));
-        } else if dcounts != ccounts && c.joins.is_empty() {
+        } else if let (Err(e), true) = (super::tests::counts_agree(&ccounts.0, &dcounts.0, &ccounts.1), c.joins.is_empty()) {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.
-            failures.push(format!("{}: counts per step differ: device {dcounts}, CPU {ccounts}; report {report:?}", what()));
+            failures.push(format!("{}: counts per step differ: {e} (the CPU's against the device's); report {report:?}", what()));
         }
     }
     (failures, tally)
@@ -643,7 +647,7 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 let p = *g.pick(&pats);
                 let s = match g.next(11) {
                     0 => format!("test {} v{t} {} {}", g.pick(&tests), sym(p), g.next(2)),
-                    1 => format!("testset {} v{t} {} {} {}", g.pick(&["prefix", "suffix", "contains", "equals"]), g.next(2), sym(p), sym(*g.pick(&pats))),
+                    1 => format!("testset {} v{t} {} {} {}", g.pick(&["prefix", "suffix", "contains", "equals"]), g.next(2), sym(p), sym(g.pick(&pats))),
                     2 => {
                         texts.push(next);
                         next += 1;
@@ -660,9 +664,9 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                         texts.push(next);
                         next += 1;
                         if g.chance(50) {
-                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(*g.pick(&rxs)), sym(*g.pick(&["", "#", "<>"])))
+                            format!("func replace_all v{} v{t} {} {}", next - 1, sym(g.pick(&rxs)), sym(g.pick(&["", "#", "<>"])))
                         } else {
-                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(*g.pick(&["", "#", "<>"])))
+                            format!("func sql_replace v{} v{t} {} {}", next - 1, sym(p), sym(g.pick(&["", "#", "<>"])))
                         }
                     }
                     5 => {

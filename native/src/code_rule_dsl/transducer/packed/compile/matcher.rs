@@ -909,8 +909,8 @@ impl LoweredWave {
             // A label in no step (none is expected) keeps its own.
             for local in 0..labels.defs.len() {
                 let id = LABEL_BASE + labels.offset + local as u16;
-                if !map.contains_key(&id) {
-                    map.insert(id, fresh(&mut next)?);
+                if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
+                    e.insert(fresh(&mut next)?);
                 }
             }
             let rename = |label: u16| map.get(&label).copied().unwrap_or(label);
@@ -1302,7 +1302,7 @@ impl LoweredWave {
         // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
         if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
             crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
                 format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
             });

@@ -1,5 +1,4 @@
 .policy "ruff-f506-percent-format-mixed-positional-and-named" revision 1
-.guests off
 .description "Don't mix %(key) placeholders and positional placeholders in one %-format string; Python cannot format it."
 .language python
 .mode steer

@@ -21,7 +21,7 @@ ids mapped at the store (decisions 0160 and 0170): the run holds only the atoms 
 - At a 4 GB budget the line is 256 MB, so 0171's reads come back for a large budget.
 - 0171's rule on segment size goes: the budget sets the line.
 
-## How (side branch `jeremybarnes/final-rerail-shape-0306`)
+## How (side branch `final-rerail-shape-0306`)
 
 - `Atoms::over_share`: set before the outermost run would take the lease, when the stored text is past
   `read_whole()`. It is kept for the store's life, since a store's atoms only grow.

@@ -1,5 +1,4 @@
 .policy "ruff-b026-star-arg-unpacking-after-keyword-arg" revision 1
-.guests off
 .description "Put star-argument unpacking before keyword arguments in calls; placing it after is legal but misleading about argument order."
 .language python
 .mode steer

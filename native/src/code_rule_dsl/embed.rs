@@ -35,6 +35,12 @@
 // cratify: `call_argument` is rerail-lang-python's (it mounts it: it reads the scope table)
 pub mod host;
 pub mod inline_content;
+// cratify: `json_object` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod json_object;
+// cratify: `match_regex` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod match_regex;
+// cratify: `rule_pattern` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod rule_pattern;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -76,6 +82,11 @@ impl Parse {
             GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
             GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
             GrammarDialect::Html => Grammar::embedded(dialect).ok().and_then(|grammar| html_lean::encode(&grammar, text, budget).ok()),
+            // A literal grammar's dialect (decision 0495 §2): tree-sitter has none, and its registered parser reads it.
+            GrammarDialect::Regex => {
+                let grammar = Grammar::embedded(dialect).ok()?;
+                return crate::code_rule_dsl::tape::TapeImage::parse(&grammar, text, &budget)?.ok().map(|image| Self::Tape(image.primary));
+            }
             _ => None,
         };
         if let Some(tape) = lean.and_then(Result::ok) {
@@ -145,6 +156,11 @@ pub trait Embedder: Send + Sync {
         false
     }
 
+    /// Whether its programs' syntax verdict is their tape's, not their language's own check of a file: they are no
+    /// files of their language (a rule's pattern, whose metavariables CPython refuses; decision 0495 §3).
+    fn tape_verdict(&self) -> bool {
+        false
+    }
     /// The programs of the host `doc` (`reads_scope`).
     fn build_in_doc(&self, _doc: &crate::code_rule_dsl::tape::TapeDoc, _budget: &dyn Fn() -> bool) -> Vec<Program> {
         Vec::new()

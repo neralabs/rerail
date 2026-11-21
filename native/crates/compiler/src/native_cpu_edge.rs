@@ -344,8 +344,7 @@ fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], prefixed: boo
                 match full[usize::from(a)] {
                     Some(c) => {
                         let v = c.rotate_right((lo - k).rem_euclid(64) as u32);
-                        for j in 0..words {
-                            let m = head[j];
+                        for (j, &m) in head.iter().enumerate().take(words) {
                             for (plane, val) in [(&mut r.gk[j], u64::MAX), (&mut r.fk[j], u64::MAX), (&mut r.gv[j], v), (&mut r.fv[j], v), (&mut r.eq[j], u64::MAX)] {
                                 *plane = (*plane & !m) | (val & m);
                             }

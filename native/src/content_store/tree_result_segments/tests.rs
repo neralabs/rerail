@@ -1,4 +1,4 @@
-// COPY: Tempo 8fe9ffed4:tempo/native/src/content_store.rs l.6192-6244 (test), verbatim.
+// COPY: the predecessor 8fe9ffed4:<predecessor>/native/src/content_store.rs l.6192-6244 (test), verbatim.
 use super::super::tests::{candidate_catalog, published_tree, store};
 use super::*;
 use std::collections::HashSet;

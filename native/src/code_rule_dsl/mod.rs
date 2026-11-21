@@ -1728,7 +1728,7 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         use std::time::Instant;
     }
-    #[path = "plan"]
+    #[cfg_attr(test, path = "plan")]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
         // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -1741,7 +1741,8 @@ pub(crate) mod logic {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[path = "corpus"]
+        // Only its tests are files of their own.
+        #[cfg_attr(test, path = "corpus")]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             // The base tests compile and evaluate rule documents through the engine (`test_support`).
@@ -1756,6 +1757,9 @@ pub(crate) mod logic {
             // Decision 0458 (R1–R5): the cross part reads the base relations off every file's tape.
             #[cfg(test)]
             pub mod cross_views_tests;
+            // Decision 0494: a batch makes a document when first read.
+            #[cfg(test)]
+            pub mod made_batch_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -1792,7 +1796,6 @@ pub(crate) mod logic {
                 #[cfg(test)]
                 pub mod tests;
             }
-            pub mod references;
             // The corpus runner's tests: they parse files, so they run where the languages are registered.
             #[cfg(test)]
             pub mod tests;
@@ -1842,6 +1845,8 @@ pub(crate) mod logic {
         pub mod tests;
         #[cfg(test)]
         pub mod coverage;
+        #[cfg(test)]
+        pub mod first_tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{AggOp, Value};
         #[allow(unused_imports)]
@@ -2859,7 +2864,6 @@ mod matcher {
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::matcher::analysis::RequiredText;
     #[allow(unused_imports)]
-    #[cfg_attr(not(test), allow(unused_imports))]
     pub(super) use crate::code_rule_dsl::matcher::lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
     #[allow(unused_imports)]
     pub(crate) use crate::code_rule_dsl::matcher::analysis::{calls_positive_only, reads_import_targets};
@@ -3629,7 +3633,6 @@ mod tape {
     #[allow(unused_imports)]
     use tree_sitter::{Language, Node as TsNode, TreeCursor};
     #[allow(unused_imports)]
-    #[allow(unused_imports)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
     #[allow(unused_imports)]
     pub(super) use crate::code_rule_dsl::tape::wire::index_span;
@@ -3834,7 +3837,6 @@ mod transducer {
         use std::ops::Range;
         #[allow(unused_imports)]
         use std::sync::Arc;
-        #[allow(unused_imports)]
         #[cfg(test)]
         #[allow(unused_imports)]
         use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
@@ -3864,13 +3866,11 @@ mod transducer {
         #[allow(unused_imports)]
         use rerail_compiler::native_cpu_codegen;
         #[allow(unused_imports)]
-        #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::native_cpu_rows;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_compiler::block;
-        #[allow(unused_imports)]
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use rerail_rr_parser as rr_parser;
         #[allow(unused_imports)]
@@ -4691,6 +4691,12 @@ pub(crate) fn install_languages() {
         (language::Via::CallArgument, &embed::call_argument::CallArgument),
         #[cfg(feature = "lang-markdown")]
         (language::Via::InlineContent, &embed::inline_content::InlineContent),
+        #[cfg(all(feature = "lang-rr", feature = "lang-json"))]
+        (language::Via::JsonObject, &embed::json_object::JsonObject),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::MatchRegex, &embed::match_regex::MatchRegex),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
@@ -4776,15 +4782,17 @@ pub(crate) fn install_languages() {
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
-    // Python's reference graph, a program's cross-file relations.
-    logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
+    workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
+        logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
+            .map_err(|error| error.to_string())
+    });
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
         let (snapshot, _) = eval::parse_snapshot(json, false)?;
         Ok(snapshot.files.into_iter().map(|f| sql_executor::documents::File { path: f.path, language: f.language, source: f.source }).collect())
     });
     // The candidate compiler's audit of a compiled rule.
-    let _ = rule_api::FRONTIER_AUDIT.set(|rule| prefilter::candidate_frontier_audit(rule).into());
+    let _ = rule_api::FRONTIER_AUDIT.set(prefilter::candidate_frontier_audit);
     // What compiles and launches a span pattern's prefilter (the transducer's block programs).
     facts::span_prefilter::install_span_prefilter(transducer::packed::regex_block::compile_span, transducer::packed::regex_block::launch_spans);
     // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
@@ -4801,6 +4809,7 @@ pub(crate) fn install_languages() {
         literal::scanf::GRAMMAR,
         literal::phpdoc::GRAMMAR,
         literal::rust_format::GRAMMAR,
+        literal::regex::GRAMMAR,
         #[cfg(test)]
         literal::CHARS,
     ]);
@@ -4824,6 +4833,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
         }
+        // Regular expressions in the engine's dialect (decision 0495 §2): a rule file's `match` regexes, and any
+        // string a rule parses as one.
+        parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Regex, name: "regexes (the Rust dialect, hand-written)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::Regex); &P } });
         // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
         if cfg!(feature = "lang-typescript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });

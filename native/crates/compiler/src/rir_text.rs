@@ -192,8 +192,8 @@ pub fn local_check_text(c: &crate::program::LocalCheck) -> String {
     out
 }
 
-/// The grammar's names (`Words::names`): `name rule R "N"`, `name kind #K "N"`, `name token K "N"`,
-/// `name mark K "N"`.
+/// The grammar's names (`Words::names`): `name rule R "N"`, `name kind #K "N"`, `name field F "N"`,
+/// `name token K "N"`, `name mark K "N"`.
 pub fn name_rows(out: &mut String, names: &crate::program::Names) {
     use std::fmt::Write as _;
     for (r, n) in &names.rules {
@@ -201,6 +201,9 @@ pub fn name_rows(out: &mut String, names: &crate::program::Names) {
     }
     for (k, n) in &names.kinds {
         let _ = writeln!(out, "  name kind #{k} {}", quote(n.as_bytes()));
+    }
+    for (f, n) in &names.fields {
+        let _ = writeln!(out, "  name field {f} {}", quote(n.as_bytes()));
     }
     for (k, n) in &names.tokens {
         let _ = writeln!(out, "  name token {k} {}", quote(n.as_bytes()));

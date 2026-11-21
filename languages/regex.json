@@ -1,0 +1,25 @@
+{
+  "format": "rerail.language/v1",
+  "id": "regex",
+  "status": "supported",
+  "family": "format",
+  "builtWith": "rr",
+  "dialects": [
+    {
+      "label": "regex",
+      "variant": "Regex",
+      "suffixes": [".regex"],
+      "parser": "literal",
+      "grammar": "native:regex",
+      "tapeTag": 33
+    }
+  ],
+  "capabilities": {
+    "scope": "refused",
+    "value": "refused",
+    "arguments": "refused",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": []
+}

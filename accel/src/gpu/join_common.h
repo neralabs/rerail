@@ -32,7 +32,7 @@ UKL_INLINE uint32_t join_tg_prefix(uint32_t mine, uint32_t t, uint32_t lane, UKL
   return off + inc - mine;
 }
 
-// A sort's screen (decision 0506, `join::Screen`): a blocked Bloom filter in the host's format, read through the reads
+// A sort's screen (decision 0488, `join::Screen`): a blocked Bloom filter in the host's format, read through the reads
 // written once in CLIF (`clif_bloom_*`, `<ukl/reads/relation.h>`), its descriptor at byte `at` of `f`.
 #include <ukl/reads/relation.h>
 

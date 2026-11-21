@@ -86,7 +86,7 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
     let pool = if text.is_empty() { vec![0] } else { text };
     let _ = writeln!(
         out,
-        "UKL_TABLE const uint8_t TEXT[{}] = {{{}}};",
+        "UKL_TABLE uint8_t TEXT[{}] = {{{}}};",
         pool.len(),
         pool.iter().map(|byte| byte.to_string()).collect::<Vec<_>>().join(",")
     );
@@ -98,9 +98,9 @@ pub(super) fn source(patterns: &[&PackedPattern], first: usize, format: u32) -> 
     );
     for (index, vars) in names.iter().enumerate() {
         let index = first + index;
-        let _ = write!(
+        let _ = writeln!(
             out,
-            "  case {index}u:{{B{index} b;for(uint32_t v=0u;v<{};v++){{b.v[v].mode=0u;b.v[v].a=0u;b.v[v].from=0u;b.v[v].n=0u;b.v[v].multi=0u;}}if(p{index}_root(c,node,&b)!=0)return false;for(uint32_t at=0u;at<item.constraintCount;at++){{Pair constraint=constraints[item.constraintStart+at];Var v=b.v[constraint.x];if(v.mode!=0u&&v.multi==0u){{uint32_t n=var_at(c,v,0u);if(((labels[constraint.y*shape.words+n/32u]>>(n%32u))&1u)==0u)return false;}}}}return true;}}\n",
+            "  case {index}u:{{B{index} b;for(uint32_t v=0u;v<{};v++){{b.v[v].mode=0u;b.v[v].a=0u;b.v[v].from=0u;b.v[v].n=0u;b.v[v].multi=0u;}}if(p{index}_root(c,node,&b)!=0)return false;for(uint32_t at=0u;at<item.constraintCount;at++){{Pair constraint=constraints[item.constraintStart+at];Var v=b.v[constraint.x];if(v.mode!=0u&&v.multi==0u){{uint32_t n=var_at(c,v,0u);if(((labels[constraint.y*shape.words+n/32u]>>(n%32u))&1u)==0u)return false;}}}}return true;}}",
             vars.len().max(1)
         );
     }
@@ -256,7 +256,7 @@ fn emit(
             // ellipsis), whether a goal is trivial, and whether it is the end of children (RER-131).
             let _ = writeln!(
                 out,
-                "UKL_TABLE const uint32_t E{index}_{id}[{count}]={{{}}};UKL_TABLE const uint8_t T{index}_{id}[{count}]={{{}}};UKL_TABLE const uint8_t D{index}_{id}[{count}]={{{}}};",
+                "UKL_TABLE uint32_t E{index}_{id}[{count}]={{{}}};UKL_TABLE uint8_t T{index}_{id}[{count}]={{{}}};UKL_TABLE uint8_t D{index}_{id}[{count}]={{{}}};",
                 ellipsis.join(","),
                 trivial.join(","),
                 ends.join(",")

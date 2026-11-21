@@ -70,7 +70,7 @@ fn every_part() -> Arc<Version> {
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
@@ -531,7 +531,7 @@ fn a_delta_is_the_size_of_its_edit() {
         for k in 0..9 {
             for r in small.rules() {
                 let head = format!("{}_{k}", small.rel_name(r.head().rel()));
-                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(r, t)).collect();
                 let mut w = b.rule().head(head.as_str(), &args);
                 for l in r.body() {
                     w = w.lit(&small, r, l);
@@ -610,7 +610,7 @@ fn passes_hold(v: &Arc<Version>) {
     use super::fields::ProgramFields;
     use super::passes;
     use std::collections::BTreeSet;
-    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let Ok((nv, ns)) = passes::normalize(v) else { return };
     let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     let lattice = ProgramFields::lattice(&**v);
     let nullary = ProgramFields::nullary(&**v);
@@ -626,7 +626,7 @@ fn passes_hold(v: &Arc<Version>) {
     }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if !Arc::ptr_eq(&nv, &v) {
+    if !Arc::ptr_eq(&nv, v) {
         for r in nv.rules() {
             let s = r.source().expect("a derived rule's source");
             assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -915,7 +915,9 @@ fn fields_agree(v: &Arc<Version>) {
         assert!(f.request(req) && f.answer(req));
     }
     // Gates, in order.
-    let gates: Vec<(String, Option<String>, String, usize, Vec<String>, Vec<String>)> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
+    // A gate's key, source, relation, level, quiet relations and dependencies.
+    type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
+    let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
     assert_eq!(gates, want);
     for (k, _) in &pgates {
@@ -1154,7 +1156,7 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     }
     let mut p = super::manager::Pipeline::new("test", managed());
     p.rules(&mut Liar);
-    let e = p.finish().err().expect("refused");
+    let e = p.finish().expect_err("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }
 
@@ -2086,7 +2088,7 @@ fn facts_in_another_order_are_the_same_program() {
 
 /// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
 /// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
-/// the record by the made version's rules, not the input's (decision 0506: every `rr_value_req` rule was then read
+/// the record by the made version's rules, not the input's (decision 0488: every `rr_value_req` rule was then read
 /// as serving only itself).
 #[test]
 fn a_made_steps_request_record_is_carried_by_its_own_rules() {

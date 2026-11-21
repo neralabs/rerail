@@ -671,6 +671,50 @@ fn only_a_rule_with_calls_terms_is_copied_into_a_workspace() {
     assert_eq!(calls.inner.clauses.len(), clauses);
 }
 
+/// Whether a code rule's finding in one file can depend on another file's text, which a host orders
+/// a workspace's edits by (`CompiledCodeRuleDsl::reads_other_files`): a rule for each way the
+/// workspace reads past a file, and one for each kind that reads its own file only.
+#[test]
+fn a_rule_reads_other_files_where_the_workspace_reads_past_its_file() {
+    let needle = json!({ "regex": { "source": "file.content", "pattern": "NEEDLE" } });
+    let clause = |form: &str, query: Value| json!([{ "id": "c", "violation": violation("X", "x"), form: query }]);
+    let import = json!({ "kind": "import_statement" });
+    let imports = json!({ "ast": { "language": "python", "rule": import } });
+    let select_when = json!({ "select_when": { "select": needle.clone(), "exists": imports } });
+    let target = json!({ "kind": "string", "importTarget": { "via": "import", "failed": true } });
+    let import_target = json!({ "ast": { "language": "typescript", "rule": target } });
+    let gated = json!([
+        { "id": "gate", "define": { "report_when": { "count": { "gt": 3 } } } },
+        { "id": "c", "violation": violation("X", "x"), "forbid": needle.clone() },
+    ]);
+    let rules = [
+        ("regex", compile("regex", clause("forbid", needle)), false),
+        (
+            "select_when",
+            compile("select-when", clause("forbid", select_when)),
+            true,
+        ),
+        ("calls", async_blocking_code_rule(), true),
+        (
+            "importTarget",
+            compile("import-target", clause("forbid", import_target)),
+            true,
+        ),
+        ("report_when", compile("gated", gated), true),
+        // The engine answers an `llm` clause with a missing-capability failure that names no file.
+        ("llm", compile("llm", clause("llm", json!({}))), false),
+    ];
+    let answered = rules
+        .iter()
+        .map(|(name, rule, _)| (*name, rule.reads_other_files()))
+        .collect::<Vec<_>>();
+    let expected = rules
+        .iter()
+        .map(|(name, _, reads)| (*name, *reads))
+        .collect::<Vec<_>>();
+    assert_eq!(answered, expected);
+}
+
 /// A Python file with the module a package walk gives it (`pkg/__init__.py` is `pkg.__init__`).
 fn module_file(path: &str, source: &str) -> Value {
     let module = path.strip_suffix(".py").unwrap().replace('/', ".");

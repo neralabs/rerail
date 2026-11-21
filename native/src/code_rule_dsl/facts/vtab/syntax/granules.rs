@@ -46,7 +46,6 @@
 //! grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable as that.
 
 use super::cells::{Block, Cell, Cells};
-use super::id_reads;
 use super::ranks::{Item, Ranks};
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
@@ -357,7 +356,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
 fn name(p: &Projected, dialect: &Dialect, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g];
-    let id = p.node(l as u32);
+    let id = p.node(l);
     let kind = dialect.name(f, id);
     // A wrapper is named by its definition, or by the declaration it exports.
     let inner = |want: fn(&str) -> bool| f.children(id).iter().copied().find(|&c| f.named(c) && want(dialect.name(f, c)));
@@ -684,7 +683,7 @@ impl Table {
         let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
-        let table = Table {
+        Table {
             starts: placed(b, &starts),
             ends: placed(b, &ends),
             parents: placed(b, &parents),
@@ -701,14 +700,13 @@ impl Table {
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
-        };
-        table.describe(r);
-        table
+        }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them: the table the projection keeps (`DefIds`), as it is built. A table numbered again (a
+    /// reference, a census) is not described: dropped, it would leave the runs at columns that are gone.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };
@@ -738,12 +736,12 @@ impl Table {
     }
 
     /// The low bits of `item` number `k`'s id (a node's local id; a token's number among the tokens): no select
-    /// (`num_low_of`, written once in CLIF).
+    /// (`Numbering::low_of`; the CLIF's `num_low_of`).
     #[inline]
     pub fn low_of(&self, r: &Ranks, item: Item, k: u32) -> Option<u32> {
         // SAFETY: the projection's descriptor, whose runs point at this table and `r`.
-        let low = unsafe { id_reads::num_low_of(r.desc(), item as u32, k) };
-        (low != u32::MAX).then_some(low)
+        let low = unsafe { r.numbering().low_of(item as u32, k) };
+        (low != rerail_clif::ids::NONE).then_some(low)
     }
 
     /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
@@ -769,24 +767,24 @@ impl Table {
     #[inline]
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
         // SAFETY: as `low_of`.
-        let v = unsafe { id_reads::num_number_of(r.desc(), low) };
-        (v != u64::MAX).then(|| (if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
+        let (item, k) = unsafe { r.numbering().number_of(low) }?;
+        Some((if item == 0 { Item::Node } else { Item::Token }, k))
     }
 
     /// Node number `l`'s order key (`order`), from its number alone (`num_order_of`).
     #[inline]
     pub fn order_of(&self, r: &Ranks, l: u32) -> Option<u32> {
         // SAFETY: as `low_of`.
-        let key = unsafe { id_reads::num_order_of(r.desc(), l) };
-        (key != u32::MAX).then_some(key)
+        let key = unsafe { r.numbering().order_of(l) };
+        (key != rerail_clif::ids::NONE).then_some(key)
     }
 
     /// The node number whose order key is `key` (`order_of`'s inverse, `num_number_of_order`).
     #[inline]
     pub fn number_of_order(&self, r: &Ranks, key: u32) -> Option<u32> {
         // SAFETY: as `low_of`.
-        let l = unsafe { id_reads::num_number_of_order(r.desc(), key) };
-        (l != u32::MAX).then_some(l)
+        let l = unsafe { r.numbering().number_of_order(key) };
+        (l != rerail_clif::ids::NONE).then_some(l)
     }
 
     /// Node `x`'s order key (`node_order`'s low 32 bits, `order`): its run's rank, then its index in its granule.

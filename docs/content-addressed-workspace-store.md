@@ -83,13 +83,14 @@ reopens them.
 PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection
-PRAGMA mmap_size=0;
+PRAGMA cache_size=-1024;          -- 1 MiB page cache per connection; the writer's is 32 MiB
+PRAGMA mmap_size=4294967296;      -- RERAIL_STORE_MMAP_MB: 4096 by default, 0 (off) on Windows
 PRAGMA journal_size_limit=16777216;
+PRAGMA temp_store=MEMORY;
 ```
 
-It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
+It also sets a 256-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. `RERAIL_STORE_MMAP_MB=0` turns the map off.
 
 </details>
 
@@ -148,19 +149,19 @@ transaction, which numbers it and inserts the rows. Each read checks the range's
 <details>
 <summary>Columns, aliases and integrity checks</summary>
 
-- **`source_objects`** stores raw length, codec (1, Zstandard) and frame.
+- **`source_objects`** stores raw length, codec (0: as it is) and the object's range in a segment (`seg`, `seg_at`,
+  `seg_len`); an aged object's `seg` is `-2`, its bytes one Zstandard frame in `object_archive` (below).
 - **`tape_objects`** stores one tape per source, `grammar_id`, `grammar_version` (the grammar build
-  identity) and `tape_format_version`.
+  identity) and `tape_format_version`, with its range the same way.
 
-Each frame is an independent level-3 Zstandard frame, readable alone. Both tables carry a
-`created_generation` for collection.
+Both tables carry a `created_generation` for collection.
 
 Publication adds an alias when evaluated bytes, from a repository index or host edit, hash to the
 committed blob. Only files whose path is clean in the worktree are hashed (`clean_blob_alias`). An
 alias naming different bytes fails publication as corrupt.
 
 Reads check codec, raw length and SHA-256 against the row, failing with `StoreError::Corrupt` (test:
-`corrupt_zstandard_frames_fail_closed`). A stored tape that does not load is parsed again.
+`objects_whose_rows_disagree_with_their_segments_fail_closed`). A stored tape that does not load is parsed again.
 
 </details>
 
@@ -242,7 +243,8 @@ A snapshot records what a commit holds; a workspace's overlay records what it ev
 
 Discovery skips:
 
-- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`);
+- built-in ignores (`BUILTIN_IGNORE`: `.git/`, `node_modules/`, `target/`, `tmp/`, `__pycache__/`, and Rerail's
+  session records folder `.rerail/sessions/` in any folder);
 - `.rerailignore` paths, in Git ignore syntax with negation. A negation cannot restore a built-in
   ignore.
 

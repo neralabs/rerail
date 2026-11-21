@@ -4,7 +4,7 @@ use rerail_rr_syntax as rr;
 
 /// The repository's `.rerail` files.
 fn corpus() -> Vec<String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -72,30 +72,18 @@ fn aot_tapes_are_the_jits() {
 }
 
 /// Every corpus file, and the table's in-place cases: tier 2 ahead of time writes the JIT's format 16 tapes (16 and
-/// 16z, presence and all) by the writer's ops, and refuses where it does. The language holds every key the corpus's
-/// format 15 tapes hold, as the engine's holds its grammar's.
+/// 16z, presence and all) by the writer's ops, and refuses where it does. The language is rr's shipped table, the one
+/// the source's numbers are literals of (`crate::lang`, decision 0535).
 #[test]
 #[ignore = "the corpus: run by name"]
 fn aot_format_16_tapes_are_the_jits() {
-    use rerail_tape_format::f16::Lang;
-    use rerail_tape_format::tape::{CodeTable, f15_columns};
     let jit = rerail_rr_parser::compiled().expect("compiles");
     let aot = crate::aot(BOTH).expect("the ahead-of-time build");
     let mut files = corpus();
     for src in ["r(x) :- x = a - b - c - d.", "r(x) :- x = (a + b) * (c - d) - e / f.", "r(x) :- x = a /* c */ - b // d\n - c.", "r(n) :- n = min (a, b) : { s(a, b) }."] {
         files.push(src.to_string());
     }
-    let mut keys = Vec::new();
-    for f in &files {
-        let Ok(image) = jit.parser.image(f.as_bytes()) else { continue };
-        let (_, table) = f15_columns(&image).expect("a format 15 tape");
-        for e in table.entries() {
-            if !keys.contains(e) {
-                keys.push(e.clone());
-            }
-        }
-    }
-    let lang = Lang::new(CodeTable::new(keys), [1, 2, 2], 1).expect("a language");
+    let lang = crate::lang();
     // One program (the fingerprints): the JIT's numbers are the ahead-of-time run's.
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     let (mut differ, mut written) = (Vec::new(), 0);

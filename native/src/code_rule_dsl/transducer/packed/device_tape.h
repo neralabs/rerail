@@ -27,7 +27,7 @@ UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,Do
 UKL_INLINE uint32_t doc_index(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
 UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){return docs[doc_index(docs,count,node)];}
 
-// ---- the reads (decision 0310): `<ukl/reads/tape.h>`, written from the tape's reads in CLIF, which the CPU's
+// ---- the reads (decision 0310): `<ukl/reads/tape.h>`, the tape's reads in CLIF written by hand (0524), which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.
 #define TAPE_READ(C,D) tape_doc(C,D),(CLIF_VIEW_SPACE const uint32_t*)&(D)
 UKL_INLINE uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}

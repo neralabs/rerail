@@ -1,5 +1,4 @@
 .policy "ruff-pth202-os-path-getsize" revision 1
-.guests off
 .description "Use Path.stat().st_size instead of os.path.getsize(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

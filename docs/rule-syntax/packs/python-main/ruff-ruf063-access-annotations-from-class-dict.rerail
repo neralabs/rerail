@@ -1,5 +1,4 @@
 .policy "ruff-ruf063-access-annotations-from-class-dict" revision 1
-.guests off
 .description "Use the dedicated get_annotations function instead of reading annotations from an object's __dict__; direct access is not forward-compatible with deferred annotation evaluation."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-b014-duplicate-handler-exception" revision 1
-.guests off
 .description "Remove duplicate exception types from an except clause's tuple; naming one twice adds nothing."
 .language python
 .mode steer

@@ -82,6 +82,15 @@ pub struct ViewInPlace {
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
+/// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub struct HasWalk {
+    pub nodes: usize,
+    pub view: ViewInPlace,
+    pub kinds: Arc<[i64]>,
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
@@ -161,6 +170,14 @@ pub trait Source: Send + Sync {
             }
         }
     }
+    /// The rows whose `column` holds one of `keys`, each with its values of `columns`, in row order, until `each`
+    /// returns false; `false` (nothing given) where the source has no such read. A view of a batch's documents walks
+    /// the documents the keys name, reading each row's own column and the other columns of the rows kept alone:
+    /// the walk carries a node's depth and place, where a lookup a key computes them again (a semi-join's rows,
+    /// decision 0458).
+    fn for_rows_keyed(&self, _column: usize, _keys: &rustc_hash::FxHashSet<i64>, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        false
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
@@ -210,6 +227,17 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
+    /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
+    /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
+    /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
+    fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
@@ -227,6 +255,12 @@ pub trait Source: Send + Sync {
     /// than a `value` call per row.
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+    }
+    /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
+    /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn has_walk(&self) -> Option<HasWalk> {
+        None
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
@@ -858,8 +892,6 @@ static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
 pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
-
-/// The tables registered on each connection that no statement has resolved yet (`register`).
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).

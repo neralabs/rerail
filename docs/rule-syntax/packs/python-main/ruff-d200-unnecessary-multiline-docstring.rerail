@@ -1,5 +1,4 @@
 .policy "ruff-d200-unnecessary-multiline-docstring" revision 1
-.guests off
 .description "Write a docstring with a single line of text on one line, with the quotes beside the text, not on lines of their own."
 .language python
 .mode steer

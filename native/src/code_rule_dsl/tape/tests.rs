@@ -422,6 +422,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };
@@ -2112,7 +2113,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2548,7 +2552,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2655,11 +2662,16 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
         "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
         "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
         "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
+        // A number past simdjson's range with an exponent's `+`: refused by simdjson, read by the Bitlex parser.
+        "[1e+21, -9223372036854778000]", "{\"a\": 1e+21, \"b\": [12345678901234567890123]}",
     ]
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))
     .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2901,7 +2913,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3082,7 +3097,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -7910,7 +7928,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             assert_eq!(view.nodes, n);
             for i in 0..n {
                 let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
-                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                let code = codes[reads.one("tape_number", tape, view, i as usize) as usize];
                 assert_eq!(
                     (code.kind, code.field, code.flags),
                     (
@@ -7923,52 +7941,52 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 );
                 let end = doc.transducer_descendants(i).end;
                 assert_eq!(
-                    reads.one("tape_end_of", tape, &view, i as usize),
+                    reads.one("tape_end_of", tape, view, i as usize),
                     end,
                     "{}",
                     at("subtree")
                 );
                 let span = doc.transducer_span(i);
                 assert_eq!(
-                    reads.one("tape_start", tape, &view, i as usize) as usize,
+                    reads.one("tape_start", tape, view, i as usize) as usize,
                     span.start,
                     "{}",
                     at("start")
                 );
                 assert_eq!(
-                    reads.one("tape_end", tape, &view, i as usize) as usize,
+                    reads.one("tape_end", tape, view, i as usize) as usize,
                     span.end,
                     "{}",
                     at("end")
                 );
                 assert_eq!(
-                    reads.one("tape_parent", tape, &view, i as usize),
+                    reads.one("tape_parent", tape, view, i as usize),
                     none(doc.transducer_parent(i)),
                     "{}",
                     at("parent")
                 );
                 assert_eq!(
-                    reads.one("tape_next", tape, &view, i as usize),
+                    reads.one("tape_next", tape, view, i as usize),
                     none(doc.transducer_next_sibling(i, false)),
                     "{}",
                     at("next")
                 );
                 let kids = doc.transducer_children(i).collect::<Vec<_>>();
                 assert_eq!(
-                    reads.one("tape_child_count", tape, &view, i as usize) as usize,
+                    reads.one("tape_child_count", tape, view, i as usize) as usize,
                     kids.len(),
                     "{}",
                     at("children")
                 );
                 assert_eq!(
-                    reads.one("tape_first_child", tape, &view, i as usize),
+                    reads.one("tape_first_child", tape, view, i as usize),
                     none(kids.first().copied()),
                     "{}",
                     at("first child")
                 );
                 for (k, &kid) in kids.iter().enumerate().take(8) {
                     assert_eq!(
-                        reads.two("tape_child", tape, &view, i as usize, k as u32),
+                        reads.two("tape_child", tape, view, i as usize, k as u32),
                         kid,
                         "{}",
                         at("a child")
@@ -7979,13 +7997,16 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
     }
 }
 
+/// A grammar's encoder of a text, stopped where its callback says: its tape, or why it refused the text.
+type Encode<E> = fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>;
+
 /// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
 /// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
 /// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
 /// parser's; a file it refuses goes to tree-sitter.
 fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     dialect: GrammarDialect,
-    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    encode: Encode<E>,
     sources: &[&str],
     invalid: &[&str],
 ) {
@@ -8234,7 +8255,7 @@ fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
     let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start as usize)).collect()
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 
 /// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is

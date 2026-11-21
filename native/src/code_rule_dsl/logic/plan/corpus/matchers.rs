@@ -65,7 +65,7 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
                         Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
                         _ => continue,
                     };
-                    let Some(node) = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg()) else { return None };
+                    let node = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg())?;
                     read = true;
                     // Another positive atom of the body that binds the node where only matchers' roots fill it.
                     let roots = body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {

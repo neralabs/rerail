@@ -11,7 +11,8 @@
 # programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
 [profile.default]
 default-filter = """not (
-    test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
+    binary(=git_revision_cli)
+  | test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
   | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent|library_modules_link_to_the_lowering_of_them_together)/)
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
   | test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)
@@ -29,6 +30,7 @@ default-filter = """not (
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
   | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
+  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -57,6 +59,12 @@ test-group = "fsevents"
 filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
+# Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
+# and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).
+[[profile.default.overrides]]
+filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
 [profile.default.junit]
 path = "junit.xml"
 
@@ -66,3 +74,15 @@ default-filter = "all()"
 
 [profile.gate.junit]
 path = "junit.xml"
+
+# The preprocessor's evaluation tests, each stopped at 1 s and failed (the user, 2026-11-20: "you
+# may not run tests over 1 second; none of these cases should take more than a few milliseconds").
+#   cargo nextest run -p rerail-c-directives --lib --profile second
+[profile.second]
+default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
+slow-timeout = { period = "1s", terminate-after = 1 }
+failure-output = "final"
+# Past the default profile's override for the package (which every profile takes), the second's.
+[[profile.second.overrides]]
+filter = "package(rerail-c-directives)"
+slow-timeout = { period = "1s", terminate-after = 1 }

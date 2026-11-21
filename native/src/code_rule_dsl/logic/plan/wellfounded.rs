@@ -352,14 +352,26 @@ impl Analysis for Proofs {
     const NAME: &'static str = "well-founded components";
     const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Proofs, String> {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "well-founded components (decision 0364 §5)".into());
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(cx.v(), &d);
         let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
         let rules = rules_of(cx.v());
         let helpers = summarize(&rules, &types);
         let comps = cx.get::<Components>()?;
-        let recursive = |c: &BTreeSet<String>| rules.iter().any(|r| c.contains(&r.head.rel) && r.atoms.iter().any(|a| c.contains(&a.rel)));
-        let comps = comps.0.iter().filter(|c| recursive(c)).map(|c| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
+        // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
+        // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
+        // against 0458); checking the recursive ones takes under 1 ms.
+        let of: HashMap<&str, usize> = comps.0.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r.as_str(), i))).collect();
+        let mut recursive = vec![false; comps.0.len()];
+        for r in &rules {
+            if let Some(&c) = of.get(r.head.rel.as_str())
+                && r.atoms.iter().any(|a| of.get(a.rel.as_str()) == Some(&c))
+            {
+                recursive[c] = true;
+            }
+        }
+        let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { comps })
     }
 }
@@ -372,10 +384,12 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
         return Err("a relation with no node column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
-    let total: usize = cols.iter().map(Vec::len).product();
-    if total > 4000 {
+    // The measures to try: one node column of each relation, every choice. Stopped at the bound as it is multiplied:
+    // a component of many relations (python/calls with the typing run, about 2^64 choices) overflowed the product.
+    const MEASURES: usize = 4000;
+    let Some(total) = cols.iter().try_fold(1usize, |n, c| n.checked_mul(c.len()).filter(|&n| n <= MEASURES)) else {
         return Err("too many measures to try".into());
-    }
+    };
     for n in 0..total {
         let (mut rest, mut m) = (n, BTreeMap::new());
         for (r, c) in rels.iter().zip(&cols) {
@@ -538,6 +552,21 @@ mod tests {
         assert_eq!(reach, Err("a relation with no node column".into()));
         let linked = check_of(".decl r(a: node, b: node)\nr(a, b) :- link(a, b).\nr(a, c) :- r(a, b), link(b, c).\n", &["r"]);
         assert!(linked.unwrap_err().starts_with("an unknown step: link"));
+    }
+
+    /// A component whose measures are past the bound is refused, however many: the product of 70 relations' four node
+    /// columns each (2^140) overflowed before it was compared (python/calls with the typing run, on two threads).
+    #[test]
+    fn a_component_of_many_measures_is_refused() {
+        let n = 70;
+        let mut text = String::new();
+        for i in 0..n {
+            let next = (i + 1) % n;
+            text.push_str(&format!(".decl r{i}(a: node, b: node, c: node, d: node)\nr{i}(a, b, c, d) :- r{next}(a, b, c, d), child(a, b, _), child(c, d, _).\n"));
+        }
+        let comp: Vec<String> = (0..n).map(|i| format!("r{i}")).collect();
+        let comp: Vec<&str> = comp.iter().map(String::as_str).collect();
+        assert_eq!(check_of(&text, &comp), Err("too many measures to try".into()));
     }
 
     /// Steps both ways, and a cycle at one node, fail.

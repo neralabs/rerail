@@ -172,7 +172,7 @@ impl<'a> Walk<'a> {
                             && self.seen.insert((name.clone(), rel.clone(), from.clone(), frame.clone(), negated))
                         {
                             self.active.push(name.clone());
-                            self.rule(&util, rel, from, &frame, negated, &format!("utils/{name}"));
+                            self.rule(util, rel, from, &frame, negated, &format!("utils/{name}"));
                             self.active.pop();
                         }
                     }

@@ -1,5 +1,4 @@
 .policy "bandit-b101-assert-used" revision 2
-.guests off
 .description "Avoid assert statements in Python code outside tests; they are stripped when Python runs with optimization, so any check they perform silently disappears."
 .language python
 .mode steer

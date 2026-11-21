@@ -1,5 +1,4 @@
 .policy "ruff-dtz901-datetime-min-max" revision 1
-.guests off
 .description "Attach a timezone to the minimum and maximum datetime constants; the bare values are naive and fail when ordered against aware datetimes."
 .language python
 .mode steer

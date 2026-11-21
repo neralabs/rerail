@@ -84,6 +84,13 @@ pub fn open(root: &Path) -> Result<gix::Repository, OpenError> {
     .map_err(|error| OpenError::Failed(error.message))?
 }
 
+/// The options [`discover`] opens a repository with, for a caller that opens its Git directory again (a source
+/// view whose object store changed).
+pub fn open_options() -> gix::open::Options {
+    let setup = installed();
+    Sources::new(setup.as_deref()).options()
+}
+
 /// The Git repository around `root`, opened as Git would open it from there.
 pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     let setup = installed();
@@ -340,6 +347,15 @@ impl Sources {
         permissions.attributes.git_binary = false;
         permissions.config.system = self.system.is_some() || self.system_found_by_gix;
         permissions.config.git_binary = self.installation.is_some();
+        // A hook may export a worktree, index or ref namespace for another repository, which gix applies even after
+        // discovery found this one: with any of them set, Git's prefixed variables are not read (gix groups these
+        // overrides under one permission).
+        if ["GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_SHALLOW_FILE"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+        {
+            permissions.env.git_prefix = gix::sec::Permission::Deny;
+        }
         let mut options = gix::open::Options::default()
             .permissions(permissions)
             .bail_if_untrusted(true);

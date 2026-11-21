@@ -1,5 +1,14 @@
     use super::*;
 
+    #[test]
+    fn catalog_inspection_does_not_attach_its_entries_to_another_run() {
+        inspect_separately(|| {
+            read_before_the_run([1; 32]);
+            inspect_separately(|| read_before_the_run([2; 32]));
+            assert_eq!(take_read_before(), vec![[1; 32]]);
+        });
+    }
+
     /// A batch's earlier run records its manifest and starts the store's collection while the pack's run has combined
     /// its program and queued it, and names it only in its own manifest, later. The entry is pinned until that run
     /// ends (`Pins`): the collection meanwhile keeps it. Before, it took the entry, and every batch combined its pack
@@ -42,6 +51,8 @@
         store.settle(&queued(&key));
         let back = lookup_version(&store, &key).unwrap().expect("kept");
         assert_eq!((back.size(), back.digest()), (program.size(), program.digest()));
+        assert!(retains_read(&store, &key, &read).unwrap());
+        assert!(!retains_read(&store, &key, &read[..1]).unwrap(), "the destination must have the same include observations");
         // The source the manifest names is the store's.
         let (text, _) = named(&key);
         assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
@@ -62,4 +73,38 @@
         next_run();
         assert!(lookup_version(&store, &key).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_process_hit_reinstalls_a_collected_program_with_a_surviving_read_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rule.rerail");
+        let text = ".decl e(x: int)\n.output e\ne(1).\n";
+        std::fs::write(&path, text).unwrap();
+        let path = path.canonicalize().unwrap();
+        let program = rr::parse_own_version(text).unwrap();
+        let digest = Sha256::digest(text.as_bytes()).into();
+        let files = [LibraryFile { path: path.clone(), sha256: Some(digest) }];
+        let key = rule_file_key(&path, &rr::library_root(), &digest);
+        let database = dir.path().join("store.sqlite");
+        super::super::with_tape_cache_path(&database, None, || {
+            let store = ContentStore::open(&database).unwrap();
+            rr::retain_read_program(&path, &rr::library_root(), &files, &program);
+            store.settle(&queued(&key));
+            assert!(retains_read(&store, &key, &files).unwrap());
+
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            let entry = store.source_by_hash(HashKey::sha256(source_text(&key).as_bytes())).unwrap().unwrap();
+            store.pin_source(entry, "keep just the input record", now + 3600).unwrap();
+            drop(Pins::new(&store, &key));
+            store.written().unwrap();
+            for _ in 0..2 { store.collect(now, 256).unwrap(); }
+            assert!(read_record(&store, &key).unwrap().is_some());
+            assert!(!retains_read(&store, &key, &files).unwrap());
+
+            rr::retain_read_program(&path, &rr::library_root(), &files, &program);
+            store.settle(&queued(&key));
+            assert!(retains_read(&store, &key, &files).unwrap());
+            assert!(lookup_read(&store, &key).unwrap().is_some());
+        });
     }

@@ -98,6 +98,8 @@ export function readApprovals(db: Pick<RerailDatabase, "select">): ReadonlySet<s
 export function currentSubject(db: Pick<RerailDatabase, "select">, catalog: RuleCatalog, name: string): RuleApprovalSubject | undefined {
   const library = db.select({ payloadHash: libraryRules.payloadHash }).from(libraryRules).where(eq(libraryRules.ruleId, name)).get();
   if (library !== undefined) return ruleSubject(name, library.payloadHash);
+  const rr = catalog.rrPolicies?.find(policy => policy.id === name);
+  if (rr !== undefined) return ruleSubject(name, rr.payloadHash);
   const pack = [...catalog.packs.values()].find(candidate => candidate.packageName === name || candidate.id === name)
     ?? catalog.packs.get(catalog.packOf.get(name) ?? "");
   if (pack === undefined) return undefined;
@@ -114,9 +116,9 @@ export function isApproved(db: Pick<RerailDatabase, "select">, subject: RuleAppr
 }
 
 /**
- * Record that a person approved `subject`; approving it again changes nothing. The first approval of an edited copy of
- * a By Rerail rule since it was created switches the original off wherever the copy is added, with a repository
- * setting, as the copy now replaces it there.
+ * Record that a person approved `subject`; approving it again changes nothing. The first approval of an edited copy
+ * since it was created (of a By Rerail rule, or of your approved rule a coding agent edited) switches the original off
+ * wherever the copy is added, with a repository setting, as the copy now replaces it there.
  */
 export function approve(db: Pick<RerailDatabase, "select" | "insert">, subject: RuleApprovalSubject, now: number = Date.now()): void {
   const copy = subject.kind === "rule"

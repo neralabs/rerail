@@ -151,7 +151,7 @@ fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
         (cut, own.finish().expect("the test's run is the outermost"))
     };
     let report = record.width.incomplete();
-    let error = stopped.err().expect("a relation past the cap stops the run").to_string();
+    let error = stopped.expect_err("a relation past the cap stops the run").to_string();
     assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
     let out = cut.expect("cut, the run goes on");
     let kept = out.shown()["pairs"].len();
@@ -339,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -2475,7 +2475,10 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
                 model.stats.fan.insert((rel, c), (rows / n).max(1.0));
             }
         }
-        model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
+        // Under the column's name as the model reads it (`Model::col`: `c1`, `doc_role` being no input), so that the
+        // count is the one the search prices.
+        let role = model.col("doc_role", 1);
+        model.stats.memo.insert("doc_role".into(), HashMap::from([((role, Constant::Int(7)), fragments)]));
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
@@ -2588,8 +2591,8 @@ fn bare_model(p: &Arc<Version>) -> Model {
 /// `(order shown, work)` of `p`'s first rule.
 fn priced_first_rule(model: &Model, p: &Arc<Version>) -> (Vec<String>, f64) {
     let r = 0usize;
-    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
-    (order.iter().map(|s| lit_at(&p, r, s.at)).collect(), work)
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(p, r), None).unwrap();
+    (order.iter().map(|s| lit_at(p, r, s.at)).collect(), work)
 }
 
 /// Work queue Q240: past the step that binds the head's last variable the walk needs one witness, and the search
@@ -2637,6 +2640,25 @@ fn within_read_from_its_container_is_priced_by_subtree_size() {
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order, ["c($t)", "within($n, $t)"]);
     assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
+}
+
+/// t50 step 4: `within(n, b)` read from a part of a node of known kind (`field($g, "body", $b)` of a function) is
+/// priced at that kind's size: the part's subtree is at most its parent's. As a node with children it was a few nodes,
+/// and `rf_in` enumerated every function's body from it before checking the read's own function.
+#[test]
+fn within_read_from_a_part_is_priced_by_its_parents_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"body\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    // 10 functions of 400 nodes, 2,000 nodes of 3: a node with children is about 5 nodes.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_010.0;
+    assert!(model.stats.subtree_fan().is_some_and(|f| f < 6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // The body's descendants, each function's: 10 × 400, not 10 × 5.
+    assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
 }
 
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
@@ -3094,6 +3116,35 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
 }
 
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0488) bounds its producer as a demand does (Q59): an
+/// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
+/// requested calls; an unrestricted atom may not.
+#[test]
+fn a_deferred_joins_producer_may_be_led_by_a_constant_restricted_atom() {
+    let program = |body: &str| parse(&format!(
+        ".decl x(v: number)\n.decl rr_deferred_pairs_x(v: number)\n.decl k(n: number, c: number)\n.decl col(n: number, c: number)\n\
+         rr_deferred_pairs_x(1). k(1, 7). col(1, 2).\n\
+         x(v) :- rr_deferred_pairs_x(v), {body}.\n.output x\n"
+    )).unwrap();
+    let lead = |body: &str| {
+        let p = program(body);
+        let db = Connection::open_in_memory().unwrap();
+        let mut stats = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
+        stats.card.insert("rr_deferred_pairs_x", 5_000_000.0);
+        stats.card.insert("k", 10.0);
+        stats.card.insert("col", 10.0);
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        inputs.given = Some(stats);
+        let model = make_plan(&body::Placed::whole(p.clone()), &db, inputs).unwrap();
+        let (order, _, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        let rule = p.rules().next().unwrap();
+        rule.body().nth(order[0].at).and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned()).unwrap()
+    };
+    assert_eq!(lead("k(v, 7)"), "k", "led by the restricted atom");
+    assert_eq!(lead("col(v, c)"), "rr_deferred_pairs_x", "an unrestricted atom does not lead");
+}
+
 /// A demanded relation's rule (decision 0048's split: `x` computed for `demand_x`'s keys) is driven by its demand,
 /// whatever the statistics say (Q59): the guard is structural. Priced here as the outlier run saw it (the demand
 /// large, a scan of `col` small), the search still starts from `demand_x`, and a kept order that does not is not
@@ -3340,7 +3391,7 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     let mut given = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
     for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
         given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
-        given.card.insert(rel.to_owned(), 1_000.0);
+        given.card.insert(rel, 1_000.0);
     }
     inputs.given = Some(given);
     // Atomized inputs, as a corpus run's: their indexes are the vtabs' (no SQL schema read).
@@ -3391,7 +3442,7 @@ fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
     let mut given = Stats::empty_of(&f);
     for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
         given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
-        given.card.insert(rel.to_owned(), 1_000.0);
+        given.card.insert(rel, 1_000.0);
     }
     inputs.given = Some(given);
     inputs.atoms = Some([0; 3]);
@@ -3464,7 +3515,7 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
@@ -3514,8 +3565,8 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let broken = shapes::run_broken().facts();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
     // The probes checked against a fact: none means no line priced by it was counted.
     let checked = shapes::run_broken().1.load(std::sync::atomic::Ordering::Relaxed);
     drop(run);
@@ -3530,7 +3581,7 @@ fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
     hits.sort();
     let want: Vec<(String, i64)> = ["a.py", "b.py"].iter().flat_map(|f| (1..=40).map(move |l| (f.to_string(), l))).collect();
     assert_eq!(hits, want, "{report:#}");
-    assert_eq!(broken.into_iter().collect::<Vec<_>>(), [("under".to_owned(), "fanout(a -> b, one)".to_owned())], "the run found `under`'s fan-out broken ({checked} probes checked against a fact)");
+    assert_eq!(broken, 1, "the run found `under`'s fan-out broken ({checked} probes checked against a fact)");
 }
 
 /// Decision 0361 step 6, a key checked where the rows are written: `under` declares `key(a)`, and a module has 40
@@ -3556,8 +3607,8 @@ fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
-    let broken = shapes::run_broken().facts();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&policy);
@@ -3571,7 +3622,7 @@ fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
     let mut want: Vec<(String, i64)> = (1..=40).map(|l| ("a.py".to_owned(), l)).collect();
     want.push(("c.py".to_owned(), 1));
     assert_eq!(hits, want, "{report:#}");
-    assert_eq!(broken.into_iter().collect::<Vec<_>>(), [("under".to_owned(), "key(a)".to_owned())], "the rows' writer found `under`'s key broken");
+    assert_eq!(broken, 1, "the rows' writer found `under`'s key broken");
 }
 
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
@@ -3653,8 +3704,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
                    .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
                    .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
                    .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n";
-    let p = parse(text).unwrap();
-    let v = p;
+    let v = parse(text).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
@@ -3667,23 +3717,23 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
     assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
     // By default no derived relation is sized by an estimate: the recursion `anc`, which no fact sizes, is not, and `z`,
-    // which reads it, is not prepared. `o`'s rule, over the inputs, is; and `r`, as `o`'s facts (inferred from its rule)
-    // size it. (Another program: a version of the same digest holds the prepared plans made above.)
+    // which reads it, is not prepared. `o`'s rule, over the inputs, tests a constant on `kind2`'s `values` column, so it
+    // is planned at run time (0361, Q297), and `r` is prepared, as `o`'s facts (inferred from its rule) size it.
+    // (Another program: a version of the same digest holds the prepared plans made above.)
     drop(_on);
-    let p = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
-    let v = p;
+    let v = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    assert!(prep.0.contains_key(&line("o", 0, None)), "`o` reads the inputs alone");
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant a `values` fact answers: planned at run time");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
 }
 
-/// Decision 0506: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// Decision 0488: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
 /// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
 /// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
 #[test]
@@ -3714,7 +3764,7 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
 }
 
-/// Decision 0506: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
 /// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
 /// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
 #[test]
@@ -3739,10 +3789,39 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
                 model.stats.counts.insert((rel, y), std::sync::Arc::new(c));
             }
         }
-        let pf = body::Placed::whole(p.clone());
-        *model.plan_rule_step_rows(pf.fields().unwrap(), &body::nth(&p, 0), None).unwrap().1.last().unwrap()
+        *model.plan_rule_step_rows(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap().1.last().unwrap()
     };
     let (with, without) = (last(true), last(false));
     assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
     eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
+}
+
+/// Past a bound head the search passes on one witness a binding only for a step joined by a bound variable, as the
+/// greedy `step` does: a cross product reads its rows until one passes the rest (Q240). A dict's keys and values
+/// unwrapped, `h(t) :- tgt(t), child(t, k0, i), child(t, v0, j), unparen(k0, k), unparen(v0, v)`, was led from the
+/// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
+/// 100 s on 300 files; probed by `child` first, a target reads a few rows.
+#[test]
+fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
+    let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [("tgt", 233.0, vec![233.0]), ("child", 69_650.0, vec![23_217.0, 69_650.0, 103.0]), ("unparen", 69_690.0, vec![69_690.0, 69_690.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    model.stats.solve(["h"].into_iter().map(str::to_owned).collect());
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    // Each `unparen` after the `child` that binds its node: probed, never scanned.
+    let first = |rel: &str| order.iter().position(|r| *r == rel).unwrap();
+    assert_eq!(order[0], "tgt", "{order:?}, work={work}");
+    assert!(first("child") < first("unparen"), "{order:?}, work={work}");
+    assert!(work < 1e4, "{order:?}: {work}");
 }

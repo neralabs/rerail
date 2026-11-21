@@ -1204,7 +1204,7 @@ impl Drop for EvaluationSlot {
 
 /// How `calls` reads a file's bindings: `resolves`' default reading, as a stub where the path is
 /// one (what `matcher::calls_tables` builds at a call node).
-pub(crate) fn reading(path: &str) -> Reading {
+pub fn reading(path: &str) -> Reading {
     Reading {
         stub: is_stub_file(path),
         ..Reading::default()

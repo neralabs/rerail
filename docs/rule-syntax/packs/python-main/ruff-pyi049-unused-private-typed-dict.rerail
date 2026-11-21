@@ -1,5 +1,4 @@
 .policy "ruff-pyi049-unused-private-typed-dict" revision 1
-.guests off
 .description "Use, make public or remove a private TypedDict that nothing in its file references; an unused private TypedDict is likely a mistake."
 .language python
 .mode steer

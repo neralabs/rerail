@@ -111,19 +111,27 @@ struct Api {
     set_kernel_exec_info: Option<unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt>,
 }
 
+/// `clHostMemAllocINTEL`'s signature.
+type HostMemAlloc = unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr;
+/// `clMemBlockingFreeINTEL`'s signature.
+type MemBlockingFree = unsafe extern "C" fn(Ptr, Ptr) -> ClInt;
+/// `clSetKernelArgMemPointerINTEL`'s signature.
+type SetKernelArgMemPointer = unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt;
+/// `clEnqueueMemcpyINTEL`'s signature.
+type EnqueueMemcpy = unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt;
+
 /// `cl_intel_unified_shared_memory`'s entry points (the platform's extension functions): host allocations, which
 /// have an address kernels follow.
-#[allow(clippy::type_complexity)]
 struct Usm {
     /// `clHostMemAllocINTEL(context, properties, size, alignment, errcode)`.
-    host_mem_alloc: unsafe extern "C" fn(Ptr, *const u64, usize, ClUint, *mut ClInt) -> Ptr,
+    host_mem_alloc: HostMemAlloc,
     /// `clMemBlockingFreeINTEL(context, ptr)`: frees once the device's work with it has completed.
-    mem_blocking_free: unsafe extern "C" fn(Ptr, Ptr) -> ClInt,
+    mem_blocking_free: MemBlockingFree,
     set_kernel_exec_info: unsafe extern "C" fn(Ptr, ClUint, usize, *const c_void) -> ClInt,
     /// `clSetKernelArgMemPointerINTEL(kernel, index, ptr)`: an argument that is a host allocation.
-    set_kernel_arg_mem_pointer: unsafe extern "C" fn(Ptr, ClUint, *const c_void) -> ClInt,
+    set_kernel_arg_mem_pointer: SetKernelArgMemPointer,
     /// `clEnqueueMemcpyINTEL(queue, blocking, dst, src, size, waits, wait list, event)`.
-    enqueue_memcpy: unsafe extern "C" fn(Ptr, ClUint, Ptr, *const c_void, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_memcpy: EnqueueMemcpy,
 }
 
 /// What a kernel's argument or a copy names of a buffer: an OpenCL buffer, or a host allocation's address (`Usm`),
@@ -170,10 +178,19 @@ fn api() -> Result<&'static Api, String> {
         let sym = |name: &str| -> Result<Ptr, String> {
             handle.symbol(name).ok_or_else(|| format!("the OpenCL library has no {name}"))
         };
+        /// The symbol at `p` as the function type `F` its field declares (a function pointer: its size is checked).
+        ///
+        /// # Safety
+        /// `p` is a function of `F`'s signature.
+        unsafe fn as_fn<F: Copy>(p: Ptr) -> F {
+            const { assert!(size_of::<F>() == size_of::<Ptr>(), "a function pointer") };
+            // SAFETY: the caller's; the sizes are equal.
+            unsafe { std::mem::transmute_copy::<Ptr, F>(&p) }
+        }
         // SAFETY: each symbol is OpenCL 1.2's function of that name, with the signature its field declares.
         macro_rules! f {
             ($n:literal) => {
-                unsafe { std::mem::transmute::<Ptr, _>(sym($n)?) }
+                unsafe { as_fn(sym($n)?) }
             };
         }
         Ok(Api {
@@ -263,7 +280,7 @@ fn native_subgroups(a: &Api, device: Ptr) -> bool {
         return false;
     }
     let sizes = device_info_bytes(a, device, CL_DEVICE_SUB_GROUP_SIZES_INTEL);
-    sizes.chunks_exact(8).any(|c| u64::from_ne_bytes(c.try_into().unwrap()) == 32)
+    sizes.as_chunks::<8>().0.iter().any(|c| u64::from_ne_bytes(*c) == 32)
 }
 
 /// The device's host allocations, with `RERAIL_OPENCL_USM=1`, where it has Intel's unified shared memory with host
@@ -290,11 +307,11 @@ fn usm(a: &Api, platform: Ptr, device: Ptr) -> Option<Usm> {
     };
     // SAFETY: each is the extension's function of that name, with the signature its field declares.
     Some(Usm {
-        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, _>(f("clHostMemAllocINTEL")?) },
-        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, _>(f("clMemBlockingFreeINTEL")?) },
+        host_mem_alloc: unsafe { std::mem::transmute::<Ptr, HostMemAlloc>(f("clHostMemAllocINTEL")?) },
+        mem_blocking_free: unsafe { std::mem::transmute::<Ptr, MemBlockingFree>(f("clMemBlockingFreeINTEL")?) },
         set_kernel_exec_info: a.set_kernel_exec_info?,
-        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, _>(f("clSetKernelArgMemPointerINTEL")?) },
-        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, _>(f("clEnqueueMemcpyINTEL")?) },
+        set_kernel_arg_mem_pointer: unsafe { std::mem::transmute::<Ptr, SetKernelArgMemPointer>(f("clSetKernelArgMemPointerINTEL")?) },
+        enqueue_memcpy: unsafe { std::mem::transmute::<Ptr, EnqueueMemcpy>(f("clEnqueueMemcpyINTEL")?) },
     })
 }
 
@@ -518,10 +535,10 @@ unsafe impl Sync for Allocation {}
 impl Drop for Allocation {
     fn drop(&mut self) {
         // A queue's work keeps the buffers it uses until it has completed, so no kernel reads these pages now.
-        if let Ok(a) = api() {
-            if !self.mem.is_null() {
-                unsafe { (a.release_mem_object)(self.mem) };
-            }
+        if let Ok(a) = api()
+            && !self.mem.is_null()
+        {
+            unsafe { (a.release_mem_object)(self.mem) };
         }
         match &self.owner {
             Owner::Heap(layout) => unsafe { std::alloc::dealloc(self.ptr, *layout) },
@@ -616,7 +633,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
     let page = crate::sys::page_size();
-    if (ptr as usize) % page != 0 || len % 64 != 0 || len == 0 {
+    if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(64) || len == 0 {
         return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
     }
     let a = api()?;
@@ -877,8 +894,11 @@ struct RootState {
     backlog: std::collections::VecDeque<Pending>,
     device: ClDevice,
     /// The fill kernel (`FILL`) and its library, compiled at the root's first fill.
-    fill: Option<Result<(Arc<ClComputeFunctionLibrary>, Arc<Mutex<Kernel>>), String>>,
+    fill: Option<Result<FillKernel, String>>,
 }
+
+/// The fill kernel and the library it was compiled in.
+type FillKernel = (Arc<ClComputeFunctionLibrary>, Arc<Mutex<Kernel>>);
 
 /// A fill's kernel (`ClComputeQueue::enqueue_fill_array`), OpenCL C (the device layer is below the UKL
 /// preprocessor): word `first + i` of `out` is the pattern's word `i % period`, for `i < count`.
@@ -985,9 +1005,12 @@ struct Launched {
     name: String,
 }
 
+/// Work a queue enqueues when its turn comes.
+type Work = Box<dyn FnOnce(&mut Enqueue) -> Result<(), String> + Send>;
+
 /// An operation of a queue: work to enqueue, or a wait for a host-signalled event that holds what follows.
 enum Op {
-    Run(Box<dyn FnOnce(&mut Enqueue) -> Result<(), String> + Send>),
+    Run(Work),
     Wait(ClSharedEvent, u64),
 }
 
@@ -1131,7 +1154,7 @@ impl ClComputeQueue {
         let words: Option<Vec<u32>> = match size {
             1 => Some(vec![u32::from_ne_bytes([one[0]; 4])]),
             2 => Some(vec![u32::from_ne_bytes([one[0], one[1], one[0], one[1]])]),
-            _ if size % 4 == 0 && size <= 32 => Some(one.chunks(4).map(|w| u32::from_ne_bytes(w.try_into().unwrap())).collect()),
+            _ if size.is_multiple_of(4) && size <= 32 => Some(one.chunks(4).map(|w| u32::from_ne_bytes(w.try_into().unwrap())).collect()),
             _ => None,
         };
         let (start, bytes) = (offset * size, count * size);
@@ -1328,7 +1351,7 @@ impl ClBindContext<'_> {
             return Ok(());
         }
         let align = self.function.device.0.base_align;
-        if offset % align != 0 || offset >= buffer.length() {
+        if !offset.is_multiple_of(align) || offset >= buffer.length() {
             return Err(format!("{}: argument {arg_num} at byte {offset} of a {}-byte buffer: OpenCL binds a region at a multiple of {align} bytes", self.function.name, buffer.length()));
         }
         let mem = if buffer.0.mem.is_null() {

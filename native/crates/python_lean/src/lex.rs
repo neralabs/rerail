@@ -224,6 +224,8 @@ struct Lexer<'s> {
     joins: &'s [u32],
     /// The brackets the text is inside (`lex_inside`): 0 for a file.
     outer: u32,
+    /// Whether `$X`, `$$$X` and `$_` are names: a rule's pattern (`lex_pattern`, decision 0495 §3).
+    metavariables: bool,
 }
 
 const MAX_NESTING: u32 = 64;
@@ -240,7 +242,17 @@ pub fn lex_joined(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
 /// `src` lexed as text inside `outer` brackets (a fragment read as if in parentheses, decision 0466): no NEWLINE,
 /// INDENT or DEDENT, as inside brackets, and a closer never takes the depth below `outer`.
 pub fn lex_inside(src: &[u8], joins: &[u32], outer: u32) -> Result<Lexed, Refusal> {
-    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins, outer };
+    lex_with(src, joins, outer, false)
+}
+
+/// `src` lexed as a rule's pattern (decision 0495 §3): a module whose metavariables are names. A metavariable is one
+/// to three `$` and a name of capitals, digits and `_` (`$X`, `$$ARGS`, `$_`), or `$$$` alone.
+pub fn lex_pattern(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
+    lex_with(src, joins, 0, true)
+}
+
+fn lex_with(src: &[u8], joins: &[u32], outer: u32, metavariables: bool) -> Result<Lexed, Refusal> {
+    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, joins, outer, metavariables };
     l.module()?;
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
@@ -608,9 +620,32 @@ impl<'s> Lexer<'s> {
             self.string(i, prefix, q)?;
             return Ok(T::StrEnd);
         }
+        if self.metavariables
+            && c == b'$'
+            && let Some(end) = self.metavariable_end(i)
+        {
+            self.toks.push(Tok { kind: T::Name, soft: 0, start: i as u32, end: end as u32 });
+            self.p = end;
+            return Ok(T::Name);
+        }
         let (kind, len) = self.operator(i)?;
         self.push(kind, i, i + len);
         Ok(kind)
+    }
+
+    /// A metavariable's end at `i` (a `$`): `$X`, `$$X`, `$$$X`, `$_`, `$X1`, or `$$$` alone.
+    fn metavariable_end(&self, i: usize) -> Option<usize> {
+        let mut j = i;
+        while j < i + 3 && self.at(j) == b'$' {
+            j += 1;
+        }
+        let name = j;
+        if matches!(self.at(j), b'A'..=b'Z' | b'_') {
+            while matches!(self.at(j), b'A'..=b'Z' | b'0'..=b'9' | b'_') {
+                j += 1;
+            }
+        }
+        (j > name || name - i == 3).then_some(j)
     }
 
     /// A name's end: ASCII runs a block a step, a character past ASCII by its XID class.

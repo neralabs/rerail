@@ -79,6 +79,7 @@ function @nfkc/1	native	no computed term	p(v) :- t(a), v = @nfkc(a).
 function @shell_unquote/1	native	no computed term	p(v) :- t(a), v = @shell_unquote(a).
 function @to_precision/2	native	no computed term	p(v) :- t(a), m(y), v = @to_precision(a, y).
 function @lower/1	native	device	p(v) :- t(a), v = @lower(a).
+function @ascii_lower/1	native	no computed term	p(v) :- t(a), v = @ascii_lower(a).
 function @str_concat/2	native	no computed term	p(v) :- t(a), t(b), v = @str_concat(a, b).
 function @str_between/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @str_between(a, b, c).
 function @str_cmp/2	native	device	p(v) :- t(a), t(b), v = @str_cmp(a, b).
@@ -189,6 +190,10 @@ aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.
 aggregate max	native	device	p(a, c) :- t(a), c = max v : { p(a, v) }.
 aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	p(a, c) :- s(a), c = product v : { p(a, v) }.
 aggregate join	native	no string join	p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
+aggregate max bounded by <	native	refused: an aggregate bounded by its probe (decision 0511)	p(a, x, c) :- s(a), n(x), c = max v : { p(a, v), v < x }.
+aggregate max bounded by <=	native	refused: an aggregate bounded by its probe (decision 0511)	p(a, x, c) :- s(a), n(x), c = max v : { p(a, v), v <= x }.
+aggregate min bounded by >	native	refused: an aggregate bounded by its probe (decision 0511)	p(a, x, c) :- s(a), n(x), c = min v : { p(a, v), v > x }.
+aggregate min bounded by >=	native	refused: an aggregate bounded by its probe (decision 0511)	p(a, x, c) :- s(a), n(x), c = min v : { p(a, v), v >= x }.
 functor @concat of three texts	native	device	p(v) :- t(a), t(b), v = @concat(a, "::", b).
 functor @printf of %012d	native	device	p(v) :- n(x), v = @printf("%03d.", x).
 functor @printf of %d and %s	native	device	p(v) :- p(a, x), v = @printf("%d:%s|%%", x, a).

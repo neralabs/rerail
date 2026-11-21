@@ -1,10 +1,12 @@
 /**
  * `rerail rules approve`: list the rules and packs whose content waits for a person's approval here, or approve one
- * (`rule-approval.ts`), printing what it approves first. Until approved, such a rule runs in Log only. A coding agent
- * runs this only after the person said yes to the content it read back to them (`skills/rerail-create`, "Approve"),
- * and the command files never pre-approve it, so the agent's host asks the person before it runs.
+ * (`rule-approval.ts`), printing what it approves first. Until approved, such a rule runs in Log only. Approving is a
+ * person's: in a coding agent's session (`agent-session.ts`) it lists what waits, and refuses to approve, sending the
+ * person to each one's page in the dashboard, as the API refuses an MCP caller.
  */
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
@@ -12,12 +14,13 @@ import { approvalKey, approve, currentSubject, packSubject, readApprovals, ruleS
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { declaredPackCatalog, PacksFileError, readPacksFile, repositoryPackDirectory } from "../engine/catalog/packs-file/packs-file.js";
 import { RERAIL_PUBLISHER } from "../engine/catalog/rule-packs.js";
-import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules } from "../engine/storage/schema.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { clean } from "../harness/setup-screens.js";
+import { agentRunsText, agentSession, type AgentSession } from "../engine/agent-session.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 
 interface Waiting {
@@ -46,14 +49,16 @@ function waiting(db: RerailDatabase, catalog: RuleCatalog, declared: RuleCatalog
     const from = pack.localSource === undefined ? by : [by, `from the ${pack.localSource.kind} ${pack.localSource.path}`].filter(Boolean).join(", ");
     return [{ subject: { ...subject, id: `${subject.id}@${pack.version ?? "?"}` }, approvalSubject: subject, from }];
   });
+  const rr = (catalog.rrPolicies ?? []).map(policy => ({ subject: ruleSubject(policy.id, policy.payloadHash), from: `this worktree's ${WORKTREE_RULES_FOLDER}` }));
   return [
-    ...[...library, ...own].filter(entry => !approvals.has(approvalKey(entry.subject))),
+    ...[...library, ...own, ...rr].filter(entry => !approvals.has(approvalKey(entry.subject))),
     ...packs.filter((entry, index) => !approvals.has(approvalKey(entry.approvalSubject))
       && packs.findIndex(other => approvalKey(other.approvalSubject) === approvalKey(entry.approvalSubject)) === index).map(({ subject, from }) => ({ subject, from })),
   ];
 }
 
-function list(db: RerailDatabase, catalog: RuleCatalog, declared: RuleCatalog | undefined, write: (text: string) => void): void {
+/** What waits here, and how a person approves it: on its page in the dashboard when a coding agent's session asks. */
+function list(db: RerailDatabase, catalog: RuleCatalog, declared: RuleCatalog | undefined, write: (text: string) => void, session: AgentSession | undefined): void {
   const entries = waiting(db, catalog, declared);
   if (entries.length === 0) {
     write("● Nothing is waiting for approval here.\n");
@@ -62,7 +67,9 @@ function list(db: RerailDatabase, catalog: RuleCatalog, declared: RuleCatalog | 
   write([
     "Waiting for approval; each runs in Log, and steers no one, until a person approves it:",
     ...entries.map(({ subject, from }) => `  ${subject.kind} ${clean(subject.id)}${from === "" ? "" : `  (${clean(from)})`}`),
-    "Read each before approving it. Approve one with: rerail rules approve <id or package>",
+    session === undefined
+      ? "Read each before approving it. Approve one with: rerail rules approve <id or package>"
+      : "A person reads each and approves it on its page in the dashboard, which rerail manage opens.",
   ].join("\n") + "\n");
 }
 
@@ -83,6 +90,15 @@ function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApp
     const pack = [...catalog.packs.values()].find(candidate => (candidate.packageName ?? candidate.id) === subject.id);
     const ids = pack?.rules.map(rule => clean(rule.id)) ?? [];
     return `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`;
+  }
+  const rr = catalog.rrPolicies?.find(policy => policy.id === subject.id && policy.payloadHash === subject.digest);
+  if (rr !== undefined) {
+    const sources = rr.inputs.filter(input => input.sha256 !== null).map(input => {
+      const bytes = readFileSync(input.path);
+      if (createHash("sha256").update(bytes).digest("hex") !== input.sha256) throw new Error(`${input.path} changed during approval`);
+      return { path: input.path, text: bytes.toString("utf8") };
+    });
+    return `● ${clean(subject.id)} (.rr rule) has this content:\n${visibleJson(sources)}\n`;
   }
   const document = db.select({ document: libraryRules.document }).from(libraryRules).where(eq(libraryRules.ruleId, subject.id)).get()?.document
     ?? catalog.documents.get(subject.id);
@@ -111,25 +127,35 @@ function declaredRepositoryPacks(root: string, write: (text: string) => void): R
   }
 }
 
+/** Why a coding agent's session cannot approve `names`, and where a person does. */
+function agentApprovalRefusal(names: readonly string[], session: AgentSession): string {
+  const one = names.length === 1;
+  return `${agentRunsText("rules approve", session)}. A person reads and approves ${names.map(clean).join(", ")} on ${one ? "its" : "their"} `
+    + `page in the dashboard, which rerail manage opens, or with rerail rules approve in a terminal of their own.`;
+}
+
 /** `rerail rules approve [<rule id | pack> …] [--repo <dir>]`. */
 export function runRuleApproveCommand(
   args: readonly string[],
   usage: () => string,
   io: { stdout?: { write(text: string): unknown } } = {},
   databasePath: string = defaultRerailDatabasePath(),
+  env: NodeJS.ProcessEnv = process.env,
 ): number {
   const write = (text: string): void => { (io.stdout ?? process.stdout).write(text); };
   // The names come first, then the options, as `rules test <draft.json> --repo <dir>` takes them.
   const first = args.findIndex(argument => argument.startsWith("-"));
   const positionals = first === -1 ? [...args] : args.slice(0, first);
   const { options } = parseArguments(first === -1 ? [] : args.slice(first), { flags: [], options: ["--repo"] }, argument => `Unknown rules approve option: ${argument}\n\n${usage()}`);
+  const session = agentSession(env);
+  if (session !== undefined && positionals.length > 0) throw new Error(agentApprovalRefusal(positionals, session));
   const { workspaceRoot } = repositoryIdentityLocation(resolve(options.get("--repo") ?? process.cwd()));
-  const catalog = worktreeRuleCatalog(loadRuleCatalog(), workspaceRoot);
+  const catalog = worktreeScanCatalog(loadRuleCatalog(), workspaceRoot);
   const declared = declaredRepositoryPacks(workspaceRoot, write);
   const db = openRerailDatabase(databasePath);
   try {
     if (positionals.length === 0) {
-      list(db, catalog, declared, write);
+      list(db, catalog, declared, write, session);
       return 0;
     }
     const approvals = readApprovals(db);

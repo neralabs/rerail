@@ -460,6 +460,11 @@ pub mod heap {
         let _ = SPAN.try_with(|s| s.set(id));
     }
 
+    /// The span this thread's allocations are charged to now (0 none): a refused device lease's (Q203).
+    pub fn span() -> u32 {
+        SPAN.try_with(Cell::get).unwrap_or(0)
+    }
+
     fn slot(ptr: usize) -> usize {
         // In 64 bits on every target (wasm32's pointers are 32): the same slot for the same address.
         ((ptr as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 13) as usize & (SLOTS - 1)
@@ -570,7 +575,7 @@ pub mod heap {
             *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
         v
     }
 
@@ -670,7 +675,7 @@ pub mod heap {
             for slot in got.iter_mut() {
                 // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
                 // caller's record is higher, and a walk out of the stack stops.
-                if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
+                if fp == 0 || !fp.is_multiple_of(8) || fp < start || fp > start + (64 << 20) {
                     break;
                 }
                 let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };

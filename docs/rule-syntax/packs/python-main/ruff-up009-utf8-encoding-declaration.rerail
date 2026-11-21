@@ -1,5 +1,4 @@
 .policy "ruff-up009-utf8-encoding-declaration" revision 1
-.guests off
 .description "Remove the UTF-8 encoding declaration comment at the top of a Python file; UTF-8 is already the default source encoding."
 .language python
 .mode steer

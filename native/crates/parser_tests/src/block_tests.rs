@@ -89,7 +89,7 @@ fn eq_equals_reference_on_every_executor() {
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
             for (name, got) in ex.every(&bytes) {
-                assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
+                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
     }
@@ -340,7 +340,8 @@ fn not_equals_reference_on_every_executor() {
 
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
-    let cases: [(&str, fn(u64, u64) -> u64); 4] =
+    type Op = fn(u64, u64) -> u64;
+    let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     for (name, f) in cases {
         // Each operator on the two masks, and on a mask with itself.
@@ -977,7 +978,7 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
 pub(crate) fn repo_file(path: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -1030,7 +1031,7 @@ fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockN
     out
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
@@ -1044,7 +1045,7 @@ fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> 
     vec![("generated msl".to_owned(), got)]
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()

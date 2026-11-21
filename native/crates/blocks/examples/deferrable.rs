@@ -224,7 +224,7 @@ DEFINE_KERNEL2(deferrable, fill, RWBUFFER, uint32_t, p, "[block]", ARGS, FillP, 
                         let left = v.iter().filter(|&&c| c as i32 & (libc::MINCORE_MODIFIED | libc::MINCORE_MODIFIED_OTHER) != 0).count();
                         if left == 0 || w.elapsed().as_secs() >= wait_s {
                             let blocks = std::fs::metadata(&path).map(|m| std::os::unix::fs::MetadataExt::blocks(&m)).unwrap_or(0);
-                            clean = format!("{} ms, {left} left, {} MiB on disk", w.elapsed().as_millis(), blocks * 512 >> 20);
+                            clean = format!("{} ms, {left} left, {} MiB on disk", w.elapsed().as_millis(), (blocks * 512) >> 20);
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(10));

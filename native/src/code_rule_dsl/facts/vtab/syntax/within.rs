@@ -45,7 +45,7 @@ use std::sync::{Arc, OnceLock};
 use crate::code_rule_dsl::facts::nearest::Binding;
 
 /// Which containment the rows are.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     /// Strictly below in the tree.
     Tree,
@@ -95,6 +95,8 @@ pub struct Within {
     len: AtomicUsize,
     /// An axis's set: per dialect tag, whether each kind code is in it.
     members: FxHashMap<u8, Box<[bool]>>,
+    /// The set's kind atoms, ascending: what the device tests a node's kind against (`has_walk`).
+    kinds: Arc<[i64]>,
     /// Where the batch's solve runs.
     binding: crate::code_rule_dsl::facts::nearest::Binding,
     /// The `n` lookups the planner expects, summed over its plans (`expect_lookups`).
@@ -150,6 +152,7 @@ impl Within {
             shape: OnceLock::new(),
             len: AtomicUsize::new(0),
             members: FxHashMap::default(),
+            kinds: Arc::from(Vec::new()),
             binding: crate::code_rule_dsl::facts::nearest::Binding::Cpu,
             expected: Mutex::new(0.0),
             chosen: std::sync::atomic::AtomicBool::new(false),
@@ -234,7 +237,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
             return out;
@@ -260,7 +263,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
             return out;
@@ -303,7 +306,9 @@ impl Within {
                 (tag, table)
             })
             .collect();
-        Within { members, binding, ..Within::new(batch, Mode::Axis(axis)) }
+        let mut sorted: Vec<i64> = kinds.into_iter().collect();
+        sorted.sort_unstable();
+        Within { members, kinds: Arc::from(sorted), binding, ..Within::new(batch, Mode::Axis(axis)) }
     }
 
     /// Whether the batch's solve answers the `n` side: an axis of ancestors in the set (`has` reads every ancestor),
@@ -316,6 +321,13 @@ impl Within {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn is_solved(&self) -> bool {
         self.solved.get().is_some()
+    }
+
+    /// Tests: the rows made per looked-up node so far, both sides.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn made_rows(&self) -> usize {
+        let made = self.made.lock();
+        made.0[0] + made.0[1]
     }
 
     /// The first id of the rows made per looked-up `n`.
@@ -334,7 +346,7 @@ impl Within {
             use crate::code_rule_dsl::logic::profile;
             use crate::code_rule_dsl::facts::nearest::{self as file_local, Trees};
             let _span = profile::span(|| "kind-set axis solved for the batch".into());
-            let n = self.batch.nodes.last().copied().unwrap_or(0);
+            let n = self.batch.nodes().last().copied().unwrap_or(0);
             let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
             if self.binding == Binding::Cpu && (0..self.batch.docs.len()).all(|doc| self.doc_tape(doc).is_some()) {
                 profile::work(profile::Unit::Node, n as u64);
@@ -342,7 +354,7 @@ impl Within {
             }
             let (mut parent, mut kind) = (Vec::with_capacity(n), Vec::with_capacity(n));
             for (doc, p) in self.batch.docs.iter().enumerate() {
-                let base = self.batch.nodes[doc] as u32;
+                let base = self.batch.nodes()[doc] as u32;
                 for l in 0..p.len() {
                     let up = p.parent(l as usize);
                     parent.push(if up == NONE { file_local::NONE } else { base + up });
@@ -413,14 +425,14 @@ impl Within {
         let mut found = Vec::with_capacity(n);
         let mut near = Vec::new();
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = self.batch.nodes[doc] as u32;
+            let base = self.batch.nodes()[doc] as u32;
             let dt = self.doc_tape(doc).expect("every document holds its tape");
             with_tape!(self.tape_of(dt), |t| {
                 nearest_all(&t, self.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut near);
             });
             found.extend(p.nodes().map(|(_, id)| match near[id as usize] {
                 rerail_tape_format::tape::NONE => file_local::NONE,
-                a => base + p.local_of_node(a as u32),
+                a => base + p.local_of_node(a),
             }));
         }
         self.solved_from(&found, inside)
@@ -431,7 +443,7 @@ impl Within {
         let s = self.solved();
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(at) = s.start_in_chunk {
-            let n = self.batch.nodes.last().copied().unwrap_or(0) + 1;
+            let n = self.batch.nodes().last().copied().unwrap_or(0) + 1;
             // SAFETY: the device wrote `n` values there, and the chunk lives as long as the batch this axis holds.
             return unsafe { std::slice::from_raw_parts(self.batch.chunk().block.ptr::<u32>(at), n) };
         }
@@ -497,7 +509,7 @@ impl Within {
         }
         let mut expected = self.expected.lock();
         *expected += keys.max(0.0);
-        let nodes = self.batch.nodes.last().copied().unwrap_or(0) as f64;
+        let nodes = self.batch.nodes().last().copied().unwrap_or(0) as f64;
         if *expected * LOOKUP_NS > nodes * SOLVE_NS {
             self.chosen.store(true, Ordering::Relaxed);
             crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || {
@@ -519,19 +531,19 @@ impl Within {
         let p = &self.batch.docs[doc];
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
-        let slot = p.facts.kind(p.node(local as u32)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let slot = p.facts.kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
         self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
     /// The document and local node of node row `row`.
     fn at(&self, row: u32) -> (usize, u32) {
-        let doc = self.batch.nodes.partition_point(|&o| o <= row as usize) - 1;
-        (doc, row - self.batch.nodes[doc] as u32)
+        let doc = self.batch.nodes().partition_point(|&o| o <= row as usize) - 1;
+        (doc, row - self.batch.nodes()[doc] as u32)
     }
 
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
@@ -651,13 +663,22 @@ impl Within {
         out
     }
 
+    /// Whether node `n` is strictly below node `a` (ids): in one document, `n` in `a`'s preorder interval of the
+    /// projection (`size`, a rank of the held tape's subtree end), the interval the made rows are (`contained`).
+    /// Nothing is made, and no tape reader is opened: a reader a call (`tape_of`) cost more than the rows it saved
+    /// in strata that check the same nodes again (t50 step 4).
+    fn below(&self, n: i64, a: i64) -> bool {
+        let (Some((dn, ln)), Some((da, la))) = (self.batch.node(n), self.batch.node(a)) else { return false };
+        dn == da && la < ln && ln <= la + self.batch.docs[da].size(la as usize)
+    }
+
     /// The rows of node row `row` as inner (`side` 0) or outer (1), made on the first lookup.
     fn rows(&self, side: usize, row: u32) -> (u32, u32) {
         if let Some(&run) = self.made.lock().1[side].get(&row) {
             return run;
         }
         let (doc, local) = self.at(row);
-        let base = self.batch.nodes[doc] as u32;
+        let base = self.batch.nodes()[doc] as u32;
         let others = if side == 0 { self.containers(doc, local) } else { self.contained(doc, local) };
         let mut made = self.made.lock();
         if let Some(&run) = made.1[side].get(&row) {
@@ -692,7 +713,7 @@ impl Within {
         debug_assert!(!(self.solvable() && row < LOOKED_UP), "a solved row is the relation's");
         let side = usize::from(row >= OUTER);
         let (k, at) = slot(row - if side == 0 { self.looked_up() } else { OUTER });
-        self.chunks[side][k].get().expect("a row made")[at].load(Ordering::Relaxed)
+        self.chunks[side][k].get().unwrap_or_else(|| panic!("within: row {row} not made (mode {:?}, solvable {}, solved {}, {} made)", self.mode, self.solvable(), self.solved.get().is_some(), self.made.lock().0[side]))[at].load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> Shape {
@@ -765,11 +786,22 @@ impl Within {
 }
 
 impl Source for Within {
+    /// A document's rows are its nodes' (an axis never leaves its document), in the row space `value` reads: the
+    /// batch's solve, where each node row's pairs are its run (decision 0494). The span mode's rows are made by lookup
+    /// and have no such space: `None`.
+    fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        if !self.solvable() {
+            return None;
+        }
+        let (start, nodes) = (self.starts(), self.batch.nodes());
+        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| start[nodes[i]] as usize..start[nodes[i + 1]] as usize).collect())
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
-    /// Read whole by the device: the batch's solve, the relation it was written into, where it lies (decision 0353
-    /// step 5).
+    /// Read whole (the device, a whole read's own index, on every target): the batch's solve, the relation it was
+    /// written into, where it lies (decision 0353 step 5). An axis with no solve has none: its rows are made per
+    /// looked-up node.
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.solvable().then(|| self.solved_rows().in_block(self.solved_rows().len()))
     }
@@ -787,7 +819,7 @@ impl Source for Within {
             return self.shape().rows as usize;
         }
         *self.all.get_or_init(|| {
-            for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
+            for row in 0..self.batch.nodes().last().copied().unwrap_or(0) as u32 {
                 self.rows(0, row);
             }
             self.len.load(Ordering::Acquire)
@@ -816,6 +848,20 @@ impl Source for Within {
     fn made_on_lookup(&self) -> bool {
         true
     }
+    /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
+    /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        if self.mode != Mode::Axis(Axis::Has) {
+            return None;
+        }
+        let chunk = self.batch.chunk();
+        let v = views_in_place(&self.batch, chunk)?;
+        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+        view.failed = view.cache_failed();
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().last().copied().unwrap_or(0), view, kinds: Arc::clone(&self.kinds) })
+    }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
     /// have no such solve.
@@ -836,7 +882,7 @@ impl Source for Within {
         }
         let mut out = Vec::new();
         for doc in 0..self.batch.docs.len() {
-            let (from, to) = (self.batch.nodes[doc], *self.batch.nodes.get(doc + 1)?);
+            let (from, to) = (self.batch.nodes()[doc], *self.batch.nodes().get(doc + 1)?);
             if from == to || !owned(self.batch.id(from)) {
                 continue;
             }
@@ -850,14 +896,55 @@ impl Source for Within {
             self.expect(keys);
         }
     }
+    /// `within(n, a)` with both given is a test, not a join (t50 step 4): `lookup_all` reads `n`'s rows (made, or the
+    /// batch's solve) for the one of them that is `a`, and `holds` reads the projection's interval of `a` (`below`).
+    fn composite(&self) -> bool {
+        self.mode == Mode::Tree
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if self.mode != Mode::Tree || equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return None;
+        }
+        Some(self.lookup(0, &[n])?.into_iter().filter(|&r| self.value(r, 1) == a).collect())
+    }
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        if self.mode != Mode::Tree {
+            return None;
+        }
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return Some(false);
+        }
+        Some(self.below(n, a))
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();
         for &v in values {
             let Some((doc, local)) = self.batch.node(v) else { continue };
-            let row = self.batch.nodes[doc] + local as usize;
+            let row = self.batch.nodes()[doc] + local as usize;
             if column == 0 && self.reads_solved() {
                 let start = self.starts();
                 out.extend(start[row] as usize..start[row + 1] as usize);
+                continue;
+            }
+            // By `a`, where the rows a scan reads are made (the batch's solve, or every node's containers), its
+            // rows are those: in each contained node's run, the pair whose outer node is `a`. A lookup's rows are
+            // then the scan's, as a reader of both (a relation's version, `Before`) takes them.
+            if column == 1 && (self.solved.get().is_some() || self.all.get().is_some()) {
+                let base = self.batch.nodes()[doc];
+                let solved = self.solved.get().is_some();
+                for c in self.contained(doc, local) {
+                    let inner = (base + c as usize) as u32;
+                    if solved {
+                        // The solve's relation holds ids (decision 0353 step 5): the row whose outer id is `a`'s.
+                        let (start, rows) = (self.starts(), self.solved_rows());
+                        out.extend((start[inner as usize]..start[inner as usize + 1]).filter(|&r| rows.get(r, 1) == v).map(|r| r as usize));
+                    } else {
+                        let (from, n) = self.rows(0, inner);
+                        out.extend((from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64));
+                    }
+                }
                 continue;
             }
             let (start, n) = self.rows(column.min(1), row as u32);

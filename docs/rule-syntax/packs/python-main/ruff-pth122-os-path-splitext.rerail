@@ -1,5 +1,4 @@
 .policy "ruff-pth122-os-path-splitext" revision 1
-.guests off
 .description "Use the suffix, stem and parent properties of a Path object instead of os.path.splitext; pathlib reads better than string-based os.path functions."
 .language python
 .mode steer
