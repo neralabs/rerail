@@ -66,20 +66,57 @@
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], \
               AT(uint32_t, SCANS), AT(uint32_t, SUBS), AT(uint32_t, CALLS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa); \
     xu.vai = AT(const uint32_t, VAI)
-// This SIMD group of the grid, and their count.
-#define SG_ID (g.group * (g.lsz / UKL_SIMD_WIDTH) + g.lid / UKL_SIMD_WIDTH)
-#define SG_N (g.groups * (g.lsz / UKL_SIMD_WIDTH))
-// A round's items (decision 0523): a thread each, then the SIMD groups' (`SC_XJ` holds them: the
-// scan's, which runs after).
+// A round's items (decision 0523): a thread each.
 #define PX_WORK_ON(T, CLOSES)                                                                          \
     {                                                                                                  \
         PX_UA(T, CLOSES);                                                                            \
-        EACH(k, ukl_min(ukl_atomic_load(&AT(uint32_t, QCTL)[2]), W(Q_CAP))) px_item(xa, AT(uint32_t, SC_XJ), k); \
-        BARRIER();                                                                                     \
-        px_worker(xu, xa, AT(const uint32_t, SC_XJ), SG_ID, SG_N, lane __UKL_ARGS);                    \
+        EACH(k, ukl_min(ukl_atomic_load(&AT(uint32_t, QCTL)[2]), W(Q_CAP))) px_item(xu, xa, k);       \
     }
 
 // A round's scan (decision 0523 §2): every list its items gave, a thread a token of each.
+// A round's exits (`px_ex_*`, decision 0523 §2), inside `PX_SCANS` (`sc_`, `xu`, `xa`): taken
+// from the scanned lists, their frames climbed a step a frame while one climbs, their joins.
+#define PX_EXITS()                                                                                     \
+    {                                                                                                  \
+        Ex ex_;                                                                                        \
+        ex_.l = AT(uint32_t, SB_L); ex_.qcap = W(Q_CAP); ex_.n = AT(uint32_t, SC_N); ex_.base = AT(uint32_t, SC_BASE); \
+        ex_.delta = AT(uint32_t, SC_DELTA); ex_.heads = AT(uint32_t, SC_HEADS); ex_.depth = AT(uint32_t, SC_DEPTH); \
+        ex_.ctr = AT(uint32_t, SC_FIRST) + 1u; ex_.total = 0u;                                         \
+        EACH(i, sc_.ns) px_ex_take(xa, sc_, ex_, i);                                                   \
+        BARRIER();                                                                                     \
+        ex_.ne = ukl_min(ukl_atomic_load(&ex_.ctr[0]), W(Q_CAP));                                      \
+        if (ex_.ne != 0u) {                                                                            \
+            for (uint32_t st_ = 0u; st_ + 1u < MAX_SEGS; st_++) {                                      \
+                EACH(e, ex_.ne) px_ex_frame(xu, xa, ex_, e);                                           \
+                BARRIER();                                                                             \
+                SCAN(ex_.ne, SC_N, SC_BASE, SC_TOTAL);                                                 \
+                ex_.total = N(SC_TOTAL);                                                               \
+                if (ex_.total > W(SC_CAP)) {                                                           \
+                    ONE(x) { AT(uint32_t, CTL)[24] = ukl_max(AT(const uint32_t, CTL)[24], ex_.total); px_refuse(AT(uint32_t, CTL), X_ROOM); } \
+                    break;                                                                             \
+                }                                                                                      \
+                /* The climbing count zeroed where each thread has read the last step's. */             \
+                ONE(x) ex_.ctr[1] = 0u;                                                                \
+                EACH(t, ex_.total) px_ex_tok(xu, xa, ex_, t);                                          \
+                BARRIER();                                                                             \
+                SEG(UKL_SEG_ADD, ex_.total, SC_DELTA, SC_HEADS, SC_DEPTH);                             \
+                EACH(t, ex_.total) px_ex_close(ex_, t);                                                \
+                BARRIER();                                                                             \
+                EACH(e, ex_.ne) px_ex_step(xa, ex_, e);                                                \
+                BARRIER();                                                                             \
+                if (ukl_atomic_load(&ex_.ctr[1]) == 0u) break;                                         \
+            }                                                                                          \
+            EACH(e, ex_.ne) px_ex_join(xu, xa, ex_, e);                                                \
+            BARRIER();                                                                                 \
+            SCAN(ex_.ne, SC_N, SC_BASE, SC_TOTAL);                                                     \
+            ex_.total = N(SC_TOTAL);                                                                   \
+            EACH(q, ex_.total) px_ex_piece(xa, ex_, q);                                                \
+            BARRIER();                                                                                 \
+            EACH(e, ex_.ne) px_ex_lref(xu, xa, ex_, e);                                                \
+            BARRIER();                                                                                 \
+        }                                                                                              \
+    }
+
 #define PX_SCANS(T, CLOSES)                                                                          \
     {                                                                                                  \
         PX_UA(T, CLOSES);                                                                            \
@@ -117,6 +154,7 @@
                 SCAN(sc_.total, SC_LIVE, SC_RANK, SC_LTOTAL);                                          \
                 sc_.ltotal = N(SC_LTOTAL);                                                             \
                 ONE(x) {                                                                               \
+                    AT(uint32_t, SC_FIRST)[1] = 0u;                                                    \
                     uint32_t nl_ = N(SC_LTOTAL), f_ = nl_ == 0u ? 0u : px_list_ids(xa, nl_);           \
                     if (f_ == NO_POS) px_refuse(AT(uint32_t, CTL), X_ROOM);                            \
                     AT(uint32_t, SC_FIRST)[0] = f_;                                                    \
@@ -126,7 +164,8 @@
                 sc_.ltotal = N(SC_LTOTAL); sc_.first = N(SC_FIRST);                                    \
                 EACH(t, sc_.total) px_sc_child(xu, xa, sc_, t);                                        \
                 BARRIER();                                                                             \
-                px_sc_finish(xu, xa, sc_, SG_ID, SG_N, lane __UKL_ARGS);                               \
+                PX_EXITS();                                                                            \
+                EACH(i, sc_.ns) px_sc_done(xa, sc_, i);                                                \
             }                                                                                          \
         }                                                                                              \
     }
@@ -519,7 +558,6 @@
                     ukl_atomic_store(&q_[5], 0u);                                                      \
                     ukl_atomic_store(&q_[6], 0u);                                                      \
                     ukl_atomic_store(&q_[7], 0u);                                                      \
-                    ukl_atomic_store(&q_[8], 0u);                                                      \
                     ukl_atomic_store(&q_[9], 0u);                                                      \
                     ukl_atomic_store(&q_[4], (q_[4] & 1u) ^ 1u);                                       \
                     c_[25]++;                                                                          \

@@ -272,6 +272,19 @@ SIMD-group operation switches each thread of the group.
      name with its `)`'s offset, a parenthesis, or its content), and a substitution's roles read
      an item's word (`px_va_at`), a list only whether its variadic argument has tokens. The bound
      of 4 is gone (a test has 5); one inside another's is refused (`D_VANEST`, `X_VA_OPT`).
+   - **The exits are phases** (`px_ex_*`), in place of a SIMD group an exit climbing its frames 32
+     tokens at a time (`px_exit`). A round's exits are taken from its scanned lists (the depth a
+     call's name leaves open is the scan's depths at once). Each step of the climb is a thread an
+     exit (its frame; the top level's `)` by its close table), a thread a token of every frame's
+     rest (its depth change, a segmented scan, the first `)` back at the depth left open by an
+     atomic min), and a thread an exit again (found, or the depth carried up); the steps run while
+     one climbs (`MAX_SEGS` at most). The joins are a thread an exit (ids, block, call list) and a
+     thread a piece (its segment rebuilt from the frames climbed, `px_ex_seg`: an exit keeps no
+     segment table), then each call's `__LINE__` ref from its written join.
+   - **No SIMD group's items.** `_Pragma`'s, a configuration's test's and a built-in's items were
+     a SIMD group's (`px_worker`), whose lanes waited on lane 0 (each is one token's work, or a
+     look at an operand of a token or two). They are their item's thread's (`px_item`), and
+     `px_worker`, its set (`QCTL` 8) and its barrier a round are gone.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.
