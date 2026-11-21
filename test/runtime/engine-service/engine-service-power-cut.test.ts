@@ -159,6 +159,27 @@ function stillRunning(databasePath: string, sessionId: string): void {
   }
 }
 
+/** Sets the start of each check of `sessionId` to `startedAt`, through a connection of its own. */
+function checksStartAt(databasePath: string, sessionId: string, startedAt: number): void {
+  const database = new Database(databasePath);
+  try {
+    database.prepare("UPDATE audits SET started_at = ? WHERE session_id = ?").run(startedAt, sessionId);
+  } finally {
+    database.close();
+  }
+}
+
+/** The start and finish of each check of `sessionId`, read through a connection of its own. */
+function checkTimes(databasePath: string, sessionId: string): Array<{ startedAt: number; finishedAt: number | null }> {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare("SELECT started_at AS startedAt, finished_at AS finishedAt FROM audits WHERE session_id = ?").all(sessionId) as
+      Array<{ startedAt: number; finishedAt: number | null }>;
+  } finally {
+    database.close();
+  }
+}
+
 /** Every event row the store holds, in order, read through a connection of its own. */
 function storedEvents(databasePath: string): Array<{ sequence: number; eventId: string }> {
   const database = new Database(databasePath, { readonly: true });
@@ -272,6 +293,23 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     expect(audits.map(audit => audit.status).sort()).toEqual(["completed", "interrupted"]);
     expect(audits.every(audit => audit.finishedAt !== null)).toBe(true);
     expect(audits.find(audit => audit.status === "interrupted")?.finishedAt).toBe(sessionRow(databasePath, "s")?.endedAt);
+  });
+
+  // A session kept open because it owes a scan can start a check more than the idle limit after it was last heard
+  // from, past the end the next start gives it. Such a check finishes at its own start, never before it.
+  it("closes as interrupted, at its own start, a check that started after its session's end, its daemon gone", { timeout: 120_000 }, async () => {
+    const { root, databasePath, checkout } = await records();
+    const { start, writes } = events(checkout);
+    const gone = await daemonProcess(root, databasePath);
+    await gone.send(start("s"));
+    await writes(gone.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
+    await gone.stop();
+    stillRunning(databasePath, "s");
+    const startedAt = lastObservedEventAt(databasePath)! + 2 * IDLE_MS;
+    checksStartAt(databasePath, "s", startedAt);
+    await nextDaemon(root, databasePath, () => startedAt + 24 * 60 * 60_000);
+    expect(sessionRow(databasePath, "s")?.endedAt).toBeLessThan(startedAt);
+    expect(checkTimes(databasePath, "s")).toEqual([{ startedAt, finishedAt: startedAt }]);
   });
 
   // A check of a session another daemon still runs is that daemon's to finish. Both kinds of check run when the next
