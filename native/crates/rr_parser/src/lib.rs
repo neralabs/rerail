@@ -220,6 +220,13 @@ mod token_local_tests;
 
 #[cfg(test)]
 pub mod tests {
+    /// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
+    /// `block_program::ready`): a test's device half is left out, as the executors' are.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn no_device() -> bool {
+        rerail_metal::block_program::ready().is_err()
+    }
+
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is
@@ -532,6 +539,9 @@ pub mod tests {
     #[test]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn a_refused_files_records_stop_on_metal() {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let c = super::compiled().expect("compiles");
@@ -589,8 +599,8 @@ pub mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let mut on = Vec::new();
-            assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
-            assert_eq!(on, got);
+            assert!(no_device() || super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
+            assert!(no_device() || on == got, "Metal's tapes, the CPU's");
         }
         for (src, g) in files.iter().zip(&got) {
             assert_eq!(*g, super::tape(src), "{src:?}");
@@ -2425,6 +2435,10 @@ pub mod tests {
         /// itself, so its codes are the interpreter's whole, up to a refusal (`codes_agree`), as the CPU's (`cpu`).
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         fn check_metal(&self, refs: &[&[u8]], cpu: &[rerail_compiler::block::BlockRun], files: &[usize]) {
+            // No device here: no device run to hold to the CPU's.
+            if no_device() {
+                return;
+            }
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&k| rerail_compiler::block::BatchFile { bytes: refs[k], program: 0 }).collect();
             let got = run_serial_split(&[&self.new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
@@ -2489,6 +2503,9 @@ pub mod tests {
     /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let want = c.parser.tier1.run_files(refs);

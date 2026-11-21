@@ -4,7 +4,9 @@
 //! both on Metal against the CPU (`metal_tests`, the Metal crate's block backend).
 //! The helpers the engine's Metal measurements share are public (`json`).
 
-#[cfg(test)]
+// The deprecated lowerings' Rust (`rust_stream`, `clif_rust`: decision 0550) is NEON's only, so its tests are
+// aarch64's; the Rust the Bitlex compiler writes directly (`bitlex_rust`, `bitlex_lex_rust`) replaces it everywhere.
+#[cfg(all(test, target_arch = "aarch64"))]
 mod aot_tests;
 #[cfg(test)]
 mod block_tests;
