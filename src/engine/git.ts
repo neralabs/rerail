@@ -1297,16 +1297,17 @@ interface GuardGit {
  */
 const guardGits = new Map<string, GuardGit>();
 
-/** The {@link GuardGit} of the Git at `executable`; undefined before it was asked, or when no Git is found. */
-function knownGuardGit(executable: string | undefined): GuardGit | undefined {
+/** The {@link GuardGit} of the Git this process runs now; undefined before it was asked, or when no Git is found. */
+function knownGuardGit(): GuardGit | undefined {
+  const executable = readerGit(undefined);
   return executable === undefined ? undefined : guardGits.get(executable);
 }
 
 /**
- * `asked`, kept for the Git at `executable`, the one this process ran when the question was put: a Git found again
- * while that Git answered is asked itself at its first call.
+ * `asked`, kept for the Git at `executable`, the one that answered: by default the Git this process runs once it
+ * answered, which for a blocking call is the one that answered, the one found again for it included.
  */
-function keptGuardGit(executable: string | undefined, asked: GuardGit | undefined): GuardGit | undefined {
+function keptGuardGit(asked: GuardGit | undefined, executable = readerGit(undefined)): GuardGit | undefined {
   if (asked !== undefined && executable !== undefined) guardGits.set(executable, asked);
   return asked;
 }
@@ -1327,14 +1328,14 @@ function guardGitOf(answer: GitResult): GuardGit | undefined {
  * guard would cover says why on the process's error stream, which for the daemon is its log.
  */
 function guardWorks(git: CallGit, cwd: string): boolean {
-  const executable = readerGit(undefined);
-  return guardCovers(knownGuardGit(executable) ?? keptGuardGit(executable, askedGuardGitSync(git, cwd)));
+  return guardCovers(knownGuardGit() ?? keptGuardGit(askedGuardGitSync(git, cwd)));
 }
 
 /** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has asked this Git. */
 async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<boolean> {
+  // Read before the question: while the Git kept answers, another call may find it gone and keep another.
   const executable = readerGit(undefined);
-  return guardCovers(knownGuardGit(executable) ?? keptGuardGit(executable, await version()));
+  return guardCovers(knownGuardGit() ?? keptGuardGit(await version(), executable));
 }
 
 /** {@link GuardGit} from `git version` asked in `cwd` within a {@link runGitWithoutBlocking} call. */

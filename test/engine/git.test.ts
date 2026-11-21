@@ -653,6 +653,13 @@ describe("runGitAsync", () => {
     expect(result.error?.message).toMatch(/maxBuffer/u);
   });
 
+  it("caps stderr at maxBuffer too, and says which stream Git printed past it", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    // Git names the object it cannot find on stderr, and prints nothing on stdout.
+    const result = await runGitAsync(root, ["cat-file", "-t", "x".repeat(2_000)], { maxBuffer: 1_000 });
+    expect([result.status, result.stdout, result.error && { ...result.error }]).toEqual([null, "", { code: "ENOBUFS", stream: "stderr" }]);
+  });
+
   it("ends a Git that hangs at its timeout, with every process it started, and answers a null status once it has exited", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
     vi.mocked(endProcessTree).mockClear();

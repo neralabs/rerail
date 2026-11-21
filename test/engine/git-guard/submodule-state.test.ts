@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { nameDiff, readStatus, submoduleChanged, UNASKED } from "../../../src/engine/git-guard/submodule-state.js";
+import { nameDiff, readStatus, submoduleChanged, UNASKED, worktreeIndex } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** The audit's `git diff` (`audit-control.ts`) and the scan's (`headless-scan.ts`), as each runs it. */
@@ -66,5 +66,14 @@ describe("submoduleChanged", () => {
     }, 0);
 
     expect([typeof changed === "object" && changed.error?.message, opened]).toEqual([`Rerail follows submodules 16 levels deep, and ${join(root, "sub")} is deeper`, []]);
+  });
+});
+
+describe("worktreeIndex", () => {
+  it("leaves the index of a folder whose real path cannot be read to Git", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-worktree-index-"));
+    roots.push(root);
+
+    expect(worktreeIndex(join(root, "gone"), {})).toBeUndefined();
   });
 });
