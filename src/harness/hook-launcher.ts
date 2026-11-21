@@ -26,7 +26,7 @@ import { sameFile } from "./same-file.js";
  * folder that cannot be made, runs the hook as before.
  */
 function turnOnCompileCache(): void {
-  // A node older than the cache has no such export; the namespace then holds none.
+  // A node before 22.8 has no such export; the namespace then holds none.
   const enable = (nodeModule as { enableCompileCache?: typeof nodeModule.enableCompileCache }).enableCompileCache;
   try {
     enable?.();
@@ -74,7 +74,10 @@ if (recordedNode === undefined || hookScript === undefined) {
 if (recordedNode !== HERE && existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // The launcher starts itself under the recorded node, as this node started it, so the hook runs in that launcher's
   // process with the compile cache on whatever this node has. The event JSON on stdin goes straight to it; its answer
-  // comes back through here, so a launcher that wrote none can be answered for.
+  // comes back through here, so a launcher that wrote none can be answered for. This node's own flags go on with it,
+  // so the `--import tsx` the tests start the launcher with reaches the second launcher; neither registered entry
+  // (`nodeHookEntry`, `cmdHookLine` in `harness-registration.ts`) passes a Node flag, so for a person's hooks the list
+  // is empty.
   const result = spawnSync(recordedNode, [...process.execArgv, fileURLToPath(import.meta.url), HERE, hookScript], { stdio: ["inherit", "pipe", "inherit"] });
   const answer = result.stdout ?? Buffer.alloc(0);
   process.stdout.write(answer);

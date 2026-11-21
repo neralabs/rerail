@@ -218,9 +218,9 @@ describe("hook launcher and Node's compile cache", () => {
 });
 
 /**
- * Stands in for a node on PATH older than the compile cache (Node 22.1), which has no `module.enableCompileCache`, while
- * the recorded node keeps it. It writes a line to `LAUNCHER_STARTS` for each node that starts a launcher, and ends the
- * third at once, so a launcher that started itself without end shows in the count instead of filling the machine.
+ * Stands in for a node on PATH without `module.enableCompileCache` (before Node 22.8), while the recorded node keeps
+ * it. It writes a line to `LAUNCHER_STARTS` for each node that starts a launcher, and ends the third at once, so a
+ * launcher that started itself without end shows in the count instead of filling the machine.
  */
 const NODE_WITHOUT_CACHE = [
   'import { appendFileSync, readFileSync } from "node:fs";',
