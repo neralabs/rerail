@@ -22,9 +22,9 @@ import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
+import { BUSY_DAEMON_WAIT_MS, HOOK_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
-import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf, pipeServer, type PipeServer } from "./daemon/engine-pipe.js";
 import { processStartedAt, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
@@ -105,6 +105,13 @@ export function sameSecret(presented: string | undefined, token: string): boolea
 export interface EngineEndpoint {
   socketPath: string;
   accessToken?: string;
+  /**
+   * Epoch ms by which the engine must have answered the event, where the engine was asked for a proof before the
+   * event (one that shows the Windows pipe `RERAIL_ENGINE_SOCKET` names to be the home's own daemon,
+   * {@link engineEndpointAt}): together they wait no longer than the event alone ({@link ENGINE_ANSWER_WAIT_MS}).
+   * Absent, the event waits that long from its own request.
+   */
+  answerBy?: number;
 }
 
 function engineEndpointOf(state: Pick<DaemonState, "kernelSocketPath" | "accessToken">): EngineEndpoint {
@@ -112,13 +119,123 @@ function engineEndpointOf(state: Pick<DaemonState, "kernelSocketPath" | "accessT
 }
 
 /**
- * The endpoint for an engine socket named outright (`RERAIL_ENGINE_SOCKET`, or a test's path): with the capability of
- * the home's daemon when its state names that same socket, and none otherwise, which only a standalone engine service
- * (one no daemon started) accepts.
+ * How long a hook waits for the engine to answer: the event's own request (`ingestEngineEvent`), a proof asked first that
+ * the Windows pipe `RERAIL_ENGINE_SOCKET` names is the home's own daemon ({@link engineEndpointAt}) included.
  */
-export async function engineEndpointAt(socketPath: string, home: string = defaultRerailHome()): Promise<EngineEndpoint> {
-  const state = await readDaemonState(join(home, DAEMON_STATE_FILE)).catch(() => undefined);
+export const ENGINE_ANSWER_WAIT_MS = 30_000;
+
+/**
+ * The endpoint for an engine socket named outright (`RERAIL_ENGINE_SOCKET`, or a test's path). On macOS and Linux it
+ * carries the capability of the home's daemon when its state names that same socket, and none otherwise, which only a
+ * standalone engine service (one no daemon started) accepts. On Windows any local user can create a pipe of any name, so
+ * the engine there is sent nothing until it shows it is the home's daemon ({@link provenEnginePipe}). `deadline` is the
+ * hook's ({@link HOOK_DAEMON_WAIT_MS} from the event's arrival): a proof the pipe gave since then answers for it.
+ */
+export async function engineEndpointAt(socketPath: string, deadline?: number, machine: DaemonMachine = THIS_MACHINE): Promise<EngineEndpoint> {
+  const home = defaultRerailHome(machine.env);
+  const state = await readDaemonState(join(home, DAEMON_STATE_FILE), machine.platform).catch(() => undefined);
+  if (machine.platform === "win32") return await provenEnginePipe({ socketPath, home, state, machine }, deadline);
   return state !== undefined && resolve(state.kernelSocketPath) === resolve(socketPath) ? engineEndpointOf(state) : { socketPath };
+}
+
+/** The Windows engine pipe `RERAIL_ENGINE_SOCKET` names, and what decides whether it is the home's own daemon. */
+interface NamedPipe {
+  socketPath: string;
+  /** The Rerail home whose daemon.json records the capability. */
+  home: string;
+  /** That daemon.json, where it could be read. */
+  state: DaemonState | undefined;
+  machine: DaemonMachine;
+}
+
+const NOTHING_SENT = "so nothing was sent to it";
+
+/**
+ * The endpoint for the Windows engine pipe `RERAIL_ENGINE_SOCKET` names. A hook sends its event there, with the
+ * capability daemon.json records, only once the pipe shows it is the home's own daemon: Windows says the process
+ * holding the pipe's server end is the daemon daemon.json records ({@link heldByRecordedDaemon}), which wrote that
+ * capability there itself, as a daemon of any Rerail version is; or else the engine on the pipe proves it holds that
+ * capability (`engineCapabilityProof`), whichever pipe daemon.json names. Another process holding the pipe's name gets
+ * nothing, nor does any engine when daemon.json records no capability: the error says why ({@link notSentReason}). A
+ * proof the pipe gave this process for the same capability since the event arrived ({@link provedSinceArrival})
+ * answers for both. Windows' wait for a free instance of the pipe stands where the event's own wait to connect would,
+ * so the event keeps its whole wait from its request; only a proof asked after Windows answered shares it
+ * ({@link EngineEndpoint.answerBy}).
+ */
+async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): Promise<EngineEndpoint> {
+  const { socketPath, machine } = pipe;
+  const { state, accessToken } = capabilityToProve(pipe);
+  if (provedSinceArrival(pipe, accessToken, deadline)) return { socketPath, accessToken };
+  const holder = machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
+  if (heldByRecordedDaemon(holder, state)) return { socketPath, accessToken };
+  const answerBy = Date.now() + ENGINE_ANSWER_WAIT_MS;
+  const answer = pipeStayedBusy(holder) ? "silent" : await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
+  if (answer === "proved") return { socketPath, accessToken, answerBy };
+  throw new Error(notSentReason(pipe, answer, holder));
+}
+
+/** daemon.json and the capability it records, for the engine on `pipe` to prove it holds; throws where it records none. */
+function capabilityToProve({ socketPath, home, state }: NamedPipe): { state: DaemonState; accessToken: string } {
+  const accessToken = state === undefined ? undefined : state.accessToken;
+  if (state === undefined || accessToken === undefined) {
+    throw new Error(`no daemon.json in ${home} records the capability that the engine on the pipe ${socketPath} must prove it holds, ${NOTHING_SENT}`);
+  }
+  return { state, accessToken };
+}
+
+/** When each engine pipe last proved to this process that it holds a capability, epoch ms, by machine ({@link proofKey}). */
+const provedAt = new WeakMap<DaemonMachine, Map<string, number>>();
+
+/** A pipe's name, whatever its case, as Windows reads it, and the capability it proved it holds. */
+function proofKey(socketPath: string, accessToken: string): string {
+  return `${socketPath.toLowerCase()}\n${accessToken}`;
+}
+
+/** Notes that the engine on `socketPath` proved to this process now that it holds `accessToken`. */
+function noteProof(machine: DaemonMachine, socketPath: string, accessToken: string): void {
+  const proofs = provedAt.get(machine) ?? new Map<string, number>();
+  proofs.set(proofKey(socketPath, accessToken), Date.now());
+  provedAt.set(machine, proofs);
+}
+
+/**
+ * Whether the engine on `pipe` proved to this process that it holds `accessToken` since the event arrived: `deadline`,
+ * the hook's, less {@link HOOK_DAEMON_WAIT_MS}. A hook's start check asks the pipe daemon.json names for that proof
+ * ({@link windowsRecordedDaemon}) before the hook looks up its endpoint, so a hook whose variable names that pipe asks
+ * for one proof, as a hook asked before the named pipe was asked at all.
+ */
+function provedSinceArrival({ socketPath, machine }: NamedPipe, accessToken: string, deadline: number | undefined): boolean {
+  const at = provedAt.get(machine)?.get(proofKey(socketPath, accessToken));
+  return deadline !== undefined && at !== undefined && at >= deadline - HOOK_DAEMON_WAIT_MS;
+}
+
+/**
+ * Whether Windows names the daemon `state` records as the holder of the pipe's server end (`holder`): its pid, in a
+ * process that started no later than the daemon recorded its start. A process keeps its pid for life, so one that started
+ * later took a dead daemon's pid; a start Windows does not say counts as later.
+ */
+function heldByRecordedDaemon(holder: PipeServer | undefined, state: DaemonState): boolean {
+  return holder?.pid === state.pid && (holder.startedAt ?? Number.POSITIVE_INFINITY) <= state.startedAt;
+}
+
+/** Whether other clients kept every instance of the pipe taken for the whole wait, so Windows could not be asked its holder. */
+function pipeStayedBusy(holder: PipeServer | undefined): boolean {
+  return holder !== undefined && typeof holder.pid !== "number";
+}
+
+/**
+ * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing, once neither Windows nor a proof
+ * (`answer`) showed it to be the home's own daemon: nothing listens on the pipe, other clients kept it busy past the
+ * wait, its engine said nothing within the wait, or it is another process.
+ */
+function notSentReason({ socketPath, home, machine }: NamedPipe, answer: EngineProofAnswer, holder: PipeServer | undefined): string {
+  if (!pipeListed(socketPath, () => machine.pipes())) {
+    return `nothing listens on the engine pipe ${socketPath}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`;
+  }
+  const waited = `${ENGINE_ANSWER_WAIT_MS / 1_000} s`;
+  if (pipeStayedBusy(holder)) return `other clients kept every instance of the engine pipe ${socketPath} taken for ${waited}, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
+  if (answer === "silent") return `the engine on the pipe ${socketPath} did not prove within ${waited} that it is this Rerail home's daemon, ${NOTHING_SENT}`;
+  return `the engine pipe ${socketPath} is not this Rerail home's daemon: it did not prove it holds the capability in ${join(home, DAEMON_STATE_FILE)}, ${NOTHING_SENT}`;
 }
 
 /** How a Rerail process sends one request to the daemon: `fetch`'s shape, over the transport the daemon serves. */
@@ -541,6 +658,12 @@ export interface DaemonMachine {
    * never sees (`engineCapabilityProof`); with `waitForInstance`, after it waited for a free instance of a busy pipe.
    */
   capabilityProof(socketPath: string, accessToken: string, timeoutMs: number, options?: Pick<EngineProofOptions, "waitForInstance">): Promise<EngineProofAnswer>;
+  /**
+   * Windows: the process holding the server end of the named pipe `socketPath` and when it started, as Windows records
+   * them, opening again while other clients hold every instance until `timeoutMs` has passed, with no pid once it has;
+   * undefined where Windows does not say (`pipeServer`).
+   */
+  pipeServer(socketPath: string, timeoutMs: number): PipeServer | undefined;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
   /**
@@ -582,6 +705,7 @@ const THIS_MACHINE: DaemonMachine = {
   env: process.env,
   pipes: listPipes,
   capabilityProof: engineCapabilityProof,
+  pipeServer,
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
@@ -667,7 +791,9 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: 
 async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, wait: ProofWait): Promise<RecordedDaemon> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
-  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait)];
+  const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait);
+  if (answer === "proved") noteProof(machine, state.kernelSocketPath, state.accessToken);
+  return PROOF_VERDICT[answer];
 }
 
 /**

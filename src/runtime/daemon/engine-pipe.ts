@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadNativeBinding, type NativeNamedPipeServer } from "../../engine/native/native.js";
 
 /**
  * What a Rerail engine pipe is on Windows: the name the engine of one Rerail database listens on, the fallback it moves
@@ -79,4 +80,21 @@ export function databasePipeListed(databasePath: string, pipes: () => readonly s
 /** Whether some Rerail engine pipe is among `pipes`; pipes that cannot be listed count as holding one. */
 export function enginePipeListed(pipes: () => readonly string[] = listPipes): boolean {
   return listed(pipes)?.some(isEnginePipe) ?? true;
+}
+
+/**
+ * What Windows says of the server end of a named pipe ({@link pipeServer}): the process holding it and when that process
+ * started; with no pid, other clients kept every instance taken for the whole wait, so no instance could be opened to ask.
+ */
+export type PipeServer = NativeNamedPipeServer;
+
+/**
+ * The process holding the server end of the Windows named pipe at `path` and when it started, as Windows records them
+ * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
+ * one to free and opens again, as Node's own client does, until `timeoutMs` has passed. Any local user can create a pipe
+ * of any name, but not one Windows records as another process's. Undefined where no such pipe takes a connection, or
+ * where the binding predates the question.
+ */
+export function pipeServer(path: string, timeoutMs: number): PipeServer | undefined {
+  return loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
 }

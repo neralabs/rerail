@@ -155,7 +155,11 @@ a secret token sent as `x-rerail-access`, on every request.
     agent sandbox. Otherwise a process that reaches the socket but cannot read the Rerail home could make the daemon
     write anywhere.
   - Hooks take the capability from the daemon's state with the socket path (`daemonEngineEndpoint`). For a socket in
-    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`).
+    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`). On
+    Windows they send neither the capability nor the event until Windows names the process holding the pipe's server
+    end as the daemon `daemon.json` records (its pid, started no later than it recorded itself), which wrote that
+    capability itself, or else the engine on that pipe gives the proof T2 describes for the capability `daemon.json`
+    records.
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
   `/native/session` and `/native/shutdown` refuse any `Origin`.

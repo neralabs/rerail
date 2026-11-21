@@ -218,8 +218,8 @@ async function runHostHookOnce(
 async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
   try {
     const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
-    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
     const { daemonDeadline } = options;
+    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named, daemonDeadline) };
     if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
     return await runningDaemonEngineEndpoint(daemonDeadline);
   } catch (error) {

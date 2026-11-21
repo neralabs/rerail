@@ -1,13 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { createServer as createHttpServer } from "node:http";
+import { ClientRequest, createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ENGINE_ANSWER_WAIT_MS } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/daemon/engine-pipe.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -474,3 +475,96 @@ describe.runIf(process.platform === "win32")("starting the engine beside a pipe 
     }
   });
 });
+
+/** A listener on a fresh engine socket (a pipe on Windows) in this process, which takes each connection and answers nothing. */
+async function silentListener(): Promise<{ socketPath: string; close(): Promise<void> }> {
+  const root = process.platform === "win32" ? undefined : await mkdtemp(join(SOCKET_ROOT, "rerail-silent-"));
+  const socketPath = root === undefined ? String.raw`\\.\pipe\rerail-silent-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+  const connections = new Set<Socket>();
+  const server = createServer(socket => connections.add(socket));
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  return {
+    socketPath,
+    close: async () => {
+      for (const socket of connections) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      if (root !== undefined) await removeFolder(root);
+    },
+  };
+}
+
+describe("an event sent after a proof on the engine", () => {
+  const event = { kind: "session-end", eventId: "end", sessionId: "s" } as const;
+
+  it("hands its socket what is left of the wait it shares with the proof, 1 ms once that is past, and its own 30 s with no proof", async () => {
+    const silent = await silentListener();
+    const waits: number[] = [];
+    // A stand-in for the socket's timer: it notes the wait the request hands it and fires once the request is sent.
+    const timer = vi.spyOn(ClientRequest.prototype, "setTimeout").mockImplementation(function (this: ClientRequest, ms: number, fire?: () => void) {
+      waits.push(ms);
+      process.nextTick(() => fire?.());
+      return this;
+    });
+    try {
+      await expect(ingestEngineEvent({ socketPath: silent.socketPath, answerBy: Date.now() + 300 }, event)).rejects.toThrow("Kernel request timed out");
+      await expect(ingestEngineEvent({ socketPath: silent.socketPath, answerBy: Date.now() - 1_000 }, event)).rejects.toThrow("Kernel request timed out");
+      await expect(ingestEngineEvent({ socketPath: silent.socketPath }, event)).rejects.toThrow("Kernel request timed out");
+    } finally {
+      timer.mockRestore();
+      await silent.close();
+    }
+    expect(waits[0]).toBeGreaterThan(0);
+    expect(waits[0]).toBeLessThanOrEqual(300);
+    // At least 1 ms, since a socket reads 0 as no limit.
+    expect(waits.slice(1)).toEqual([1, ENGINE_ANSWER_WAIT_MS]);
+  });
+});
+
+describe("the holder of a Windows named pipe", () => {
+  it.runIf(process.platform === "win32")("is the process serving it, as Windows records it, with when that process started, and no one once it stops", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-${process.pid}-${Date.now()}`;
+    const server = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => server.listen(pipe, resolve));
+    try {
+      const holder = pipeServer(pipe, 1_000);
+      expect(holder?.pid).toBe(process.pid);
+      // Node starts a moment after Windows creates its process.
+      const nodeStarted = Date.now() - process.uptime() * 1_000;
+      expect(holder?.startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
+      expect(holder?.startedAt).toBeGreaterThan(nodeStarted - 10_000);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+    expect(pipeServer(pipe, 0)).toBeUndefined();
+  });
+
+  it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, and says so with no pid", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-busy-${process.pid}-${Date.now()}`;
+    // Node reads how many instances a pipe server keeps listening from this variable as it listens.
+    const instances = process.env.NODE_PENDING_PIPE_INSTANCES;
+    process.env.NODE_PENDING_PIPE_INSTANCES = "1";
+    const server = createServer(socket => socket.destroy());
+    try {
+      await new Promise<void>(resolve => server.listen(pipe, resolve));
+    } finally {
+      if (instances === undefined) delete process.env.NODE_PENDING_PIPE_INSTANCES;
+      else process.env.NODE_PENDING_PIPE_INSTANCES = instances;
+    }
+    try {
+      // The client opens the one instance before connect returns, and the server lists another only once this process's
+      // event loop runs again, which each synchronous lookup below holds up for its whole wait.
+      const client = connect(pipe).on("error", () => undefined);
+      const answers = [pipeServer(pipe, 0), pipeServer(pipe, 100)];
+      client.destroy();
+      // An answer with no pid, which tells a pipe kept busy from one no one holds.
+      expect(answers.map(answer => answer !== undefined && typeof answer.pid !== "number")).toEqual([true, true]);
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", () => {
+    expect(pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
+  });
+});
+
