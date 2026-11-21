@@ -2210,7 +2210,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
                 }
 ,
                 3 => {
@@ -2817,7 +2817,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = ((xs_4 && fs_6) && l == s);
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x40)
                 }
 ,
                 13 => {
@@ -2867,12 +2867,6 @@ pub fn lex(src: &[u8]) -> Lexed {
 ;
         let word = if extra { 0 } else { word(&src[s..=l]) };
         // The token marks: tier 2 tests the rest of each.
-        if (open == 5 && (((((((((((bit(&m_alpha, s) || bit(&t96, s)) || bit(&t98, s)) || bit(&t99, s)) || bit(&t102, s)) || open == 3) || open == 2) || open == 6) || open == 7) || open == 4) || open == 5) || bit(&t105, s))) {
-            marks |= 1 << 6;
-        }
-        if (bit(&m_alpha, s) && (((((((((((bit(&m_alpha, s) || bit(&t96, s)) || bit(&t98, s)) || bit(&t99, s)) || bit(&t102, s)) || open == 3) || open == 2) || open == 6) || open == 7) || open == 4) || open == 5) || bit(&t105, s))) {
-            marks |= 1 << 7;
-        }
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
                 if rec_0 {

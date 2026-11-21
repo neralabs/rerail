@@ -371,9 +371,12 @@ struct Node {
 /// A row of the token loop, for `dispatch`: its start, the test build's checks where the loop
 /// first reads an assumption, and its code (a block that makes its record).
 struct RowArm {
+    row: usize,
     start: Expr,
     check: String,
+    /// Its code up to its record's marks, and the marks it always has.
     body: String,
+    bits: u32,
 }
 
 /// `dispatch`'s choices, by the first byte's group: the region opened, and the row.
@@ -2277,7 +2280,7 @@ impl Gen<'_> {
     /// `LO[c & 15] & HI[c >> 4]`. In a group, the openers and the rows that may start there are
     /// tested in their order, each as `at_start` reads it of the group's bytes: one that starts at
     /// every one of them is no test.
-    fn dispatch(&mut self, rows: &[RowArm]) -> Result<(String, Picks), String> {
+    fn dispatch(&mut self, rows: &[RowArm]) -> Result<(String, Picks, Vec<Vec<usize>>), String> {
         let opens: Vec<(String, Expr, Vec<usize>)> = match &self.opens {
             Some(o) => o.iter().map(|(kind, local, after)| (local.clone(), self.kinds.iter().find(|r| &r.kind == kind).map_or(Expr::Not(Box::new(Expr::Empty)), |r| r.opener.clone()), after.clone())).collect(),
             None => Vec::new(),
@@ -2353,6 +2356,7 @@ impl Gen<'_> {
         let tables = format!("/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.\nstatic DISPATCH_LO: [{ty}; 16] = [{}];\nstatic DISPATCH_HI: [{ty}; 16] = [{}];\n\n", list(&lo), list(&hi));
         // Each group's openers and rows, as `at_start` reads them of its bytes.
         let mut picks = Picks { open: String::new(), rows: String::new() };
+        let mut chains: Vec<Vec<usize>> = Vec::new();
         for (g, (sig, b)) in groups.iter().enumerate() {
             let pats = rects.iter().enumerate().filter(|r| r.1.0 == g).map(|(bit, _)| bit.to_string()).collect::<Vec<_>>().join(" | ");
             let shown: String = (0..256u32).filter(|&c| b[c as usize]).map(|c| if (33..127).contains(&c) { char::from_u32(c).unwrap_or('?').to_string() } else { format!("\\x{c:02x}") }).collect();
@@ -2403,11 +2407,12 @@ impl Gen<'_> {
                 chain.push((st, i.to_string()));
             }
             self.start_in = None;
+            chains.push(chain.iter().map(|(_, v)| v.parse().unwrap_or(usize::MAX)).collect());
             if !chain.is_empty() {
                 let _ = write!(picks.rows, "                // `{shown}`\n                {pats} => {},\n", if_chain(&chain, "usize::MAX", "                "));
             }
         }
-        Ok((tables, picks))
+        Ok((tables, picks, chains))
     }
 
     /// Whether `e` may hold at a byte, given the bytes about it (`ctx`): some way it holds
@@ -4175,7 +4180,7 @@ impl Gen<'_> {
                 let _ = write!(hits, "            // {why}\n            if {holds} {{\n                refused = true;\n                break;\n            }}\n");
             }
             let _ = &st;
-            row_arms.push(RowArm { start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            let l = {l};\n            let l = l.max(s);\n{hits}            (l, {k}, {extra}, {bits:#x})\n        }}") });
+            row_arms.push(RowArm { row: *row, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            let l = {l};\n            let l = l.max(s);\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -4198,7 +4203,10 @@ impl Gen<'_> {
             }
         }
         // The token marks of the code: each its mask's bit at a record's first byte, and its word.
+        // A mark of rows alone is decided by the row the dispatch picks, where every row decides it
+        // (`row_marks`).
         let mut token_code = String::new();
+        let mut row_marks: Vec<(u32, Vec<usize>, Vec<usize>, String)> = Vec::new();
         for (bit, mask, w) in x.token_bits {
             let starts = |rs: &[usize]| rs.iter().filter_map(|&r| rows.iter().find(|q| q.0 == r)).filter_map(|(_, s)| if let Stmt::Token { start, .. } = s { Some(start.clone()) } else { None }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)));
             let word = if *w == 0 { String::new() } else { format!("word == {w}") };
@@ -4225,6 +4233,12 @@ impl Gen<'_> {
             if test.is_empty() {
                 return Err(format!("tier 1 as Rust: token mark bit {bit} holds at every record"));
             }
+            if let CodeMask::Rows(a, b) = mask
+                && *w == 0
+            {
+                row_marks.push((u32::from(*bit), a.clone(), b.clone(), test));
+                continue;
+            }
             let _ = write!(token_code, "        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
         }
         // The masks tier 2 reads (`readers`), as `plan_fields` made them.
@@ -4241,13 +4255,41 @@ impl Gen<'_> {
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
         let mut open_code = String::new();
-        let (tables, picks) = self.dispatch(&row_arms)?;
+        let (tables, picks, chains) = self.dispatch(&row_arms)?;
+        // Each mark of rows, at the row picked: a row of a set starts where the row picked is one,
+        // and may where one is after it in a group's chain it is in (those before it do not start).
+        for (bit, a, b, test) in &row_marks {
+            let of = |p: usize, set: &[usize]| -> Option<bool> {
+                if set.contains(&row_arms[p].row) {
+                    return Some(true);
+                }
+                let after = chains.iter().filter(|c| c.contains(&p)).any(|c| c.iter().skip_while(|&&q| q != p).skip(1).any(|&q| set.contains(&row_arms[q].row)));
+                if after { None } else { Some(false) }
+            };
+            let each: Vec<Option<bool>> = (0..row_arms.len()).map(|p| {
+                let (x, y) = (of(p, a), if b.is_empty() { Some(true) } else { of(p, b) });
+                match (x, y) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                }
+            }).collect();
+            if each.iter().all(Option::is_some) {
+                for (p, v) in each.iter().enumerate() {
+                    if *v == Some(true) {
+                        row_arms[p].bits |= 1 << bit;
+                    }
+                }
+            } else {
+                let _ = write!(token_code, "        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
+            }
+        }
         let _ = write!(open_code, "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n");
         if let Some(opens) = &self.opens {
             let plain: Vec<String> = opens.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect();
             let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n        if matches!(open, {}) {{\n            plain = open;\n        }}\n", picks.open, plain.join(" | "));
         }
-        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&a.body, "        ").trim_start())).collect::<String>());
+        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&format!("{}{:#x})\n        }}", a.body, a.bits), "        ").trim_start())).collect::<String>());
         let mut span_decl = String::new();
         let mut span_after = String::new();
         let mut acc_after = String::new();
