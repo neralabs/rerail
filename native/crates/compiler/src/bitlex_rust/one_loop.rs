@@ -40,6 +40,24 @@ enum T {
     Word,
 }
 
+/// The field of the key a method's code is made with: each number of a node written with it is the method's
+/// argument (`n[j]`), the one its caller's key gives, as the lean parser's `string(v, field)` takes its field.
+const PLACE: u16 = u16::MAX;
+
+/// A method's numbers: each node kind it writes with its caller's key, and the supertypes it adds to it.
+type Numbers = Vec<(String, Vec<u16>)>;
+
+/// Where a part that starts with a choice is decided by its alternatives (`heads`).
+struct Heads {
+    /// The alternatives, and the key each is written with.
+    alts: Vec<Gram>,
+    key: Key,
+    /// What follows them in the part.
+    rest: Vec<Gram>,
+    /// The choice they are of, where it is a rule, and the key it is reached with.
+    choice: Option<(String, Key)>,
+}
+
 /// A decision's arm: its first tokens, and its code given what the decision found.
 type Arm<'s> = (Vec<First>, Box<dyn Fn(T) -> Result<String, String> + 's>);
 
@@ -83,6 +101,12 @@ struct Lp<'g, 'a> {
     /// The root's end (its close and the stream's end), and the place it is once one is made of it.
     root_end: String,
     root_place: std::cell::Cell<Option<usize>>,
+    /// The methods made, by name: their numbers.
+    methods: RefCell<BTreeMap<String, Numbers>>,
+    /// Their code, in the order made.
+    method_code: RefCell<Vec<String>>,
+    /// The numbers of the methods being made, innermost last.
+    making: RefCell<Vec<Numbers>>,
 }
 
 /// A set of bytes.
@@ -221,8 +245,24 @@ impl Lp<'_, '_> {
         Ok(self.one_byte(first).zip(self.one_byte(last)))
     }
 
-    /// The number of a node of `kind` written with `key`.
-    fn number(&self, kind: &str, key: &Key) -> Result<usize, String> {
+    /// The number of a node of `kind` written with `key`: a literal, or in a method, where `key` is its caller's
+    /// (`PLACE`), its argument for it.
+    fn number(&self, kind: &str, key: &Key) -> Result<String, String> {
+        if key.field == PLACE {
+            let mut making = self.making.borrow_mut();
+            let ns = making.last_mut().ok_or_else(|| "tier 2 as one loop: a method's key outside a method".to_owned())?;
+            let e = (kind.to_owned(), key.classes.clone());
+            let j = ns.iter().position(|x| *x == e).unwrap_or_else(|| {
+                ns.push(e);
+                ns.len() - 1
+            });
+            return Ok(format!("n[{j}]"));
+        }
+        Ok(self.literal(kind, key)?.to_string())
+    }
+
+    /// The number of a node of `kind` written with `key`, a key of the code table.
+    fn literal(&self, kind: &str, key: &Key) -> Result<usize, String> {
         let id = (self.g.x.kind)(kind).ok_or_else(|| format!("no kind `{kind}`"))?;
         let e = (id, key.field, key.classes.clone());
         let mut es = self.entries.borrow_mut();
@@ -448,13 +488,15 @@ impl Lp<'_, '_> {
         }
         let required: Vec<String> = self.g.x.keywords.iter().filter(|r| r.0 == *part && r.2).flat_map(|r| r.1.iter().map(|(w, _)| format!("b\"{}\"", lit(w)))).collect();
         let check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
-        let node = self.number(kind, key)?;
-        let content = self.number(&rd.content, &Key::default())?;
-        let piece = self.number(part, &Key::default())?;
         let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
-        Ok(Some(format!(
-            "{test}// `{kind}`: read at its token, its pieces leaves.\n\
-             let s = starts[i] as usize;\ni += 1;\n\
+        // The read, a method of its own (`string` in the lean parser), the node's number its caller's.
+        let ns = self.method(&ident(kind), &format!("`{kind}`, its pieces leaves"), |key| {
+            let node = self.number(kind, key)?;
+            let content = self.number(&rd.content, &Key::default())?;
+            let piece = self.number(part, &Key::default())?;
+            Ok(format!(
+            "let s = starts[i] as usize;\n\
+             i += 1;\n\
              let c = match first_bit(&m.{close}, s + 1) {{\nSome(c) => c,\nNone => return Err(s as u32),\n}};\n\
              open(d, {node}, s as u64);\ncommit(d);\n\
              let mut p = s + 1;\n\
@@ -468,13 +510,14 @@ impl Lp<'_, '_> {
              }}\n\
              e = c + 1;\nclose(d, e as u64);\n",
             close = rd.close,
-        )))
+            ))
+        })?;
+        Ok(Some(format!("{test}{}", self.call(&ident(kind), &ns, key)?)))
     }
 
-    /// `g` as alternatives where it starts with a choice: each alternative, the key it is written with, and what
-    /// follows them in `g` (each alternative then that). None where `g` does not, or an alternative may be empty (its
-    /// first tokens would be those after it). A decision among them is the choice's own: no second one.
-    fn heads(&self, g: &Gram, key: &Key) -> Result<Option<(Vec<Gram>, Key, Vec<Gram>)>, String> {
+    /// `g` as alternatives where it starts with a choice (`Heads`). None where `g` does not, or an alternative may be
+    /// empty (its first tokens would be those after it). A decision among them is the choice's own: no second one.
+    fn heads(&self, g: &Gram, key: &Key) -> Result<Option<Heads>, String> {
         Ok(match g {
             Gram::Alt(gs) => {
                 for a in gs {
@@ -482,10 +525,10 @@ impl Lp<'_, '_> {
                         return Ok(None);
                     }
                 }
-                Some((gs.clone(), key.clone(), Vec::new()))
+                Some(Heads { alts: gs.clone(), key: key.clone(), rest: Vec::new(), choice: None })
             }
             Gram::Sym(n) => match self.g.rules.get(n.as_str()) {
-                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.heads(body, &self.through(key, supertype.as_deref())?)?,
+                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.heads(body, &self.through(key, supertype.as_deref())?)?.map(|h| Heads { choice: h.choice.or_else(|| Some((n.clone(), key.clone()))), ..h }),
                 _ => None,
             },
             Gram::Field(f, a) => {
@@ -493,9 +536,9 @@ impl Lp<'_, '_> {
                 self.heads(a, &Key { field, ..key.clone() })?
             }
             Gram::Seq(gs) => match gs.split_first() {
-                Some((h, rest)) => self.heads(h, key)?.map(|(alts, k, mut more)| {
-                    more.extend(rest.iter().cloned());
-                    (alts, k, more)
+                Some((h, rest)) => self.heads(h, key)?.map(|mut h| {
+                    h.rest.extend(rest.iter().cloned());
+                    h
                 }),
                 None => None,
             },
@@ -503,18 +546,46 @@ impl Lp<'_, '_> {
         })
     }
 
-    /// The arms of a decision on `g`, each going on to `k` (`walk`): its alternatives where it starts with a choice
-    /// (`heads`), else `g` itself.
-    fn walk_arms<'s>(&'s self, g: &'s Gram, key: &Key, k: K) -> Result<Vec<Arm<'s>>, String> {
-        if let Some((alts, akey, rest)) = self.heads(g, key)? {
-            let k = if rest.is_empty() { k } else { K::Go(self.to_place(K::Code(self.walk(&Gram::Seq(rest), &Key::default(), k, T::No)?))) };
-            let mut arms: Vec<Arm<'s>> = Vec::new();
-            for a in alts {
+    /// A decision's arms for `h`'s alternatives, each going on to `k`. Of a choice that is a rule, the alternatives
+    /// that call no level are one arm, a call of the choice's method (`primitive` in the lean parser), which decides
+    /// among them; each other alternative is an arm of its own.
+    fn alt_arms<'s>(&'s self, h: Heads, k: K) -> Result<Vec<Arm<'s>>, String> {
+        let mut arms: Vec<Arm<'s>> = Vec::new();
+        let plain: Vec<&Gram> = h.alts.iter().filter(|a| !self.calls(a)).collect();
+        if let Some((name, at)) = &h.choice
+            && plain.len() > 1
+        {
+            let alts: Vec<Gram> = plain.iter().map(|a| (*a).clone()).collect();
+            let first: Vec<First> = alts.iter().map(|a| self.g.first(a).map(|f| f.0)).collect::<Result<Vec<_>, _>>()?.concat();
+            let ns = self.method(&ident(name), &format!("`{name}`'s alternatives that call no level"), |place| {
+                let Some(hp) = self.heads(&Gram::Sym(name.clone()), place)? else { return self.err(format!("`{name}`: no alternatives")) };
+                let mine: Vec<Gram> = hp.alts.into_iter().filter(|a| !self.calls(a)).collect();
+                self.plain(&Gram::Alt(mine), &hp.key, T::No)
+            })?;
+            let (call, k2) = (self.call(&ident(name), &ns, at)?, k.clone());
+            arms.push((first, Box::new(move |_| Ok(format!("{call}{}", Self::jump(&k2))))));
+            for a in h.alts.iter().filter(|a| self.calls(a)).cloned() {
                 let (first, _) = self.g.first(&a)?;
-                let (akey, k) = (akey.clone(), k.clone());
+                let (akey, k) = (h.key.clone(), k.clone());
                 arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));
             }
             return Ok(arms);
+        }
+        for a in h.alts {
+            let (first, _) = self.g.first(&a)?;
+            let (akey, k) = (h.key.clone(), k.clone());
+            arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));
+        }
+        Ok(arms)
+    }
+
+    /// The arms of a decision on `g`, each going on to `k` (`walk`): its alternatives where it starts with a choice
+    /// (`heads`), else `g` itself.
+    fn walk_arms<'s>(&'s self, g: &'s Gram, key: &Key, k: K) -> Result<Vec<Arm<'s>>, String> {
+        if let Some(mut h) = self.heads(g, key)? {
+            let rest = std::mem::take(&mut h.rest);
+            let k = if rest.is_empty() { k } else { K::Go(self.to_place(K::Code(self.walk(&Gram::Seq(rest), &Key::default(), k, T::No)?))) };
+            return self.alt_arms(h, k);
         }
         let key = key.clone();
         Ok(vec![(self.g.first(g)?.0, Box::new(move |t| self.walk(g, &key, k.clone(), t)))])
@@ -523,19 +594,49 @@ impl Lp<'_, '_> {
     /// The arms of a decision on `g` with no call in it (`plain`): its alternatives where it is a choice alone, else
     /// `g` itself.
     fn plain_arms<'s>(&'s self, g: &'s Gram, key: &Key) -> Result<Vec<Arm<'s>>, String> {
-        if let Some((alts, akey, rest)) = self.heads(g, key)?
-            && rest.is_empty()
+        if let Some(h) = self.heads(g, key)?
+            && h.rest.is_empty()
         {
             let mut arms: Vec<Arm<'s>> = Vec::new();
-            for a in alts {
+            for a in h.alts {
                 let (first, _) = self.g.first(&a)?;
-                let akey = akey.clone();
+                let akey = h.key.clone();
                 arms.push((first, Box::new(move |t| self.plain(&a, &akey, t))));
             }
             return Ok(arms);
         }
         let key = key.clone();
         Ok(vec![(self.g.first(g)?.0, Box::new(move |t| self.plain(g, &key, t)))])
+    }
+
+    /// Method `name`, made once: its code `body` with its caller's key (`PLACE`). It takes the next record at `ip` and
+    /// returns the token's end, as the lean parser's `string` and `primitive` take a value and return its end.
+    fn method(&self, name: &str, what: &str, body: impl FnOnce(&Key) -> Result<String, String>) -> Result<Numbers, String> {
+        if let Some(ns) = self.methods.borrow().get(name) {
+            return Ok(ns.clone());
+        }
+        self.making.borrow_mut().push(Vec::new());
+        let code = body(&Key { field: PLACE, classes: Vec::new() });
+        let ns = self.making.borrow_mut().pop().expect("the method's numbers");
+        let code = code?;
+        let n = if ns.is_empty() { "_n" } else { "n" };
+        self.method_code.borrow_mut().push(format!(
+            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n#[inline(always)]\nfn {name}(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
+            ns.len()
+        ));
+        self.methods.borrow_mut().insert(name.to_owned(), ns.clone());
+        Ok(ns)
+    }
+
+    /// A call of method `name`, its numbers those of `key`: the token's end in `e`.
+    fn call(&self, name: &str, ns: &Numbers, key: &Key) -> Result<String, String> {
+        let mut args = Vec::new();
+        for (kind, extra) in ns {
+            let mut classes = key.classes.clone();
+            classes.extend(extra.iter().copied());
+            args.push(self.number(kind, &Key { field: key.field, classes })?);
+        }
+        Ok(format!("e = {name}(src, starts, m, d, &mut i, [{}])?;\n", args.join(", ")))
     }
 
     /// The most nodes `g` holds open at once inside its level (a node rule written where it is used, around what
@@ -676,7 +777,13 @@ impl Lp<'_, '_> {
                     let after = format!("close(d, e as u64);\n{}", Self::jump(&k));
                     format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after), t)?)
                 }
-                Some(Stmt::Choice { nested: false, supertype, body, .. }) => self.walk(body, &self.through(key, supertype.as_deref())?, k, t)?,
+                Some(Stmt::Choice { nested: false, supertype, body, .. }) => match self.heads(g, key)? {
+                    Some(h) => {
+                        let after = self.to_place(k);
+                        self.decide(&self.alt_arms(h, K::Go(after))?, "return Err(at(src, starts, i));\n")?
+                    }
+                    None => self.walk(body, &self.through(key, supertype.as_deref())?, k, t)?,
+                },
                 _ => return self.err(format!("`{n}`: a nested choice is not written yet")),
             },
             Gram::Seq(gs) => {
@@ -949,7 +1056,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1013,6 +1120,9 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     out.push('\n');
     out.push_str(&words);
     out.push_str(&check_fns);
+    for m in lp.method_code.borrow().iter() {
+        out.push_str(m);
+    }
     let _ = write!(
         out,
         "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nw.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * {frames} + 1);\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"

@@ -12,23 +12,23 @@ type Cells = Fixed<1, 1, 1>;
 /// The code table the numbers below are of: each number's kind, field and supertypes.
 pub const ENTRIES: &[(u16, u16, &[u16])] = &[
     (10, 0, &[]),
-    (12, 0, &[]),
-    (16, 2, &[9]),
-    (16, 0, &[9]),
-    (19, 0, &[9]),
-    (1, 0, &[9]),
     (3, 0, &[]),
     (4, 0, &[]),
+    (1, 0, &[9]),
     (6, 0, &[9]),
     (7, 0, &[9]),
     (8, 0, &[9]),
     (5, 0, &[9]),
-    (19, 2, &[9]),
+    (12, 0, &[]),
     (1, 2, &[9]),
     (6, 2, &[9]),
     (7, 2, &[9]),
     (8, 2, &[9]),
     (5, 2, &[9]),
+    (16, 2, &[9]),
+    (16, 0, &[9]),
+    (19, 0, &[9]),
+    (19, 2, &[9]),
     (1, 1, &[]),
 ];
 
@@ -189,6 +189,99 @@ j += 1;
 j == b.len()
 }
 
+/// `string`, its pieces leaves, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
+/// caller's key, as each place gives them.
+#[inline(always)]
+fn string(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
+let mut i = *ip;
+let mut e = 0usize;
+let s = starts[i] as usize;
+i += 1;
+let c = match first_bit(&m.q, s + 1) {
+Some(c) => c,
+None => return Err(s as u32),
+};
+open(d, n[0], s as u64);
+commit(d);
+let mut p = s + 1;
+loop {
+let q = match first_bit(&m.esc, p) {
+Some(q) if q < c => q,
+_ => c,
+};
+if q > p {
+leaf(d, 1, p as u64, q as u64);
+commit(d);
+}
+if q == c {
+break;
+}
+p = q;
+if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
+return Err(p as u32);
+}
+leaf(d, 2, p as u64, (p + 2) as u64);
+commit(d);
+p += 2;
+}
+e = c + 1;
+close(d, e as u64);
+*ip = i;
+Ok(e)
+}
+
+/// `value`'s alternatives that call no level, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
+/// caller's key, as each place gives them.
+#[inline(always)]
+fn value(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
+let mut i = *ip;
+let mut e = 0usize;
+match peek(src, starts, i) {
+0x22 => {
+e = string(src, starts, m, d, &mut i, [n[0]])?;
+}
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+// `number`: its word.
+let s = starts[i] as usize;
+let end = run_last(&m.run_number, s) + 1;
+match word_number(&src[s..end]) {
+10 => {
+i += 1;
+e = end;
+leaf(d, n[1], s as u64, e as u64);
+commit(d);
+}
+11 => {
+i += 1;
+e = end;
+leaf(d, n[2], s as u64, e as u64);
+commit(d);
+}
+12 => {
+i += 1;
+e = end;
+leaf(d, n[3], s as u64, e as u64);
+commit(d);
+}
+_ => {
+i += 1;
+e = end;
+if !check_number(&src[s..e]) {
+return Err(s as u32);
+}
+leaf(d, n[4], s as u64, e as u64);
+commit(d);
+}
+}
+}
+_ => {
+return Err(at(src, starts, i));
+}
+}
+*ip = i;
+Ok(e)
+}
+
 /// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.
 /// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes
 /// open at once (3 a level), and the root's.
@@ -221,6 +314,11 @@ match st {
 open(d, 0, at(src, starts, i) as u64);
 commit(d);
 match peek(src, starts, i) {
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
+st = 1;
+continue 'run;
+}
 0x7b => {
 if starts.last().map(|&l| src[l as usize]) != Some(0x7d) {
 return Err(at(src, starts, i));
@@ -233,12 +331,12 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 3, s as u64, e as u64);
+leaf(d, 15, s as u64, e as u64);
 commit(d);
 st = 1;
 continue 'run;
 }
-open(d, 3, at(src, starts, i) as u64);
+open(d, 15, at(src, starts, i) as u64);
 commit(d);
 stack.push(1);
 st = 2;
@@ -256,94 +354,16 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 4, s as u64, e as u64);
+leaf(d, 16, s as u64, e as u64);
 commit(d);
 st = 1;
 continue 'run;
 }
-open(d, 4, at(src, starts, i) as u64);
+open(d, 16, at(src, starts, i) as u64);
 commit(d);
 stack.push(1);
 st = 6;
 continue 'run;
-}
-0x22 => {
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 5, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
-st = 1;
-continue 'run;
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-i += 1;
-e = end;
-leaf(d, 8, s as u64, e as u64);
-commit(d);
-st = 1;
-continue 'run;
-}
-11 => {
-i += 1;
-e = end;
-leaf(d, 9, s as u64, e as u64);
-commit(d);
-st = 1;
-continue 'run;
-}
-12 => {
-i += 1;
-e = end;
-leaf(d, 10, s as u64, e as u64);
-commit(d);
-st = 1;
-continue 'run;
-}
-_ => {
-i += 1;
-e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-st = 1;
-continue 'run;
-}
-}
 }
 _ => {
 return Err(at(src, starts, i));
@@ -363,40 +383,9 @@ i += 1;
 e = s + 1;
 match peek(src, starts, i) {
 0x22 => {
-open(d, 1, at(src, starts, i) as u64);
+open(d, 8, at(src, starts, i) as u64);
 commit(d);
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 18, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
+e = string(src, starts, m, d, &mut i, [18])?;
 match peek(src, starts, i) {
 0x3a => {
 let s = starts[i] as usize;
@@ -408,6 +397,11 @@ return Err(at(src, starts, i));
 }
 }
 match peek(src, starts, i) {
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+e = value(src, starts, m, d, &mut i, [9, 10, 11, 12, 13])?;
+st = 9;
+continue 'run;
+}
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
@@ -417,12 +411,12 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 2, s as u64, e as u64);
+leaf(d, 14, s as u64, e as u64);
 commit(d);
 st = 9;
 continue 'run;
 }
-open(d, 2, at(src, starts, i) as u64);
+open(d, 14, at(src, starts, i) as u64);
 commit(d);
 stack.push(9);
 st = 2;
@@ -437,94 +431,16 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 12, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-open(d, 12, at(src, starts, i) as u64);
-commit(d);
-stack.push(9);
-st = 6;
-continue 'run;
-}
-0x22 => {
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 13, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
-st = 9;
-continue 'run;
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-i += 1;
-e = end;
-leaf(d, 14, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-11 => {
-i += 1;
-e = end;
-leaf(d, 15, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-12 => {
-i += 1;
-e = end;
-leaf(d, 16, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-_ => {
-i += 1;
-e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
 leaf(d, 17, s as u64, e as u64);
 commit(d);
 st = 9;
 continue 'run;
 }
-}
+open(d, 17, at(src, starts, i) as u64);
+commit(d);
+stack.push(9);
+st = 6;
+continue 'run;
 }
 _ => {
 return Err(at(src, starts, i));
@@ -561,44 +477,13 @@ match peek(src, starts, i) {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-open(d, 1, at(src, starts, i) as u64);
+open(d, 8, at(src, starts, i) as u64);
 commit(d);
 match peek(src, starts, i) {
 0x22 => {}
 _ => return Err(at(src, starts, i)),
 }
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 18, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
+e = string(src, starts, m, d, &mut i, [18])?;
 match peek(src, starts, i) {
 0x3a => {
 let s = starts[i] as usize;
@@ -610,6 +495,11 @@ return Err(at(src, starts, i));
 }
 }
 match peek(src, starts, i) {
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+e = value(src, starts, m, d, &mut i, [9, 10, 11, 12, 13])?;
+st = 5;
+continue 'run;
+}
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
@@ -619,12 +509,12 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 2, s as u64, e as u64);
+leaf(d, 14, s as u64, e as u64);
 commit(d);
 st = 5;
 continue 'run;
 }
-open(d, 2, at(src, starts, i) as u64);
+open(d, 14, at(src, starts, i) as u64);
 commit(d);
 stack.push(5);
 st = 2;
@@ -639,94 +529,16 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 12, s as u64, e as u64);
-commit(d);
-st = 5;
-continue 'run;
-}
-open(d, 12, at(src, starts, i) as u64);
-commit(d);
-stack.push(5);
-st = 6;
-continue 'run;
-}
-0x22 => {
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 13, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
-st = 5;
-continue 'run;
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-i += 1;
-e = end;
-leaf(d, 14, s as u64, e as u64);
-commit(d);
-st = 5;
-continue 'run;
-}
-11 => {
-i += 1;
-e = end;
-leaf(d, 15, s as u64, e as u64);
-commit(d);
-st = 5;
-continue 'run;
-}
-12 => {
-i += 1;
-e = end;
-leaf(d, 16, s as u64, e as u64);
-commit(d);
-st = 5;
-continue 'run;
-}
-_ => {
-i += 1;
-e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
 leaf(d, 17, s as u64, e as u64);
 commit(d);
 st = 5;
 continue 'run;
 }
-}
+open(d, 17, at(src, starts, i) as u64);
+commit(d);
+stack.push(5);
+st = 6;
+continue 'run;
 }
 _ => {
 return Err(at(src, starts, i));
@@ -749,6 +561,11 @@ let s = starts[i] as usize;
 i += 1;
 e = s + 1;
 match peek(src, starts, i) {
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
+st = 8;
+continue 'run;
+}
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
@@ -758,12 +575,12 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 3, s as u64, e as u64);
+leaf(d, 15, s as u64, e as u64);
 commit(d);
 st = 8;
 continue 'run;
 }
-open(d, 3, at(src, starts, i) as u64);
+open(d, 15, at(src, starts, i) as u64);
 commit(d);
 stack.push(8);
 st = 2;
@@ -778,94 +595,16 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 4, s as u64, e as u64);
+leaf(d, 16, s as u64, e as u64);
 commit(d);
 st = 8;
 continue 'run;
 }
-open(d, 4, at(src, starts, i) as u64);
+open(d, 16, at(src, starts, i) as u64);
 commit(d);
 stack.push(8);
 st = 6;
 continue 'run;
-}
-0x22 => {
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 5, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
-st = 8;
-continue 'run;
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-i += 1;
-e = end;
-leaf(d, 8, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-11 => {
-i += 1;
-e = end;
-leaf(d, 9, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-12 => {
-i += 1;
-e = end;
-leaf(d, 10, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-_ => {
-i += 1;
-e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-}
 }
 _ => {
 st = 7;
@@ -898,6 +637,11 @@ let s = starts[i] as usize;
 i += 1;
 e = s + 1;
 match peek(src, starts, i) {
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
+st = 8;
+continue 'run;
+}
 0x7b => {
 if stack.len() == DEPTH {
 return Err(at(src, starts, i));
@@ -907,12 +651,12 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 3, s as u64, e as u64);
+leaf(d, 15, s as u64, e as u64);
 commit(d);
 st = 8;
 continue 'run;
 }
-open(d, 3, at(src, starts, i) as u64);
+open(d, 15, at(src, starts, i) as u64);
 commit(d);
 stack.push(8);
 st = 2;
@@ -927,94 +671,16 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 4, s as u64, e as u64);
+leaf(d, 16, s as u64, e as u64);
 commit(d);
 st = 8;
 continue 'run;
 }
-open(d, 4, at(src, starts, i) as u64);
+open(d, 16, at(src, starts, i) as u64);
 commit(d);
 stack.push(8);
 st = 6;
 continue 'run;
-}
-0x22 => {
-// `string`: read at its token, its pieces leaves.
-let s = starts[i] as usize;
-i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
-open(d, 5, s as u64);
-commit(d);
-let mut p = s + 1;
-loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
-if q > p {
-leaf(d, 6, p as u64, q as u64);
-commit(d);
-}
-if q == c {
-break;
-}
-p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
-leaf(d, 7, p as u64, (p + 2) as u64);
-commit(d);
-p += 2;
-}
-e = c + 1;
-close(d, e as u64);
-st = 8;
-continue 'run;
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
-let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
-i += 1;
-e = end;
-leaf(d, 8, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-11 => {
-i += 1;
-e = end;
-leaf(d, 9, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-12 => {
-i += 1;
-e = end;
-leaf(d, 10, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-_ => {
-i += 1;
-e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
-leaf(d, 11, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-}
 }
 _ => {
 return Err(at(src, starts, i));
