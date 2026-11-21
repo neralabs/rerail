@@ -266,6 +266,11 @@ struct Gen<'a> {
     /// region: each its reason and its masks at the start, after it to the closer, and over the
     /// closer.
     region_checks: Vec<Vec<(String, [Option<String>; 3])>>,
+    /// The escapes over the bytes outside every region token, tested over each token of code's
+    /// bytes: each its reason and its mask there.
+    code_checks: Vec<(String, String)>,
+    /// Each class's bytes.
+    class_bytes: HashMap<String, [bool; 256]>,
 }
 
 impl Gen<'_> {
@@ -737,8 +742,18 @@ impl Gen<'_> {
     /// fill from there to the closer, the hidden bytes after its start through its closer, none
     /// of them outside. `None`: `e` reads one of them shifted or carried.
     fn in_region(&self, e: &Expr, k: Option<usize>, part: u8) -> Option<Expr> {
+        self.in_region_of(e, k, part, &[true; 256], &mut HashMap::new())
+    }
+
+    /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
+    /// that holds at none of them is none there.
+    fn in_region_of(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &[bool; 256], memo: &mut HashMap<(String, i64), [bool; 256]>) -> Option<Expr> {
         let all = || Expr::Not(Box::new(Expr::Empty));
         let opens = self.opens.as_ref()?;
+        let here = self.bytes_at(e, 0, memo);
+        if !(0..256).any(|i| here[i] && ctx[i]) {
+            return Some(Expr::Empty);
+        }
         Some(match e {
             Expr::Name(n) if self.regional.contains(n) => {
                 let kind = |p: &str| opens.iter().position(|(q, _, _)| *n == format!("{p}_{q}"));
@@ -747,7 +762,7 @@ impl Gen<'_> {
                 } else if let Some(q) = kind("f") {
                     k == Some(q) && part < 2
                 } else if let Some(d) = self.defs.get(n) {
-                    return self.in_region(d, k, part);
+                    return self.in_region_of(d, k, part, ctx, memo);
                 } else {
                     // The hidden bytes.
                     k.is_some() && part > 0
@@ -755,13 +770,69 @@ impl Gen<'_> {
                 if holds { all() } else { Expr::Empty }
             }
             Expr::Name(_) | Expr::Empty => e.clone(),
-            Expr::Not(a) => simplify(Expr::Not(Box::new(self.in_region(a, k, part)?))),
-            Expr::And(a, b) => simplify(Expr::And(Box::new(self.in_region(a, k, part)?), Box::new(self.in_region(b, k, part)?))),
-            Expr::Or(a, b) => simplify(Expr::Or(Box::new(self.in_region(a, k, part)?), Box::new(self.in_region(b, k, part)?))),
-            Expr::Xor(a, b) => simplify(Expr::Xor(Box::new(self.in_region(a, k, part)?), Box::new(self.in_region(b, k, part)?))),
+            Expr::Not(a) => simplify(Expr::Not(Box::new(self.in_region_of(a, k, part, ctx, memo)?))),
+            Expr::And(a, b) => {
+                let (x, y) = (self.bytes_at(a, 0, memo), self.bytes_at(b, 0, memo));
+                let ca: [bool; 256] = std::array::from_fn(|i| ctx[i] && y[i]);
+                let cb: [bool; 256] = std::array::from_fn(|i| ctx[i] && x[i]);
+                simplify(Expr::And(Box::new(self.in_region_of(a, k, part, &ca, memo)?), Box::new(self.in_region_of(b, k, part, &cb, memo)?)))
+            }
+            Expr::Or(a, b) => simplify(Expr::Or(Box::new(self.in_region_of(a, k, part, ctx, memo)?), Box::new(self.in_region_of(b, k, part, ctx, memo)?))),
+            Expr::Xor(a, b) => simplify(Expr::Xor(Box::new(self.in_region_of(a, k, part, ctx, memo)?), Box::new(self.in_region_of(b, k, part, ctx, memo)?))),
             Expr::Call(..) if !self.regional(e) => e.clone(),
             Expr::Call(..) | Expr::Test { .. } => return None,
         })
+    }
+
+    /// The bytes `e` can hold at, `d` bytes on from where it holds (`d` < 0: before): a class's
+    /// bytes at its own; what a `prev` or a `next` reads, shifted; the bytes of both sides of a
+    /// `&`, of either of a `|`. Every byte where it says nothing.
+    fn bytes_at(&self, e: &Expr, d: i64, memo: &mut HashMap<(String, i64), [bool; 256]>) -> [bool; 256] {
+        let all = [true; 256];
+        match e {
+            Expr::Empty => [false; 256],
+            Expr::Name(n) => {
+                if let Some(set) = self.class_bytes.get(n) {
+                    return if d == 0 { *set } else { all };
+                }
+                if let Some(r) = memo.get(&(n.clone(), d)) {
+                    return *r;
+                }
+                let r = match self.defs.get(n) {
+                    Some(def) => self.bytes_at(def, d, memo),
+                    None => all,
+                };
+                memo.insert((n.clone(), d), r);
+                r
+            }
+            // A class's complement, at its own byte; else every byte.
+            Expr::Not(a) => match &**a {
+                Expr::Name(n) if d == 0 && self.class_bytes.contains_key(n) => self.class_bytes[n].map(|b| !b),
+                _ => all,
+            },
+            Expr::And(a, b) => {
+                let (x, y) = (self.bytes_at(a, d, memo), self.bytes_at(b, d, memo));
+                std::array::from_fn(|i| x[i] && y[i])
+            }
+            Expr::Or(a, b) | Expr::Xor(a, b) => {
+                let (x, y) = (self.bytes_at(a, d, memo), self.bytes_at(b, d, memo));
+                std::array::from_fn(|i| x[i] || y[i])
+            }
+            Expr::Call(f, args) if (f == "prev" || f == "next") => {
+                let Some(Arg::E(a)) = args.first() else { return all };
+                let k = match args.get(1) {
+                    Some(Arg::N(k)) => *k as i64,
+                    _ => 1,
+                };
+                // `next(a, k)` holds where `a` holds `k` bytes on.
+                self.bytes_at(a, if f == "next" { d + k } else { d - k }, memo)
+            }
+            Expr::Call(f, args) if f == "text" && d == 0 => match args.first() {
+                Some(Arg::S(t)) if !t.is_empty() => std::array::from_fn(|i| i == usize::from(t[0])),
+                _ => all,
+            },
+            Expr::Call(..) | Expr::Test { .. } => all,
+        }
     }
 
     /// Whether `e` is the file's last byte (`~next(~empty)`, or a mask of it): it is never in a
@@ -776,11 +847,23 @@ impl Gen<'_> {
 
     /// Escape `why` of `e`, made of the regions, as tests where each region's token reads it:
     /// where it holds nowhere outside a region token, and only in regions a token reads.
-    fn region_escape(&mut self, why: &str, e: &Expr, read: &[usize]) -> Result<bool, String> {
+    fn region_escape(&mut self, why: &str, e: &Expr, read: &[usize], skip: Option<&Expr>) -> Result<bool, String> {
         let Some(n) = self.opens.as_ref().map(|o| o.len()) else { return Ok(false) };
-        if !matches!(self.in_region(e, None, 0), Some(Expr::Empty)) {
-            return Ok(false);
-        }
+        // Outside every region token: none, or a mask of stage 1 tested over each token of code
+        // (the loop's bytes but the skipped ones, which it must hold at none of).
+        let outside = match self.in_region(e, None, 0) {
+            Some(Expr::Empty) => None,
+            Some(v) if !self.regional(&v) => {
+                let at = self.bytes_at(&v, 0, &mut HashMap::new());
+                let skipped = skip.map(|k| self.bytes_at(k, 0, &mut HashMap::new())).unwrap_or([false; 256]);
+                // A skipped byte it may hold at: not one test a token.
+                if (0..256).any(|i| at[i] && skipped[i]) {
+                    return Ok(false);
+                }
+                Some(v)
+            }
+            _ => return Ok(false),
+        };
         let mut found = Vec::new();
         for k in 0..n {
             let mut parts: [Option<Expr>; 3] = [None, None, None];
@@ -809,6 +892,10 @@ impl Gen<'_> {
                 }
             }
             self.region_checks[k].push((why.to_owned(), v));
+        }
+        if let Some(v) = outside {
+            let v = self.val(&v)?;
+            self.code_checks.push((why.to_owned(), v));
         }
         Ok(true)
     }
@@ -985,6 +1072,7 @@ impl Gen<'_> {
                     }
                 }
                 self.class(name, &set);
+                self.class_bytes.insert(name.clone(), set);
             }
         }
         let mut skip: Option<Expr> = None;
@@ -1067,7 +1155,7 @@ impl Gen<'_> {
                 self.sinks.push((why.to_string(), id));
                 continue;
             }
-            if self.region_escape(why, e, &read)? {
+            if self.region_escape(why, e, &read, skip.as_ref())? {
                 continue;
             }
             let v = self.val(e)?;
@@ -1257,6 +1345,12 @@ impl Gen<'_> {
                 };
                 let at = if *after { 16 + u32::from(*bit) } else { u32::from(*bit) };
                 let _ = write!(hits, "            if {holds} {{\n                hits |= 1 << {at};\n            }}\n");
+            }
+            // The escapes outside the regions, over a token of code's bytes.
+            if !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                for (why, v) in &self.code_checks {
+                    let _ = write!(hits, "            // {why}\n            if any_in(&{v}, s, l) {{\n                refused = true;\n                break;\n            }}\n");
+                }
             }
             for t in &token_escapes {
                 let Stmt::TokenEscape { why, kind: tk, test, expr, least } = t else { continue };
@@ -1655,5 +1749,5 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new() }.source()
 }
