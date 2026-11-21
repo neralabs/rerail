@@ -123,6 +123,25 @@ table and patched by the changed documents. They are counted at the held nodes, 
   edit's are equal to a cold run's over the edited corpus, with `made <= 1`.
 - Q396's `syntax` and keeper tests, and theirs' `a_copy_of_any_inputs_columns_is_held_in_place`.
 
+**Done** (e870c85994, and the statistics fix with item 3's commit).
+
+- `corpus.rs`'s `held_counted` counts a semi-join's statistics at its held nodes, by document, into a `RelStats`. They
+  are kept in the documents' table under their own name (`held_stats_name`), so the batch's row space stays the
+  view's (0494). On both routes (layered and batch), statistics kept of the same documents stand, and no document is
+  walked. R7 passes.
+- An edit counts them again over the documents the run holds, and makes none. It does not patch them by the changed
+  documents. This follows from what a semi-join is: a node is held when another document's export names it, so
+  editing file A changes which of file B's rows are held. The held rows are not a per-document sum, and the changed
+  documents' old and new rows cannot patch them. The R4 and session tests now name this.
+- `SemijoinCounts`, `KeptInput::stats`, `kept_inputs`' `stats_of`, `write_kept`'s and `write_input_kept`'s
+  `input_stats`, and `holds_stats` are removed, as in theirs. This leaves one mechanism.
+- The new test is `keptstats::a_semijoins_held_rows_counted_by_document_are_their_measure`. It found a fault in
+  `statkeep`: rows keyed by a document key (`doc32` 0) form one group across documents in `syntax::measured`, but
+  `RelStats` summed their squares by document. So counting a document out took out less than it had put in (`kind`'s
+  sq 98 against 50). Each column now keeps that group's counts by value (`Column::zero`, an `Exact`) and moves
+  `zero_sq` by each square's change, so counting a document in or out is exact. The stored format is now 3; format 2
+  had the error baked in.
+
 ## 3. Roll-up 38: `UNOWNED_ROOM`, a 64 MiB block for a relation made outside a run
 
 **Theirs** (d4aa849d18): outside a run, `profile::local::<Open>()` is a fresh value each time. So every relation
@@ -165,6 +184,24 @@ run, a value of its own that nothing keeps", while `machine` is "outside a run: 
   one block (`Live`'s count).
 - A new test, `a_moved_tail_takes_its_tables`: a relation in a block sized to force `tail_moved` still finds its
   pending rows and key map in its new block.
+
+**Done.**
+
+- `rows.rs`'s `open_blocks()` returns the run's open blocks inside a run and the machine's outside one.
+  `UNOWNED_ROOM`, the `unowned` branch and `lease_room`'s use for it are removed.
+- The tables follow their rows. `RowData::lies_in` (and `Rows::home_is`, which counts no references) tells a table
+  that its relation's rows have moved to another block. `RowSet::reserve` and `KeyMap::reserve_at` then place it
+  again in the new block at its next placement, at its own size.
+- I chose that over `Part::moved_room` carrying the tables. The tables belong to setfix's `Rel`, not to the facts
+  layer's `Part`, and every move (`grow`, `moved_room`, a later run copying a kept relation) is caught where the
+  table is next written. The device binds a key map by its own block (`device.rs`'s `LatMap { home: m.facts() }`),
+  so a table not yet placed again is still read correctly.
+- Tests:
+  - `relations_made_outside_a_run_share_the_machines_block`: 1,000 relations in one block.
+  - `a_moved_tail_takes_its_tables`: a run's rows copied into the next run's block take the pending rows' table and
+    the key map with them, and every row and key is found there.
+  - The three block tests pass with no size floor, as does theirs' 1,000-document `tree_walk_file_edits` test.
+  - rerail-logic: 570 of 570. rerail-facts: 110 of 110. The warm tier: 16 of 16. Clippy is clean.
 
 ## 4. Roll-up 32: the grid's join, and the CPU's grid of one group
 

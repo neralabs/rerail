@@ -73,12 +73,6 @@ pub fn moved() -> (u64, u64) {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
-/// The least block of a relation alone in it outside a run (`Part::try_new_with`'s `unowned`): its address space,
-/// whose pages are taken as they are written, so that its tail and its tables (a key map, its pending rows) grow in
-/// it as in a run's open block (decision 0384), where a block of twice its first rows moved its tail out at once and
-/// left its tables behind. A thousand of them reserve 64 GiB, not the 16 TiB a run's size each did.
-const UNOWNED_ROOM: usize = 64 << 20;
-
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
@@ -157,6 +151,20 @@ pub enum Life {
 /// run's, so no two runs' relations share a block).
 #[derive(Default)]
 struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+
+/// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
+/// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
+/// relations share the run's: a relation's tables grow in its block (0384), and a relation dropped gives its chunks
+/// back to it (0342). Outside a run `local` is a value of its own each time it is asked for: every relation then
+/// leased a block of a run's size, 16 GiB of address space where blocks reserve it (decision 0445), and a session's
+/// 1,000 one-document batches' relations reserved all of it (mmap refused at 256 TiB).
+fn open_blocks() -> Arc<Open> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_some() {
+        crate::code_rule_dsl::logic::profile::local::<Open>()
+    } else {
+        crate::code_rule_dsl::logic::profile::machine::<Open>()
+    }
+}
 
 /// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
 /// machine's, as the memory it counts is).
@@ -426,7 +434,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
-    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let runs = open_blocks();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
@@ -1095,18 +1103,12 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
-        // Outside a run and a chunk (a session's work between its runs, decision 0442) the open block is no one's: a
-        // value of its own each time it is asked for, so every relation leased a block of the run's size, 16 GiB of
-        // address space where blocks reserve it (decision 0445), held while it lived. A session's 1,000 one-document
-        // batches' relations reserved all of it (mmap refused at 256 TiB). It is alone in a block of its room, with
-        // room for its tail to double, and at least `UNOWNED_ROOM`.
-        let unowned = !alone && chunk.is_none() && crate::code_rule_dsl::logic::profile::run_own().is_none();
-        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let (runs, live_blocks) = (open_blocks(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone || unowned => {
-                    let block = if unowned { lease_room((2 * need + MARGIN).max(UNOWNED_ROOM))? } else { lease_exact(need + extra, life)? };
+                _ if alone => {
+                    let block = lease_exact(need + extra, life)?;
                     let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }, life));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
@@ -2073,6 +2075,11 @@ impl Rows {
         Some(Home { facts: p.facts.clone(), life: p.life, grow: 0 })
     }
 
+    /// Whether `facts` is its home's block (`home`), read with no reference counted.
+    pub fn home_is(&self, facts: &Arc<Facts>) -> bool {
+        self.tail.as_ref().map(|t| &t.facts).or_else(|| self.segs.last().map(|(_, p)| &p.facts)).is_none_or(|f| Arc::ptr_eq(f, facts))
+    }
+
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
     /// (`append_part`) holds the rows where they lie.
     pub fn parts(&self) -> impl Iterator<Item = &Part> {
@@ -2947,6 +2954,25 @@ mod tests {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
         assert_eq!(held_of(&live), 6 << 20);
         assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
+    }
+
+    /// Outside a run the open blocks are the machine's (decision 0442, `open_blocks`): a session's relations made
+    /// between its runs share one block, as a run's do, not a block of their own each (16 GiB of address space each
+    /// where blocks reserve it: a session's 1,000 one-document batches' relations reserved all of it).
+    #[test]
+    fn relations_made_outside_a_run_share_the_machines_block() {
+        assert!(crate::code_rule_dsl::logic::profile::run_own().is_none(), "outside a run");
+        let made: Vec<Rows> = (0..1000i64)
+            .map(|i| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&[i, i + 1, i + 2, i + 3]);
+                r
+            })
+            .collect();
+        let first = block_of(&made[0]);
+        assert!(made.iter().all(|r| Arc::ptr_eq(&block_of(r), &first)), "one block");
+        assert_eq!(*made[999].row(1, 2), [1001, 1002]);
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
