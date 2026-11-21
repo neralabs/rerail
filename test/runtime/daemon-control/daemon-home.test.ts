@@ -396,11 +396,13 @@ describe("the daemons of a Rerail home", () => {
 
   // A daemon this start launched that exited in its start, after the start began to wait for it outside the start
   // lock, was launched again, and again for as long as each launch failed, the person shown no log.
-  it("fails once, with what the daemon wrote, when the daemon it launched exits in its start, and launches no second", async () => {
+  it("fails at once, with what the daemon wrote, when the daemon it launched exits in its start, and launches no second", async () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
     env = watchedEnvironment(home, undefined, slowStart);
     await writeFile(slowStart, "");
+    // A start's wait far past this case's own bound: the exit ends the start, never the wait's end.
+    waits.startMs = 120_000;
     const told: number[] = [];
     const onWaiting = (pid: number): void => {
       told.push(pid);
