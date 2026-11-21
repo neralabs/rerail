@@ -82,6 +82,9 @@ UKL_INLINE uint64_t clif_col_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
  uint32_t v2=0;
  uint64_t v4=0;
  uint64_t v6=0;
+ uint64_t v8=0;
+ uint32_t v9=0;
+ uint64_t v11=0;
  v0=a0;
  v1=a1;
  v2=a2;
@@ -90,11 +93,23 @@ UKL_INLINE uint64_t clif_col_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
  uint8_t v5=((uint8_t)((uint32_t)(v3)==(uint32_t)(((uint32_t)(4ul)))));
  if(v5!=0){
   uint32_t v7=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+v4)));
-  uint64_t v8=((uint64_t)(v7));
-  {uint64_t t0=v8;v6=t0;}
+  v8=((uint64_t)(v7));
+  v9=((uint32_t)(*(UKL_GLOBAL const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(4))))))));
+  uint8_t v10=((uint8_t)((uint32_t)(v9)==(uint32_t)(((uint32_t)(0ul)))));
+  if(v10!=0){
+   {uint64_t t0=v8;v11=t0;}
+  }else{
+   uint64_t v12=((uint64_t)(((int64_t)(((int32_t)(v9))))));
+   uint64_t v13=v12+v8;
+   uint64_t v14=((uint64_t)((uint64_t)(v13)<<(((uint32_t)(3))&63u)));
+   uint64_t v15=v0+v14;
+   uint64_t v16=((uint64_t)(*(UKL_GLOBAL const uint64_t*)(t+v15)));
+   {uint64_t t0=v16;v11=t0;}
+  }
+  {uint64_t t0=v11;v6=t0;}
  }else{
-  uint64_t v9=((uint64_t)(*(UKL_GLOBAL const uint64_t*)(t+v4)));
-  {uint64_t t0=v9;v6=t0;}
+  uint64_t v17=((uint64_t)(*(UKL_GLOBAL const uint64_t*)(t+v4)));
+  {uint64_t t0=v17;v6=t0;}
  }
  return v6;
 }

@@ -33,6 +33,7 @@ const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
 const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
 const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
 const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
+const COL_DICT: i32 = offset_of!(ColDir, dict) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
@@ -126,10 +127,12 @@ pub fn col_at(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `col_get(dir, min_log, i)`: row `i`'s value in the column whose directory is `dir` (a 4-byte column's
-/// unsigned): a reader of many rows of one column resolves its directory once (`rows::ColRead`).
+/// unsigned, or its dictionary's value for it: the 8-byte word `dict + code` words from the directory, `dict` 0
+/// for none, `rows::ColDir`): a reader of many rows of one column resolves its directory once (`rows::ColRead`).
 pub fn col_get(b: &mut B<'_, '_>) -> Value {
     let (min_log, i) = (b.arg(0), b.arg(1));
-    let width = b.word_at(I32, b.tape, COL_WIDTH);
+    let dir = b.tape;
+    let width = b.word_at(I32, dir, COL_WIDTH);
     let p = b.call("col_at", &[min_log, i]);
     let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
     b.either(
@@ -137,7 +140,21 @@ pub fn col_get(b: &mut B<'_, '_>) -> Value {
         four,
         |b| {
             let v = b.word_at(I32, p, 0);
-            b.f.ins().uextend(I64, v)
+            let code = b.f.ins().uextend(I64, v);
+            let dict = b.word_at(I32, dir, COL_DICT);
+            let plain = b.f.ins().icmp_imm(IntCC::Equal, dict, 0);
+            b.either(
+                I64,
+                plain,
+                |_| code,
+                |b| {
+                    let dict = b.f.ins().sextend(I64, dict);
+                    let word = b.f.ins().iadd(dict, code);
+                    let at = b.f.ins().ishl_imm(word, 3);
+                    let at = b.f.ins().iadd(dir, at);
+                    b.word_at(I64, at, 0)
+                },
+            )
         },
         |b| b.word_at(I64, p, 0),
     )
@@ -471,6 +488,64 @@ mod tests {
                 let index_rows = rel.index_at(0).rows.as_slice();
                 let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - index_rows.as_ptr() as usize) / 4 };
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
+            }
+        }
+    }
+
+    /// A dictionary-coded column (an axis's node rows, read through its batch's ids, `rows::ColDir`'s `dict`) reads
+    /// in the JIT as on the host: each row's value its dictionary's, through its rows, a column resolved once and the
+    /// relation, beside an uncoded 4-byte column and an 8-byte one.
+    #[test]
+    fn the_jits_dictionary_reads_are_the_hosts() {
+        let reads = crate::jit::Reads::new();
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (rows_get, col_get, rel_get): (Two, Two, Two) = unsafe {
+            (
+                std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
+                std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
+                std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+            )
+        };
+        let spec = Spec { widths: vec![4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        // The dictionary before the relation and after it: a negative offset and a positive one.
+        let ids: Vec<i64> = (0..900i64).map(|i| (i / 300 + 7) << 32 | i * 3).collect();
+        let before = block.alloc_t::<i64>(ids.len());
+        let rel = Relation::create(&block, &spec, None);
+        let after = block.alloc_t::<i64>(ids.len());
+        for (d, sign) in [(before, 1i64), (after, -1)] {
+            for (k, &v) in ids.iter().enumerate() {
+                // SAFETY: `ids.len()` values allocated at `d`.
+                unsafe { *d.add(k) = sign * v };
+            }
+        }
+        // SAFETY: both in the relation's block, holding every code written below.
+        unsafe {
+            rel.rows.set_dict(0, before);
+            rel.rows.set_dict(1, after);
+        }
+        let n = 5_000u32;
+        rel.rows.reserve(&block, u64::from(n));
+        // SAFETY: rows `0..n` reserved; this thread alone writes them.
+        unsafe {
+            rel.rows.claim_reserved(n);
+            for i in 0..n {
+                rel.rows.put_code(i, 0, i * 7 % 900);
+                rel.rows.put_code(i, 1, i / 6);
+                rel.rows.put(i, 2, -i64::from(i));
+            }
+        }
+        let desc = std::ptr::from_ref(rel).cast::<u8>();
+        let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
+        for i in 0..n {
+            let want = [ids[(i * 7 % 900) as usize], -ids[(i / 6) as usize], -i64::from(i)];
+            for c in 0..3u32 {
+                assert_eq!(rel.rows.get(i, c as usize), want[c as usize], "host row {i} column {c}");
+                assert_eq!(rows_get(rows, i, c) as i64, want[c as usize], "rows_get row {i} column {c}");
+                let dir = std::ptr::from_ref(rel.rows.col(c as usize)).cast::<u8>();
+                assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, want[c as usize], "col_get row {i} column {c}");
+                assert_eq!(rel_get(desc, i, c) as i64, want[c as usize], "rel_get row {i} column {c}");
             }
         }
     }

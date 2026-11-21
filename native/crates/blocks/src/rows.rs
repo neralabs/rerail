@@ -20,10 +20,15 @@ pub const DIRS: usize = 96;
 pub const MIN_LOG: u32 = 4;
 
 structure! {
-    /// One column: its width in bytes (4 or 8), and each chunk's offset from this descriptor.
+    /// One column: its width in bytes (4 or 8), its dictionary, and each chunk's offset from this descriptor.
+    ///
+    /// A 4-byte column may be dictionary-coded: `dict` is then the offset, in 8-byte words, from this descriptor
+    /// to an array of 8-byte values in the same block, and a row holds a code, its value the array's `code`th (an
+    /// axis's node ids, held once for every axis over a batch: rows of node rows, read through the batch's ids).
+    /// 0: none, the row's 4 bytes its value.
     pub struct ColDir {
         pub width: u32,
-        pub pad: u32,
+        pub dict: i32,
         pub chunk: [AtomicI64; 96],
     }
 }
@@ -63,15 +68,49 @@ impl ColDir {
         start.wrapping_add(place * self.width as usize).cast_mut()
     }
 
-    /// Row `i`'s value (a 4-byte column's unsigned; the CLIF's `col_get`).
+    /// Row `i`'s value (a 4-byte column's unsigned, or its dictionary's value for it; the CLIF's `col_get`).
     ///
     /// # Safety
     /// Row `i` is reserved: its chunk is made.
     #[inline(always)]
     pub unsafe fn get(&self, min_log: u32, i: u32) -> i64 {
         let p = self.at(min_log, i);
-        // SAFETY: the row's value in its chunk, aligned to the column's width (the caller's).
-        unsafe { if self.width == 4 { i64::from(*p.cast::<u32>()) } else { *p.cast::<i64>() } }
+        // SAFETY: the row's value in its chunk, aligned to the column's width (the caller's); a code's value in the
+        // dictionary the column was given, whose every code's value is there (`Rows::set_dict`).
+        unsafe {
+            if self.width == 4 {
+                let code = *p.cast::<u32>();
+                if self.dict == 0 { i64::from(code) } else { self.decode(code) }
+            } else {
+                *p.cast::<i64>()
+            }
+        }
+    }
+
+    /// Row `i`'s 4 bytes as written: a dictionary column's code.
+    ///
+    /// # Safety
+    /// Row `i` is reserved, and the column is 4 bytes wide.
+    #[inline(always)]
+    pub unsafe fn code(&self, min_log: u32, i: u32) -> u32 {
+        // SAFETY: the caller's.
+        unsafe { *self.at(min_log, i).cast::<u32>() }
+    }
+
+    /// A code's value in the column's dictionary.
+    ///
+    /// # Safety
+    /// The column has a dictionary, which holds `code`.
+    #[inline(always)]
+    pub unsafe fn decode(&self, code: u32) -> i64 {
+        // SAFETY: the caller's; the dictionary is in this descriptor's block, `dict` words from it.
+        unsafe { *std::ptr::from_ref(self).cast::<i64>().offset(self.dict as isize + code as isize) }
+    }
+
+    /// Whether the column is dictionary-coded.
+    #[inline(always)]
+    pub fn coded(&self) -> bool {
+        self.dict != 0
     }
 }
 
@@ -146,6 +185,7 @@ impl Rows {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
                 (*cols.add(c)).width = w;
+                (*cols.add(c)).dict = 0;
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
@@ -200,12 +240,45 @@ impl Rows {
         let (p, w) = self.at(i, c);
         unsafe {
             if w == 4 {
+                // A value is never a code: a writer of a dictionary column writes codes (`put_code`).
+                assert!(!self.col(c).coded(), "a value {v} written into column {c}, a dictionary's codes");
                 debug_assert!((0..=u32::MAX as i64).contains(&v), "{v} in a 4-byte column");
                 *(p as *mut u32) = v as u32
             } else {
                 *(p as *mut i64) = v
             }
         }
+    }
+
+    /// Row `i`'s code in dictionary column `c` (a device writer stores it through `rows_put`, at the column's width).
+    ///
+    /// # Safety
+    /// Row `i` was claimed by the caller and reserved; `code` is in the column's dictionary.
+    #[inline]
+    pub unsafe fn put_code(&self, i: u32, c: usize, code: u32) {
+        let (p, w) = self.at(i, c);
+        debug_assert!(w == 4 && self.col(c).coded(), "a code written into column {c}, not a dictionary's");
+        // SAFETY: the caller's.
+        unsafe { *(p as *mut u32) = code };
+    }
+
+    /// Column `c`, 4 bytes wide, coded by the values at `dict`, in the block this relation lies in: each row's
+    /// value is then `dict[code]`, for every reader (the CLIF's `col_get`, the kernels' and the JIT's). Set before
+    /// any row is written, by its one writer.
+    ///
+    /// # Safety
+    /// `dict` is in the same block as the relation and outlives it there, and holds a value for every code
+    /// written.
+    pub unsafe fn set_dict(&self, c: usize, dict: *const i64) {
+        let d = self.col(c);
+        assert_eq!(d.width, 4, "a dictionary codes a 4-byte column");
+        assert!(self.is_empty(), "a dictionary given before the column's rows");
+        let from = std::ptr::from_ref(d) as isize;
+        let off = dict as isize - from;
+        assert!(off % 8 == 0 && off != 0, "a dictionary at a word from the column's directory");
+        let words = i32::try_from(off / 8).expect("a dictionary within 16 GB of the column's directory");
+        // SAFETY: the directory's one writer, before any reader (asserted empty).
+        unsafe { (*std::ptr::from_ref(d).cast_mut()).dict = words };
     }
 
     /// Makes chunks until `n` rows fit. The caller holds the relation's lock, or no kernel is running.
@@ -323,6 +396,7 @@ impl Rows {
     /// Column `c`'s values as dense slices, one per chunk: a scan reads these.
     pub fn col_chunks_u32(&self, c: usize) -> impl Iterator<Item = &[u32]> + '_ {
         assert_eq!(self.col(c).width, 4);
+        assert!(!self.col(c).coded(), "a scan of column {c}'s values reads a dictionary's codes");
         let n = self.len() as u64;
         (0..self.nchunks.load(Relaxed) as usize)
             .map_while(move |k| self.chunk_raw(c, k, n))
@@ -331,14 +405,22 @@ impl Rows {
 
     /// Column `c`'s first `n` values into `out`, a chunk at a time (no per-row chunk arithmetic).
     pub fn read_col(&self, c: usize, n: u32, out: &mut [i64]) {
-        let w = self.col(c).width;
+        let d = self.col(c);
+        let w = d.width;
         let mut k = 0;
         while let Some((first, len, p)) = self.chunk_raw(c, k, n as u64) {
             let o = &mut out[first as usize..first as usize + len];
             if w == 4 {
                 let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
-                for (d, &v) in o.iter_mut().zip(s) {
-                    *d = v as i64;
+                if d.coded() {
+                    for (o, &v) in o.iter_mut().zip(s) {
+                        // SAFETY: every code written is in the dictionary (`set_dict`).
+                        *o = unsafe { d.decode(v) };
+                    }
+                } else {
+                    for (o, &v) in o.iter_mut().zip(s) {
+                        *o = v as i64;
+                    }
                 }
             } else {
                 o.copy_from_slice(unsafe { std::slice::from_raw_parts(p as *const i64, len) });
@@ -351,6 +433,7 @@ impl Rows {
     /// one else writes them.
     pub fn write_col(&self, c: usize, vals: &[i64]) {
         let w = self.col(c).width;
+        assert!(!self.col(c).coded(), "values written into column {c}, a dictionary's codes");
         let mut k = 0;
         while let Some((first, len, p)) = self.chunk_raw(c, k, vals.len() as u64) {
             let v = &vals[first as usize..first as usize + len];
@@ -389,7 +472,15 @@ impl Rows {
         }
         let (start, len, p) = self.chunk_raw(c, k, hi as u64).expect("a chunk in range");
         let a = (lo as u64).saturating_sub(start) as usize;
-        let at = if r.width == 4 {
+        let at = if self.col(c).coded() {
+            // A code's value is its dictionary's: the search reads each row's value.
+            let (mut l, mut h) = (a, len);
+            while l < h {
+                let m = l + (h - l) / 2;
+                if r.get(start as u32 + m as u32) < key { l = m + 1 } else { h = m }
+            }
+            l
+        } else if r.width == 4 {
             let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
             a + s[a..].partition_point(|&v| (v as i64) < key)
         } else {
@@ -514,5 +605,47 @@ mod tests {
         let mut back = vec![0i64; vals.len()];
         rows.read_col(1, n, &mut back);
         assert_eq!(back, vals);
+    }
+
+    /// A dictionary column (an axis's node rows, coded by the batch's ids) reads as its values through every read:
+    /// a row's, a column resolved once, a chunk at a time and the searches; a value written into it is refused.
+    #[test]
+    fn a_dictionary_columns_rows_read_as_its_values() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let lock = Mutex::new(());
+        let rows: &Rows = unsafe { &*block.alloc_t::<Rows>(1) };
+        unsafe { Rows::init(rows as *const Rows as *mut Rows, &block, &[4, 4], MIN_LOG) };
+        // The dictionary: sorted node ids, of many documents (a key in the high word), past a u32.
+        let ids: Vec<i64> = (0..3_000i64).map(|i| (i / 700 + 1) << 32 | (i % 700) * 5).collect();
+        let dict = block.alloc_t::<i64>(ids.len());
+        unsafe { std::ptr::copy_nonoverlapping(ids.as_ptr(), dict, ids.len()) };
+        unsafe { rows.set_dict(0, dict) };
+        // Rows in node order, each node's codes repeated (an axis's `n` side), and an uncoded column beside.
+        let codes: Vec<u32> = (0..20_000u32).map(|i| i / 7).collect();
+        let n = codes.len() as u32;
+        let s = rows.claim(&block, &lock, n);
+        for (i, &code) in codes.iter().enumerate() {
+            unsafe { rows.put_code(s + i as u32, 0, code) };
+            unsafe { rows.put(s + i as u32, 1, i64::from(code)) };
+        }
+        let vals: Vec<i64> = codes.iter().map(|&c| ids[c as usize]).collect();
+        let r = rows.reader(0);
+        for i in 0..n {
+            assert_eq!((rows.get(i, 0), r.get(i), rows.get(i, 1)), (vals[i as usize], vals[i as usize], i64::from(codes[i as usize])), "row {i}");
+            assert_eq!(unsafe { rows.col(0).code(rows.min_log, i) }, codes[i as usize], "row {i}'s code");
+        }
+        let mut back = vec![0i64; vals.len()];
+        rows.read_col(0, n, &mut back);
+        assert_eq!(back, vals);
+        for key in [ids[0] - 1, ids[0], ids[699], ids[700], ids[1234] + 1, ids[2_856], i64::MAX] {
+            for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100)] {
+                let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| v < key) as u32;
+                assert_eq!(rows.lower_bound(0, lo, hi, key), want_lo, "lower {key} in {lo}..{hi}");
+                let want_hi = lo.max(want_lo) + vals[want_lo as usize..hi as usize].partition_point(|&v| v <= key) as u32;
+                assert_eq!(rows.upper_from(0, want_lo, hi, key), want_hi, "upper {key} in {lo}..{hi}");
+            }
+        }
+        let refused = std::panic::catch_unwind(|| unsafe { rows.put(0, 0, 5) });
+        assert!(refused.is_err(), "a value written into a dictionary's codes");
     }
 }
