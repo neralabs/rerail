@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
 import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
-import { agentStatus, installedLabel } from "../../ui/settings-model.js";
+import { agentStatus, installedLabel, isNewerVersion, newerRelease, releaseUrl } from "../../ui/settings-model.js";
 
 type DataAccess = "kept-out" | "file-tools" | "open";
-const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess }>) => {
-  const { access = "open", ...rest } = over;
-  return { id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, rerailData: { access, why: `${access} because` }, ...rest };
+const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess; fix: string | null }>) => {
+  const { access = "open", fix = null, ...rest } = over;
+  return { id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, rerailData: { access, why: `${access} because`, fix }, ...rest };
 };
 
 /** One entry of `GET /api/repository/rules`, as `toStoredRules` reads it. */
@@ -23,9 +23,12 @@ describe("a coding agent's state in Settings", () => {
     });
   });
 
-  it("says whether a connected agent's tools can read Rerail's data, warning unless they are kept out", () => {
-    expect(agentStatus(agent({ found: true, connected: true, access: "kept-out" })).data).toEqual({ text: "kept-out because", warn: false });
-    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools" })).data).toEqual({ text: "file-tools because", warn: true });
+  it("says whether a connected agent's tools can read Rerail's data, warning only when there is something to do", () => {
+    expect(agentStatus(agent({ found: true, connected: true, access: "kept-out" })).data).toEqual({ text: "kept-out because", warn: false, fix: null });
+    // Not wholly kept out, with nothing the person can change (Cursor, Codex, Claude Code on Windows): a fact, not a warning.
+    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools" })).data).toEqual({ text: "file-tools because", warn: false, fix: null });
+    expect(agentStatus(agent({ found: true, connected: true, access: "open" })).data).toEqual({ text: "open because", warn: false, fix: null });
+    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools", fix: "Run /sandbox." })).data).toEqual({ text: "file-tools because", warn: true, fix: "Run /sandbox." });
     expect(agentStatus(agent({ found: true, connected: true, problem: "settings.json is not valid JSON" })).data).toBeUndefined();
     expect(agentStatus(agent({ found: true })).data).toBeUndefined();
   });
@@ -44,6 +47,32 @@ describe("a coding agent's state in Settings", () => {
     expect(agentStatus(agent({ found: true, connected: true, problem: "settings.json is not valid JSON" }))).toMatchObject({
       state: "Couldn’t check", command: null, problem: "settings.json is not valid JSON",
     });
+  });
+});
+
+describe("the version in About Rerail and the top bar", () => {
+  it("links a version to its release page on GitHub", () => {
+    expect(releaseUrl("0.2.0")).toBe("https://github.com/neralabs/rerail/releases/tag/v0.2.0");
+  });
+
+  it("orders versions by number, a prerelease before its release", () => {
+    expect(isNewerVersion("0.2.0", "0.1.15")).toBe(true);
+    expect(isNewerVersion("0.10.0", "0.9.9")).toBe(true);
+    expect(isNewerVersion("0.2.0", "0.2.0")).toBe(false);
+    expect(isNewerVersion("0.1.9", "0.2.0")).toBe(false);
+    expect(isNewerVersion("0.2.0", "0.2.0-beta.1")).toBe(true);
+    expect(isNewerVersion("0.2.0-beta.2", "0.2.0-beta.10")).toBe(false);
+    expect(isNewerVersion("latest", "0.2.0")).toBe(false);
+  });
+
+  it("names a newer version only when the daemon reports one above the version running", () => {
+    expect(newerRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
+    expect(newerRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    expect(newerRelease({ version: "0.3.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    // Today's daemon does not say, and a page that has not heard from it yet has no health.
+    expect(newerRelease({ version: "0.2.0" })).toBeNull();
+    expect(newerRelease({ version: "0.2.0", update: null })).toBeNull();
+    expect(newerRelease(null)).toBeNull();
   });
 });
 
