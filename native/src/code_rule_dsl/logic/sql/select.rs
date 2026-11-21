@@ -89,6 +89,11 @@ impl Source {
 
 pub use crate::code_rule_dsl::facts::core::input_columns;
 
+/// An input's column names (`input_columns`); any other relation's columns are `c0`, `c1`, ….
+pub fn sql_col(rel: &str, col: usize) -> String {
+    input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
+}
+
 impl Relation {
     /// The relation the program names, if it is one (`Input`, `Derived`, `Batch`, `Bound`).
     pub fn program_relation(&self) -> Option<&str> {

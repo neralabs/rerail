@@ -852,18 +852,8 @@ pub struct Choice {
     pub why: &'static str,
 }
 
-/// Observations from one scan followed by a keyed probe, before the walker selects its lookup.
-#[derive(Clone, Copy, Debug)]
-pub struct BloomProbeInput {
-    pub probe_rows: usize,
-    pub build_rows: usize,
-    pub distinct_overlap: Option<f64>,
-    pub sampled: usize,
-    pub rejected: usize,
-    /// Whether the filter is the probe side's own (kept with its column, decision 0488): nothing was built for it,
-    /// and a walk backs off where it stops paying, so an eighth of the samples refused is enough.
-    pub kept: bool,
-}
+/// A probe side's screen (`bloom::use_bloom`), as the pricer sees it.
+pub use crate::code_rule_dsl::logic::bloom::BloomProbeInput;
 
 /// A batch prediction of the candidates' work (decision 0203 §2): one call per round, a price per candidate. The
 /// planner's estimates stand where none is set, or where it answers `None`.
@@ -886,18 +876,14 @@ fn pricer() -> Arc<Pricing> {
 /// The pair caches' admission hook (`strings::functions::PairCacheInput`), as the pricer sees it.
 pub use crate::code_rule_dsl::logic::strings::functions::PairCacheInput;
 
-pub(crate) fn use_bloom(input: BloomProbeInput) -> bool {
-    if pricing() {
-        let pricer = pricer().0.read().clone();
-        if let Some(choice) = pricer.and_then(|p| p.use_bloom(input)) { return choice; }
-    }
-    if input.kept { input.rejected * 8 >= input.sampled } else { input.rejected * 2 >= input.sampled }
-}
 
 pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
     // The pair caches' admission (`rr_admit_pairs`, in a crate below) asks the same machine's pricer.
     let admit = p.clone().map(|p| Arc::new(move |input| p.cache_pairs(input)) as Arc<dyn Fn(PairCacheInput) -> Option<bool> + Send + Sync>);
     *super::super::profile::machine::<crate::code_rule_dsl::logic::strings::functions::PairAdmission>().0.write() = admit;
+    // The Bloom screens (`bloom::use_bloom`, in a crate below) too.
+    let screen = p.clone().map(|p| Arc::new(move |input| p.use_bloom(input)) as Arc<dyn Fn(BloomProbeInput) -> Option<bool> + Send + Sync>);
+    *super::super::profile::machine::<crate::code_rule_dsl::logic::bloom::BloomAdmission>().0.write() = screen;
     let held = pricer();
     held.1.store(p.is_some(), Relaxed);
     *held.0.write() = p;

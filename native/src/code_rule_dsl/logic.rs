@@ -1,20 +1,28 @@
 //! The logic language (docs/final-shape/03-architecture.md §12; 05 Phases 5–6): rules as named
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
-//! `sql` is the typed SQL its plans emit. The core modules (`sql`, `analysis`, `costs`, `run`, …) are
-//! `rerail-logic-core`'s, under the planner; this module re-exports them under their paths.
+//! `sql` is the typed SQL its plans emit. The core modules (`sql`, `analysis`, `costs`, …) are
+//! `rerail-logic-core`'s, and the native solvers with the run, its lanes and its state (`native`, `run`, `lanes`,
+//! `run_state`, `device`) `rerail-setfix`'s, under the planner; this module re-exports them under their paths.
 
 pub use rerail_logic_core::code_rule_dsl::logic::crypto;
 pub use rerail_logic_core::code_rule_dsl::logic::derived;
-pub mod run;
-pub mod run_state;
+pub use rerail_setfix::code_rule_dsl::logic::run;
+/// setfix's, with its tests, which read what the whole program carries (`plan::CARRIERS`).
+pub mod run_state {
+    pub use rerail_setfix::code_rule_dsl::logic::run_state::*;
+    #[cfg(test)]
+    mod tests;
+}
 #[cfg(test)]
 pub mod facts_only;
 /// This crate's own test binary, which the engine does not load: strict mode on every connection, as the engine's
-/// loader sets it. (The store sends its SQL hazards to the profile itself, `content_store::hazards`.)
+/// loader sets it (the store sends its SQL hazards to the profile itself, `content_store::hazards`), and what a job
+/// carries of its run, as boot registers it.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-logic's tests", crate::code_rule_dsl::logic::plan::CARRIERS);
     }
     // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
     #[used]
@@ -69,8 +77,8 @@ pub mod front {
 }
 pub use rerail_logic_core::code_rule_dsl::logic::costs;
 // The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
-pub mod device;
-pub mod lanes;
+pub use rerail_setfix::code_rule_dsl::logic::device;
+pub use rerail_setfix::code_rule_dsl::logic::lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub use rerail_logic_core::code_rule_dsl::logic::liveness;
@@ -81,7 +89,21 @@ pub mod magic {
     pub mod tests;
 }
 #[allow(dead_code)]
-pub mod native;
+/// setfix's, with the tests of it that read the language and the planner (`rr::parse_version`, `plan::corpus::retain`).
+pub mod native {
+    pub use rerail_setfix::code_rule_dsl::logic::native::*;
+    pub mod setfix {
+        pub use rerail_setfix::code_rule_dsl::logic::native::setfix::*;
+        #[allow(unused_imports)]
+        use rusqlite::Connection;
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+        #[cfg(test)]
+        mod bounded_tests;
+        #[cfg(test)]
+        mod retain_tests;
+    }
+}
 #[allow(dead_code)]
 pub mod plan;
 #[path = "logic/profile"]

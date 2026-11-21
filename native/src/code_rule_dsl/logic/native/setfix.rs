@@ -83,8 +83,8 @@ mod cut_tests;
 mod key_tests;
 #[cfg(test)]
 mod index_order_tests;
-#[cfg(test)]
-mod bounded_tests;
+// `bounded_tests` reads the language (`rr::parse_version`), and `retain_tests` the planner's retention: `rerail-logic`'s
+// facade of this module mounts them.
 #[cfg(test)]
 mod view_tests;
 #[cfg(test)]
@@ -411,7 +411,7 @@ pub mod probed {
     #[derive(Default)]
     struct Probes(std::sync::Mutex<HashMap<(String, Vec<usize>), u64>>);
     #[inline]
-    pub(crate) fn on() -> bool {
+    pub fn on() -> bool {
         rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_INDEX_REPORT").is_some())
     }
     #[inline]
@@ -427,7 +427,7 @@ pub mod probed {
         crate::code_rule_dsl::logic::run::with_local(|p: &Probes| *p.0.lock().unwrap_or_else(|e| e.into_inner()).entry((rel.to_owned(), cols)).or_insert(0) += 1);
     }
     /// The probes since the last `take`.
-    pub(crate) fn take() -> HashMap<(String, Vec<usize>), u64> {
+    pub fn take() -> HashMap<(String, Vec<usize>), u64> {
         crate::code_rule_dsl::logic::run::local_if_any::<Probes>().map(|p| std::mem::take(&mut *p.0.lock().unwrap_or_else(|e| e.into_inner()))).unwrap_or_default()
     }
 }
@@ -593,7 +593,7 @@ enum Origin {
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vec<i64> },
 }
 impl Rel {
-    fn new(table: &str, types: &[u8]) -> Rel {
+    pub fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
@@ -706,7 +706,7 @@ impl Rel {
     /// spec says `KeptOld` (the default, decision 0122 §2) stamps them no wave's. `None` when `old` has no orders to start from,
     /// or when too many of its rows would be dead (then it is made from its rows, compacted). No `gone`: all of
     /// `old`'s rows.
-    fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
+    pub fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
         let none = InRel::empty(old.k);
         let gone = gone.unwrap_or(&none);
         let k = old.k;
@@ -936,7 +936,7 @@ impl Rel {
         }
     }
     /// Adds a row (of the next wave, its delta) unless it is there.
-    fn push(&mut self, row: &[i64]) -> bool {
+    pub fn push(&mut self, row: &[i64]) -> bool {
         let from = self.n;
         let new = self.push_row(row);
         if new && !self.keyed.is_empty() {
@@ -2927,7 +2927,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         if planning_counts.iter().any(|(r, before)| {
             let rel = &store.rels[*r];
             std::iter::once(rel.n).chain(rel.sketches.iter().map(Sketch::ndv)).zip(before)
-                .any(|(now,then)| (*then == 0 && now > 0) || now as f64 > (*then).max(1) as f64 * crate::code_rule_dsl::logic::plan::PRICE_DRIFT)
+                .any(|(now,then)| (*then == 0 && now > 0) || now as f64 > (*then).max(1) as f64 * crate::code_rule_dsl::logic::costs::PRICE_DRIFT)
         }) {
             if wave_trace { eprintln!("      {name}: return for planning after {waves} waves; delta statistics grew"); }
             break;
@@ -4461,7 +4461,7 @@ pub fn finding_rows(conn: &Connection) -> Result<Option<Vec<(String, String, i64
 /// with the indexes it has (`r:` sources), not copied into a source and indexed again. The run's planner takes the
 /// names (`adopted`).
 pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     let on = on(conn);
@@ -4479,7 +4479,7 @@ pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
 /// Holds `table` in `conn`'s run as `rel`, its kept relation, for a component that maintains it from its deltas: the
 /// rows an earlier snapshot left, which the profile does not count as this run's (the component's close does).
 pub fn hold_maintained(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let conn = conn.db();
     forgotten_on_close();
     on(conn).derived.lock().insert(table.to_owned(), rel);
@@ -4506,7 +4506,7 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vec<i64>>, types: Ve
 /// `Source::sorted_rows`, a field by child off the tape), else an index of its rows in its block. The caller gives
 /// its statistics (`plan`'s `hold_view_in_place`: its base's, or counted when first planned with).
 pub fn hold_view_in_place(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, types: Vec<u8>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let conn = conn.db();
     let rel = InRel::viewed(src, cols, types);
     let _ = rel.name.set(table.to_owned());
@@ -4577,7 +4577,7 @@ pub fn hold_empty(conn: impl Scoped, table: &str, types: Vec<u8>) {
 /// Holds `table` in `conn`'s run as a relation of `rows` (flat, `types.len()` values each): one a run kept from an
 /// earlier run of the same stratum over the same inputs (decision 0077 §4), read as if this run had derived it.
 pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>, n: usize) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let rel = InRel::kept(types, rows, n);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
@@ -4587,7 +4587,7 @@ pub fn hold_rows(conn: &Connection, table: &str, types: Vec<u8>, rows: Vec<i64>,
 
 /// `rel`, an earlier run's kept relation bound where it lies (decision 0401 F3), held as `conn`'s run's `table`.
 pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
-    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
+    crate::code_rule_dsl::logic::run::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     // Not observed (`author_joins::observe`): an earlier run's set, which this run's maintenance changes, not its own.
@@ -5425,17 +5425,17 @@ impl InRel {
     /// Its statistics as measured of its rows before (a kept relation's, by an earlier run: decision 0120 §3), each
     /// column's rows, distinct values, sum of squared postings and that sum by document: what its source answers
     /// (`Derived::statistics`) without reading its rows. Ignored once it has some, or if they are of another width.
-    pub(in crate::code_rule_dsl) fn give_measured(&self, measured: &[(String, i64, i64, i64, i64)]) {
+    pub fn give_measured(&self, measured: &[(String, i64, i64, i64, i64)]) {
         if measured.len() == self.k && self.measured.get().is_none() {
             let _ = self.measured.set(BlockVec::from_iter_in(self.rows.home().as_ref(), measured.iter().map(|&(_, a, b, c, d)| [a, b, c, d])));
         }
     }
-    pub(in crate::code_rule_dsl) fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
+    pub fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
         let s = self.stats.as_ref()?;
         (s.0.rows() == (self.n - self.ndead) as i64 && names.len() == self.k).then(|| s.0.renamed(names))
     }
     /// A component's relation at its fixpoint, its rows and indexes moved.
-    fn moved(mut rel: Rel) -> InRel {
+    pub fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
         // Declared sorted (decision 0456 K7): laid out in canonical order, unless its rows are numbered as the kept
@@ -5748,12 +5748,12 @@ impl InRel {
     fn delta_from(&self, at: usize, n: usize) -> Option<(Vec<i64>, Vec<i64>)> {
         match &self.from {
             Some(Origin::Based { at: a, n: n0, .. }) if *a == at && *n0 == n => {
-                let rows_of = |ids: Vec<u32>| { crate::code_rule_dsl::logic::plan::corpus::maintain::shape::rows_copied(ids.len()); ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v }) };
+                let rows_of = |ids: Vec<u32>| { crate::code_rule_dsl::logic::run::shape::rows_copied(ids.len()); ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v }) };
                 Some((rows_of(self.version_ids(Ver::Plus)?), rows_of(self.version_ids(Ver::Minus)?)))
             }
             Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == n => {
                 let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
-                crate::code_rule_dsl::logic::plan::corpus::maintain::shape::rows_copied(added.len() / self.k.max(1) + removed.len() / self.k.max(1));
+                crate::code_rule_dsl::logic::run::shape::rows_copied(added.len() / self.k.max(1) + removed.len() / self.k.max(1));
                 Some((added, removed.clone()))
             }
             _ => None,
@@ -6798,7 +6798,7 @@ struct WalksWhole(bool);
 
 /// Enters a scope of the run's chunk in a job of the run (`rows::enter_chunk`, Q203 item 3): what the job holds is
 /// the chunk's. The chunk itself is the run's context's, which the job carries.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+pub fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.part(&["TOP"], crate::code_rule_dsl::logic::run_state::Shared(crate::code_rule_dsl::facts::rows::current_chunk(), crate::code_rule_dsl::facts::rows::enter_chunk));
 }
 
@@ -9008,34 +9008,6 @@ pub mod posted_tests {
         assert!(InRel::over_source(src, b"ii".to_vec()).sorted.within_key(2, None, &[0], 0, 4).is_empty(), "a source with no order");
     }
 
-    /// A relation over a source (a kept relation bound in place, decision 0456 step 6b) has no rows of its own: its
-    /// values, its live rows and their batches are read through it, as a held relation's are (a value of it once
-    /// panicked, "row 0 of a relation of 0 rows", and its live rows were none, so a kept stratum's put held no rows).
-    #[test]
-    fn a_relation_over_a_source_reads_its_rows_through_it() {
-        let src = super::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 2, 5]), Some(vec![3, 4, 0])]);
-        let r = InRel::over_source(src, b"ii".to_vec());
-        assert_eq!((r.len(), r.rows()), (3, 3));
-        assert_eq!((0..3).map(|i| [r.value(i, 0), r.value(i, 1)]).collect::<Vec<_>>(), [[1, 3], [2, 4], [5, 0]], "its values");
-        assert_eq!(r.live_rows().as_deref(), Some(&[1, 3, 2, 4, 5, 0][..]), "its live rows");
-        let mut batches = Vec::new();
-        assert!(r.each_live_batch(1, 9, |b| batches.push(b.to_vec())).is_some());
-        assert_eq!(batches, [vec![2, 4, 5, 0]], "rows 1.. in one batch, bounded by its rows");
-        let cells = crate::code_rule_dsl::logic::plan::Cells::plain(2);
-        // Its digest is its rows', as the same rows held flat have (a sum, blind to their order): a kept relation
-        // bound in place and passed on unchanged is its entry, not re-kept. Re-kept (its rows changed), every row is
-        // put, read through it: rr-align's 4e3d12466 re-kept views by a frame and `kept_rows`, which take a relation
-        // in a block, and lost their rows (7d8103eed's warm-run losses, which it met by naming a view by its reads).
-        use crate::code_rule_dsl::logic::plan::corpus::retain;
-        let flat = InRel::from_flat(vec![5, 0, 1, 3, 2, 4], 3, b"ii".to_vec());
-        let d = retain::held_digest(&cells, &r);
-        assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
-        let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);
-        match put.what {
-            crate::content_store::kept_facts::KeptWhat::Flat { rows, n, .. } => assert_eq!((rows, n), (vec![1, 3, 2, 4, 5, 0], 3), "every row of the view kept"),
-            _ => panic!("a view is kept as its rows"),
-        }
-    }
 
     /// Statistics read from a kept relation's postings are those measured from its rows, with dead rows left out.
     #[test]
@@ -9065,32 +9037,8 @@ pub mod posted_tests {
         }
     }
 
-    /// Statistics counted from a relation's postings are those counted from its live rows.
-    /// A relation's digest taken from its rows where they lie (`retain::held_digest`) is the digest of a copy of its
-    /// live rows (`rows_digest`), dead rows and batch edges included.
-    #[test]
-    fn a_digest_read_in_place_is_the_digest_of_the_copied_rows() {
-        use crate::code_rule_dsl::logic::plan::{Cells, rows_digest};
-        use crate::code_rule_dsl::logic::plan::corpus::retain::held_digest;
-        let n = 3 * LIVE_BATCH + 17;
-        let mut rel = Rel::new("t", b"iii");
-        for i in 0..n as i64 {
-            rel.push(&[i * 3 - 7, (i * 7919) % 1001 - 500, -i]);
-        }
-        let old = InRel::moved(rel);
-        let mut gone = Rel::new("g", b"iii");
-        for id in [0usize, 5, LIVE_BATCH - 1, LIVE_BATCH, 2 * LIVE_BATCH + 3, n - 1] {
-            let r = old.row(id).to_vec();
-            gone.push(&r);
-        }
-        let dead = InRel::moved(Rel::based("t", b"iii", &old, Some(&InRel::moved(gone))).expect("few dead"));
-        for held in [&old, &dead] {
-            let live = held.live_rows().expect("flat");
-            let cells = Cells::plain(3);
-            assert_eq!(held_digest(&cells, held), Some(rows_digest(&cells, &live, held.rows())), "{} dead", held.ndead);
-        }
-    }
 
+    /// Statistics counted from a relation's postings are those counted from its live rows.
     #[test]
     fn statistics_counted_from_postings_are_those_of_the_rows() {
         use crate::code_rule_dsl::logic::plan::statkeep::RelStats;

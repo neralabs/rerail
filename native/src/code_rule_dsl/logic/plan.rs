@@ -93,7 +93,8 @@ pub mod replanning;
 pub mod compose;
 pub mod connection;
 pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
-pub mod statkeep;
+/// setfix's: its kept relations carry their statistics in the planner's form (`setfix::KeptStats`).
+pub use rerail_setfix::code_rule_dsl::logic::plan::statkeep;
 pub mod lower;
 pub mod text_demand;
 pub mod joins;
@@ -1166,10 +1167,7 @@ impl Model {
     }
 }
 
-/// An input's column names (`sql::select::input_columns`); any other relation's columns are `c0`, `c1`, ….
-pub fn sql_col(rel: &str, col: usize) -> String {
-    super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
-}
+pub use super::sql::select::sql_col;
 
 const PLAN_CACHE_NAMES: [&str; 12] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search", "searched: ran over its price", "started: its line's order", "started: its source rule's order"];
 /// `RERAIL_PLAN_FRESH`: every plan searched, none reused (a measurement: what kept orders cost).
@@ -2159,8 +2157,8 @@ pub struct Priced {
     got: (Plan, Option<super::profile::RulePlan>),
 }
 
-/// How far a size may move before a kept price is worked out again.
-pub const PRICE_DRIFT: f64 = 2.0;
+/// How far a size may move before a kept price is worked out again (the cost model's, which setfix's waves read too).
+pub use super::costs::PRICE_DRIFT;
 
 /// Whether sizes `now` are within `PRICE_DRIFT` of `then`, each counted as at least one row.
 /// Whether a kept plan's distributions (`live_sizes` after its cardinalities) are near this pricing's, at another
@@ -2263,6 +2261,19 @@ struct StepRows(bool);
 /// Bound while the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
 #[derive(Clone, Copy, Default)]
 struct Skewing(bool);
+
+/// What a job carries of the run's context, in the order it is entered (`run_state::CARRIERS`, which the program's
+/// composition registers): the run first, entered first and put back last, so every other part's guard drops inside
+/// it (a plans guard's drop counts into the run); then the planner's kept plans and observations; then a job's scope
+/// of the run's chunk (Q203 item 3); and in a test build the test's store.
+pub const CARRIERS: &[fn(&mut super::run_state::Capture)] = &[
+    super::run::carried,
+    carried,
+    keeps::carried,
+    super::native::setfix::carried,
+    #[cfg(any(test, feature = "test-hooks"))]
+    corpus::test_store::carried,
+];
 
 /// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
 /// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.

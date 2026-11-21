@@ -181,7 +181,7 @@ pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
 }
 
 /// The lattice named `name`: a built-in (`flat`, `max`, `min`), else one the run under way declared.
-pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
+pub fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
     let built_in: Option<Arc<dyn Lattice>> = match name {
         "flat" => Some(Arc::new(Flat)),
         "max" => Some(Arc::new(Max)),

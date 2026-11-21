@@ -5,7 +5,7 @@
 pub fn sum_value(sum: i128) -> rusqlite::Result<i64> {
     i64::try_from(sum).map_err(|_| rusqlite::Error::UserFunctionError("integer overflow".into()))
 }
-pub(in crate::code_rule_dsl) fn register_sum(db: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub fn register_sum(db: &rusqlite::Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::{Aggregate, Context, FunctionFlags};
     struct Sum;
     impl Aggregate<i128, i64> for Sum {

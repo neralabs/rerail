@@ -495,4 +495,38 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       SQL profiling test needs `node`, which that host lacks, and passes on a Mac.
     - On a Mac: the core's 23 tests, the join planner's and join steps' tests, `analysis`'s, the closure test and
       the profiling test: 32 pass.
+- **Step 5b** (2026-11-21): `rerail-setfix` (`native/crates/setfix`): `logic::native` (setfix and the other
+  solvers), the run and its state (`run`, `run_state`), the lanes, the solver device interface (`device`), the waves'
+  owner, schedule and storage, and the thread pool, 27.7k production lines. It also mounts the planner's `statkeep`
+  under the planner's path (`plan::statkeep`, as `rerail-facts` mounts `plan::sketch`): a kept relation carries its
+  statistics in that form (`setfix::KeptStats`). `rerail-logic` re-exports each module under its old name.
+  - **What setfix read of the planner moved down, or became a registration.**
+    - The run's binding (`Binding`, `device`, `set_binding`, `block_device`) is `device::binding`, which
+      `plan::placement` re-exports. The prices it places by stay in `placement`.
+    - The required shape's counts (`maintain::shape`) read only the run's state, so they are `run::shape`, and
+      `maintain` re-exports them. R1's scan of the source exempts that file, which holds the maintenance names.
+    - `PRICE_DRIFT` is the cost model's (`costs`). `sql_col` names an input's columns from `input_columns` alone,
+      so it is `sql::select`'s.
+    - The Bloom screen's choice (`use_bloom`, `BloomProbeInput`) is `logic::bloom`'s. The machine's pricer gives
+      its answer through a slot on the machine object (`BloomAdmission`), which `set_pricer` fills, as it fills the
+      pair caches' (`PairAdmission`).
+    - `profile::watch`'s memory reads (`memory_ceiling`, `resident_bytes`, `physical_bytes`) read only the OS, so
+      they are `profile::memory`'s, in `rerail-prof`, and `watch` re-exports them.
+    - **What a job carries of its run** (`run_state::CARRIERS`) named the planner's thread-locals between the
+      run's and setfix's, so it is a `rerail_registry::Slot`, its first user. The program's composition registers
+      the ordered list, `plan::CARRIERS`: boot does, and `rerail-logic`'s own test binary does as it loads. Setfix's
+      own test binary registers the run's and setfix's (`RUN_CARRIERS`). A binary that registers none fails in
+      `Carry::here` with the slot's name, rather than carrying part of the context.
+    - Tests that read the language or the planner are mounted by `rerail-logic`'s facades: `run_state`'s (every
+      thread-local of the tree against `plan::CARRIERS`), `setfix::bounded_tests` (`rr::parse_version`), and two
+      tests of a relation's digest and kept rows under `plan::corpus::retain`, which moved out of `posted_tests`
+      into `setfix/retain_tests.rs`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; setfix, logic, boot, device-metal,
+    tests_logic and sessions check on a Mac):
+    - spark1: setfix's 162, sessions' 20, `rerail-logic`'s mounted 23, and tests_logic's native, lanes, run,
+      run-state, Bloom, joins, statkeep and maintain tests: 254 pass. In the first run R1 failed until its
+      exemption followed the list, and once `a_maintained_strata_pieces_run_as_one_component` aborted at exit
+      after passing (glibc: "double free or corruption"). It did not recur alone (6 runs) or in the full set
+      again.
+    - A Mac (m3): setfix's tests, the mounted ones, and tests_logic's run-state, joins and lanes tests: 173 pass.
 
