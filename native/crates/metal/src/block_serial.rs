@@ -1847,7 +1847,7 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
 
 /// The outputs counted per segment: the extracts', then one for all the totals (one flag).
 fn counted_outputs(native: &BlockNative) -> Vec<usize> {
-    rerail_compiler::native_cpu_block::counted(native)
+    rerail_compiler::block_native::counted(native)
 }
 
 /// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
@@ -2315,7 +2315,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         out_base += n.outputs.len() * blocks;
         // The extracts' positions, and with records a code a token after them.
         pos_base += (n.extracts.len() + usize::from(n.records.is_some())) * len.max(1);
-        tot_base += rerail_compiler::native_cpu_block::counted(n).len();
+        tot_base += rerail_compiler::block_native::counted(n).len();
     }
     let total = segs.len();
     let table = crate::pool::upload(&rows)?;

@@ -48,8 +48,8 @@ fn aot_tapes_are_the_jits() {
     assert_eq!(jit.parser.tier1.records.as_ref().map(|t| t.layout), Some(rerail_compiler::records::RecordLayout::Rows), "the records a row a token, from the file's first position");
     let (mut differ, mut tier1_differ, mut taken) = (Vec::new(), Vec::new(), 0);
     for (i, f) in files.iter().enumerate() {
-        let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
-        let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+        let mut a = rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
+        let mut j = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
         j.call(&jit.parser.tier1);
         let masks = (0..a.out.len()).all(|k| !read.contains(&(k % n)) || a.out[k] == j.out[k]);
@@ -93,10 +93,10 @@ fn jit_against_aot() {
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
     let nodes: usize = ours.iter().map(|f| lean::tape(f.as_bytes()).map_or(0, |t| t.code.len() / 2)).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
-    let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
+    let batch = |p: &rerail_cpu_stream::native_cpu_stream::Parser| -> Vec<_> {
         ours.iter()
             .map(|f| {
-                let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
                 b.call(&p.tier1);
                 b
             })
@@ -211,7 +211,7 @@ fn structure() {
         let files: Vec<String> = std::env::var("RERAIL_KOTLIN_CORPUS").map(|_| corpus()).unwrap_or_default();
         let mut bits = vec![0u64; b.outputs.len()];
         for f in &files {
-            let mut batch = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+            let mut batch = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
             batch.call(&jit.parser.tier1);
             for (i, w) in batch.out.iter().enumerate() {
                 bits[i % b.outputs.len()] += u64::from(w.count_ones());
@@ -234,7 +234,7 @@ fn tier1_alone() {
     let rounds: usize = std::env::var("KOTLIN_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
     let files = corpus();
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
-    let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()])).collect();
+    let mut batches: Vec<_> = ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()])).collect();
     let at = thread_cpu();
     for _ in 0..rounds {
         for b in &mut batches {

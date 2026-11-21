@@ -3527,7 +3527,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use rerail_compiler::native_cpu_codegen;
             #[allow(unused_imports)]
-            pub use rerail_compiler::native_cpu_rows;
+            pub use rerail_cpu_block::native_cpu_rows;
             #[allow(unused_imports)]
             pub use crate::code_rule_dsl::transducer::packed::packed_batch::PackedExecution;
             #[allow(unused_imports)]

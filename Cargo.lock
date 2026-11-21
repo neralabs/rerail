@@ -3188,6 +3188,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-bitlex"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-bitlex",
+ "rerail-compiler",
+ "rustc-hash",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
@@ -3248,6 +3259,7 @@ dependencies = [
  "rerail-classic",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-cpu-block",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-lang",
@@ -3296,10 +3308,14 @@ name = "rerail-c-directives"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-bitlex",
  "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-pp",
+ "rerail-cpu-stream",
  "rerail-metal",
  "rerail-pp-aot",
  "rerail-simd8",
@@ -3430,7 +3446,6 @@ dependencies = [
  "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
- "sha2 0.11.1",
 ]
 
 [[package]]
@@ -3443,6 +3458,55 @@ dependencies = [
  "rayon-core",
  "rerail-context",
  "rustc-hash",
+]
+
+[[package]]
+name = "rerail-cpu-block"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "libc",
+ "rerail-compiler",
+ "rerail-context",
+ "rerail-cpu-block",
+]
+
+[[package]]
+name = "rerail-cpu-pp"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "rerail-clif",
+ "rerail-compiler",
+ "rerail-cpu-pp",
+]
+
+[[package]]
+name = "rerail-cpu-stream"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-jit-wasm",
+ "cranelift-module",
+ "cranelift-native",
+ "rerail-bitlex",
+ "rerail-clif",
+ "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
+ "rerail-metal",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3518,6 +3582,7 @@ dependencies = [
  "rerail-classic",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-cpu-block",
  "rerail-device",
  "rerail-device-metal",
  "rerail-facts",
@@ -3723,7 +3788,6 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
- "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
  "rerail-tape-format",
@@ -3824,6 +3888,8 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
@@ -3844,7 +3910,10 @@ name = "rerail-kotlin-parser"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-bitlex",
  "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",
@@ -3908,7 +3977,6 @@ dependencies = [
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
- "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
  "rerail-scala-lean",
@@ -4050,8 +4118,11 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-bitlex",
  "rerail-classic",
  "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-facts",
  "rerail-lang",
  "rerail-lang-json",
@@ -4483,8 +4554,11 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "libc",
+ "rerail-bitlex",
  "rerail-compiler",
  "rerail-context",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
@@ -4509,6 +4583,8 @@ name = "rerail-pp-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-compiler",
+ "rerail-cpu-pp",
+ "rerail-cpu-stream",
 ]
 
 [[package]]
@@ -4676,8 +4752,11 @@ name = "rerail-rr-aot"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rerail-bitlex",
  "rerail-compiler",
  "rerail-context",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4690,8 +4769,11 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "cranelift-codegen",
+ "rerail-bitlex",
  "rerail-compiler",
  "rerail-context",
+ "rerail-cpu-block",
+ "rerail-cpu-stream",
  "rerail-metal",
  "rerail-prof",
  "rerail-rr-parser",
@@ -5459,6 +5541,7 @@ dependencies = [
  "rerail-classic",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-cpu-block",
  "rerail-device-metal",
  "rerail-facts",
  "rerail-gpu",
@@ -5549,6 +5632,7 @@ dependencies = [
  "rerail-classic",
  "rerail-clif",
  "rerail-compiler",
+ "rerail-cpu-block",
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",

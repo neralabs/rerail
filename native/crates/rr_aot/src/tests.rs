@@ -48,8 +48,8 @@ fn aot_tapes_are_the_jits() {
     let (mut differ, mut tier1_differ) = (Vec::new(), Vec::new());
     let mut taken = 0;
     for (i, f) in files.iter().enumerate() {
-        let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
-        let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+        let mut a = rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
+        let mut j = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
         a.call(&aot.parser.tier1);
         j.call(&jit.parser.tier1);
         if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
@@ -114,7 +114,7 @@ fn the_word_multiplier_is_a_literal() {
     let src = include_str!(concat!(env!("OUT_DIR"), "/tier1_aot.rs"));
     assert!(!src.contains("kept("), "a barrier on a constant");
     assert!(src.contains(&format!("{}i64 as u64", t.table.mult as i64)), "the multiplier a literal");
-    assert_eq!(t.rest, rerail_compiler::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
+    assert_eq!(t.rest, rerail_cpu_block::native_cpu_block::WordRest::Ninth, "rr's words are nine bytes at most");
 }
 
 /// The token loop's innermost loop, the fused rules' (a word's hash in it), calls nothing: as
@@ -328,10 +328,10 @@ fn jit_against_aot() {
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
     let nodes: usize = ours.iter().map(|f| rr::engine_tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
-    let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
+    let batch = |p: &rerail_cpu_stream::native_cpu_stream::Parser| -> Vec<_> {
         ours.iter()
             .map(|f| {
-                let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
                 b.call(&p.tier1);
                 b
             })
@@ -478,9 +478,9 @@ fn aot_profile_loop() {
     let aot = (!jit1).then(|| crate::aot(BOTH).expect("the ahead-of-time build"));
     // Every file: tier 1 runs on each, and a scratch compile may refuse others.
     let ours: Vec<&String> = files.iter().collect();
-    let mut batches: Vec<_> = aot.iter().flat_map(|a| ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&a.parser.tier1, &[f.as_bytes()]))).collect();
+    let mut batches: Vec<_> = aot.iter().flat_map(|a| ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&a.parser.tier1, &[f.as_bytes()]))).collect();
     let jit = rerail_rr_parser::compiled().expect("compiles");
-    let mut jit_batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()])).collect();
+    let mut jit_batches: Vec<_> = ours.iter().map(|f| rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()])).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let (t0, (i0, c0)) = (thread_cpu(), retired());
     let (mut rounds, mut n) = (0usize, 0usize);
@@ -539,7 +539,7 @@ fn tier1_by_kind() {
             // `RR_WHO=lean`: the lean lexer alone, for the same profile of it; `jit`: Cranelift's.
             let lean = std::env::var("RR_WHO").is_ok_and(|w| w == "lean");
             let p = if std::env::var("RR_WHO").is_ok_and(|w| w == "jit") { &jit.parser } else { &aot.parser };
-            let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[text.as_bytes()]);
+            let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&p.tier1, &[text.as_bytes()]);
             let t0 = thread_cpu();
             while (thread_cpu() - t0).as_secs_f64() < seconds {
                 if lean {
@@ -550,9 +550,9 @@ fn tier1_by_kind() {
             }
             continue;
         }
-        let mut b = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
+        let mut b = rerail_cpu_block::native_cpu_block::Batch::new(&aot.parser.tier1, &[text.as_bytes()]);
         b.call(&aot.parser.tier1);
-        let mut bj = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[text.as_bytes()]);
+        let mut bj = rerail_cpu_block::native_cpu_block::Batch::new(&jit.parser.tier1, &[text.as_bytes()]);
         bj.call(&jit.parser.tier1);
         let (mut ours, mut lean, mut cl) = ((u64::MAX, u64::MAX), (u64::MAX, u64::MAX), (u64::MAX, u64::MAX));
         let least = |m: (u64, u64), a: (u64, u64), b: (u64, u64)| (m.0.min(b.0 - a.0), m.1.min(b.1 - a.1));

@@ -320,7 +320,7 @@ pub fn run_batch(
     }
     // The file table, and each base after the files before.
     let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-    let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
+    let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::block_native::counted).collect();
     let mut rows = Vec::with_capacity(files.len());
     let mut group_file: Vec<u32> = Vec::new();
     for (i, file) in files.iter().enumerate() {
@@ -419,7 +419,7 @@ pub fn run_batch(
                     out0,
                     outs: fit(n.outputs.len())?,
                     ext0,
-                    exts: fit(rerail_compiler::native_cpu_block::counted(n).len())?,
+                    exts: fit(rerail_compiler::block_native::counted(n).len())?,
                     pad: [0; 2],
                 });
             }
@@ -1097,7 +1097,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
 /// narrower than a block, and a constant of both kinds is the same at every width. A carry
 /// (`toggle`, `escaped`, `fill`) is never folded: its look-back is the same in every body.
 fn full_form(native: &BlockNative) -> BlockNative {
-    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::lane_plan::Plan::of(native);
     let mut form = native.clone();
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
@@ -1131,7 +1131,7 @@ fn group_members(native: &BlockNative) -> Vec<bool> {
 /// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
 /// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
 fn ascii_form(native: &BlockNative) -> BlockNative {
-    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::lane_plan::Plan::of(native);
     let mut form = full_form(native);
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {

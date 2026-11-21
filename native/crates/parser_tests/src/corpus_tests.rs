@@ -23,9 +23,11 @@
 
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
+use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
-use rerail_compiler::bitlex_masks as bitlex_compile;
+use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
@@ -36,8 +38,8 @@ use std::fmt::Write as _;
 static DIR: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{}/bitlex_corpus", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
 
-// The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
-pub use rerail_compiler::ladder::{Ids, Rng};
+// The seeded xorshift and the ids by name are the compiler crate's (`rerail_cpu_stream::ladder`).
+pub use rerail_cpu_stream::ladder::{Ids, Rng};
 
 /// The classes most programs read: bytes the inputs hold often, a high range, `0x00`.
 const CLASSES: &str = "class quote = '\"'

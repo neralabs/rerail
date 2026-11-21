@@ -13,7 +13,8 @@ fn main() {
 
 #[cfg(feature = "generated")]
 fn generate() {
-    use rerail_compiler::{clif_rust, native_ir, rust_stream};
+    use rerail_compiler::native_ir;
+    use rerail_cpu_stream::{clif_rust, rust_stream};
     // The compiles in a run of the script's own: their options (decision 0442) are its.
     let _run = rerail_context::within(rerail_context::default_shared());
     rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);

@@ -171,7 +171,7 @@ The crates are cut from the bottom of the DAG up. A crate that is cut low rebuil
 
 #### Step 4: the compiler (66k), at the bottom
 
-`rerail-lang` and `rerail-facts` depend on all of `rerail-compiler`, so an edit to any tier rebuilds everything.
+`rerail-lang` and `rerail-facts` depended on all of `rerail-compiler`, so an edit to any tier rebuilt everything. Done: the Log, step 4.
 
 | crate | holds | lines |
 |---|---|---:|
@@ -383,3 +383,50 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   (`test_crates.py` ran once).
   - Tests: the 145 moved tests pass under cargo (spark1); one `cargo check --tests` over boot, the engine and the
     six test crates is clean.
+- **Step 4** (2026-11-21): the compiler is five crates. Their sources stay in `crates/compiler/src`; each crate above
+  the front end mounts its modules by `#[path]` and reads the crates below through a private glob (`use
+  rerail_compiler::*;`), so the mounted files' `crate::records` paths are unchanged.
+
+  | crate | holds | lines |
+  |---|---|---:|
+  | `rerail-compiler` (the front end) | the programs and their analyses: `grammar`, `block`, `block_native`, `stream`, `native_ir`, `rir_asm`, `pp_words`, `clif_fold`, `native_cpu_codegen` (what every JIT function shares), `lane_plan`, `byte_needs`, `native_cpu_edge`, `native_cpu_pairs`, … | 19.4k |
+  | `rerail-bitlex` | `bitlex_masks`, `bitlex_tier2`, `bitlex_prove`, `bitlex_sat`, `answers` | 9.3k |
+  | `rerail-cpu-block` | `native_cpu_block`, `native_cpu_bytes`, `native_cpu_lanes`, `native_cpu_walk`, `native_cpu_rows` | 13.6k |
+  | `rerail-cpu-pp` | `native_cpu_pp`, `clif_ukl` | 7.5k |
+  | `rerail-cpu-stream` | `native_cpu_stream`, `native_cpu_tape`, `native_cpu_clusters`, `rust_stream`, `rust_block`, `clif_rust`, `ladder`, `tier2_on` (and the tier tests) | 17.4k |
+
+  The plan's table differed from the code in three places:
+  - **The tiers' analyses were in the tiers.** `block_native`'s CPU form read the token loop's bytes, marks and
+    remade values from `native_cpu_bytes`, `native_cpu_block` and `native_cpu_lanes`, and Metal read the lanes'
+    `Plan`. The analyses that emit no code moved down: `lane_plan` (the `Plan`, the class packs, `remade`, out of
+    `native_cpu_lanes`), `byte_needs` (`Needs`, `made_from_bytes`, `sequential`, out of `native_cpu_bytes` and
+    `native_cpu_stream`), the token loop's mark sets into `records`, `counted`, `FRONT` and `BACK` into
+    `block_native`, `DEPTH` into `stream`, the pp refusals' `REASONS` into `pp_words`, and the JIT's table
+    addresses and switch trees (`table_address`, `dispatch`) into `native_cpu_codegen`. Each tier re-exports what
+    moved under its old name. `BlockProgram::compile_rows` became `native_cpu_rows::compile_program`.
+  - **`pp_words` is the front end's**: `rir_asm` validates a program by it, and Metal's pp runs read it.
+  - **`rust_stream` is live in the JIT.** Its `facts` decides where the JIT's format 16 runs pass nodes directly
+    (`direct_keys`, `open_bound`, `marks`, `word_form`), and parser_tests checks that the JIT is direct exactly where
+    the Rust is. `facts` also refuses programs for the Rust backend's own limits. So it stays with the stream tier, as
+    do `rust_block` (it reads `rust_stream`'s names) and `clif_rust` (tier 1's source from a `Parser`). Cutting it out
+    first means separating the JIT's direct-run facts from the Rust backend's acceptance.
+  - **No backend trait was needed.** Every caller of a tier is above it (the parser crates: rr-parser, c-directives,
+    kotlin, lang-json, the AOT crates, parser_tests), so each upward reference was cut by moving the item down. A
+    registry would have no lower caller to serve.
+
+  `rerail-lang` and `rerail-facts` now reach no tier (`cargo tree -i`):
+  - `tier2_on` (tier 2 over Metal's buffers) moved from `rerail-metal` to `rerail-cpu-stream`, which depends on metal
+    on the device layer's targets. Metal itself reads only the front end.
+  - Both had kept `rerail-rr-parser` from the engine's dependency list, which none of their code reads. It is gone.
+  - Tier 2's tests set `bitlex_masks::NO_GAP_ENDS`, which was `cfg(test)` and is now behind `test-hooks`, since those
+    tests are another crate's. It was the only `cfg(test)` hook in a lower crate that a higher crate's tests read.
+  - Tests (cargo nextest, spark1; one `cargo check --tests --workspace` clean on Linux, and the Metal crates' check
+    on an M3):
+    - The five crates' 146 tests pass, with 3 in the slow tier. That is every `#[test]` in their sources but the
+      two macOS-only relocation tests.
+    - The tiers' callers (rr-parser, parser_tests, kotlin, c-directives, lang-json, the AOT crates): 186 pass, once
+      rr-parser's source-path test read `tier2_on` at its new place.
+    - The engine's packed transducer and the coverage gate: 183 run. Three fail because they read pack data this
+      checkout has not pulled (`pyflakes/F601.py`, the Python pack's upstream sources). One,
+      `a_patterns_block_program_runs_alike_on_every_executor`, failed for the device's capacity under the parallel
+      run and passes alone.

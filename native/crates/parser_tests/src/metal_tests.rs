@@ -4,7 +4,7 @@
 //! backend is the Metal crate's (`rerail_metal::block_program`).
 
 use crate::json::{base, files_in, form};
-use rerail_compiler::ladder::*;
+use rerail_cpu_stream::ladder::*;
 use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
