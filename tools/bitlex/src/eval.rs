@@ -434,6 +434,8 @@ impl<'a> Ev<'a> {
             }
             // Read at the start (`stream`).
             Stmt::Prefix(_) => {}
+            // A fact of the token loop: no mask of its own (decision 0552).
+            Stmt::Assume { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;

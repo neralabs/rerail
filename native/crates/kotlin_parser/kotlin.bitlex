@@ -253,6 +253,12 @@ mask name_tok   = fill(word_start, ~w)
 # A name runs over its word's bytes after its first, as the lean lexer's word reader. A number
 # runs over its bytes: a decimal's, or a `0x`'s or `0b`'s letter and digits.
 mask name_more  = name_tok & ~word_start
+# What the token loop reads of the masks above at a token's start (decision 0552): the regions
+# open only at a token's start, so no start is in one, and the token before a start ends there.
+assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
+assume "a number starts at a digit not after one `.`: a start is never in a word" at starts int_at = digit & ~(zero & (next(x_letter) | next(b_letter))) & ~prev(dot & ~prev(dot))
+assume "a `0x` starts a hex number at a start" at starts hex_at = zero & next(x_letter) & ~prev(dot & ~prev(dot))
+assume "a `0b` starts a binary number at a start" at starts bin_at = zero & next(b_letter) & ~prev(dot & ~prev(dot))
 token simple_identifier = start word_start run name_more
 token integer_literal = start int_at run nb
 token real_literal = start dot_at run nb

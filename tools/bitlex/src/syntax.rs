@@ -701,6 +701,12 @@ pub enum Stmt {
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
+    /// `assume "WHY" at starts NAME = E` (decision 0552): a fact the grammar's writer knows of the
+    /// token loop, that mask `NAME` is `E` at every byte a token starts at. It changes no mask: a
+    /// lexer that reads tokens one at a time reads `NAME` there as `E`. The compiler proves it
+    /// where it can (the prover, its answers cached by content, 0414); else a test build checks it
+    /// at every token.
+    Assume { why: String, name: String, expr: Expr },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -1868,6 +1874,14 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 self.pairs(n)?
+            }
+            "assume" => {
+                let why = String::from_utf8_lossy(&self.string()?).into_owned();
+                self.want_kw("at")?;
+                self.want_kw("starts")?;
+                let name = self.ident()?;
+                self.want_p("=")?;
+                Stmt::Assume { why, name, expr: self.expr()? }
             }
             "mask" => {
                 let n = self.ident()?;

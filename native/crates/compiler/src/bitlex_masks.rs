@@ -430,6 +430,9 @@ pub struct Lowering {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust (`Compiled::lexer_rust`).
     pub lexer_rust: Option<Result<String, String>>,
+    /// The grammar's assumptions (`assume`, decision 0552): each mask's name, what it is at a
+    /// token's start, and whether the prover proved it (else a test build checks it).
+    pub assumed: Vec<(String, Expr, bool)>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -568,6 +571,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         costs: Vec::new(),
         rust: None,
         lexer_rust: None,
+        assumed: Vec::new(),
         rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
@@ -585,6 +589,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let from = low.program.ops.len();
     let token_rows = low.tokens()?;
     low.cost("the token rows".into(), from);
+    assumptions(&mut low, stmts, &token_rows)?;
     let from = low.program.ops.len();
     // The tree section: its state machine, its checks and tier 2's words (decision 0087), before
     // the outputs, since the words' guards join the fallback.
@@ -790,7 +795,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
                 Err("tier 1 as Rust: a mark of one word is not written yet".to_owned())
             } else {
-                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits };
+                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed };
                 crate::bitlex_lex_rust::tier1(&x)
             };
             low.lexer_rust = Some(lexer);
@@ -1090,6 +1095,8 @@ impl Lowering {
                 }
                 // Made first (`prefix_value`).
                 Stmt::Prefix(_) => {}
+                // Asked once the token rows are made (`assumptions`).
+                Stmt::Assume { .. } => {}
                 Stmt::Skip(expr) => {
                     let x = self.expr(expr)?;
                     self.skip = Some(match self.skip {
@@ -2966,6 +2973,42 @@ pub fn cost_name(stmt: &Stmt) -> String {
 pub fn statement(stmt: &Stmt) -> String {
     let text = format!("{stmt:?}");
     text.split(['(', ' ', '{']).next().unwrap_or("?").to_owned()
+}
+
+/// The grammar's assumptions (`assume "WHY" at starts NAME = E`, decision 0552), each asked of the
+/// prover: that `NAME` and `E` differ at no byte the token loop can stand at, where a row's start
+/// holds and `skip` does not (the loop stands nowhere else: a byte no row starts at refuses). One
+/// question each, cached by its content as every proof is (0414): a later compile of the same
+/// grammar, or one whose question is the same, proves nothing again.
+fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, Val)]) -> Result<(), String> {
+    let asked: Vec<(&String, &String, &Expr)> = stmts.iter().filter_map(|s| if let Stmt::Assume { why, name, expr } = s { Some((why, name, expr)) } else { None }).collect();
+    if asked.is_empty() {
+        return Ok(());
+    }
+    // The rows the loop reads: not a region's parts, which tier 2 reads inside their region.
+    let rows: Vec<Val> = token_rows.iter().enumerate().filter(|(i, _)| !low.inside.get(*i).copied().unwrap_or(false)).map(|(_, t)| t.1).collect();
+    let Some(&first) = rows.first() else { return Err("`assume … at starts`: a grammar with no token rows".into()) };
+    let mut starts = first;
+    for &t in &rows[1..] {
+        starts = low.or(starts, t)?;
+    }
+    if let Some(skip) = low.skip {
+        let not = low.not(skip)?;
+        starts = low.and(starts, not)?;
+    }
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    for (why, name, expr) in asked {
+        let a = low.expr(&Expr::Name(name.clone()))?;
+        let b = low.expr(expr)?;
+        let differs = low.xor(a, b)?;
+        let at = low.and(differs, starts)?;
+        let proved = low.either_never(&mut settled, at);
+        if std::env::var_os("RERAIL_ASSUMPTIONS").is_some() {
+            eprintln!("assume {name}: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
+        }
+        low.assumed.push((name.clone(), expr.clone(), proved));
+    }
+    Ok(())
 }
 
 /// Whether a keyword gives kind `name`.
