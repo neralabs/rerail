@@ -372,10 +372,10 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
         return Err("a relation with no node column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
-    let total: usize = cols.iter().map(Vec::len).product();
-    if total > 4000 {
+    // Checked: a component of many relations with several node columns each overflowed the product before the bound.
+    let Some(total) = cols.iter().try_fold(1usize, |n, c| n.checked_mul(c.len())).filter(|&n| n <= 4000) else {
         return Err("too many measures to try".into());
-    }
+    };
     for n in 0..total {
         let (mut rest, mut m) = (n, BTreeMap::new());
         for (r, c) in rels.iter().zip(&cols) {

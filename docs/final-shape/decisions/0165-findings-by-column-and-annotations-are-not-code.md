@@ -54,3 +54,33 @@ Datalog's alone: B110 ×2 (main's quirk, t34 "Findings against main") and PYI046
 Tests: `findings_keep_their_columns_and_an_annotation_is_not_code`, `string_annotations_are_guests_at_their_host_lines`
 (round 2 reached through the annotation), `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`
 (an annotation's copies fold and widen their originals' bounds).
+
+## A rule's rows are its own
+
+Added 2026-11-21 (main's #923, 2026-11-20, as built here on the version). A pack's programs share the library's
+relations (decision 0089), so a rule's rows depended on what else the run held. Since decision 0431 an annotation is a
+tape value, and a finding at its node is refused (R9), so the pack failed where the program alone ran:
+
+- **Clones.** Hiding clones a rule for a variable that may be a guest's node (O110). `builtin_at` holds an
+  annotation's names beside a library that reads string annotations, so C408's own `c4_builtin` was cloned, and its
+  findings were calls inside `a: "dict()"`. Alone, C408 found none.
+- **Folding.** Folding widened an original for every reader, not only its copies' readers. Beside `anns`, which reads
+  `list_like` from a string annotation, `cmps` read `cmp` widened and found the annotation's `1 in []`.
+
+Both now hold to one line, the columns an output shows (`hide::shown_columns`, `combining::shown_columns`): an
+output's every column, a finding's place (the column `rr_unplaced` reads a node of), and each column a rule reads into
+one its head shows, transitively.
+
+- A clone whose head would hold an annotation's node at a shown column goes (`hide::shows_an_annotation`). A column
+  that may be an annotation's counts, since a clone leaves it unbounded.
+- A rule that is not a widened original's own reads it as hiding left it, `rr_narrow_<orig>`, where the atom reads a
+  variable its head shows. A narrow copy's rules read every widened original narrow.
+- A clone or a widened read used inside a rule stays. A call's target through a quoted `n: "Node"` needs the clones
+  (`quoted_annotations_are_read_as_their_code`), and main's narrowing of every read lost eleven typing tests' rows.
+
+Also: `wellfounded::classify`'s count of measures to try is a checked product. The narrow copies grew one recursive
+component until the product overflowed before its bound of 4,000.
+
+Tests: `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` (C408 beside its twin, and a policy that includes
+`ruff-classes.rerail`), `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` (main's #923, its `Ann`
+placed at the string as R9 asks).
