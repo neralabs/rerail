@@ -49,6 +49,7 @@ import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/t
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { placeCheckout } from "../engine/catalog/checkouts/checkout-placement.js";
+import { GitReads } from "../engine/git.js";
 import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
@@ -1213,8 +1214,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
-  /** Ends the Git reads that place a session's checkout (`placeCheckout`) once the runtime is disposed. */
-  readonly #placing = new AbortController();
+  /**
+   * The Git reads that place a session's checkout (`placeCheckout`): a disposed runtime ends them, and returns once
+   * each Git has exited, so none is left running in a checkout (Windows refuses to remove a folder a process holds).
+   */
+  readonly #placing = new GitReads();
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /** The sessions `resumeSession` is opening again for a scan, whose open fails rather than wait for a write lock. */
   readonly #resumingForScan = new Set<string>();
@@ -2104,7 +2108,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
-    this.#placing.abort();
+    const placingEnded = this.#placing.stop();
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
     // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
@@ -2113,6 +2117,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
+    await placingEnded;
     // A Merge Assist this runtime made works over its database: its hook's late answers stop before that closes.
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
@@ -2132,7 +2137,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const startedAt = recordedSession?.startedAt ?? Date.now();
     // What the checkout's first events ask Git is learnt here without blocking the daemon (`placeCheckout`), so the
     // steps below find it kept: every other session's events are answered meanwhile, and this session's wait in order.
-    const [ledger] = await Promise.all([this.#openLedger(session, recordedSession === undefined), this.#placeCheckout(session)]);
+    const ledger = await this.#ledgerWhilePlaced(session, recordedSession === undefined);
     this.#failWhileWriteLockedForScan(session.sessionId);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
@@ -2373,10 +2378,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
   }
 
+  /**
+   * The session's ledger ({@link #openLedger}), read while its checkout is placed ({@link #placeCheckout}): both settle
+   * before it answers or fails, so an open that fails leaves no Git of its placement running in the checkout.
+   */
+  async #ledgerWhilePlaced(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const [ledger, placed] = await Promise.allSettled([this.#openLedger(session, unrecorded), this.#placeCheckout(session)]);
+    if (ledger.status === "rejected") throw ledger.reason;
+    if (placed.status === "rejected") throw placed.reason;
+    return ledger.value;
+  }
+
   /** {@link placeCheckout} for the session's folder; a runtime disposed meanwhile fails the open before any Git finds the checkout. */
   async #placeCheckout(session: AdapterSession): Promise<void> {
-    await placeCheckout(session.cwd, { signal: this.#placing.signal });
-    if (this.#placing.signal.aborted) throw new Error(`the session ${session.sessionId} opened while Rerail was stopping`);
+    await this.#placing.run(signal => placeCheckout(session.cwd, { signal }));
+    if (this.#placing.stopped) throw new Error(`the session ${session.sessionId} opened while Rerail was stopping`);
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
