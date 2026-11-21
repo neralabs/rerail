@@ -285,6 +285,39 @@ SIMD-group operation switches each thread of the group.
      a SIMD group's (`px_worker`), whose lanes waited on lane 0 (each is one token's work, or a
      look at an operand of a token or two). They are their item's thread's (`px_item`), and
      `px_worker`, its set (`QCTL` 8) and its barrier a round are gone.
+   - **The pause's loops are phases** (`px_gv_*`, `PX_GIVE_LISTS`), in place of a thread a list
+     walking its children and moving its pieces (`px_forward`, `px_give`). The pause works in the
+     round's scan's stores (no scan runs in a pause; past their room the unit is refused, as a
+     round is). The live macro lists' slots are numbered (a scan of `nkid`), a slot's list found
+     by its number.
+     - Dead lists: a list is dead when one of its owner chain is dead or its call done; each
+       list's next owner and whether one before it hits come by pointer doubling
+       (`px_gc_seed`, `px_gc_jump`), in place of a thread a list climbing its chain.
+     - The freed ids: each run of marked ids is given back by its last, its first from a max scan
+       (each unmarked id's own + 1), in place of a run's first walking to its end.
+     - Forwarding: each list's forwarding is its exit's call's id, or its own; the chains' ends
+       come by pointer doubling over the lists. A thread a slot finds its list's stop (the first
+       slot past the list's exit's name, or whose chain ends at a call that is pending or has an
+       exit not forwarded; atomic min); the slots to the stop take their chains' ends, which are
+       marked, and a thread a list kills the forwarded calls whose chain's end is marked.
+     - Givings: a thread a slot gives its span's end and its next: the slot after it, or for a
+       claim the first slot past its cover (a binary search over the slots' places). Whether a
+       claim's calls are all final is a scan of the pending slots. The slots reached from each
+       list's first come by doubling (`px_live_jump`), and the list's last is its first reached
+       slot that stops. Each taken slot counts its pieces (two binary searches over the places),
+       and a scan of them gives, at each piece, how many before it leave; a segmented max gives
+       the last reached slot at or before each slot.
+     - Pieces: a thread a list gives back a dead list's blocks and counts a live one's kept
+       pieces (the trim at its exit's name included). The pieces of the lists that lose some are
+       numbered, and a thread a piece finds whether it is kept and where it goes. A list one of
+       whose kept pieces goes down takes a block of its kept pieces' class (one given back, else
+       the tokens' front), each kept piece is written there by its thread, and the old block is
+       given back. In-place moves would race (a piece's place is another's source), so the
+       pieces go to a new block, not through a staging copy.
+     - The test: `reclaimed_tokens_keep_a_chain_at_rung_0` has a shape with calls and plain
+       tokens beside each level's call (`G(s) a L(s) b G(s) c`), whose lists lose their first
+       call's pieces and move the rest (36 moves a run). Skipping the moves fails it, and skipping
+       the forwarding fails `a_chains_use_is_flat_in_its_length`.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

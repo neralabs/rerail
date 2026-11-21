@@ -1539,7 +1539,7 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let levels = 40;
     let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
-        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n");
+        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n#define G(x) -\n");
         t += &format!("#define L0(s) {last}\n");
         for k in 1..=levels {
             t += &format!("#define L{k}(s) {}\n", body(k));
@@ -1553,6 +1553,7 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
         ("an exit", chain(&|k| format!("CAT(L, {})(s)", k - 1), "<s>", "")),
         ("__LINE__", chain(&|k| format!("L{}(s)", k - 1), "[s]", " __LINE__")),
         ("stringized", chain(&|k| format!("L{}(ID(s))", k - 1), "X(s)", "")),
+        ("calls beside it", chain(&|k| format!("G(s) a L{}(s) b G(s) c", k - 1), "[s]", "")),
     ];
     for (what, text) in &shapes {
         let files = [("main.c", text.as_str())];

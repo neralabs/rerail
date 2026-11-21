@@ -586,6 +586,84 @@
         }                                                                                              \
     }
 
+// A pause's forwarding and givings (`px_gv_*`), a thread a list, a slot or a piece, in the round's
+// scan's stores (no scan runs in a pause): the lists' slots numbered; the forwardings' chains'
+// ends by doubling, each list's stop, the slots forwarded and their chains' calls dead; each
+// slot's span, the slots reached by doubling, each list's last, the pieces each takes out and
+// their scan, the last reached slot at each; each list given back (a dead one's blocks) and its
+// pieces kept counted; the pieces of the lists that lose some numbered, a moving list's new block,
+// its kept pieces moved, its old block and its end given back.
+#define PX_GIVE_LISTS()                                                                                \
+    Gv v_;                                                                                             \
+    v_.lists = AT(PxList, LISTS); v_.cols = AT(uint32_t, TOKENS); v_.pool = gv_p; v_.ctl = gv_c;       \
+    v_.tc = gv_tc; v_.n = gv_nl; v_.ns = 0u; v_.pnd = 0u; v_.np = 0u;                                  \
+    v_.base = AT(uint32_t, SC_K); v_.cnt = AT(uint32_t, SC_M); v_.fwd = AT(uint32_t, SC_E);            \
+    v_.fstop = AT(uint32_t, SC_DEPTH); v_.gstop = AT(uint32_t, SC_CKEYS); v_.mark = AT(uint32_t, SC_CAT); \
+    v_.flags = AT(uint32_t, SC_CEND); v_.npn = AT(uint32_t, SC_M); v_.pcnt = AT(uint32_t, SC_HEADS);   \
+    v_.pbase = AT(uint32_t, SC_VB); v_.nf = AT(uint32_t, SC_LIVE);                                     \
+    v_.lo = AT(uint32_t, SC_REACH); v_.pend = AT(uint32_t, SC_LIVE); v_.pscan = AT(uint32_t, SC_RANK); \
+    v_.e = AT(uint32_t, SC_M); v_.st = AT(uint32_t, SC_HEADS); v_.on = AT(uint32_t, SC_DEPTH);         \
+    v_.k = AT(uint32_t, SC_CAT); v_.kscan = AT(uint32_t, SC_CLOSE); v_.pa = AT(uint32_t, SC_DELTA);     \
+    v_.top = AT(uint32_t, SC_VA); v_.rin = AT(uint32_t, SC_LIVE); v_.heads = AT(uint32_t, SC_RANK);    \
+    v_.words = AT(uint32_t, SC_FIRST);                                                                 \
+    ONE(x) v_.words[0] = 0u;                                                                           \
+    EACH(i, gv_nl) px_gv_count(v_, i);                                                                 \
+    BARRIER();                                                                                         \
+    SCAN(gv_nl, SC_M, SC_K, SC_TOTAL);                                                                 \
+    v_.ns = N(SC_TOTAL);                                                                               \
+    if (v_.ns != 0u) {                                                                                 \
+        UKL_GLOBAL uint32_t* j0_ = AT(uint32_t, SC_DELTA);                                             \
+        UKL_GLOBAL uint32_t* j1_ = AT(uint32_t, SC_HEADS);                                             \
+        EACH(c, gv_nl) px_gv_fwd(v_, j0_, c);                                                          \
+        BARRIER();                                                                                     \
+        if (ukl_atomic_load(&v_.words[0]) != 0u) {                                                     \
+            for (uint32_t d_ = 1u; d_ < gv_nl; d_ *= 2u) {                                             \
+                EACH(c, gv_nl) px_gv_jump(gv_nl, j0_, j1_, c);                                         \
+                BARRIER();                                                                             \
+                UKL_GLOBAL uint32_t* js_ = j0_; j0_ = j1_; j1_ = js_;                                  \
+            }                                                                                          \
+            EACH(s_, v_.ns) px_gv_fstop(v_, j0_, s_);                                                  \
+            BARRIER();                                                                                 \
+            EACH(s_, v_.ns) px_gv_forward(v_, j0_, s_);                                                \
+            BARRIER();                                                                                 \
+            EACH(c, gv_nl) px_gv_dead(v_, j0_, c);                                                     \
+            BARRIER();                                                                                 \
+        }                                                                                              \
+        EACH(s_, v_.ns) px_gv_slot(v_, s_);                                                            \
+        BARRIER();                                                                                     \
+        SCAN(v_.ns, SC_LIVE, SC_RANK, SC_LTOTAL);                                                      \
+        v_.pnd = N(SC_LTOTAL);                                                                         \
+        UKL_GLOBAL uint32_t* k0_ = AT(uint32_t, SC_VA);                                                \
+        UKL_GLOBAL uint32_t* k1_ = AT(uint32_t, SC_VB);                                                \
+        EACH(s_, v_.ns) px_gv_span(v_, k0_, s_);                                                       \
+        BARRIER();                                                                                     \
+        for (uint32_t d_ = 1u; d_ < v_.ns; d_ *= 2u) {                                                 \
+            EACH(s_, v_.ns) px_live_jump(v_.ns, k0_, k1_, v_.on, s_);                                  \
+            BARRIER();                                                                                 \
+            UKL_GLOBAL uint32_t* ks_ = k0_; k0_ = k1_; k1_ = ks_;                                      \
+        }                                                                                              \
+        EACH(s_, v_.ns) px_gv_stop(v_, s_);                                                            \
+        BARRIER();                                                                                     \
+        EACH(s_, v_.ns) px_gv_take(v_, s_);                                                            \
+        BARRIER();                                                                                     \
+        SCAN(v_.ns, SC_CAT, SC_CLOSE, SC_CTOTAL);                                                      \
+        SEG(UKL_SEG_MAX, v_.ns, SC_LIVE, SC_RANK, SC_VA);                                              \
+    }                                                                                                  \
+    EACH(i, gv_nl) px_gv_keep(v_, i);                                                                  \
+    BARRIER();                                                                                         \
+    SCAN(gv_nl, SC_HEADS, SC_VB, SC_LTOTAL);                                                           \
+    v_.np = N(SC_LTOTAL);                                                                              \
+    if (v_.np != 0u) {                                                                                 \
+        EACH(q, v_.np) px_gv_moves(v_, q);                                                             \
+        BARRIER();                                                                                     \
+        EACH(i, gv_nl) px_gv_block(v_, i);                                                             \
+        BARRIER();                                                                                     \
+        EACH(q, v_.np) px_gv_move(v_, q);                                                              \
+        BARRIER();                                                                                     \
+        EACH(i, gv_nl) px_gv_end(v_, i);                                                               \
+        BARRIER();                                                                                     \
+    }
+
 // The blocks given back: the lists' dead marks, then each list's blocks to the pool; the next
 // mark `WORDS` 11 past the front (a fixed gap: halving it as the front nears the room's end spent
 // the bound on givings that each found little new). `CTL` 16 counts them.
@@ -595,21 +673,38 @@
         uint32_t gv_tc = AT(const uint32_t, WORDS)[1];                                                 \
         uint32_t gv_nl = ukl_min(ukl_atomic_load(&gv_c[1]), W(LIST_CAP));                              \
         UklPool gv_p; gv_p.heads = AT(uint32_t, TOKENS) + 5u * gv_tc; gv_p.next = AT(uint32_t, TOKENS); \
-        EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), i);                                               \
-        BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_forward(AT(PxList, LISTS), AT(uint32_t, TOKENS), gv_nl, i);                                        \
-        BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, AT(uint32_t, TOKENS), gv_tc, gv_nl, i); \
-        BARRIER();                                                                                     \
-        /* The lists' ids and the arguments' entries no item reads again. */                           \
-        UklPool gv_lp; gv_lp.next = (UKL_GLOBAL uint32_t*)(AT(PxList, LISTS) + W(LIST_CAP)); gv_lp.heads = gv_lp.next + W(LIST_CAP); \
-        UklPool gv_ap; gv_ap.next = (UKL_GLOBAL uint32_t*)(AT(PxArg, ARGS) + AT(const uint32_t, WORDS)[3]); gv_ap.heads = gv_ap.next + AT(const uint32_t, WORDS)[3]; \
-        bool gv_counted = ukl_atomic_load(&AT(uint32_t, CNT)[1]) != 0u;                                \
-        EACH(i, gv_nl) px_free_mark(AT(PxList, LISTS), gv_ap, gv_counted, i);                          \
-        BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_free_give(AT(const PxList, LISTS), gv_lp, gv_nl, i);                         \
-        BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_free_done(AT(PxList, LISTS), i);                                             \
+        if (gv_nl > W(SC_CAP)) {                                                                       \
+            ONE(x) { gv_c[24] = ukl_max(gv_c[24], gv_nl); px_refuse(gv_c, X_ROOM); }                   \
+        } else {                                                                                       \
+            /* The dead lists: each owner chain's by doubling. */                                      \
+            UKL_GLOBAL uint32_t* u0_ = AT(uint32_t, SC_K);                                             \
+            UKL_GLOBAL uint32_t* h0_ = AT(uint32_t, SC_M);                                             \
+            UKL_GLOBAL uint32_t* u1_ = AT(uint32_t, SC_E);                                             \
+            UKL_GLOBAL uint32_t* h1_ = AT(uint32_t, SC_DELTA);                                         \
+            EACH(i, gv_nl) px_gc_seed(AT(const PxList, LISTS), gv_nl, u0_, h0_, i);                    \
+            BARRIER();                                                                                 \
+            for (uint32_t d_ = 1u; d_ < gv_nl; d_ *= 2u) {                                             \
+                EACH(i, gv_nl) px_gc_jump(gv_nl, u0_, h0_, u1_, h1_, i);                               \
+                BARRIER();                                                                             \
+                UKL_GLOBAL uint32_t* us_ = u0_; u0_ = u1_; u1_ = us_;                                  \
+                UKL_GLOBAL uint32_t* hs_ = h0_; h0_ = h1_; h1_ = hs_;                                  \
+            }                                                                                          \
+            EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), h0_, i);                                      \
+            BARRIER();                                                                                 \
+            PX_GIVE_LISTS();                                                                           \
+            /* The lists' ids and the arguments' entries no item reads again. */                       \
+            UklPool gv_lp; gv_lp.next = (UKL_GLOBAL uint32_t*)(AT(PxList, LISTS) + W(LIST_CAP)); gv_lp.heads = gv_lp.next + W(LIST_CAP);\
+            UklPool gv_ap; gv_ap.next = (UKL_GLOBAL uint32_t*)(AT(PxArg, ARGS) + AT(const uint32_t, WORDS)[3]); gv_ap.heads = gv_ap.next + AT(const uint32_t, WORDS)[3];\
+            bool gv_counted = ukl_atomic_load(&AT(uint32_t, CNT)[1]) != 0u;                            \
+            EACH(i, gv_nl) px_free_mark(AT(PxList, LISTS), gv_ap, gv_counted, i);                      \
+            BARRIER();                                                                                 \
+            EACH(i, gv_nl) px_free_run(AT(const PxList, LISTS), gv_nl, AT(uint32_t, SC_M), AT(uint32_t, SC_K), i);\
+            BARRIER();                                                                                 \
+            SEG(UKL_SEG_MAX, gv_nl, SC_M, SC_K, SC_E);                                                 \
+            EACH(i, gv_nl) px_free_give(AT(const PxList, LISTS), gv_lp, gv_nl, AT(const uint32_t, SC_E), i);\
+            BARRIER();                                                                                 \
+            EACH(i, gv_nl) px_free_done(AT(PxList, LISTS), i);                                         \
+        }                                                                                              \
         BARRIER();                                                                                     \
         ONE(x) {                                                                                       \
             uint32_t front_ = ukl_min(ukl_atomic_load(&gv_c[0]), gv_tc);                               \
