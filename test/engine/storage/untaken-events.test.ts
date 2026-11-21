@@ -1,0 +1,576 @@
+import { spawn } from "node:child_process";
+import { on, once } from "node:events";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
+import { mkdtemp, readdir, rename } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  leaveUntaken,
+  UNTAKEN_EVENTS_DIR,
+  UNTAKEN_MOST_BYTES,
+  UNTAKEN_MOST_EVENTS,
+  untakenEventTaker,
+  UntakenFolderFullError,
+  untakenFolderId,
+  untakenFor,
+  untakenWaiting,
+  type UntakenEvent,
+  type UntakenHandler,
+  type UntakenPass,
+} from "../../../src/engine/storage/untaken-events.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+
+/** By path, what runs just before the taker opens an event's file: a file put under its name after it was looked at. */
+const beforeOpen = vi.hoisted(() => new Map<string, () => void>());
+vi.mock("../../../src/engine/no-follow.js", async importOriginal => {
+  const actual = await importOriginal<{ openNoFollowSync: (path: string, ...flags: number[]) => number }>();
+  return {
+    ...actual,
+    openNoFollowSync: (path: string, ...flags: number[]) => {
+      beforeOpen.get(path)?.();
+      return actual.openNoFollowSync(path, ...flags);
+    },
+  };
+});
+
+const homes: string[] = [];
+async function home(): Promise<string> {
+  const path = await mkdtemp(join(tmpdir(), "rerail-untaken-"));
+  homes.push(path);
+  return path;
+}
+
+afterEach(async () => {
+  beforeOpen.clear();
+  await Promise.all(homes.splice(0).map(path => removeFolder(path)));
+});
+
+/** A handler that keeps what it is handed and each pass it hears of; `take` ends at once unless `held` says otherwise. */
+function keeper(held?: Promise<void>): UntakenHandler & { events: UntakenEvent[]; passes: UntakenPass[] } {
+  const events: UntakenEvent[] = [];
+  const passes: UntakenPass[] = [];
+  return {
+    events,
+    passes,
+    take: async event => {
+      events.push(event);
+      await held;
+    },
+    passed: pass => passes.push(pass),
+  };
+}
+
+/** The event files in `rerailHome`'s folder, the taken mark left out. */
+async function eventFiles(rerailHome: string): Promise<string[]> {
+  return (await readdir(join(rerailHome, UNTAKEN_EVENTS_DIR))).filter(name => name.endsWith(".json"));
+}
+
+/** An event's name in the folder, as `leaveUntaken` names one, for the daemon 7. */
+const eventName = (arrivedAt: number): string => `${String(arrivedAt).padStart(13, "0")}-7-1-${arrivedAt}-5.json`;
+
+/**
+ * A program other than Rerail holding `path` open, as Windows lets one: `share` is what it lets others do meanwhile.
+ * "Read" lets the daemon read it but no one remove it. "None" lets no one remove it, and the program locks the file's
+ * bytes too, so no one reads it either: sharing None alone keeps out no token whose backup privilege is on (an elevated
+ * administrator's in Git Bash, as GitHub's Windows runner runs the tests, reads the file anyway), and a lock keeps out
+ * every reader. Ends when `release` is awaited.
+ */
+async function heldOpen(path: string, share: "Read" | "None"): Promise<{ release: () => Promise<void> }> {
+  const lock = share === "None" ? " $f.Lock(0, $f.Length);" : "";
+  const script = `$f = [System.IO.File]::Open('${path}', 'Open', 'Read', '${share}');${lock} [Console]::Out.WriteLine('held'); [void][Console]::In.ReadLine(); $f.Close()`;
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  const exited = once(holder, "exit");
+  for await (const chunk of holder.stdout) if (String(chunk).includes("held")) break;
+  return {
+    release: async () => {
+      holder.stdin.end();
+      await exited;
+    },
+  };
+}
+
+describe("the home's untaken events", () => {
+  it("are taken in the order their hooks met them, each removed once handed on, and name the daemon they were left for", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 41, "third", 3_000);
+    await leaveUntaken(rerailHome, 41, "first", 1_000);
+    await leaveUntaken(rerailHome, 42, "second", 2_000);
+    // A folder hooks made holds no daemon's mark until a daemon's watch opens on it.
+    expect(untakenFolderId(rerailHome)).toBeUndefined();
+    const handler = keeper();
+    const taker = untakenEventTaker(rerailHome, handler);
+    try {
+      const folder = taker.watch(() => undefined)!;
+      expect(folder).toBe(untakenFolderId(rerailHome));
+      expect(untakenFor(rerailHome, 41, folder)).toBe(true);
+      expect(untakenFor(rerailHome, 43, folder)).toBe(false);
+      expect(untakenFor(rerailHome, 41, `${folder}0`)).toBe(false);
+      await taker.taken();
+      expect(handler.events).toEqual([
+        { body: "first", arrivedAt: 1_000 },
+        { body: "second", arrivedAt: 2_000 },
+        { body: "third", arrivedAt: 3_000 },
+      ]);
+      expect(await eventFiles(rerailHome)).toEqual([]);
+      expect(untakenFor(rerailHome, 41, folder)).toBe(false);
+    } finally {
+      taker.close();
+    }
+  });
+
+  it("are taken as they are left once the daemon watches its home, with no request and no timer", async () => {
+    const rerailHome = await home();
+    const taken = Promise.withResolvers<UntakenEvent>();
+    const taker = untakenEventTaker(rerailHome, { take: async event => taken.resolve(event), passed: () => undefined });
+    try {
+      expect(taker.watch(() => undefined)).toBe(untakenFolderId(rerailHome));
+      await leaveUntaken(rerailHome, 7, "left later", 5_000);
+      // Within a bound of its own, under the case's: a watch that tells nothing fails here, not at the case's timeout.
+      const none = new Promise(resolve => setTimeout(resolve, 4_000, "not taken within 4 s"));
+      expect(await Promise.race([taken.promise, none])).toEqual({ body: "left later", arrivedAt: 5_000 });
+    } finally {
+      taker.close();
+    }
+  });
+
+  it("orders two events one hook left in the same millisecond as it left them", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < 11; count += 1) await leaveUntaken(rerailHome, 7, `event ${count}`, 9_000);
+    const handler = keeper();
+    await untakenEventTaker(rerailHome, handler).taken();
+    expect(handler.events.map(event => event.body)).toEqual(Array.from({ length: 11 }, (_, count) => `event ${count}`));
+  });
+
+  // A watch follows its folder's change notices. On Windows a moved folder sends its watch none, and a removed one fails
+  // it; the state file's folder id then keeps hooks asking the daemon (hook-failures.test.ts).
+  // A watch makes no folder where its folder went: a hook makes the next one, and the daemon's next event follows it.
+  it.runIf(process.platform !== "win32")("follow the folder a hook makes once theirs was removed or moved at the next take, then are taken by the watch alone, which names each new folder", async () => {
+    const rerailHome = await home();
+    const taken: string[] = [];
+    const watched: (string | undefined)[] = [];
+    const next = Promise.withResolvers<void>();
+    const taker = untakenEventTaker(rerailHome, {
+      take: async event => {
+        taken.push(event.body);
+        if (event.body === "later still") next.resolve();
+      },
+      passed: () => undefined,
+    });
+    try {
+      watched.push(taker.watch(folder => watched.push(folder)));
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      await leaveUntaken(rerailHome, 7, "after the removal", 1_000);
+      await taker.taken();
+      await rename(join(rerailHome, UNTAKEN_EVENTS_DIR), join(rerailHome, "moved"));
+      await leaveUntaken(rerailHome, 7, "after the move", 2_000);
+      await taker.taken();
+      await leaveUntaken(rerailHome, 7, "later still", 3_000);
+      await next.promise;
+      expect(taken).toEqual(["after the removal", "after the move", "later still"]);
+      expect(watched.at(-1)).toBe(untakenFolderId(rerailHome));
+      expect(watched).not.toContain(undefined);
+    } finally {
+      taker.close();
+    }
+  });
+
+  it("hand a backlog on a slice per turn of the event loop, oldest first, though the watch and a later call ask for them meanwhile", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < 100; count += 1) await leaveUntaken(rerailHome, 7, `event ${count}`, 1_000 + count);
+    const handler = keeper();
+    const taker = untakenEventTaker(rerailHome, handler);
+    try {
+      taker.watch(() => undefined);
+      const first = taker.taken();
+      // The pass's own removals wake the watch, and an event sent meanwhile asks too; neither takes the rest at once.
+      const second = taker.taken();
+      // The largest step is kept as the turns go: a loaded machine takes many turns, too many to spread into Math.max.
+      let largest = 0;
+      for (let handed = 0; handler.events.length < 100; handed = handler.events.length) {
+        await nextTurn();
+        largest = Math.max(largest, handler.events.length - handed);
+      }
+      expect(largest).toBeLessThanOrEqual(16);
+      await Promise.all([first, second]);
+      expect(handler.events.map(event => event.body)).toEqual(Array.from({ length: 100 }, (_, count) => `event ${count}`));
+      expect(await eventFiles(rerailHome)).toEqual([]);
+    } finally {
+      taker.close();
+    }
+  });
+
+  // A folder's mode keeps no one from removing a file in it on Windows, and root removes it anyway.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("are counted by no hook once a pass has begun to take them, and a file the daemon cannot remove is handed on once", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    const folder = untakenFolderId(rerailHome)!;
+    const handler = keeper();
+    // A folder its owner may not write keeps the daemon from removing what it took, as a program Windows lets hold a
+    // file does. Taken away as the event is handed on, after the pass wrote its taken mark.
+    const take = handler.take;
+    handler.take = async event => {
+      chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR), 0o500);
+      await take(event);
+    };
+    const taker = untakenEventTaker(rerailHome, handler);
+    try {
+      await taker.taken();
+      await taker.taken();
+      expect(handler.events.map(event => event.body)).toEqual(["first"]);
+      expect(untakenFor(rerailHome, 7, folder)).toBe(false);
+      expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+    } finally {
+      chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR), 0o700);
+    }
+    handler.take = take;
+    await leaveUntaken(rerailHome, 7, "second", 2_000);
+    expect(untakenFor(rerailHome, 7, folder)).toBe(true);
+    expect(untakenWaiting(rerailHome, 7)).toEqual({ events: 1, since: 2_000 });
+    await taker.taken();
+    expect(handler.events.map(event => event.body)).toEqual(["first", "second"]);
+    expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it("are kept up to their bound, past which a hook's event is refused, by count and by bytes", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < UNTAKEN_MOST_EVENTS; count += 1) await leaveUntaken(rerailHome, 7, "e", 1_000 + count);
+    await expect(leaveUntaken(rerailHome, 7, "one more", 9_000)).rejects.toThrow(new UntakenFolderFullError("256 events already wait for it, the most Rerail keeps"));
+    const other = await home();
+    await leaveUntaken(other, 7, "x".repeat(UNTAKEN_MOST_BYTES - 10), 1_000);
+    // The bound it met by bytes, named as such: before, the refusal said the one event waiting was the most Rerail keeps.
+    await expect(leaveUntaken(other, 7, "x".repeat(11), 2_000)).rejects.toThrow(new UntakenFolderFullError(
+      "the 1 event that already waits for it holds 16.0 MiB, and this one's 1 KiB would pass the 16 MiB Rerail keeps",
+    ));
+    await leaveUntaken(other, 7, "x".repeat(10), 3_000);
+  });
+
+  it("fail a name the daemon cannot read in the pass that met it, never again, and count it for no hook", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    // A folder under an event's name: no read and no removal takes it, on every system.
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(3_000)));
+    const folder = untakenFolderId(rerailHome)!;
+    const handler = keeper();
+    let reported = Promise.withResolvers<void>();
+    const taker = untakenEventTaker(rerailHome, {
+      take: handler.take,
+      passed: pass => {
+        handler.passes.push(pass);
+        reported.resolve();
+      },
+    });
+    try {
+      taker.watch(() => undefined);
+      await taker.taken();
+      await reported.promise;
+      // Before, each of these passes read it again and reported it again, and the pass's taken mark woke the watch for
+      // the next: one such file kept the daemon logging it as lost thousands of times a second.
+      await taker.taken();
+      await taker.taken();
+      expect(untakenFor(rerailHome, 7, folder)).toBe(false);
+      expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+      reported = Promise.withResolvers<void>();
+      await leaveUntaken(rerailHome, 7, "second", 4_000);
+      await taker.taken();
+      await reported.promise;
+      expect(handler.events.map(event => event.body)).toEqual(["first", "second"]);
+      expect(handler.passes).toEqual([{ events: 2, from: 1_000, to: 3_000, failed: 1 }, { events: 1, from: 4_000, to: 4_000, failed: 0 }]);
+      expect(existsSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(3_000)))).toBe(true);
+    } finally {
+      taker.close();
+    }
+  });
+
+  // A file mode keeps no one from reading on Windows, and root reads it anyway.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("read a file the daemon could not read again at each pass, saying so once with its name, and check it once it reads, after the event left behind it", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    chmodSync(file, 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const taker = untakenEventTaker(rerailHome, handler);
+    await taker.taken();
+    await leaveUntaken(rerailHome, 7, "newer", 2_000);
+    await taker.taken();
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+    // Before, each pass that could not read it said so again: a line for each event hooks sent while it could not.
+    expect(stderr.mock.calls.filter(([text]) => String(text).includes("could not be read"))).toEqual([
+      [expect.stringMatching(new RegExp(`^rerail: the event a hook left in ${name!.replace(/\./gu, "\\.")} could not be read, and is read again at the next pass: EACCES`, "u"))],
+    ]);
+    // Before, the pass that could not read it removed it, and the event was lost.
+    chmodSync(file, 0o600);
+    await taker.taken();
+    expect(handler.events.map(event => event.body)).toEqual(["newer", "unread"]);
+    expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  // Passes start at every event a hook sends, so an active session's next hooks start several within a second.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0).each([
+    { schedule: "passes a millisecond apart", kept: [0, 1, 2], lost: 60_000 },
+    { schedule: "a pass a minute after the first", kept: [0, 60_000], lost: 60_001 },
+  ])("remove a file the daemon could not read at three passes over a minute, counted lost: $schedule", async ({ kept, lost }) => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    let now = 0;
+    const taker = untakenEventTaker(rerailHome, handler, () => now);
+    for (const at of kept) {
+      now = at;
+      await taker.taken();
+    }
+    // Before, the third pass lost it, however soon it came.
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+    now = lost;
+    await taker.taken();
+    expect(handler.events).toEqual([]);
+    expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("count a name's failed reads afresh once its file went and one came back under it", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    chmodSync(file, 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    let now = 0;
+    const taker = untakenEventTaker(rerailHome, keeper(), () => now);
+    await taker.taken();
+    now = 1;
+    await taker.taken();
+    rmSync(file);
+    await taker.taken();
+    writeFileSync(file, "unread", { mode: 0o000 });
+    now = 60_000;
+    await taker.taken();
+    // Before, the count of the file that went stayed, and this pass, the third it counted, lost the one there now.
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+  });
+
+  it("pass over an event whose file went after the pass listed it, saying nothing", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    await leaveUntaken(rerailHome, 7, "gone", 2_000);
+    const gone = (await eventFiles(rerailHome)).find(name => name.startsWith(String(2_000).padStart(13, "0")))!;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    const taker = untakenEventTaker(rerailHome, {
+      // Begun before the next name is read: another program removes that file meanwhile.
+      take: async event => {
+        rmSync(join(rerailHome, UNTAKEN_EVENTS_DIR, gone));
+        await handler.take(event);
+      },
+      passed: pass => reported.resolve(pass),
+    });
+    await taker.taken();
+    expect(await reported.promise).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 0 });
+    // Before, daemon.log said it could not be read and would be read again.
+    expect(stderr).not.toHaveBeenCalled();
+  });
+
+  it("fail in the pass that met it a larger file put under an event's name after it was looked at, unread", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    writeFileSync(join(rerailHome, "larger"), "first, and more");
+    beforeOpen.set(file, () => renameSync(join(rerailHome, "larger"), file));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    await untakenEventTaker(rerailHome, { take: handler.take, passed: pass => reported.resolve(pass) }).taken();
+    // Before, the open read what it found, sized by its look at the file that was there before.
+    expect(handler.events).toEqual([]);
+    expect(await reported.promise).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 1 });
+    expect(stderr).toHaveBeenCalledWith(`rerail: the event a hook left in ${name} could not be checked: it holds 15 bytes, where its name says 5\n`);
+  });
+
+  // Windows makes a link only with a privilege.
+  it.runIf(process.platform !== "win32")("fail in the pass that met it, unopened, a link or a file of another size than its name says", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    // A link of the size its name says, to a file beside it of that size too: only its kind tells it from an event.
+    writeFileSync(join(folder, "a.txt"), "taken");
+    symlinkSync("a.txt", join(folder, eventName(2_000)));
+    writeFileSync(join(folder, eventName(4_000)), "six b.");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    const taker = untakenEventTaker(rerailHome, { take: handler.take, passed: pass => reported.resolve(pass) });
+    await taker.taken();
+    // Before, the link and the larger file were read as events.
+    expect(handler.events.map(event => event.body)).toEqual(["first"]);
+    expect(await reported.promise).toEqual({ events: 3, from: 1_000, to: 4_000, failed: 2 });
+    expect(stderr).toHaveBeenCalledWith(`rerail: the event a hook left in ${eventName(4_000)} could not be checked: it holds 6 bytes, where its name says 5\n`);
+  });
+
+  it("move the taken mark only on, so a name the daemon could not take stays counted by no hook once an older event is taken", async () => {
+    const rerailHome = await home();
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR), { recursive: true });
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(2_000)));
+    await leaveUntaken(rerailHome, 7, "newest", 3_000);
+    const taker = untakenEventTaker(rerailHome, keeper());
+    await taker.taken();
+    // An event its hook met before the newest one, left once that was taken: a hook that waited out a busy daemon.
+    await leaveUntaken(rerailHome, 7, "older", 1_000);
+    await taker.taken();
+    // Before, the mark went back to the older event, and hooks counted the name that stays as waiting.
+    expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+    expect(untakenFor(rerailHome, 7, untakenFolderId(rerailHome)!)).toBe(false);
+  });
+
+  // Windows lets a program hold a file so that no one can remove it, or read it either; other systems have no such hold.
+  it.runIf(process.platform === "win32").each([
+    { share: "Read", hold: "sharing Read" },
+    { share: "None", hold: "sharing None, its bytes locked" },
+  ] as const)(
+    "count for no hook, and remove at a later pass, a file another program holds $hold, handed on at most once",
+    async ({ share }) => {
+      const rerailHome = await home();
+      await leaveUntaken(rerailHome, 7, "held", 1_000);
+      const [name] = await eventFiles(rerailHome);
+      const folder = untakenFolderId(rerailHome)!;
+      const handler = keeper();
+      const taker = untakenEventTaker(rerailHome, handler);
+      const holder = await heldOpen(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), share);
+      try {
+        // As an active session's next hooks start passes while the program holds the file.
+        for (let pass = 0; pass < 3; pass += 1) await taker.taken();
+        expect(await eventFiles(rerailHome)).toEqual([name]);
+        expect(untakenFor(rerailHome, 7, folder)).toBe(false);
+        expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+      } finally {
+        await holder.release();
+      }
+      await taker.taken();
+      expect(await eventFiles(rerailHome)).toEqual([]);
+      // Before, a file held sharing None was lost at the pass that could not read it.
+      expect(handler.events.map(event => event.body)).toEqual(["held"]);
+    },
+  );
+
+  it("report each pass once its checks end, with how many failed", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    await leaveUntaken(rerailHome, 7, "second", 2_000);
+    writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, "0000000003000-7-1-1-5.json"), "third");
+    const reported = Promise.withResolvers<UntakenPass>();
+    const checks = Promise.withResolvers<void>();
+    let handed = 0;
+    const taker = untakenEventTaker(rerailHome, {
+      take: async ({ body }) => {
+        handed += 1;
+        await checks.promise;
+        if (body === "second") throw new Error("not an engine request");
+      },
+      passed: pass => reported.resolve(pass),
+    });
+    await taker.taken();
+    expect(handed).toBe(3);
+    checks.resolve();
+    expect(await reported.promise).toEqual({ events: 3, from: 1_000, to: 3_000, failed: 1 });
+  });
+
+  // A daemon that stops while a pass hands on a backlog leaves what it did not hand on in the folder for the next one.
+  it("report a pass a close cut short for the events it handed on alone, and leave the rest in the folder", async () => {
+    const rerailHome = await home();
+    for (let count = 0; count < 40; count += 1) await leaveUntaken(rerailHome, 7, `event ${count}`, 1_000 + count);
+    const reported = Promise.withResolvers<UntakenPass>();
+    let handed = 0;
+    const taker = untakenEventTaker(rerailHome, {
+      take: async () => {
+        handed += 1;
+        // The daemon stops as the pass hands on the last event of its first slice.
+        if (handed === 16) taker.close();
+      },
+      passed: pass => reported.resolve(pass),
+    });
+    await taker.taken();
+    // Before, the 24 events it never handed on were reported as failed, and lost, though they stay to be checked.
+    expect(await reported.promise).toEqual({ events: 16, from: 1_000, to: 1_015, failed: 0 });
+    expect(await eventFiles(rerailHome)).toHaveLength(24);
+  });
+
+  // A handler's `take` that throws as it is called, rather than rejecting, fails the pass that met it.
+  it("take what came since for a call made while a pass that failed ran", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    let throws = true;
+    const bodies: string[] = [];
+    const taker = untakenEventTaker(rerailHome, {
+      take: ({ body }) => {
+        if (throws) {
+          throws = false;
+          throw new Error("not taken");
+        }
+        bodies.push(body);
+        return Promise.resolve();
+      },
+      passed: () => undefined,
+    });
+    const failing = taker.taken();
+    const after = taker.taken();
+    await expect(failing).rejects.toThrow("not taken");
+    // Before, the call made meanwhile ended with the failed pass, and so did every call made while a later pass ran.
+    await expect(after).resolves.toBeUndefined();
+    expect(bodies).toEqual(["first"]);
+  });
+
+  // Linux hands one process's watches of a removed folder and of its home their notices in one read, handled together,
+  // so once the case has had the home's notice and read the home, the taker's watch has handled its own. No other
+  // system hands the two over together.
+  it.runIf(process.platform === "linux")("make nothing in the home once the folder they watch is removed, and follow the folder a hook makes there at the next take", async () => {
+    const rerailHome = await home();
+    const handler = keeper();
+    const followed: Array<string | undefined> = [];
+    const taker = untakenEventTaker(rerailHome, handler);
+    const notices = watch(rerailHome);
+    try {
+      expect(taker.watch(folder => followed.push(folder))).toBe(untakenFolderId(rerailHome));
+      // As `rm -r` of the whole home removes it: the home itself goes next, and a folder made meanwhile keeps it.
+      removeFolderSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      for await (const [, name] of on(notices, "change") as AsyncIterable<[string, string | null]>) if (name === UNTAKEN_EVENTS_DIR) break;
+      // Before, the watch made the folder again at once, and its daemon wrote its state file to name it.
+      expect(await readdir(rerailHome)).toEqual([]);
+      expect(followed).toEqual([]);
+      // A hook that finds the daemon not reading makes the folder as it leaves its event; the daemon's next event takes it.
+      await leaveUntaken(rerailHome, 7, "left after", 5_000);
+      await taker.taken();
+      expect(handler.events).toEqual([{ body: "left after", arrivedAt: 5_000 }]);
+      expect(followed).toEqual([untakenFolderId(rerailHome)]);
+    } finally {
+      notices.close();
+      taker.close();
+    }
+  });
+
+  // Linux gives a folder made where one was removed the removed one's file id at once, and its birth time in the same tick.
+  it("leave a folder made again where one was removed unmarked until a daemon's watch follows it, so no hook takes it for the one that went", async () => {
+    const rerailHome = await home();
+    const taker = untakenEventTaker(rerailHome, keeper());
+    try {
+      const watched = taker.watch(() => undefined)!;
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      await leaveUntaken(rerailHome, 7, "left", 1_000);
+      expect(untakenFolderId(rerailHome)).not.toBe(watched);
+      expect(untakenFor(rerailHome, 7, watched)).toBe(false);
+    } finally {
+      taker.close();
+    }
+  });
+});

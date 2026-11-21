@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
@@ -8,7 +8,10 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/daemon/engine-pipe.js";
-import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
+import {
+  chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
+} from "../../../src/runtime/engine-service.js";
+import type { HeldSession } from "../../../src/engine/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
@@ -471,6 +474,51 @@ describe.runIf(process.platform === "win32")("starting the engine beside a pipe 
     } finally {
       second.close();
       await new Promise<void>(resolve => engine.close(() => resolve()));
+    }
+  });
+});
+
+describe("the answer to a hook's event", () => {
+  it("carries the event's deliveries when the facts beside them cannot be told, and what its runtime holds to a hook that asks once they can", async () => {
+    const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-")));
+    const databasePath = join(root, "rerail.sqlite");
+    const repositoryKey = startTestRepository(root, databasePath);
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-event-answer-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    let readable = false;
+    const held: (HeldSession | undefined)[] = [];
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+      answerFacts: (_event, _deliveries, readHeld) => {
+        const session = readHeld();
+        held.push(session);
+        if (!readable) throw new Error("the daemon could not tell its dashboard");
+        return { dashboard: null, ...(session?.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }) };
+      },
+    });
+    const start = (sessionId: string) => ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } } as const);
+    try {
+      // The hook reads what the answer lacks after it, as from a daemon older than these facts.
+      await expect(ingestEngineEventAnswer({ socketPath }, start("unread"))).resolves.toEqual({ eventId: "unread:start", deliveries: [] });
+      readable = true;
+      await expect(ingestEngineEventAnswer({ socketPath }, start("read")))
+        .resolves.toEqual({ eventId: "read:start", deliveries: [], dashboard: null, sessionNote: { setUp: false } });
+      // What the runtime that took each start holds of its session: its checkout, and a note for a repository not set up.
+      const session = { checkout: { repositoryKey, checkoutPath: root }, sessionNote: { setUp: false } };
+      expect(held).toEqual([session, session]);
+    } finally {
+      await service.close();
+      await removeFolder(root);
     }
   });
 });

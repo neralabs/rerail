@@ -4,6 +4,7 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
+import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 import { holdsTable } from "../storage/table-probe.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
@@ -653,48 +654,54 @@ function workspaceRoots(database: RerailDatabase, auditIds: readonly string[]): 
   return new Map(rows.map(row => [row.auditId, row.workspaceRoot]));
 }
 
-/** Durable, local-only audit bookkeeping. It never emits session events. */
+/**
+ * Durable, local-only audit bookkeeping. It never emits session events. Every write goes through the database's record
+ * writer (`openRecordWriter`): made at once, or, while another process holds the write lock, in order once it is given
+ * back, never waiting on the caller's thread; its times are taken when it is asked for. Every read here is of what this
+ * process recorded, so it makes the waiting writes first (`#recorded`).
+ */
 export class SqliteAuditStore implements AuditRecorder, AuditReader {
   readonly supportsResultPages = true;
   readonly path: string;
   readonly #database: RerailDatabase;
+  readonly #records: RecordWriter;
 
   constructor(path: string, database?: RerailDatabase) {
     this.path = path;
     this.#database = database ?? openRerailDatabase(path);
+    this.#records = openRecordWriter(path);
   }
 
   start(input: AuditInput): string {
     const auditId = randomUUID();
     const provenance = input.ruleProvenance ?? [];
-    // Immediate: the provenance lookup and the inserts that follow it take the write lock together.
-    this.#database.$client.transaction(() => {
-      this.#database
-        .insert(audits)
-        .values({
-          auditId: auditId,
-          sessionId: input.sessionId,
-          workspaceRoot: input.workspaceRoot,
-          scope: input.scope,
-          mode: input.mode,
-          origin: input.origin ?? "ongoing",
-          revision: input.revision,
-          catalogRevision: input.catalogRevision,
-          ruleRevisions: input.ruleRevisions,
-          paths: input.paths,
-          ruleProvenance: [],
-          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names
-          // none is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
-          // provenance waits while such audits come (`rule-provenance-move.ts`).
-          ruleProvenanceId: storedRuleProvenanceId(this.#database, provenance),
-          startedAt: Date.now(),
-          finishedAt: null,
-          status: "running",
-          violations: [],
-          failures: [],
-        })
-        .run();
-    }).immediate();
+    const startedAt = Date.now();
+    // In one immediate transaction (`RecordWrite`): the provenance lookup and the insert take the write lock together.
+    this.#records.write(database => database
+      .insert(audits)
+      .values({
+        auditId: auditId,
+        sessionId: input.sessionId,
+        workspaceRoot: input.workspaceRoot,
+        scope: input.scope,
+        mode: input.mode,
+        origin: input.origin ?? "ongoing",
+        revision: input.revision,
+        catalogRevision: input.catalogRevision,
+        ruleRevisions: input.ruleRevisions,
+        paths: input.paths,
+        ruleProvenance: [],
+        // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names
+        // none is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
+        // provenance waits while such audits come (`rule-provenance-move.ts`).
+        ruleProvenanceId: storedRuleProvenanceId(database, provenance),
+        startedAt,
+        finishedAt: null,
+        status: "running",
+        violations: [],
+        failures: [],
+      })
+      .run());
     return auditId;
   }
   appendResultPage(
@@ -702,115 +709,124 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     pageIndex: number,
     result: Pick<AuditResult, "violations" | "failures">,
   ): void {
-    this.#database.$client
+    const violations = JSON.stringify(storedViolations(result.violations ?? []));
+    const failures = JSON.stringify(storedFailures(result.failures ?? []));
+    this.#records.write(database => database.$client
       .prepare(
         "INSERT INTO audit_result_pages(audit_id,page_index,violations_json,failures_json) " +
           "SELECT ?,?,?,? WHERE EXISTS (SELECT 1 FROM audits WHERE audit_id=? AND status='running') " +
           "ON CONFLICT(audit_id,page_index) DO UPDATE SET violations_json=excluded.violations_json,failures_json=excluded.failures_json",
       )
-      .run(
-        auditId,
-        pageIndex,
-        JSON.stringify(storedViolations(result.violations ?? [])),
-        JSON.stringify(storedFailures(result.failures ?? [])),
-        auditId,
-      );
+      .run(auditId, pageIndex, violations, failures, auditId), violations.length + failures.length);
   }
 
   finishResultPages(auditId: string, status: AuditStatus, unlistedFailureCount = 0): void {
-    this.#database.$client.transaction(() => {
-      const finished = this.#database.$client
+    const finishedAt = Date.now();
+    this.#records.write(database => {
+      const finished = database.$client
         .prepare(
           "UPDATE audits SET status=?, finished_at=?, " +
             "violations_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.violations_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]'), " +
             "failures_json=COALESCE((SELECT json_group_array(json(j.value)) FROM audit_result_pages p, json_each(p.failures_json) j WHERE p.audit_id=audits.audit_id ORDER BY p.page_index,j.key),'[]') " +
             "WHERE audit_id=? AND status='running'",
         )
-        .run(status, Date.now(), auditId).changes > 0;
-      if (finished) this.#recordUnlisted(auditId, unlistedFailureCount);
-      this.#database.delete(auditResultPages).where(eq(auditResultPages.auditId, auditId)).run();
-    })();
+        .run(status, finishedAt, auditId).changes > 0;
+      if (finished) recordUnlisted(database, auditId, unlistedFailureCount);
+      database.delete(auditResultPages).where(eq(auditResultPages.auditId, auditId)).run();
+    });
   }
 
   progress(auditId: string, result: Pick<AuditResult, "violations" | "failures" | "unlistedFailureCount">): void {
-    this.#database.$client.transaction(() => {
-      const running = this.#database
+    const violations = result.violations === undefined ? undefined : storedViolations(result.violations);
+    const failures = result.failures === undefined ? undefined : storedFailures(result.failures);
+    this.#records.write(database => {
+      const running = database
         .update(audits)
-        .set({
-          ...(result.violations === undefined ? {} : { violations: storedViolations(result.violations) }),
-          ...(result.failures === undefined ? {} : { failures: storedFailures(result.failures) }),
-        })
+        .set({ ...(violations === undefined ? {} : { violations }), ...(failures === undefined ? {} : { failures }) })
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
         .run().changes > 0;
-      if (running && result.failures !== undefined) this.#recordUnlisted(auditId, result.unlistedFailureCount ?? 0);
-    })();
+      if (running && failures !== undefined) recordUnlisted(database, auditId, result.unlistedFailureCount ?? 0);
+    });
   }
 
   finish(auditId: string, result: AuditResult): void {
+    const terminal = {
+      status: result.status,
+      violations: storedViolations(result.violations ?? []),
+      failures: storedFailures(result.failures ?? []),
+      finishedAt: Date.now(),
+    };
     // Interruption and database reset may win a race with an evaluator's late
     // completion. Only the first terminal transition owns the persisted result.
-    this.#database.$client.transaction(() => {
-      const finished = this.#database
+    this.#records.write(database => {
+      const finished = database
         .update(audits)
-        .set({
-          status: result.status,
-          violations: storedViolations(result.violations ?? []),
-          failures: storedFailures(result.failures ?? []),
-          finishedAt: Date.now(),
-        })
+        .set(terminal)
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
         .run().changes > 0;
-      if (finished) this.#recordUnlisted(auditId, result.unlistedFailureCount ?? 0);
-    })();
-  }
-
-  /** Keeps how many failures an audit had beyond those it lists, replacing what it kept before; none when it lists all. */
-  #recordUnlisted(auditId: string, count: number): void {
-    this.#database.delete(auditUnlistedFailures).where(eq(auditUnlistedFailures.auditId, auditId)).run();
-    if (count > 0) this.#database.insert(auditUnlistedFailures).values({ auditId, count }).run();
+      if (finished) recordUnlisted(database, auditId, result.unlistedFailureCount ?? 0);
+    });
   }
 
   interrupt(sessionId: string): void {
     const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
-    // Read first: an update takes the write lock even when it matches no row, waiting up to 5 s for another process's,
-    // and every evaluator's open asks this of a session that mostly runs nothing.
-    if (this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined) return;
-    this.#database.update(audits).set({ status: "interrupted", finishedAt: Date.now() }).where(running).run();
+    const finishedAt = Date.now();
+    // Read first: an update takes the write lock even when it matches no row, and every evaluator's open asks this of a
+    // session that mostly runs nothing. A start still waiting for the lock is no row yet, so the writer then writes.
+    const idle = (): boolean => this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined;
+    this.#records.writeUnless(idle, database => database.update(audits).set({ status: "interrupted", finishedAt }).where(running).run());
   }
 
   get(auditId: string): AuditRecord | undefined {
-    const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
+    const database = this.#recorded();
+    const row = database.select(auditColumns(database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
-    return listAudits(this.#database, query, repositoryIds);
+    return listAudits(this.#recorded(), query, repositoryIds);
   }
   listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
-    return listRepositoryAudits(this.#database, query, repositoryIds);
+    return listRepositoryAudits(this.#recorded(), query, repositoryIds);
   }
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined {
-    return listRepositoryAuditEntries(this.#database, query);
+    return listRepositoryAuditEntries(this.#recorded(), query);
   }
   ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals> {
-    return ruleActivity(this.#database, since, repositoryIds);
+    return ruleActivity(this.#recorded(), since, repositoryIds);
   }
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
-    return listViolationHistory(this.#database, query, repositoryIds);
+    return listViolationHistory(this.#recorded(), query, repositoryIds);
   }
   workspaceRoots(auditIds: readonly string[]): Map<string, string> {
-    return workspaceRoots(this.#database, auditIds);
+    return workspaceRoots(this.#recorded(), auditIds);
   }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
-    return sessionsWithViolations(this.#database, since, repositoryIds);
+    return sessionsWithViolations(this.#recorded(), since, repositoryIds);
   }
 
   latestSummary(sessionId: string): AuditSummary | undefined {
-    return latestAuditSummary(this.#database, sessionId);
+    return latestAuditSummary(this.#recorded(), sessionId);
+  }
+
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a scan's verdict reads the
+   * audits it just made, which a holder of a moment in another process would otherwise hide.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
   }
 
   close(): void {
+    this.#records.close();
     this.#database.$client.close();
   }
+}
+
+/** Keeps how many failures an audit had beyond those it lists, replacing what it kept before; none when it lists all. */
+function recordUnlisted(database: RerailDatabase, auditId: string, count: number): void {
+  database.delete(auditUnlistedFailures).where(eq(auditUnlistedFailures.auditId, auditId)).run();
+  if (count > 0) database.insert(auditUnlistedFailures).values({ auditId, count }).run();
 }
 
 /**

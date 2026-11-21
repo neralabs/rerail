@@ -1,9 +1,11 @@
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
+import {
+  answeredFacts, hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type EventAnswerFacts, type RerailEventLoop, type SteerRule,
+} from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
-import { ingestCursorTranscript } from "./cursor-transcript.js";
+import { ingestCursorTranscript, transcriptCarriesText } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
   deliveryRules,
@@ -15,9 +17,10 @@ import {
   type HookInput,
   type HookOutput,
   type SessionLock,
+  withSessionLock,
 } from "../../harness/hook-adapter.js";
-import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, linkedByAnswer, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -216,21 +219,67 @@ export async function handleCursorEvent(
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
-  const transcript = () => ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
-  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcript);
+  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcriptStep(input, descriptor, eventLoop, storageRoot));
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
+  if (eventLoop.untaken === true) return await leftAnswer(input, descriptor, storageRoot);
+  return await answerCursorHook(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
+}
+
+/**
+ * The answer of a hook that left its event for a daemon that is not reading: one with nothing to deliver, the session's
+ * held steers waiting in their file for the next hook the daemon answers. A `beforeSubmitPrompt` then records that the
+ * session sends its own text (`transcriptCarriesText`), with its event left already: such a hook holds no session lock,
+ * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept. A
+ * `sessionEnd` removes the held steers' file, as one the daemon answered does: no later hook of the session reads it.
+ */
+async function leftAnswer(input: CursorHookInput, descriptor: AdapterSession, storageRoot: string): Promise<CursorHookOutput> {
+  const hook = requiredText(input, "hook_event_name");
+  if (hook === "beforeSubmitPrompt") await withSessionLock(storageRoot, "cursor", descriptor.sessionId, async () => await transcriptCarriesText(input, descriptor, storageRoot));
+  if (hook === "sessionEnd") await rm(pendingPath(storageRoot, "cursor", descriptor.sessionId), { force: true });
+  return cursorHookOutput(hook, []);
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerCursorHook(
+  input: CursorHookInput,
+  at: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
+  deliveries: readonly AdapterDelivery[],
+): Promise<CursorHookOutput> {
+  const { hook, path } = at;
   switch (hook) {
     case "beforeSubmitPrompt":
-      await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
+      // A steer held for a later event keeps this answer's links, so that event's answer need carry none.
+      await persistPending(path, linkedByAnswer(deliveries.filter(delivery => steers(delivery.requested)), at.answered));
       return cursorHookOutput(hook, []);
     case "sessionEnd":
       await rm(path, { force: true });
       return {};
     default:
-      return cursorAnswer(input, { hook, descriptor, path }, deliveries);
+      return cursorAnswer(input, at, deliveries);
   }
+}
+
+/**
+ * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
+ * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
+ * next hook the daemon answers, which sends them through the rules. A session's `beforeSubmitPrompt` says the session
+ * sends its own text from then on, so the transcript carries none of it: the read records that, and a hook that leaves
+ * its event records it once the event is left (`leftAnswer`).
+ */
+function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
+  if (eventLoop.untaken !== true) return async () => await ingestCursorTranscript(input, descriptor, linkingByAnswer(eventLoop), storageRoot);
+  if (input.hook_event_name === "beforeSubmitPrompt") return async () => false;
+  return async () => await transcriptCarriesText(input, descriptor, storageRoot);
+}
+
+/**
+ * `eventLoop`, its deliveries linked with the facts of the answers that found them (`linkedByAnswer`): the steers the
+ * transcript's lines find are held for a later hook, whose own answer usually links nothing.
+ */
+function linkingByAnswer(eventLoop: RerailEventLoop): RerailEventLoop {
+  return { ingest: async event => linkedByAnswer(await eventLoop.ingest(event), answeredFacts(eventLoop)) };
 }
 
 /** Runs `work` while `lock` is kept, or as it is when there is no lock. */
@@ -240,13 +289,15 @@ async function keptBy<T>(lock: SessionLock | undefined, work: () => Promise<T>):
 
 /**
  * What a hook answers Cursor with: the steers waiting for an event that can carry them, each linked to this checkout's
- * dashboard, and at a session's start the note only the model reads.
+ * dashboard, and at a session's start the note only the model reads. The daemon's answer (`answered`) carries the
+ * note's link and rules and the steers' links; an older daemon's is read after it.
  */
 async function cursorAnswer(
-  input: CursorHookInput, { hook, descriptor, path }: { hook: string; descriptor: AdapterSession; path: string },
+  input: CursorHookInput,
+  { hook, descriptor, path, answered }: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
   deliveries: readonly AdapterDelivery[],
 ): Promise<CursorHookOutput> {
-  const available = await routeDeliveries(path, hook, deliveries, {
+  const available = await routeDeliveries(path, hook, linkedByAnswer(deliveries, answered), {
     // Cursor only exposes preToolUse.agent_message when a tool is denied.
     // Preserve the steer until a post-tool result can actually carry it.
     sessionStart: true, postToolUse: true,
@@ -256,6 +307,6 @@ async function cursorAnswer(
     ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
   // The runtime records no links; the rules point at this checkout's dashboard only here.
-  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor)) : undefined;
-  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
+  const note = hook === "sessionStart" ? await presentedSessionStartNote(descriptor, answered) : undefined;
+  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd, answered), note);
 }

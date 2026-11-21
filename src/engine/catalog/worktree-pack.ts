@@ -5,7 +5,8 @@
  * The folder is read again whenever a file in it is added, removed or changed, so an edit applies on the next event.
  */
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync } from "node:fs";
+import { lstatSync, readdirSync, type Stats } from "node:fs";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
@@ -47,6 +48,12 @@ interface RuleFile {
   readonly size: number;
 }
 
+/** A rule file's stamp: it changes when the file is edited, replaced or becomes something other than a regular file. */
+const fileStamp = (info: Stats): string => `${info.mtimeMs}:${info.size}:${info.mode}`;
+
+/** The names in the rules folder that are rule documents, in the order the catalog reads them. */
+const ruleNames = (names: readonly string[]): string[] => names.filter(name => name.endsWith(".json")).sort(compareDeterministicStrings);
+
 /**
  * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
  * symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
@@ -56,16 +63,29 @@ function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
   const directory = worktreeRulesDirectory(checkoutRoot);
   try {
     if (!lstatSync(parent).isDirectory() || !lstatSync(directory).isDirectory()) return undefined;
-    return readdirSync(directory)
-      .filter(name => name.endsWith(".json"))
-      .sort(compareDeterministicStrings)
-      .map(name => {
-        const path = join(directory, name);
-        const info = lstatSync(path);
-        return { name, path, stamp: `${info.mtimeMs}:${info.size}:${info.mode}`, regular: info.isFile(), size: info.size };
-      });
+    return ruleNames(readdirSync(directory)).map(name => {
+      const path = join(directory, name);
+      const info = lstatSync(path);
+      return { name, path, stamp: fileStamp(info), regular: info.isFile(), size: info.size };
+    });
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * The checkout's rule files by name and stamp, as {@link worktreeRuleCatalog} reads them, read without blocking: it
+ * changes exactly when that catalog would read the rules again. Empty when there is no rules folder.
+ */
+export async function worktreeRulesStamp(checkoutRoot: string): Promise<string> {
+  const directory = worktreeRulesDirectory(checkoutRoot);
+  try {
+    if (!(await lstat(join(checkoutRoot, ".rerail"))).isDirectory() || !(await lstat(directory)).isDirectory()) return "";
+    const names = ruleNames(await readdir(directory));
+    const stamps = await Promise.all(names.map(async name => `${name}\0${fileStamp(await lstat(join(directory, name)))}`));
+    return stamps.join("\n");
+  } catch {
+    return "";
   }
 }
 

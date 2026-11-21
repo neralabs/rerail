@@ -1,13 +1,39 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
+import { sessionStartNote, steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
 import { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../../../src/hosts/cursor/cursor-hook.js";
 import { cursorWorkspace } from "../../../src/hosts/cursor/cursor-hook-adapter.js";
 import { steeredRules } from "../../support/steers.js";
+import { answering, countingDaemon } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { withPendingFileLock } from "../../../src/harness/index.js";
+
+/** Tells a case when a hook next asks for its session's lock (`withSessionLock`), before it waits for it. */
+const lockAsks = vi.hoisted(() => {
+  let told: (() => void) | undefined;
+  return {
+    asked: () => {
+      told?.();
+      told = undefined;
+    },
+    next: () => new Promise<void>(resolve => {
+      told = resolve;
+    }),
+  };
+});
+
+vi.mock("../../../src/harness/hook-adapter.js", async importOriginal => {
+  const actual = await importOriginal<{ withSessionLock: (...args: unknown[]) => Promise<unknown> }>();
+  const withSessionLock = async (...args: unknown[]): Promise<unknown> => {
+    lockAsks.asked();
+    return await actual.withSessionLock(...args);
+  };
+  return { ...actual, withSessionLock };
+});
 
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -179,6 +205,75 @@ describe("Cursor plugin contract", () => {
     });
   });
 
+  it("builds the session note and links a steer from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const common = { conversation_id: "cursor-session", cwd: root, workspace_roots: [root] };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: true as const, ruleCount: 3 };
+      expect(await handleCursorEvent({ ...common, hook_event_name: "sessionStart" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions")))
+        .toMatchObject({ additional_context: sessionStartNote(dashboard, "cursor", "cursor-session", sessionNote) });
+
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "postToolUse", tool_name: "Write", tool_input: {}, tool_output: "written" };
+      await handleCursorEvent({ ...result, tool_use_id: "write-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      await handleCursorEvent({ ...result, tool_use_id: "write-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("links a steer it holds with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const common = { conversation_id: "cursor-session", cwd: root, workspace_roots: [root], tool_name: "Shell", tool_input: { command: "ls" } };
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      await handleCursorEvent({ ...common, tool_use_id: "t1", hook_event_name: "preToolUse" }, answering(scriptedLoop({ call: steer }), { dashboard }), join(root, "sessions"));
+      await handleCursorEvent({ ...common, hook_event_name: "beforeSubmitPrompt", prompt: "next" }, answering(scriptedLoop({ "user-prompt": steer }), { dashboard }), join(root, "sessions"));
+
+      // The result's answer links nothing of its own, so it carries no dashboard.
+      const result = await handleCursorEvent({ ...common, tool_use_id: "t1", hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), join(root, "sessions"));
+      // Either steer held unlinked would have the hook read the dashboard from the daemon.
+      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("links a steer the transcript's lines found with the answer that found it, so the hook that carries it asks the daemon nothing after its answer", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const transcript = join(root, "transcript.jsonl");
+      await writeFile(transcript, `${JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text: "answer one" }] } })}\n`);
+      const common = { conversation_id: "cursor-session", cwd: root, transcript_path: transcript, tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" } };
+      const dashboard = `${daemon.origin}?repository=clone%3Aapp&checkout=%2Fwork%2Fapp`;
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      await handleCursorEvent({ ...common, hook_event_name: "preToolUse" }, answering(scriptedLoop({ "assistant-message": steer }), { dashboard }), join(root, "sessions"));
+
+      // The result's answer links nothing of its own, so it carries no dashboard.
+      const result = await handleCursorEvent({ ...common, hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), join(root, "sessions"));
+      expect(JSON.stringify(result)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+    } finally {
+      await daemon.close();
+    }
+  });
+
   it("preserves pre-tool code rule violations until Cursor can expose them after the tool", async () => {
     const root = await temporaryDirectory();
     const storage = join(root, "sessions");
@@ -277,5 +372,124 @@ describe("Cursor plugin contract", () => {
     expect(await handleCursorEvent({ ...common, loop_count: 0 }, scriptedLoop({ "turn-end": [delivery("steer", "Do not write bad.")] }), storage)).toEqual({});
     const toolResult = { ...common, hook_event_name: "postToolUse", tool_use_id: "read-1", tool_name: "Read", tool_output: "ok" };
     expect(await handleCursorEvent(toolResult, scriptedLoop({}), storage)).toEqual({ additional_context: expect.stringContaining("Do not write bad.") });
+  });
+});
+
+describe("a Cursor hook while the daemon is not reading", () => {
+  /** A transcript-mode session (no beforeSubmitPrompt) whose transcript holds a prompt and an answer no hook has read. */
+  async function unreadTranscript(): Promise<{ storage: string; common: Record<string, unknown> }> {
+    const root = await temporaryDirectory();
+    const transcript = join(root, "transcript.jsonl");
+    const line = (role: string, text: string) => JSON.stringify({ role, message: { content: [{ type: "text", text }] } });
+    await writeFile(transcript, `${line("user", "<timestamp>t</timestamp>\n<user_query>\nprompt one\n</user_query>")}\n${line("assistant", "answer one")}\n`);
+    return { storage: join(root, "sessions"), common: { conversation_id: "cursor-session", generation_id: "g1", cwd: root, transcript_path: transcript } };
+  }
+
+  /** A loop that leaves each event for a daemon that is not reading, as a hook does once one was left untaken. */
+  function untakenLoop(): RerailEventLoop & { events: AdapterEvent[] } {
+    return { ...scriptedLoop({}), untaken: true };
+  }
+
+  it("answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const common = { conversation_id: "cursor-held", generation_id: "g1", cwd: root };
+    const tool = (id: string) => ({ tool_use_id: id, tool_name: "Shell", tool_input: { command: "ls" } });
+    const steer: AdapterDelivery = { sessionId: "cursor-held", requested: "steer", mechanism: "deferred-context", content: "Held steer.", ruleIds: [], rules: [] };
+    // Cursor shows nothing at a call, so its steer waits for a result that can carry it.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "preToolUse" }, scriptedLoop({ call: [steer] }), storage)).toEqual({ permission: "allow" });
+    const left = untakenLoop();
+    // Before, the hook routed the held steer into its own answer and emptied the session's file, under the lock.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "postToolUse", tool_output: "a" }, left, storage)).toEqual({});
+    expect(await handleCursorEvent({ ...common, ...tool("t2"), hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), storage))
+      .toEqual({ additional_context: expect.stringContaining("Held steer.") });
+  });
+
+  it("removes the steers held for the session at its end, as one the daemon answers does, since no later hook of it reads them", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const common = { conversation_id: "cursor-ended", generation_id: "g1", cwd: root };
+    const steer: AdapterDelivery = { sessionId: "cursor-ended", requested: "steer", mechanism: "deferred-context", content: "Held steer.", ruleIds: [], rules: [] };
+    const call = { tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" }, hook_event_name: "preToolUse" };
+    expect(await handleCursorEvent({ ...common, ...call }, scriptedLoop({ call: [steer] }), storage)).toEqual({ permission: "allow" });
+    const left = untakenLoop();
+    expect(await handleCursorEvent({ ...common, hook_event_name: "sessionEnd", reason: "completed" }, left, storage)).toEqual({});
+    expect(left.events).not.toEqual([]);
+    // A session resumed under the same id: before, its first result carried the steer held for the session that ended.
+    const result = { ...call, hook_event_name: "postToolUse", tool_output: "a" };
+    expect(await handleCursorEvent({ ...common, ...result }, scriptedLoop({}), storage)).toEqual({});
+  });
+
+  it("leaves the transcript unread for the next hook the daemon answers, and leaves only the hook's own event", async () => {
+    const { storage, common } = await unreadTranscript();
+    const tool = { tool_use_id: "shell-1", tool_name: "Shell", tool_input: { command: "ls" } };
+    const left = untakenLoop();
+    expect(await handleCursorEvent({ ...common, ...tool, hook_event_name: "preToolUse" }, left, storage)).toEqual({ permission: "allow" });
+    expect(left.events.map(event => event.kind)).toEqual(["call"]);
+    const answer = untakenLoop();
+    expect(await handleCursorEvent({ ...common, hook_event_name: "afterAgentResponse", text: "answer one" }, answer, storage)).toEqual({});
+    expect(answer.events).toEqual([]);
+    const live = scriptedLoop({});
+    await handleCursorEvent({ ...common, ...tool, tool_use_id: "shell-2", hook_event_name: "preToolUse" }, live, storage);
+    expect(live.events.map(event => event.kind)).toEqual(["user-prompt", "assistant-message", "call"]);
+  });
+
+  /** The kinds of event each hook of `inputs` leaves, or the daemon takes, in order, one loop a hook. */
+  async function kindsLeft(inputs: readonly Record<string, unknown>[], storage: string, untaken: boolean): Promise<string[]> {
+    const kinds: string[] = [];
+    for (const input of inputs) {
+      const loop = untaken ? untakenLoop() : scriptedLoop({});
+      await handleCursorEvent(input, loop, storage);
+      kinds.push(...loop.events.map(event => event.kind));
+    }
+    return kinds;
+  }
+
+  it("leaves every event of a turn whose session sends its own text, as the daemon takes them when it reads", async () => {
+    const { storage, common } = await unreadTranscript();
+    const turn = (session: string) => [
+      { ...common, conversation_id: session, hook_event_name: "beforeSubmitPrompt", prompt: "prompt one" },
+      { ...common, conversation_id: session, hook_event_name: "afterAgentResponse", text: "answer one" },
+      { ...common, conversation_id: session, hook_event_name: "stop", status: "completed", loop_count: 0 },
+    ];
+    const taken = await kindsLeft(turn("cursor-taken"), storage, false);
+    expect(taken).toEqual(["user-prompt", "assistant-message", "turn-end"]);
+    expect(await kindsLeft(turn("cursor-left"), storage, true)).toEqual(taken);
+  });
+
+  it("leaves the hook's text event where the transcript it names is not there yet, as the daemon takes it when it reads", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const answer = (session: string) => [{ conversation_id: session, generation_id: "g1", cwd: root, transcript_path: join(root, "none.jsonl"), hook_event_name: "afterAgentResponse", text: "answer one" }];
+    const taken = await kindsLeft(answer("cursor-taken"), storage, false);
+    expect(taken).toEqual(["assistant-message"]);
+    expect(await kindsLeft(answer("cursor-left"), storage, true)).toEqual(taken);
+  });
+
+  it("leaves the prompt's event before it asks for the session's lock, then notes under it that the session sends its own text", async () => {
+    const { storage, common } = await unreadTranscript();
+    // The session's held steers' file, beside which its transcript's sidecar sits, under the lock its hooks hold.
+    const pending = join(storage, "cursor-pending", `${createHash("sha256").update("cursor-session").digest("hex")}.json`);
+    const sidecar = `${pending}.transcript`;
+    const noted = async (): Promise<boolean> => (await readFile(sidecar, "utf8").catch(() => "")).includes('"nativeTextMode":true');
+    const left = untakenLoop();
+    let answered = false;
+    let prompt: Promise<unknown> = Promise.resolve();
+    await withPendingFileLock(pending, async () => {
+      // A hook of the session reading its transcript holds the lock: it read the sidecar before the prompt came.
+      const asked = lockAsks.next();
+      prompt = handleCursorEvent({ ...common, hook_event_name: "beforeSubmitPrompt", prompt: "prompt one" }, left, storage)
+        .finally(() => (answered = true));
+      // A prompt hook that writes without the lock answers while this one holds it; one that takes it asks for it first.
+      expect(await Promise.race([asked.then(() => "asked for the lock"), prompt.then(() => "answered")])).toBe("asked for the lock");
+      // Its event is left before it waits for the lock, so a lock it is not given costs it no event.
+      expect(left.events.map(event => event.kind)).toEqual(["user-prompt"]);
+      await mkdir(dirname(sidecar), { recursive: true });
+      await writeFile(sidecar, JSON.stringify({ path: common.transcript_path, offset: 0, latestAssistantText: "", nativeTextMode: false }));
+      expect(answered).toBe(false);
+    });
+    await prompt;
+
+    expect(await noted()).toBe(true);
   });
 });

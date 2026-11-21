@@ -14,12 +14,16 @@ import {
   CodeRuleBridge,
   filesystemClock,
   generatedEditPaths,
+  inputTextEdits,
   isCommandTool,
   ledgerPreimage,
   MAX_TOLD_AT_ONCE,
   MAX_TOLD_GAPS,
   type Preimage,
   type SourceObservationCache,
+  type TextEdit,
+  undoTextEdits,
+  unreadAfter,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import { claudeCodeReportedPreimage, type ReportedPreimage } from "../../../src/engine/code-rule/tool-result/reported-preimage.js";
@@ -547,6 +551,28 @@ describe("CodeRuleBridge", () => {
       "src/secrets.py": { withheld: { sha256: createHash("sha256").update(text).digest("hex"), bytes: Buffer.byteLength(text) } },
       "src/a.py": { text: "before\n" },
     });
+  });
+
+  it("reads a call begun with nothing captured, as from a ledger, whole, as nothing it holds gives its file's earlier text", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    // The session's first walk has run, so what it read of the file comes before the calls' sightings, not after them.
+    await bridge.checkpoint("turn");
+    await bridge.begin("edit-1", "write", { path: "src/a.py" });
+    await writeFile(path, "middle\n");
+    await bridge.finish("edit-1");
+    // The session last saw the file as the call before left it, but another write may have come since: no "before" is
+    // certain without the call's own text edits, so the rules read the whole text it left.
+    await expect(bridge.begin("edit-2", "write", { path: "src/a.py" }, {})).resolves.toEqual({});
+    await writeFile(path, "after\n");
+    await bridge.finish("edit-2");
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/a.py", language: "python", previousReadError: "Original source was not captured for this tool call", generatedText: "after\n" },
+    ]);
   });
 
   // A link to a folder named like one holding secrets leads to the same files: `conf/config.py`, with `conf` a link (a
@@ -4789,6 +4815,83 @@ async function withWorktree(root: string, place: string, branch = "other") {
   };
   return { worktree, roots, extra };
 }
+
+const once = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: false });
+const everywhere = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: true });
+
+describe("the text edits a tool call's input asks for", () => {
+  it("reads an Edit's one edit, made once unless it asks for every place", () => {
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2" })).toEqual([once("1", "2")]);
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: true })).toEqual([everywhere("1", "2")]);
+  });
+
+  it("reads a MultiEdit's edits in the order they are made", () => {
+    const input = { file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b", new_string: "c", replace_all: true }] };
+    expect(inputTextEdits(input)).toEqual([once("a", "b"), everywhere("b", "c")]);
+  });
+
+  it("reads none from an input that asks for no text edit, or one whose fields are not of their kind", () => {
+    expect(inputTextEdits({ file_path: "a.py", content: "x" })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b" }] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: 2 })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: "yes" })).toBeUndefined();
+    expect(inputTextEdits("a.py")).toBeUndefined();
+    expect(inputTextEdits(null)).toBeUndefined();
+  });
+});
+
+describe("the text a tool call's edits were made on, from the text they left", () => {
+  it("puts an edit's old text back where the text holds its new text once", () => {
+    expect(undoTextEdits("def a():\n    print(1)\n    return 1\n", [once("    return 1", "    print(1)\n    return 1")])).toBe("def a():\n    return 1\n");
+  });
+
+  it("gives none where the text holds the new text more than once, or not at all, as the place is then unknown", () => {
+    expect(undoTextEdits("print(1)\nx\nprint(1)\n", [once("pass", "print(1)")])).toBeUndefined();
+    expect(undoTextEdits("aaa\n", [once("b", "aa")])).toBeUndefined();
+    expect(undoTextEdits("print(3)\n", [once("pass", "print(2)")])).toBeUndefined();
+  });
+
+  it("puts an edit made at every place back at every place, and gives none where the text no longer holds it", () => {
+    expect(undoTextEdits("y = 2\nz = 2\n", [everywhere("1", "2")])).toBe("y = 1\nz = 1\n");
+    expect(undoTextEdits("y = 3\n", [everywhere("1", "2")])).toBeUndefined();
+  });
+
+  it("gives none for an edit that removed its old text, as nothing marks where it was", () => {
+    expect(undoTextEdits("a\nb\n", [once("x\n", "")])).toBeUndefined();
+    expect(undoTextEdits("a\nb\n", [everywhere("x\n", "")])).toBeUndefined();
+  });
+
+  it("gives none where the tool could not have made the edits on the text undoing gives", () => {
+    // Undone, the text holds the old text twice, where the tool makes an edit of one place only on a text holding it once.
+    expect(undoTextEdits("b\nx\na\n", [once("a", "b")])).toBeUndefined();
+    // An Edit with an empty old text created its file: nothing was there to make it on.
+    expect(undoTextEdits("def a():\n", [once("", "def a():\n")])).toBeUndefined();
+  });
+
+  it("undoes a MultiEdit's edits from the last to the first", () => {
+    expect(undoTextEdits("c\n", [once("a", "b"), once("b", "c")])).toBe("a\n");
+    expect(undoTextEdits("b\n", [once("a", "b"), once("x", "y")])).toBeUndefined();
+  });
+
+  it("matches the edit's lines with CRLF in a text with CRLF line breaks, as an editor keeping them writes them", () => {
+    const edit = once("    return 1", "    print(1)\n    return 1");
+    expect(undoTextEdits("def a():\r\n    print(1)\r\n    return 1\r\n", [edit])).toBe("def a():\r\n    return 1\r\n");
+    expect(undoTextEdits("x = 2\r\n", [once("x = 1\ny = 1", "x = 2")])).toBe("x = 1\r\ny = 1\r\n");
+  });
+});
+
+describe("the files a session could not read, after a pass of noticed paths", () => {
+  const tooLarge = (stamp: string): { stamp: string; readError: string } => ({ stamp, readError: "too large to read" });
+
+  it("takes out each path the pass read, keeps the others as the last walk found them, and adds what the pass found unread", () => {
+    const unread = new Map([["src/big.ts", tooLarge("1")], ["src/other.ts", tooLarge("2")]]);
+
+    const after = unreadAfter(unread, new Map([["src/big.ts", undefined], ["src/new.ts", undefined]]), new Map([["src/new.ts", tooLarge("3")]]));
+
+    expect([...after].sort()).toEqual([["src/new.ts", tooLarge("3")], ["src/other.ts", tooLarge("2")]]);
+  });
+});
 
 describe("CodeRuleBridge and every worktree of the repository", () => {
   /** Runs `run` as a shell call, then lets the walk of the other worktrees, which the call does not wait for, find it. */

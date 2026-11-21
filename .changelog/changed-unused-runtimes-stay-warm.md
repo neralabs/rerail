@@ -1,0 +1,1 @@
+A repository's compiled rules and file walk now stay in memory after its last session ends while the daemon has memory to spare, so a later session there does not wait for them again. Short of memory, each is freed 15 minutes after its last session as before, and all before the daemon restarts at its heap limit.
