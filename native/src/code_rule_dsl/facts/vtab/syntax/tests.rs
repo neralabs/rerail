@@ -7,36 +7,11 @@ use crate::content_store::Binding;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-fn root() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
-}
+use super::fixtures::{corpus, documents, facts, root};
+
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-vtab-{what}-{}-{nonce}.sqlite", std::process::id()))
-}
-
-/// CPython 3.13's `fnmatch`, `ftplib`, `glob`, `json/` and `shlex`: the planner fixture's corpus, in its `doc` order.
-fn corpus() -> Vec<(String, String)> {
-    let raw = zstd::decode_all(std::fs::File::open(root().join("facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
-    serde_json::from_slice(&raw).unwrap()
-}
-fn facts(path: &str, source: &str) -> Arc<Facts> {
-    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    match core::build(&file).unwrap() {
-        Built::Facts(f) => Arc::new(f),
-        Built::Unparsed => panic!("{path} did not parse"),
-    }
-}
-/// The corpus as a batch, document `d` keyed `d`.
-pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
-    corpus()
-        .into_iter()
-        .enumerate()
-        .map(|(d, (path, source))| {
-            let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
-        })
-        .collect()
 }
 
 /// How a column's integers decode to T's text.
@@ -1117,7 +1092,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = crate::source_tree::native().join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1710,7 +1685,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
@@ -2428,6 +2403,25 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1);
     assert!(text.failure().is_none());
+}
+
+/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
+/// module's document alone, as one by its path does: the batch knows each file's module from its path and the
+/// corpus's name for it, none made.
+#[test]
+fn a_probe_of_doc_by_a_module_makes_that_document_alone() {
+    let store = ContentStore::open(&temp("probe-module")).unwrap();
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("pkg/m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["doc".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let module = i64::from(store.atoms_handle().intern("pkg.m4").unwrap());
+    let found = doc.lookup(2, &[module]).unwrap();
+    assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![4], "pkg/m4.py's row");
+    assert_eq!(batch.docs.made_count(), 1, "only the module's document is made");
+    assert_eq!(doc.lookup(2, &[i64::from(store.atoms_handle().intern("pkg.none").unwrap())]).unwrap(), Vec::<usize>::new(), "no file is that module");
+    assert_eq!(batch.docs.made_count(), 1, "a module no file is makes none");
 }
 
 /// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and

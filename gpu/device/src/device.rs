@@ -243,8 +243,12 @@ impl Device {
     /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
     /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
     /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
-    /// have (`max_threadgroup_memory`).
+    /// have (`max_threadgroup_memory`). The CPU's is exact: the groups its launches run at once
+    /// (`compute_kernel_cpu::resident_groups`, the launch's `resident`), its memory a host's.
     pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
+        if let Device::Cpu(_) = self {
+            return Some(cpu::resident_groups(threads as usize) as u64);
+        }
         let cores = self.gpu_cores()? as u64;
         let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
         let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));

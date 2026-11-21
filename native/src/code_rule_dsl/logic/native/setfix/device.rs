@@ -1124,7 +1124,7 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
 /// the stage's keys past its own (`with_consts`, decision 0353 step 6), none uploaded.
 fn reads_source(rel: &InRel) -> bool {
     rel.ndead == 0
-        && rel.view.as_ref().is_some_and(|v| !v.whole() && v.filtered() && v.src.device_view().is_some_and(|d| d.rows == v.src.len() && d.in_place.is_some()))
+        && rel.view.as_ref().is_some_and(|v| !v.whole() && v.by_constants() && v.src.device_view().is_some_and(|d| d.rows == v.src.len() && d.in_place.is_some()))
 }
 
 /// Column `c` of `rel` among its owner's columns: a whole view's (or one `reads_source` reads), its source's.
@@ -1372,7 +1372,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
                         _ if ids.is_some() && rel.view.is_none() => "flat rows with dead rows, no block taking their delta",
                         None => "flat rows in no one block",
                         Some(_) if ids.is_some() => "dead rows",
-                        Some(view) if !view.whole() && view.filtered() => "filtered by constants",
+                        Some(view) if !view.whole() && view.by_constants() => "filtered by constants",
                         Some(view) if !view.whole() => "of chosen rows (a version's, or picked)",
                         Some(view) => match view.src.in_block() {
                             Some(b) if b.rows as usize == n => "in a block, not taken",

@@ -473,6 +473,22 @@ index 781123aa..4760aaf3 100644
          let fs_base: rt_fn_ty!(fn() -> u64) = unsafe { std::mem::transmute(reader as usize) };
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
+diff --git a/libs/relax/compiler/src/sections.rs b/libs/relax/compiler/src/sections.rs
+--- a/libs/relax/compiler/src/sections.rs
++++ b/libs/relax/compiler/src/sections.rs
+@@ -45,8 +45,10 @@ pub(crate) struct Section {
+ /// The `#[link_section]` item `item` names (its `cfg_attr`s applied), if any.
+ fn item_section(f: &ParsedFile, item: ItemId) -> Option<String> {
+     for a in f.ast.list(f.ast.item(item).attrs) {
+-        if a.toks.hi >= a.toks.lo + 3 && f.tok_text(a.toks.lo) == "link_section" && f.tok_text(a.toks.lo + 1) == "=" {
+-            return Some(crate::lit::unescape_str(f.tok_text(a.toks.lo + 2)));
++        // Edition 2024 writes it `#[unsafe(link_section = "...")]`: the name is inside `unsafe(...)`.
++        let lo = if a.toks.hi >= a.toks.lo + 2 && f.tok_text(a.toks.lo) == "unsafe" && f.tok_text(a.toks.lo + 1) == "(" { a.toks.lo + 2 } else { a.toks.lo };
++        if a.toks.hi >= lo + 3 && f.tok_text(lo) == "link_section" && f.tok_text(lo + 1) == "=" {
++            return Some(crate::lit::unescape_str(f.tok_text(lo + 2)));
+         }
+     }
+     None
 diff --git a/libs/relax/compiler/std/std/os/linux.rs b/libs/relax/compiler/std/std/os/linux.rs
 index eb9e99f2..fff2cdde 100644
 --- a/libs/relax/compiler/std/std/os/linux.rs
@@ -641,6 +657,36 @@ index 00000000..a3a893dd
 +    let v: Vec<u16> = Vec::new();
 +    let r = &v[..] as &[u16];
 +    println!("| {:?} {}", bytes, r.len());
++}
+diff --git a/libs/relax/compiler/tests/link_section_constructors.rs b/libs/relax/compiler/tests/link_section_constructors.rs
+--- a/libs/relax/compiler/tests/link_section_constructors.rs
++++ b/libs/relax/compiler/tests/link_section_constructors.rs
+@@ -48,6 +48,17 @@ static CTOR_BC: [extern "C" fn(); 2] = [ctor_b, ctor_c];
+ #[cfg_attr(windows, link_section = ".CRT$XCB")]
+ static CTOR_EARLY: extern "C" fn() = ctor_early;
+ 
++// edition 2024's spelling, `unsafe(link_section = ...)`: a constructor too
++static UNSAFE_FORM: AtomicU32 = AtomicU32::new(0);
++extern "C" fn ctor_unsafe_form() {
++    UNSAFE_FORM.fetch_add(1, Ordering::SeqCst);
++}
++#[used]
++#[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
++#[cfg_attr(all(not(target_vendor = "apple"), not(windows)), unsafe(link_section = ".init_array"))]
++#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
++static CTOR_UNSAFE_FORM: extern "C" fn() = ctor_unsafe_form;
++
+ #[test]
+ fn a01_constructors_ran_before_the_tests() {
+     // each ran once, whatever the tests
+@@ -69,3 +80,8 @@ fn a02_main_state_is_theirs() {
+     A.fetch_add(100, Ordering::SeqCst);
+     println!("| a02: a kept {}", A.load(Ordering::SeqCst) > 100);
+ }
++
++#[test]
++fn a03_the_unsafe_spelling_runs() {
++    println!("| a03: ran once {}", UNSAFE_FORM.load(Ordering::SeqCst) == 1);
 +}
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
 index 20d9fcc4..2b518851 100644

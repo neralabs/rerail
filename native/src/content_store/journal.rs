@@ -352,6 +352,14 @@ mod fsevents {
     /// attributes. Its bytes are as they were, so an event of these alone names no change (Q152: a host's agent setting
     /// the access times of the files a command will read made a warm run forget their answers).
     const META: u32 = 0x400 | 0x2000 | 0x4000 | 0x8000;
+
+    /// Whether an event of `flags` names its path: any but one of metadata alone. fseventsd keeps one record a path
+    /// whose flags gather (Q456): a change of a file's times soon after it was made, in the stream that was told of
+    /// its making, comes with the making's bits too (`0x11500`, not `0x10400`), and is named. A path looked at
+    /// again, the safe answer, never one missed.
+    pub(super) fn names(flags: u32) -> bool {
+        flags & META == 0 || flags & CONTENT != 0
+    }
     /// How long a replay may wait for its cookie.
     const WAIT: Duration = Duration::from_secs(2);
 
@@ -378,6 +386,9 @@ mod fsevents {
         /// Whether the marker written before the stream started came in its history (decision 0400): fseventsd had
         /// logged every change made before it, so the replay holds them.
         marker_in_history: bool,
+        /// Each event's flags as fseventsd gave them, by its path: a test reads what record a change came in (Q456).
+        #[cfg(test)]
+        flags: Vec<(String, u32)>,
     }
 
     struct Shared {
@@ -423,7 +434,9 @@ mod fsevents {
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 eprintln!("journal flags {id} {flag:#x} {path}");
             }
-            if flag & META != 0 && flag & CONTENT == 0 {
+            #[cfg(test)]
+            seen.flags.push((path.clone(), flag));
+            if !names(flag) {
                 continue;
             }
             seen.events.push((id, path));
@@ -485,6 +498,16 @@ mod fsevents {
         rerail_prof::code_rule_dsl::logic::profile::shared::<Streams>()
     }
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// The flags of each event the process's streams were told of `path` (by its real path), in the order they came.
+    #[cfg(test)]
+    pub(super) fn flags_of(path: &Path) -> Vec<u32> {
+        let Ok(path) = std::fs::canonicalize(path) else { return Vec::new() };
+        let path = path.to_string_lossy();
+        let all = streams();
+        let all = all.0.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter().flat_map(|l| l.shared.seen.lock().unwrap_or_else(|e| e.into_inner()).flags.iter().filter(|(p, _)| *p == path).map(|(_, f)| *f).collect::<Vec<_>>()).collect()
+    }
 
     #[cfg(test)]
     pub(super) fn forget_streams() {
@@ -866,6 +889,18 @@ mod tests {
     /// The journal names a file written after the cursor; once every earlier event is in, a replay from a later
     /// cursor names nothing. A write just before a cursor may be named too (its event's id came after the cursor):
     /// a path looked at again, never one missed.
+    /// What an event names, by its flags (Q456, as fseventsd gave them on an M1 Max): a file's times set alone
+    /// (inode metadata) names nothing; a write, or the times set in the record of the file's making (fseventsd's
+    /// record of a path gathers its flags), names it.
+    #[test]
+    fn an_event_of_metadata_alone_names_nothing() {
+        use super::fsevents::names;
+        assert!(!names(0x10400), "a file's times set");
+        assert!(names(0x11400), "written, its times set");
+        assert!(names(0x11100), "made");
+        assert!(names(0x11500), "made, then its times set: one record");
+    }
+
     #[test]
     fn the_journal_names_what_changed_since_its_cursor() {
         // A replay that is `Lost` or `Behind` (a cookie later than its wait, a history behind its marker: the m3 at
@@ -912,12 +947,20 @@ mod tests {
         // A file whose times are set, its mtime to what it was (as a host's agent marks a file a command will read),
         // is not named: its bytes are as they were. Written, it is.
         let kept = root.join("sub/kept.py");
+        let told = super::fsevents::flags_of(&kept).len();
         let mtime = std::fs::metadata(&kept).unwrap().modified().unwrap();
         std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(500));
         next_epoch();
         let (paths, touched) = changed!(base, since(std::slice::from_ref(&root), Some(settled), &cookies, SETTLE));
-        assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
+        // As the record came (Q422): fseventsd may give the times set in the record of the file's making, its flags
+        // gathered (`0x11500`), which is named; of metadata alone (`0x10400`), it is not.
+        let came = super::fsevents::flags_of(&kept).split_off(told);
+        if came.iter().any(|f| super::fsevents::names(*f)) {
+            assert!(paths.contains(&kept), "a record with content bits ({came:x?}) names its file: {paths:?}");
+        } else {
+            assert!(!paths.contains(&kept), "an access time set ({came:x?}) is no change: {paths:?}");
+        }
         std::fs::write(&kept, "x = 2\n").unwrap();
         next_epoch();
         let (paths, _) = changed!(base, since(std::slice::from_ref(&root), Some(touched), &cookies, SETTLE));
@@ -931,3 +974,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 }
+

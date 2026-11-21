@@ -21,6 +21,10 @@
 //! byte weighted by its bit, then three rounds of pairwise adds, `addp`); elsewhere
 //! `vhigh_bits` (one `pmovmskb` on x86).
 
+// The program's counts and paddings (`block_native`) and the token loop's marks (`records`), the front end's,
+// under the names the lowering's callers read.
+pub use crate::block_native::{BACK, FRONT, counted};
+pub use crate::records::{blank_bits, blank_marks, loop_marks};
 use crate::Error;
 use crate::block::{BatchFile, BlockRun};
 use crate::native_cpu_lanes::{Lane, Lanes, Plan, all_ascii};
@@ -161,13 +165,6 @@ pub struct PassShape {
 pub struct Outlined {
     pub clif: String,
     pub disassembly: String,
-}
-
-/// The running counts, as output indexes: each extract's, then one for all the totals (the first
-/// total's index stands for them: `BlockProgram::totals`, one flag). A file's counts are laid out
-/// in this order, so tier 2 reads its totals' flag from the count after the extracts'.
-pub fn counted(native: &BlockNative) -> Vec<usize> {
-    native.extracts.iter().chain(native.totals.first()).copied().collect()
 }
 
 impl CompiledBlock {
@@ -493,19 +490,6 @@ pub fn thread_cpu() -> f64 {
     }
 }
 
-/// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,
-/// and the byte before the stream is 0x00.
-pub const FRONT: usize = 16;
-
-/// The default padding (`BlockNative::pad`): zero bytes after every file's last byte, at least,
-/// wherever a compiled function reads it (`Batch`, a resident source's slab). As simdjson's
-/// padded input, a window that reads past the end reads zeros, so an output false on a zero
-/// byte has no bits there and needs no cut (`Bytewise::padded`). The widest window: 64 bits a
-/// lane times 32 lanes (Metal's), 256 bytes; a CPU window reaches less (`pad_reach`). An
-/// application may ask for less, its windows cut on a rare branch.
-pub const BACK: usize = 256;
-
-
 /// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`
 /// field keeps the top `width` bits of instruction `at`'s word (for its `prev`s, and a `toggle`'s
 /// or `fill`'s own carry, its top bit); a `flag` field an `escaped`'s borrow.
@@ -747,9 +731,9 @@ fn lane_and(f: &FunctionBuilder<'_>, x: Value) -> Option<(Value, Vec<(Value, boo
 /// The constants every body uses, made once in the function's entry: the nibble mask, the
 /// bitmask's weights, and simdjson's even bits.
 pub struct Consts {
-    pub(crate) nibble: Value,
-    pub(crate) weights: Value,
-    pub(crate) even: Value,
+    pub nibble: Value,
+    pub weights: Value,
+    pub even: Value,
 }
 
 impl Consts {
@@ -3514,7 +3498,7 @@ pub(crate) fn word_hit(f: &mut FunctionBuilder<'_>, t: &RecordTables, (mult, slo
 /// (the tables' first 256 bytes) and its word's bits on a hit (`word_hit`). `(tables, mult,
 /// slots)`: the tables' constants (`tables_consts`); `bytes`: the file's. A region's part's
 /// (decision 0323), by tier 1's walk (`read_in_parts`) and tier 2's fetch alike.
-pub(crate) fn plain_code(f: &mut FunctionBuilder<'_>, t: &RecordTables, (tables, mult, slots): (Value, Value, Value), bytes: Value, at: Value, len: Value) -> Value {
+pub fn plain_code(f: &mut FunctionBuilder<'_>, t: &RecordTables, (tables, mult, slots): (Value, Value, Value), bytes: Value, at: Value, len: Value) -> Value {
     let ro = MemFlags::trusted().with_readonly();
     let from = f.ins().iadd(bytes, at);
     let raw = f.ins().load(types::I64, MemFlags::trusted(), from, 0);
@@ -4306,10 +4290,10 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
 }
 
 /// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
-pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
-    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+pub fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_codegen::table_address(f, t.words.as_ptr());
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
-    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
+    let slots = crate::native_cpu_codegen::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 
@@ -6829,65 +6813,6 @@ pub fn lazy_coded(r: &crate::records::Records) -> u32 {
     })
 }
 
-/// The marks the token loop sets itself (decision 0177), their masks made from the bytes
-/// (`Reads`): each `(mark, output)`. The gap marks' (`lift`), from the bytes between grammar
-/// tokens, as `records::gap_marks`; the others', at a token's first byte. A mark a reader gives
-/// (`Reader::retag`) or of tests alone is not.
-pub(crate) fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> (Vec<(u8, u16)>, Vec<(u8, u16)>) {
-    if r.skip.is_none() {
-        return (Vec::new(), Vec::new());
-    }
-    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
-    let blank = blank_bits(r, bytewise);
-    let known = extra_known(r, bytewise);
-    let mut lift = Vec::new();
-    let mut at = Vec::new();
-    for (k, &(o, w)) in r.marks.iter().enumerate() {
-        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || r.alone >> k & 1 == 1 || blank >> k & 1 == 1 || !bytewise(o) {
-            continue;
-        }
-        if r.gaps >> k & 1 == 1 {
-            if known {
-                lift.push((k as u8, o));
-            }
-        } else {
-            at.push((k as u8, o));
-        }
-    }
-    (lift, at)
-}
-
-/// The gap marks the token loop reads from the blanks (`Records::blanks`, decision 0430): each
-/// `(mark, class output)`, the class read from the bytes. While it passes the blank run before
-/// each token, the loop tests the class there, as the lean lexer's `skip` notes `nl`; an
-/// extra's run goes on to the grammar token after it. No mask of the mark is made.
-pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
-    if r.skip.is_none() {
-        return Vec::new();
-    }
-    if !extra_known(r, bytewise) {
-        return Vec::new();
-    }
-    r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
-}
-
-/// Whether the token loop knows an extra at its token (Q347): it tells one by the extra's mark
-/// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
-/// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
-/// `blank_marks`) go past an extra to the grammar token after it only so.
-fn extra_known(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> bool {
-    let Some(e) = r.extra else { return true };
-    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
-    let (o, w) = r.marks[usize::from(e)];
-    let at_first = o != crate::records::WORD_ALONE && w == 0 && r.gaps >> e & 1 == 0 && r.tested_only >> e & 1 == 0 && r.alone >> e & 1 == 0 && bytewise(o);
-    retagged >> e & 1 == 1 || at_first
-}
-
-/// `blank_marks`' marks, as bits `1 << mark`.
-pub fn blank_bits(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> u32 {
-    blank_marks(r, bytewise).iter().fold(0, |a, &(k, _)| a | 1 << k)
-}
-
 /// The marks of `marks` with a bit in the file's bytes `a ..= b` (none where `a > b`), as bits
 /// `1 << mark`. In the block in registers (`regs`, its first byte `base`) when `a` is in it, `b`
 /// too; else a word at a time from the bytes, in cold blocks.
@@ -7035,7 +6960,6 @@ struct BlockRegs {
     /// Split runs' term words, by their byte sets (`RunForm::Block`).
     terms: Vec<([u64; 4], Value)>,
 }
-
 
 /// A part of a file's token loop (decision 0177): the tokens whose words are in the `ready`
 /// blocks, from the state `init`; it goes on to `then` with the state it stops at.

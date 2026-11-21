@@ -6,7 +6,8 @@
 //! Public so the engine's tests of its own block programs (`packed::regex_block`) use them too.
 
 use rerail_compiler::program::Words as Program;
-use rerail_compiler::{block, native_cpu_block, native_ir};
+use rerail_compiler::{block, native_ir};
+use rerail_cpu_block::native_cpu_block;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 

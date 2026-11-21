@@ -8,9 +8,9 @@ use super::api::{
 use super::persisted::{AFTER_FILES_PUBLISHED, LEASE_RENEWAL_ATTEMPTS};
 use super::secret_names::SecretNamePatterns;
 use super::storage::storage_context_in;
-use super::tests::{WORKSPACE_TEST_SLOT, git, result_page};
+use super::fixtures::{WORKSPACE_TEST_SLOT, git, result_page};
 use super::{STORE_BUSY_COOLDOWN, TEST_STORE_BUSY_CLOCK_ADVANCE, TEST_UNPUBLISHED_RESIDENT_BYTES};
-use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use crate::code_rule_dsl::{CompiledCodeRuleDsl};
 use crate::content_store::{
     AFTER_GIT_TREE_TRANSACTION, BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE,
     BUSY_WAIT_HOOK, CLOCK_OFFSET, ContentStore, MAX_COLLECTION_BATCH,
@@ -130,11 +130,7 @@ fn needle_code_rule_reporting(code: &str) -> CompiledCodeRuleDsl {
             "forbid": { "regex": { "pattern": "NEEDLE", "source": "file.content" } }
         }]
     });
-    CodeRuleDslRuntime::compile(
-        code_rule.to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&code_rule.to_string(), "json", &capabilities.to_string())
     .unwrap()
 }
 
@@ -1872,8 +1868,7 @@ fn the_store_never_holds_a_file_named_like_one_holding_secrets() {
             "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
             "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
     });
-    let code_rule = CodeRuleDslRuntime::compile(
-        json!({
+    let code_rule = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "secret-needle", "revision": 1, "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": [{
@@ -1882,10 +1877,7 @@ fn the_store_never_holds_a_file_named_like_one_holding_secrets() {
                 "forbid": { "regex": { "pattern": "NEEDLE", "source": "file.content" } }
             }]
         })
-        .to_string(),
-        "json".into(),
-        capabilities.to_string(),
-    )
+        .to_string(), "json", &capabilities.to_string())
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&code_rule, None).unwrap();

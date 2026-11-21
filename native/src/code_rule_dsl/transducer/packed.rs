@@ -111,7 +111,7 @@ pub mod native_cpu_tape;
 pub mod native_cpu_value;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2), the compiler crate's.
 #[allow(unused_imports)]
-pub use rerail_compiler::native_cpu_rows;
+pub use rerail_cpu_block::native_cpu_rows;
 // Rows sorted by a key on the host: the CPU's sort join, and the device's narrow columns (decision 0095).
 pub mod rows_sort;
 pub mod native_ir;

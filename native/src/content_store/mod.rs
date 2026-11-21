@@ -845,14 +845,15 @@ impl ContentStore {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = models;
-        // A store created again at its path has a writer of its own too.
+        // A store created again at its path has atoms and a writer of its own too.
         Ok(Self::with_connection(
             path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
             atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
         ))
     }
 
-    /// The scratch store for fact-only evaluation with the durable cache disabled.
+    /// The scratch store for fact-only evaluation with the durable cache disabled: in memory, so nothing is flushed
+    /// (decision 0481's `none`).
     pub fn open_ephemeral() -> StoreResult<Self> {
         let mut connection = Connection::open_in_memory()?;
         let atoms = atoms::Atoms::ephemeral();

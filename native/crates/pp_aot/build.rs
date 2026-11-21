@@ -23,12 +23,12 @@ fn generate() {
     let rir = std::fs::read_to_string("../c_directives/expand/expand.rir").expect("reads the words");
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     let words = rerail_compiler::rir_asm::assemble(&rir).expect("the words assemble");
-    let src = rerail_compiler::native_cpu_pp::rust_source(&words).unwrap_or_else(|e| panic!("the words to Rust: {e}"));
+    let src = rerail_cpu_pp::native_cpu_pp::rust_source(&words).unwrap_or_else(|e| panic!("the words to Rust: {e}"));
     let body: String = src.lines().filter(|l| !l.starts_with("#![") && !l.starts_with("//!")).flat_map(|l| [l, "\n"]).collect();
     // The words' text it was made from, by fingerprint: the host runs the build only for the
     // words it has (`rerail_c_directives::expand::native`).
-    let words_fp = rerail_compiler::clif_rust::fingerprint(&rir);
-    let abi = rerail_compiler::native_cpu_pp::ABI;
+    let words_fp = rerail_cpu_stream::clif_rust::fingerprint(&rir);
+    let abi = rerail_cpu_pp::native_cpu_pp::ABI;
     let body = format!("{body}/// The words' text it was made from (`clif_rust::fingerprint` of `expand.rir`).\npub const WORDS: u64 = {words_fp:#x};\n/// The harness's interface it was made for (`native_cpu_pp::ABI`).\npub const ABI: u64 = {abi:#x};\n");
     std::fs::write(out.join("pp.rs"), body).expect("writes the source");
 }

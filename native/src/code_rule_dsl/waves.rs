@@ -1,7 +1,8 @@
 //! SQL-driven waves (docs/final-shape/03-architecture.md §4, §7; decision 0010): one owner
 //! connection on the content store, the temp schema's lifecycle, and the frontier loop that SQL
 //! steers, wave by wave, until no relation changes.
-// Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
+// The waves' tests, mounted by rerail-tests-logic: they read what boot registers (the languages, their `.rerail`
+// libraries).
 pub mod owner {
     pub use rerail_logic::code_rule_dsl::waves::owner::*;
     #[cfg(test)]
@@ -11,7 +12,7 @@ pub mod owner {
 #[path = "waves/relational"]
 pub(in crate::code_rule_dsl) mod relational {
     pub mod shared {
-        pub use rerail_w::code_rule_dsl::waves::relational::shared::*;
+        pub use rerail_classic::code_rule_dsl::waves::relational::shared::*;
         #[cfg(test)]
         pub mod identity_tests;
             #[allow(unused_imports)]
@@ -29,7 +30,7 @@ pub(in crate::code_rule_dsl) mod relational {
     }
     pub mod producer {
         pub mod layout {
-            pub use rerail_w::code_rule_dsl::waves::relational::producer::layout::*;
+            pub use rerail_classic::code_rule_dsl::waves::relational::producer::layout::*;
             #[cfg(test)]
             pub mod tests;
                 #[allow(unused_imports)]
@@ -37,10 +38,10 @@ pub(in crate::code_rule_dsl) mod relational {
                 #[allow(unused_imports)]
                 use std::{collections::HashSet, sync::Arc};
         }
-        pub use rerail_w::code_rule_dsl::waves::relational::producer::*;
+        pub use rerail_classic::code_rule_dsl::waves::relational::producer::*;
     }
     pub mod pool {
-        pub use rerail_w::code_rule_dsl::waves::relational::pool::*;
+        pub use rerail_classic::code_rule_dsl::waves::relational::pool::*;
         #[cfg(test)]
         pub mod tests;
             #[allow(unused_imports)]
@@ -50,10 +51,10 @@ pub(in crate::code_rule_dsl) mod relational {
             #[allow(unused_imports)]
             use std::{ cell::{OnceCell, RefCell}, ops::Deref, rc::Rc, sync::{Arc, atomic::AtomicUsize}, };
     }
-    pub use rerail_w::code_rule_dsl::waves::relational::*;
+    pub use rerail_classic::code_rule_dsl::waves::relational::*;
     #[path = "batch"]
     pub mod batch {
-        pub use rerail_w::code_rule_dsl::waves::relational::batch::*;
+        pub use rerail_classic::code_rule_dsl::waves::relational::batch::*;
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
@@ -68,7 +69,7 @@ pub(in crate::code_rule_dsl) mod relational {
     pub mod execution;
     #[path = "inputs"]
     pub mod inputs {
-        pub use rerail_w::code_rule_dsl::waves::relational::inputs::*;
+        pub use rerail_classic::code_rule_dsl::waves::relational::inputs::*;
         #[cfg(test)]
         pub mod tests;
         #[allow(unused_imports)]
@@ -123,13 +124,16 @@ pub(in crate::code_rule_dsl) mod relational {
     };
 }
 /// The first slice's wave over lowered matchers (06 S4).
-pub(in crate::code_rule_dsl) mod matches;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::matches;
 /// The first slice's findings layer over the wave's matches (06 S5).
-pub(in crate::code_rule_dsl) mod findings;
-#[path = "waves/schedule"]
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::findings;
+#[cfg_attr(test, path = "waves/schedule")]
 pub(in crate::code_rule_dsl) mod schedule {
     pub use rerail_logic::code_rule_dsl::waves::schedule::*;
-    pub mod batches;
+    #[cfg_attr(not(test), allow(unused_imports))]
+    pub use rerail_boot::code_rule_dsl::waves::schedule::batches;
     #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
@@ -154,4 +158,5 @@ pub(in crate::code_rule_dsl) mod schedule {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::waves::schedule::lattice::Operations as LatticeOperations;
 }
 /// The policies through the logic language: the wave's clauses, rules and demand (list step 21).
-pub(in crate::code_rule_dsl) mod policies;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::policies;

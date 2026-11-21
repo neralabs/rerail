@@ -1,7 +1,6 @@
 //! The converter's run over the data-layer pack, and checks of what it writes.
 
 use super::*;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
@@ -195,7 +194,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
             if let Some(c) = cache.borrow().get(text.as_str()) {
                 return Ok(c.clone());
             }
-            let c = CodeRuleDslRuntime::compile(text.clone(), "json".to_owned(), CAPABILITIES.to_owned()).map_err(|e| e.reason.to_string())?.inner;
+            let c = crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).map_err(|e| e.reason.to_string())?.inner;
             cache.borrow_mut().insert(text.clone(), c.clone());
             Ok(c)
         })
@@ -1462,7 +1461,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let _ = std::fs::remove_dir_all(&dir);
     got.sort();
     // W, on the same source: its findings of the clauses converted (its lines 0-based).
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1486,7 +1485,7 @@ fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<St
     write_files(&dir, [(path, source)]);
     let mut got = findings(&c.program, &dir).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
-    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(rule).unwrap(), "json", CAPABILITIES).unwrap();
     let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
     let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
     let mut w: Vec<String> = result["violations"]
@@ -1786,7 +1785,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        crate::source_tree::native().join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.

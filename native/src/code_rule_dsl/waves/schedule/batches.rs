@@ -9,7 +9,7 @@ type Built = StoreResult<(Vec<Document>, Vec<(&'static str, Arc<dyn Source>)>)>;
 /// Runs `program` over `documents` of `scope` on `lease` to its fixpoint, then records each derived
 /// relation as a family. `demand` gives a chunk's packed batch, if its steps read one. The
 /// relations stay readable on the lease until it is dropped.
-pub(in crate::code_rule_dsl) fn run(
+pub fn run(
     lease: &Lease<'_>,
     graph: &(impl Graph + ?Sized),
     program: &Program,
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) fn run(
 /// documents that changed, its relations holding the others' rows as kept (06 S6), and its
 /// families read every document.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn run_over(
+pub fn run_over(
     lease: &Lease<'_>,
     graph: &(impl Graph + ?Sized),
     program: &Program,

@@ -9,7 +9,9 @@ description = "The C preprocessing words built ahead of time: the JIT's Cranelif
 # The generated code: the build script writes the words' code as Rust (about 3.4 MB) and this
 # crate compiles it. Turned on by `rerail-c-directives`' `generated` feature, a default one: the
 # build is the preprocessor's CPU path. Without it, the path is the JIT's code.
-generated = ["dep:rerail-compiler"]
+generated = ["dep:rerail-compiler", "dep:rerail-cpu-pp", "dep:rerail-cpu-stream"]
 
 [build-dependencies]
 rerail-compiler = { path = "../compiler", optional = true }
+rerail-cpu-pp = { path = "../cpu_pp", optional = true }
+rerail-cpu-stream = { path = "../cpu_stream", optional = true }

@@ -299,6 +299,86 @@ impl<T> LazyStats<T> {
 /// What `Stats` holds of a relation's lazy statistics: the caller's part is not the planner's.
 pub trait Deferred: Send + Sync {
     fn statistics(&self) -> (Vec<(String, [i64; 4])>, Vec<(String, i64, i64)>);
+    /// A view's statistics counted where its rows lie, as a copy's are (`LiveRel`, `Run::hold_view_in_place`):
+    /// `Model::resolve` applies them as `live_stats` does, exact, and never a layout's answer (decision 0361) in
+    /// their place. `None`: they are `statistics`', as measured.
+    fn live(&self) -> Option<LiveRel> {
+        None
+    }
+    /// Whether they are `live`'s: known without counting them.
+    fn is_live(&self) -> bool {
+        false
+    }
+}
+
+/// The statistics of a view of a batch's `node` held in place (decision 0329), counted off the batch's documents
+/// (`syntax::node_column_counts`) when a plan first reads them (Q332): counting them makes every document's
+/// projection, which a run whose plans never read the view (a warm run's, its strata kept) has no need of.
+struct InPlaceView {
+    rel: String,
+    batch: Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>,
+    cols: Vec<usize>,
+    rows: i64,
+}
+impl InPlaceView {
+    fn counted(&self) -> LiveRel {
+        let _span = super::profile::span(|| format!("statistics of {}, a view held in place, counted when first planned with", self.rel));
+        let (mut ndv, mut sq, mut freq) = (Vec::new(), Vec::new(), Vec::new());
+        for (j, &c) in self.cols.iter().enumerate() {
+            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&self.batch, c).expect("a column node_column_counts counts");
+            ndv.push(d);
+            sq.push(s);
+            if let Some(counts) = counts {
+                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
+            }
+        }
+        LiveRel { n: self.rows, delta: self.rows, ndv, sq, freq, keys: Vec::new(), counts: Vec::new() }
+    }
+}
+impl Deferred for InPlaceView {
+    fn statistics(&self) -> (Vec<(String, [i64; 4])>, Vec<(String, i64, i64)>) {
+        let live = self.counted();
+        let cols = (0..self.cols.len()).map(|j| (sql_col(&self.rel, j), [live.n, live.ndv[j], live.sq[j], live.sq[j]])).collect();
+        let vals = live.freq.iter().flat_map(|(j, f)| f.iter().filter_map(|(v, &m)| match v { Constant::Int(v) => Some((sql_col(&self.rel, *j), *v, m)), _ => None })).collect();
+        (cols, vals)
+    }
+    fn live(&self) -> Option<LiveRel> {
+        Some(self.counted())
+    }
+    fn is_live(&self) -> bool {
+        true
+    }
+}
+/// The statistics of a view of any other source's columns held in place (`Run::hold_view_in_place`): its columns'
+/// counts, the source's own or measured off its rows, when a plan first reads them. Counted at once, a view no plan
+/// read (a quiet stratum's reader, a warm run's) made every document of a batch's relation (`string_annotation`).
+struct SourceView {
+    rel: String,
+    src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+    cols: Vec<usize>,
+    rows: i64,
+}
+impl SourceView {
+    fn counted(&self) -> LiveRel {
+        let _span = super::profile::span(|| format!("statistics of {}, a view held in place, counted when first planned with", self.rel));
+        let all = crate::code_rule_dsl::facts::vtab::syntax::statistics(self.src.as_ref());
+        let at = |c: usize| all.get(c).map_or((self.rows, self.rows), |s| (s.2, s.3));
+        let (ndv, sq) = self.cols.iter().map(|&c| at(c)).unzip();
+        LiveRel { n: self.rows, delta: self.rows, ndv, sq, freq: Vec::new(), keys: Vec::new(), counts: Vec::new() }
+    }
+}
+impl Deferred for SourceView {
+    fn statistics(&self) -> (Vec<(String, [i64; 4])>, Vec<(String, i64, i64)>) {
+        let live = self.counted();
+        let cols = (0..self.cols.len()).map(|j| (sql_col(&self.rel, j), [live.n, live.ndv[j], live.sq[j], live.sq[j]])).collect();
+        (cols, Vec::new())
+    }
+    fn live(&self) -> Option<LiveRel> {
+        Some(self.counted())
+    }
+    fn is_live(&self) -> bool {
+        true
+    }
 }
 impl<T: Send + Sync> Deferred for LazyStats<T> {
     fn statistics(&self) -> (Vec<(String, [i64; 4])>, Vec<(String, i64, i64)>) {
@@ -916,6 +996,11 @@ impl Model {
                 prior_now(self, f, rel, true);
             }
             let Some(deferred) = self.stats.lazy.0.remove(rel) else { continue };
+            // A view held in place: its exact statistics, as when they were counted at once (`InPlaceView`).
+            if let Some(live) = deferred.live() {
+                live_stats(self, rel, live);
+                continue;
+            }
             // Its layout answers it whole: priced from the facts, nothing counted (decision 0361 step 4).
             if let Some(width) = f.arity(rel)
                 && self.stats.shapes.answers(rel, self.stats.counts())
@@ -2492,9 +2577,10 @@ impl Model {
 
     /// A relation whose statistics are still to be made: bound lazily (`Stats::lazily`), or quiet and taking its
     /// kept rows' (`prior_stats`).
-    /// A relation its layout answers whole (`shapes::Shapes::answers`) is never one: its statistics are not made.
+    /// A relation its layout answers whole (`shapes::Shapes::answers`) is never one: its statistics are not made. A
+    /// view held in place always is (`Deferred::is_live`): its statistics are counted, never a layout's.
     fn deferred(&self, rel: &str) -> bool {
-        self.stats.lazy.0.contains_key(rel) && !self.shaped(rel) || self.stats.prior_later.contains(rel)
+        self.stats.lazy.0.get(rel).is_some_and(|d| d.is_live() || !self.shaped(rel)) || self.stats.prior_later.contains(rel)
     }
 
     /// Whether `rel`'s layout answers every column's distinct values (decision 0361 step 4).
@@ -5953,6 +6039,32 @@ pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::p
 }
 
 
+/// A changed read's versions as a stratum reads them: a row gone and a row added that agree on every column it reads
+/// (`used`, its source's) are no change to it, and neither is in its delta. Each is a set of rows picked where they lie
+/// in the versions (0364 R2), found through a transient order of each version's row ids. `None` when no pair agrees.
+/// A line inserted moves the `start` and `end` of every node after it alone: ep2's one-line edit gave `node` 1,637 rows
+/// added and 1,633 gone, and a stratum that read nodes' kinds saw each as a change, past the threshold (0090 §4).
+pub(crate) fn unchanged_as_read(minus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, plus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, used: &[usize]) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]> {
+    use crate::code_rule_dsl::facts::vtab::Source;
+    fn row<'a>(s: &'a dyn Source, r: u32, used: &'a [usize]) -> impl Iterator<Item = i64> + 'a {
+        used.iter().map(move |&c| s.value(r as usize, c))
+    }
+    let order = |s: &dyn Source| {
+        let mut ids: Vec<u32> = (0..s.len() as u32).collect();
+        ids.sort_unstable_by(|&a, &b| row(s, a, used).cmp(row(s, b, used)));
+        ids
+    };
+    let (by_minus, by_plus) = (order(minus.as_ref()), order(plus.as_ref()));
+    // The rows of `s` whose columns read no row of `t` holds.
+    let alone = |s: &dyn Source, t: &dyn Source, by: &[u32]| -> Vec<u32> { (0..s.len() as u32).filter(|&r| by.binary_search_by(|&x| row(t, x, used).cmp(row(s, r, used))).is_err()).collect() };
+    let (m, p) = (alone(minus.as_ref(), plus.as_ref(), &by_plus), alone(plus.as_ref(), minus.as_ref(), &by_minus));
+    if m.len() == minus.len() {
+        return None;
+    }
+    let picked = |s: &Arc<dyn Source>, ids| super::native::component::InRel::picked(Arc::clone(s), ids, s.columns());
+    Some([picked(minus, m), picked(plus, p)])
+}
+
 /// How many strata the process held as views of an input's columns, for tests and profiles.
 pub fn input_views() -> u64 {
     run_counts().input_views.load(std::sync::atomic::Ordering::Relaxed)
@@ -6415,28 +6527,60 @@ impl<'a> Run<'a, '_> {
         Ok(Some(source.len()))
     }
 
-    /// A view of `node`'s columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`), where `src`
-    /// is a batch's: its statistics each column's exact ones, counted from the batch without reading its rows
-    /// (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`). `None`: `src` is not a batch's, and
-    /// the view is read into flat rows (`hold_view`).
-    fn hold_view_in_place(&mut self, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<LiveRel> {
-        if src.columns().len() != 5 {
-            return None;
-        }
-        let batch = src.python_batch()?;
+    /// A view of `base`'s columns `cols` (`input_view`) held in place (decisions 0329, 0353: a view is a read of its
+    /// source, nothing makes its rows), and its rows' count. Its statistics are each column's exact ones: `base`'s,
+    /// where the run holds them (`view_stats_held`); else counted when a plan first reads them: a batch's `node` from
+    /// the batch without reading its rows (`syntax::node_column_counts`, `InPlaceView`), any other source off its
+    /// columns (`SourceView`). Counted at once, a view no plan reads made every document of a batch's relation.
+    fn hold_view_in_place(&mut self, base: &str, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> i64 {
+        let batch = src.python_batch().filter(|_| src.columns().len() == 5 && cols.iter().all(|&c| crate::code_rule_dsl::facts::vtab::syntax::node_column_counted(c)));
         let n = src.len() as i64;
-        let mut ndv = Vec::new();
-        let mut sq = Vec::new();
-        let mut freq: Vec<(usize, HashMap<Constant, i64>)> = Vec::new();
+        super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
+        if let Some(live) = self.view_stats_held(base, &src.columns(), cols, n, batch.is_some()) {
+            self.model.stats.lazy.0.remove(rel);
+            live_stats(&mut self.model, rel, live);
+            super::profile::decision("a view held in place: its statistics (Q332)", || format!("{rel}: {base}'s, held"));
+            return n;
+        }
+        super::profile::decision("a view held in place: its statistics (Q332)", || format!("{rel}: counted off {base} when first planned with ({base}'s are not held)"));
+        self.model.stats.prior_later.remove(rel);
+        let deferred: Arc<dyn Deferred> = match batch {
+            Some(batch) => Arc::new(InPlaceView { rel: rel.to_owned(), batch, cols: cols.to_vec(), rows: n }),
+            None => Arc::new(SourceView { rel: rel.to_owned(), src: Arc::clone(src), cols: cols.to_vec(), rows: n }),
+        };
+        self.model.stats.lazily(rel, n.max(1) as usize, deferred);
+        n
+    }
+
+    /// The statistics of a view of `base`'s columns `cols` (`names`, its columns), `n` rows, from those the run holds
+    /// of `base` itself (Q332): its columns' counts, kept and patched by the changed documents (decision 0458), and
+    /// the kind column's values, the tree's (`Stats::tree`: by the same kind atoms the column holds). What counting
+    /// the batch's documents gives (`InPlaceView`), none made. `None` where one is not held, or holds other rows than
+    /// the view's (a node column's counts of `n` rows, the tree's kinds `n` nodes of as many kinds). Of another
+    /// source than a batch's `node` (`node` false), any column's counts, with no values' counts.
+    fn view_stats_held(&self, base: &str, names: &[String], cols: &[usize], n: i64, node: bool) -> Option<LiveRel> {
+        let st = &self.model.stats;
+        let (mut ndv, mut sq, mut freq) = (Vec::new(), Vec::new(), Vec::new());
         for (j, &c) in cols.iter().enumerate() {
-            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&batch, c)?;
+            let &[rows, d, s, _] = st.col.get(&(base.to_owned(), names.get(c)?.clone()))?;
+            if rows != n {
+                return None;
+            }
+            match c {
+                _ if !node => {}
+                1 => {}
+                2 => {
+                    let kinds: HashMap<Constant, i64> = st.kfreq.iter().filter(|(_, m)| **m > 0).map(|(k, &m)| Some((Constant::Int(k.parse().ok()?), m))).collect::<Option<_>>()?;
+                    if kinds.values().sum::<i64>() != n || kinds.len() as i64 != d {
+                        return None;
+                    }
+                    freq.push((j, kinds));
+                }
+                _ => return None,
+            }
             ndv.push(d);
             sq.push(s);
-            if let Some(counts) = counts {
-                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
-            }
         }
-        super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
         Some(LiveRel { n, delta: n, ndv, sq, freq, keys: Vec::new(), counts: Vec::new() })
     }
 
@@ -8160,6 +8304,23 @@ impl<'a> Run<'a, '_> {
         };
         proofs.of(scc)
     }
+    /// The columns of changed read `rel` that stratum `rules` reads: of each atom over it, the arguments but `_`. `None`
+    /// when an aggregate reads it, whose groups count its rows.
+    fn read_columns(&self, rules: &[RuleKey], rel: &str) -> Option<BTreeSet<usize>> {
+        let mut used = BTreeSet::new();
+        for &r in rules {
+            let b = self.versions.at(r);
+            for i in 0..b.len() {
+                match b.view(i) {
+                    Lit::Atom(a) if b.rel(a) == rel => used.extend(a.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c)),
+                    Lit::Agg { atom: a, .. } if b.rel(a) == rel => return None,
+                    _ => {}
+                }
+            }
+        }
+        Some(used)
+    }
+
     fn maintain_mode_blocks(&self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, olds: &BTreeMap<String, Arc<super::native::component::InRel>>, ins: &ModeInputs) -> Option<String> {
         if std::env::var("RERAIL_MAINTAIN_MODE").is_ok_and(|v| v == "off") {
             return Some("RERAIL_MAINTAIN_MODE=off".into());
@@ -8847,8 +9008,8 @@ impl<'a> Run<'a, '_> {
             return Ok(Native::Ran);
         }
         // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
-        // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
-        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves). Only a stratum whose
+        // hogql): its relation is a view of the input's columns, read in place (`hold_view_in_place`), and no
+        // component copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves). Only a stratum whose
         // program makes it a view (`written`): one whose other rules join relations empty this run (`cparam`: a
         // file-local export's copy and a cross-file rule) is derived, kept, and maintained.
         if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
@@ -8856,23 +9017,15 @@ impl<'a> Run<'a, '_> {
             && gates.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {
-            // Held in place where the source answers the view's probes and counts its columns itself (a batch's
-            // `node`, decision 0329): no row read. Else read once into flat rows (`hold_view`). Either way its
-            // statistics are a copy's, exact or sketched: its readers plan as they did when a stratum copied it.
-            let (form, live) = match self.hold_view_in_place(rel, &src, &cols, types(rel).into_bytes()) {
-                Some(live) => ("held in place", live),
-                None => {
-                    let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
-                    let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
-                    ("read into flat rows", LiveRel::of_native(l))
-                }
-            };
+            // Held in place (decisions 0329, 0353): no row read, none copied. Its statistics are counted when a plan
+            // first reads them (`InPlaceView`, `SourceView`), unless its base's are held.
+            let n = self.hold_view_in_place(&base, rel, &src, &cols, types(rel).into_bytes());
+            let form = "held in place";
             if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
                 let (v, rule) = vs.rule_at(*r);
                 let body: Vec<&str> = rule.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).collect();
-                eprintln!("RERAIL_SHAPE_TRACE {rel}: a view of {base}{cols:?} ({form}; its rule reads {body:?}, {} rows)", live.n);
+                eprintln!("RERAIL_SHAPE_TRACE {rel}: a view of {base}{cols:?} ({form}; its rule reads {body:?}, {n} rows)");
             }
-            live_stats(&mut self.model, rel, live);
             run_counts().input_views.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: {form}, no component opened"));
             self.native_rels.extend(scc.iter().cloned());
@@ -11957,6 +12110,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // A relation derived again whose delta is its rows gone and added (`Moved::Rows`): its minus and plus versions,
     // given to its readers (`ins`).
     let mut diffs: HashMap<String, [Arc<super::native::component::InRel>; 2]> = HashMap::new();
+    // A changed read's versions as strata read them (`unchanged_as_read`), by its minus version and the columns read:
+    // made once for all the strata that read the same columns. The minus version is held by its entry, so its address
+    // is no other's while the entry lives.
+    type AsRead = (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>);
+    let mut as_read: HashMap<(usize, Vec<usize>), AsRead> = HashMap::new();
     // The strata derived again in place of the maintain mode, by relation: its kept rows, which its delta is made
     // against once its level has run (at the next level's placement).
     let mut again_olds: BTreeMap<String, Arc<super::native::component::InRel>> = BTreeMap::new();
@@ -12539,6 +12697,23 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
                         Some((r.clone(), ([src(&o?), src(&mi?), src(&pl?), src(&h)], cols)))
                     }).collect();
+                    // Each as the stratum reads it: its rows gone and added that agree on the columns its rules read are
+                    // no change to it (`unchanged_as_read`). A view's columns are its source's through `cols`.
+                    let ins: ModeInputs = ins.into_iter().map(|(r, ([o, mi, pl, now], cols))| {
+                        let used: Option<Vec<usize>> = run.read_columns(&rules, &r).and_then(|u| u.into_iter().map(|c| cols.as_ref().map_or(Some(c), |m| m.get(c).copied())).collect());
+                        let Some(used) = used.filter(|u| u.len() < mi.columns().len()) else { return (r, ([o, mi, pl, now], cols)) };
+                        let (_, made) = as_read.entry((Arc::as_ptr(&mi) as *const u8 as usize, used.clone())).or_insert_with(|| {
+                            let made = unchanged_as_read(&mi, &pl, &used);
+                            if let Some([m2, p2]) = &made {
+                                super::profile::decision("a changed read's rows that agree on the columns its strata read (0090 §4)", || format!("{r} by columns {used:?}: {} of {} gone, {} of {} added", m2.len(), mi.len(), p2.len(), pl.len()));
+                            }
+                            (Arc::clone(&mi), made)
+                        });
+                        match made.as_ref() {
+                            Some([m2, p2]) => (r, ([o, Arc::clone(m2), Arc::clone(p2), now], cols)),
+                            None => (r, ([o, mi, pl, now], cols)),
+                        }
+                    }).collect();
                     // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas are past θ of those reads'
                     // stored rows is derived again, its levels fresh from that derive. A derive reads its inputs whole
                     // and the mode reads their deltas, so the share of the reads that changed is what the two cost
@@ -12572,7 +12747,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     };
                     if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
                         let costs = priced.map_or_else(String::new, |(m, d)| format!(", mode {m:.0} against derive {d:.0}"));
-                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows of {read_rows} read, {kept_rows} kept{costs})", blocks.as_deref().unwrap_or("the maintain mode"));
+                        let mut by: Vec<_> = sizes.iter().filter(|(_, (d, _))| *d > 0).map(|(r, (d, n))| format!("{r} {d}/{n}")).collect();
+                        by.truncate(4);
+                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows of {read_rows} read, {kept_rows} kept{costs}; {})", blocks.as_deref().unwrap_or("the maintain mode"), by.join(", "));
                     }
                     match blocks {
                         None => {
