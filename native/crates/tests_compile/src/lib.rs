@@ -36,6 +36,39 @@ mod test_load {
 #[path = "../../../src/code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
+    #[cfg(test)]
+    #[cfg_attr(test, path = "module_graph")]
+    mod module_graph {
+        pub use rerail_boot::code_rule_dsl::module_graph::*;
+        #[cfg(test)]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tree::Tree;
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use ast_grep_language::LanguageExt;
+        #[allow(unused_imports)]
+        use indexmap::IndexSet;
+        #[allow(unused_imports)]
+        use parking_lot::Mutex;
+        #[allow(unused_imports)]
+        use regex::Regex;
+        #[allow(unused_imports)]
+        use serde_json::Value;
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+        #[allow(unused_imports)]
+        use std::path::{Path, PathBuf};
+        #[allow(unused_imports)]
+        use std::sync::{Arc, LazyLock};
+        #[allow(unused_imports)]
+        use std::time::{Duration, SystemTime};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::adapter::package_manifests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::{dialect_by_label, label_of_path};
+    }
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
     #[cfg_attr(test, path = "blade")]
     mod blade {

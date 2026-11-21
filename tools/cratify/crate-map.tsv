@@ -182,7 +182,7 @@ dsl_root	rerail-engine
 slice::napi	rerail-engine
 slice::napi_tests	rerail-engine
 tools::napi	rerail-engine
-waves	rerail-engine
+napi_tests	rerail-engine
 transducer::packed::compile_matcher	rerail-transducer
 
 # Boot: the composition root (incremental-plan.md, step 1b) and what only it and the engine read. Boot's mounts are

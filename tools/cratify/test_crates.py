@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""The engine's hosted tests, into test crates above rerail-boot (incremental-plan.md, step 2). Run once.
+"""Ran once, for step 2: it reads the engine's code_rule_dsl/mod.rs as it was before step 2 (`git show
+be18d02111:native/src/code_rule_dsl/mod.rs`), which no longer holds. Since step 3 the test crates' lib.rs files are
+source, kept by hand.
+
+The engine's hosted tests, into test crates above rerail-boot (incremental-plan.md, step 2). Run once.
 
 The engine hosts each crate's tests through facades (`code_rule_dsl/mod.rs`, the lines before the napi items): an
 inline module per module path, which re-exports the crate's module by glob, imports what the tests' `use super::*`

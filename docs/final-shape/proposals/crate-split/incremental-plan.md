@@ -368,3 +368,18 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Results: the quick tier across boot, the engine and the six test crates, 3,001 tests, before the fixes above:
     every failure but those reads pack test data that isn't pulled (`npm run fixtures:pull`), or `node`, which the
     Linux host lacks (`sql_executor::tests::profiling`).
+- **Step 3** (2026-11-21): the engine is napi, the CLI's entry points and the OS work behind them (process
+  creation, the Git start, the main-instance lock, the model): 4,676 lines of its own, and about 2,000 of tests.
+  Step 1b had already taken `prefilter`, the waves' glue, `functors`, `convert`, `slice` and `tools` into boot. This
+  step takes out the last tests the engine hosted for other subjects:
+  - waves' tests (the owner's, the relational executor's, the schedule's) to `rerail-tests-logic`, mounted through
+    `waves.rs`, the facade they were mounted through;
+  - the adapter kit (`language::adapter::kit`) to `rerail-tests-lang`, whose build script generates `with_adapter!`
+    as the lang crate's does (`src/build_languages.rs`);
+  - `module_graph::tests` to `rerail-tests-compile` and `workspace::context_tests` to `rerail-tests-matcher`.
+  The six tests that read the napi items (the package facts a host reads, `module_path`, the server graph task)
+  are the engine's `code_rule_dsl::napi_tests`. Their helpers moved to fixtures modules: `module_graph::fixtures`,
+  and `workspace::fixtures` (`TempDir`, `package_repository`). The test crates' lib.rs files are source now
+  (`test_crates.py` ran once).
+  - Tests: the 145 moved tests pass under cargo (spark1); one `cargo check --tests` over boot, the engine and the
+    six test crates is clean.

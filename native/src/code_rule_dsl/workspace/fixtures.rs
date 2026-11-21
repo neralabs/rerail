@@ -4,6 +4,8 @@
 use super::api::CodeRuleDslWorkspace;
 use napi::Task;
 use parking_lot::Mutex;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Serializes the tests that share process-wide state. A parking_lot mutex never poisons, so a
 /// failing test cannot fail every test that takes the slot after it.
@@ -41,4 +43,69 @@ pub fn result_page(
     maximum_bytes: u32,
 ) -> napi::Result<String> {
     request_result_page(workspace, cursor, maximum_bytes)()
+}
+
+/// The source of each package module `package_repository` holds.
+pub const PACKAGE_SOURCE: &str = "from . import helper\nhelper()\n";
+
+/// A directory of its own under the system's temporary one, removed with it.
+pub struct TempDir(pub PathBuf);
+
+impl TempDir {
+    pub fn new(tag: &str) -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "rerail-context-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(dunce::canonicalize(path).unwrap())
+    }
+
+    pub fn store(&self) -> PathBuf {
+        self.0.join("store").join("content.sqlite")
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A committed repository with two packages holding identical module source and one loose file.
+pub fn package_repository(tag: &str) -> TempDir {
+    let directory = TempDir::new(tag);
+    let root = directory.0.join("repo");
+    for (path, source) in [
+        ("alpha/__init__.py", ""),
+        ("alpha/helper.py", "def helper():\n    pass\n"),
+        ("alpha/x.py", PACKAGE_SOURCE),
+        ("beta/__init__.py", ""),
+        ("beta/x.py", PACKAGE_SOURCE),
+        ("loose/x.py", PACKAGE_SOURCE),
+    ] {
+        let file = root.join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, source).unwrap();
+    }
+    git(&root, &["init", "-q"]);
+    git(&root, &["add", "."]);
+    git(
+        &root,
+        &[
+            "-c",
+            "user.name=rerail",
+            "-c",
+            "user.email=rerail@example.invalid",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    );
+    directory
 }

@@ -36,6 +36,10 @@ mod test_load {
 #[path = "../../../src/code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_boot::code_rule_dsl::*;
+    // The waves' tests (the owner's, the relational executor's, the schedule's), under the facade they were
+    // mounted through (`waves.rs`).
+    #[allow(dead_code)]
+    mod waves;
     pub use rerail_boot::code_rule_dsl::rule_api::CodeRuleDslEditor;
     #[path = "logic"]
     pub(crate) mod logic {

@@ -1012,6 +1012,8 @@ pub mod code_rule_dsl {
     #[cfg_attr(test, path = "workspace")]
     pub(crate) mod workspace {
         pub use rerail_boot::code_rule_dsl::workspace::*;
+        #[cfg(test)]
+        pub mod context_tests;
         pub mod results {
             pub use rerail_boot::code_rule_dsl::workspace::results::*;
             #[cfg(test)]

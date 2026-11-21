@@ -1,7 +1,8 @@
 //! SQL-driven waves (docs/final-shape/03-architecture.md §4, §7; decision 0010): one owner
 //! connection on the content store, the temp schema's lifecycle, and the frontier loop that SQL
 //! steers, wave by wave, until no relation changes.
-// Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
+// The waves' tests, mounted by rerail-tests-logic: they read what boot registers (the languages, their `.rerail`
+// libraries).
 pub mod owner {
     pub use rerail_logic::code_rule_dsl::waves::owner::*;
     #[cfg(test)]

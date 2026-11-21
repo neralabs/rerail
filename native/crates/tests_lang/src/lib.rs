@@ -283,6 +283,8 @@ pub mod code_rule_dsl {
         #[cfg_attr(test, path = "adapter")]
         pub mod adapter {
             pub use rerail_boot::code_rule_dsl::language::adapter::*;
+            // The adapter kit's checks of every family, by `with_adapter!` (this crate's build script).
+            pub mod kit;
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_php::code_rule_dsl::language::adapter::blade;
             pub use rerail_lang_ecma::code_rule_dsl::language::adapter::ecma;

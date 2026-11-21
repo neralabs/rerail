@@ -2749,6 +2749,9 @@ pub mod code_rule_dsl {
     pub use rerail_classic::code_rule_dsl::model;
     pub mod module_graph {
         pub use rerail_lang_ecma::code_rule_dsl::module_graph::*;
+        // The module graph tests' fixtures, which the engine's napi tests read too.
+        #[cfg(any(test, feature = "test-hooks"))]
+        pub mod fixtures;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tree::Tree;
         #[allow(unused_imports)]
