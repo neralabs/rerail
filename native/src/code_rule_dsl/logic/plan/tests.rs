@@ -3891,3 +3891,40 @@ fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
     assert!(first("child") < first("unparen"), "{order:?}, work={work}");
     assert!(work < 1e4, "{order:?}: {work}");
 }
+
+
+/// Past a bound head the walk stops at a binding's first witness (`witnessed`), and reads all of a binding's rows where
+/// none passes. The greedy order priced such a step at one read a binding, as if its first row were a witness, where
+/// the search and a kept order's pricing read every row walked (Q411). Decision 0431 R9's key over a tape value's
+/// findings, `exists_10(d) :- demand(d), node(d, v, …), !placed(v), finding(v)` led from its 40 documents (corpus0,
+/// one pack, 2026-11-21: 69,690 nodes, one finding), was priced at 118 rows of work through `node` by `$d`, under a
+/// search's cost, so taken unsearched: it read each document's every node, 100 k rows a call where the finding's one
+/// row, then `node` by `$d` and `$v`, reads about 80.
+#[test]
+fn a_walk_past_a_bound_head_reads_every_row_where_none_is_a_witness() {
+    let p = parse_version(".decl dm(d: number)\n.decl node(d: number, n: number, k: number, s: number, e: number)\n.decl pl(n: number)\n.decl f(n: number)\n.decl e(d: number)\ne(d) :- dm(d), node(d, v, _, _, _), !pl(v), f(v).\n.output e\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("dm", 40.0, vec![(40.0, 1.0)]), ("node", 69_690.0, vec![(40.0, 1_742.0), (69_690.0, 1.0), (81.0, 860.0), (69_690.0, 1.0), (69_690.0, 1.0)]), ("pl", 3_000.0, vec![(3_000.0, 1.0)]), ("f", 1.0, vec![(1.0, 1.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 69_690.0;
+    let pf = body::Placed::whole(p.clone());
+    let b = body::nth(&p, 0);
+    // Led from the demand, as its seed line is.
+    let ((order, work, _), _) = model.plan_rule_explained(pf.fields().unwrap(), &b, Some(0)).unwrap();
+    let order: Vec<String> = order.iter().map(|s| lit_at(&p, 0, s.at)).collect();
+    let at = |lit: &str| order.iter().position(|o| o.starts_with(lit)).unwrap();
+    assert!(at("f(") < at("node("), "the finding's row first, then `node` by `$d` and `$v`: {order:?} at {work}");
+    assert!(work < 1_000.0, "{order:?} at {work}");
+    // The walk of `node` by `$d` alone, priced as it runs: every node of the 40 documents.
+    let walk: Vec<Step> = (0..4).map(|at| Step { at, mode: None }).collect();
+    let explain = explaining(true);
+    let x = model.explain_order(pf.fields().unwrap(), &b, Some(0), &walk).expect("the order is priced");
+    drop(explain);
+    assert!(x.work > 10.0 * work, "the walk is priced over the finding's row first: {} against {work}", x.work);
+    assert!(x.steps[1].rows >= 69_000.0, "`node` by `$d` makes a document's nodes: {:?}", x.steps.iter().map(|s| (&s.literal, s.rows)).collect::<Vec<_>>());
+}

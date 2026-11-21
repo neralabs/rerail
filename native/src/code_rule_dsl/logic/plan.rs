@@ -4255,16 +4255,12 @@ impl Model {
                 _ => None,
             }
         };
-        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
-            let (w, out, mode) = step_all(l, rows, bound)?;
-            // A step joined by a bound variable: a cross product reads its rows until one passes the rest (Q240).
-            let joined = b.args(l).iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v)));
-            if out > rows && head_vars.is_subset(bound) && joined {
-                let atom = matches!(b.view(l), Lit::Atom(_));
-                return Some((if atom { w - out + rows } else { w }, rows, mode));
-            }
-            Some((w, out, mode))
-        };
+        // A step as every order prices it: the rows it walks, past the head's binding too. The walk's stop at a
+        // binding's first witness is the whole order's (`witnessed`, over its tail), not a step's: priced a step at a
+        // time, as one read a binding, the greedy order read a document's every node as one where none of them
+        // passed (decision 0431 R9's `exists_10($d) :- demand($d), node($d, $v, …), !placed($v), finding($v)`,
+        // 118 rows of work priced, 100 k read a call), and took it unsearched.
+        let step = |l: usize, rows: f64, bound: &VarSet| step_all(l, rows, bound);
         // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
         // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
         // rows it drops. `def_name`'s long-text twin seeded every node past the text bound and read each one's text
@@ -4438,6 +4434,8 @@ impl Model {
         let greedy = |candidates: &mut u64| -> Option<Best> {
             let (mut work, mut rows, mut order, mut bound, mut rest) = best_of.get(&0).cloned().expect("the empty order");
             let mut done: u64 = 0;
+            // The work and rows where the head's variables are all bound before a join (`witnessed`), as `price`'s.
+            let mut tail: Option<(f64, f64)> = None;
             while done != full_mask {
                 let mut best: Option<(usize, f64, f64, Option<Mode>)> = None;
                 for (i, &l) in joins.iter().enumerate() {
@@ -4454,6 +4452,9 @@ impl Model {
                     }
                 }
                 let Some((i, w, out, mode)) = best else { break };
+                if tail.is_none() && head_vars.is_subset(&bound) {
+                    tail = Some((work, rows));
+                }
                 order.push(Step { at: joins[i], mode });
                 bound.extend(b.vars(joins[i]));
                 let (closed, filtered) = close(&mut order, out, &mut bound, &mut rest);
@@ -4461,7 +4462,7 @@ impl Model {
                 work += w + filtered;
                 done |= 1 << i;
             }
-            (done == full_mask).then_some((work, rows, order, bound, rest))
+            (done == full_mask).then_some((witnessed(work, tail, rows), rows, order, bound, rest))
         };
         let (probe, greedy_first) = rerail_prof::code_rule_dsl::logic::profile::setting(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
