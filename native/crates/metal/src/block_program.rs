@@ -807,6 +807,59 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     ))
 }
 
+/// What crosses a group's edge in generated UKL (no device): each exchange's scans and halo bits,
+/// the edge's bits in all, and the most edge bits any carried value depends on (its cone): a
+/// group's summary as a function of its carry-in state has 2^cone candidates at that value.
+pub fn boundary_shape(native: &BlockNative) -> String {
+    let form = native.planes_form();
+    let plan = Plan::new(&form);
+    let bits = |at: usize| match form.insts[at] {
+        BlockInst::Prev(_, k) => usize::from(k),
+        _ => 1,
+    };
+    let mut cone: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); form.insts.len()];
+    for at in 0..form.insts.len() {
+        let mut c: std::collections::BTreeSet<usize> = operands(&form.insts[at]).iter().flat_map(|&a| cone[a].iter().copied()).collect();
+        if form.insts[at].carried() && !plan.windowed.contains(&at) {
+            c.insert(at);
+        }
+        cone[at] = c;
+    }
+    let edge: usize = plan.scanned.iter().chain(&plan.halos).map(|&at| bits(at)).sum();
+    let most = cone.iter().map(|c| c.iter().map(|&at| bits(at)).sum::<usize>()).max().unwrap_or(0);
+    let levels: Vec<String> = plan
+        .exchanges()
+        .iter()
+        .map(|(h, s)| format!("{}s+{}h({}b)", s.len(), h.len(), h.iter().map(|&at| bits(at)).sum::<usize>()))
+        .collect();
+    // A launch per level: a value used in a later launch than its own is saved across the cut
+    // (the counts' launch, after the last level, uses the extracts' values).
+    let last = plan.exchanges().len() + usize::from(!form.extracts.is_empty());
+    let mut saved = std::collections::BTreeSet::new();
+    for at in 0..form.insts.len() {
+        for a in operands(&form.insts[at]) {
+            if plan.level[at] > plan.level[a] {
+                saved.insert(a);
+            }
+        }
+    }
+    for &k in &form.extracts {
+        let v = usize::from(form.outputs[k]);
+        if plan.level[v] < last {
+            saved.insert(v);
+        }
+    }
+    format!(
+        "{} insts; exchanges [{}]; extracts {}; edge {} bits; widest cone {} bits; saved across cuts {}",
+        form.insts.len(),
+        levels.join(", "),
+        form.extracts.len(),
+        edge,
+        most,
+        saved.len()
+    )
+}
+
 /// The lanes each group of generated UKL spends warming up: enough lanes of `width` bytes to
 /// hold the farthest local `prev`'s look-back, whose bytes the shuffles of the group's first
 /// useful lane read. A group's useful lanes start after them, so that groups overlap by these

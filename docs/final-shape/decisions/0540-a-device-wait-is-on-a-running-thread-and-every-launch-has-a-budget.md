@@ -307,9 +307,23 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      3.8 MB file (`stage1_cost_per_block`, the M1 Max quiet, ns a 64-byte block, before and after): masks 3.2 and
      6.5 (Planes, 64-byte lanes), with the extract 4.7 and 41.0, and 6.5 and 154.6 by lookups. The groups in flight
      reach each exchange together, so nearly every one finds its predecessor's word not there yet: 1 to 2.5 parks a
-     group. Without the fences that order only atomics it was no faster. The block programs keep their look-back
-     (polls on a group that took its ticket earlier, bounded, and a launch again where they run out) until the
-     user chooses.
+     group. Without the fences that order only atomics it was no faster. Not taken.
+   - **Done: the block programs' cooperation is the forward carry, where no segment waits on another.** The user's:
+     that fine-grained cooperation needs a better concurrency design. Why neither form of look-back can be one: a
+     group's summary at a level depends on the carries resolved at the levels before, so a group whose predecessor
+     has not reached a level cannot go on (park) and can only wait. A summary free of the levels before would be
+     the group's function of its whole carry-in state, and that state is too wide to enumerate: over the corpus
+     (`corpus_boundary_shapes`, `boundary_shape`: no device), the bits crossing a group's edge reach 192 and the
+     widest cone 191 (halos of `prev`s by up to 63 bits); 14-json's cone is 7 bits (128 candidates a group), 15-jsonc's
+     18. So the carries resolve level by level, and without a wait inside a launch, by the forward carry
+     (`block_serial.rs`, doc 23): a level's pass gives each segment its table of each scan, a prefix over each file's
+     segments makes them exact, the `prev`s start from a guess, and a check runs again the segments whose start
+     differs. Measured equal to the look-back on JSON's corpus (doc 23 §5: 4.10 ms against 4.19 ms), and tier 1
+     already runs on it. Its last product user moves to it: code rules' span prefilters (`span_ends`,
+     `device_metal.rs`), which ran the look-back executor with 64 polls. While a set's kernels compile on threads of
+     their own (`serial::compiled`, each through `kernels::ready_behind_function`) the cores run the batch; the GPU's
+     interpreter, which covered that window, is the look-back's. The look-back executor (`run_batch`, its
+     interpreter `block_program.uglykl` and generated UKL's exchanges) is now the tests' and benchmarks' only.
    - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
      MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
      another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"

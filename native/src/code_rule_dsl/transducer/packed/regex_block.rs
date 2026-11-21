@@ -1,7 +1,7 @@
 //! A span regex as a block program (decision 0081 §3): straight-line word operations over the file's bytes that
 //! mark every byte after which a match of the pattern can end. Every executor of block programs runs it: the CPU
-//! interpreter, Cranelift, and Metal (each lane a chunk, the carries of `prev` and `fill` across chunks). It is
-//! chunk-at-a-time matching (decision 0041): no per-byte loop, no per-node scan.
+//! interpreter, Cranelift, and Metal (in segments that carry `prev` and `fill` forward only: no segment waits on
+//! another). It is chunk-at-a-time matching (decision 0041): no per-byte loop, no per-node scan.
 //!
 //! The marks are a superset of the ends of the matches `regex` finds: the host runs the pattern, captures and all,
 //! only where a mark says a match can be (`core_rr::CoreRows::matches`). Exact where the translation is exact;
@@ -52,9 +52,9 @@ pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 
 /// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
 /// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
-/// run on that lane's worker, and scored. Its GPU form is the generated block program (on the one device and queue);
-/// its cores' form the interpreter, which the GPU's runs instead where the batch needs a form Metal lacks (recorded,
-/// `metal-form`). Any other failure on the device is the launch's error (decision 0382).
+/// run on that lane's worker, and scored. Its GPU form is the generated block program in the forward carry (on the one
+/// device and queue); its cores' form the interpreter, which the GPU's runs instead where the batch needs a form Metal
+/// lacks, or while the set's kernels compile. Any other failure on the device is the launch's error (decision 0382).
 struct SpanEnds {
     filters: Vec<std::sync::Arc<SpanPrefilter>>,
     /// Each document's source, once; `files` are (document, program) pairs.

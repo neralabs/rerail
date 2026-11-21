@@ -937,3 +937,20 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
 /// No Metal executors off macOS.
 #[cfg(not(target_os = "macos"))]
 fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}
+
+/// What crosses a group's edge in generated UKL, for every corpus file and both JSON forms
+/// (`block_program::boundary_shape`): no device.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn corpus_boundary_shapes() {
+    use metal_program_backend::block_program::boundary_shape;
+    for c in compiled_corpus() {
+        let native = native_ir::lower(&c.program, 0, 0).expect("lowers").block_programs.remove(0);
+        println!("{}\t{}", c.name, boundary_shape(&native));
+    }
+    for name in ["14-json", "15-jsonc"] {
+        let c = crate::json::form(name);
+        println!("{name}\t{}", boundary_shape(&c.native.block_programs[0]));
+    }
+}

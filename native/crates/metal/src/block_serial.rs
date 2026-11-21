@@ -1939,6 +1939,47 @@ const PREFIX_THREADS: usize = 256;
 /// Threads a threadgroup of the segment kernels.
 const THREADS: usize = 64;
 
+/// The cone pass's kernel: in lanes form or one thread a segment (`lanes_on`).
+fn cone_kernel() -> &'static str {
+    if lanes_on() { "lanes_cone" } else { "serial_cone" }
+}
+
+/// Every kernel of a serial source that `run_serial_io` compiles.
+fn serial_kernels() -> [&'static str; 12] {
+    [
+        cone_kernel(),
+        "serial_cone_prefix",
+        "lanes_group",
+        "lanes_run",
+        "lanes_again",
+        "serial_run",
+        "serial_check",
+        "serial_count",
+        "serial_prefix",
+        "serial_write",
+        "lanes_write",
+        "serial_records",
+    ]
+}
+
+/// Whether `programs`' kernels in the forward carry (their source as runs have learned it) are compiled. When one is
+/// not, its compile starts on a thread of its own (`kernels::ready_behind_function`) and this is false at once: the
+/// caller runs the batch another way meanwhile, and no launch waits on the compiler (decision 0012). A batch with back
+/// fills or loads runs in passes (`run_passes`), one program at a time; its kernels are compiled at its run.
+pub fn compiled(programs: &[&BlockNative]) -> bool {
+    if super::ready().is_err() {
+        return false;
+    }
+    let forms: Vec<BlockNative> = programs.iter().map(|p| p.planes_form()).collect();
+    if forms.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        return true;
+    }
+    let refs: Vec<&BlockNative> = forms.iter().collect();
+    let (_, source, _, _) = serial_source(&refs, None);
+    // Every kernel asked, so that each one not compiled starts compiling now.
+    serial_kernels().iter().fold(true, |all, name| rerail_accel::gpu::kernels::ready_behind_function(&source, name, None).is_some() && all)
+}
+
 /// `run_serial`, split while the device refuses it for capacity, as `run_split` does: halves in
 /// the files' order, their counts and seconds summed.
 pub fn run_serial_split(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: Segments) -> Result<SerialRun, Error> {
@@ -2344,7 +2385,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     // `~n` (`records_source`).
     let refusal = crate::pool::zeroed::<u32>(rows.len() * 6)?;
     assert!(2 * segments.warm < segments.blocks, "a segment is longer than its two warm-ups");
-    let cone = kernel(source_key, source, if lanes_on() { "lanes_cone" } else { "serial_cone" })?;
+    let cone = kernel(source_key, source, cone_kernel())?;
     let cone_prefix = kernel(source_key, source, "serial_cone_prefix")?;
     let group_pass = kernel(source_key, source, "lanes_group")?;
     let lanes = lanes_on();
