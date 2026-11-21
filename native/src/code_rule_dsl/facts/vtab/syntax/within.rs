@@ -318,6 +318,13 @@ impl Within {
         self.solved.get().is_some()
     }
 
+    /// Tests: the rows made per looked-up node so far, both sides.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn made_rows(&self) -> usize {
+        let made = self.made.lock();
+        made.0[0] + made.0[1]
+    }
+
     /// The first id of the rows made per looked-up `n`.
     fn looked_up(&self) -> usize {
         if self.solvable() { LOOKED_UP } else { 0 }
@@ -651,6 +658,15 @@ impl Within {
         out
     }
 
+    /// Whether node `n` is strictly below node `a` (ids): in one document, `n` in `a`'s preorder interval of the
+    /// projection (`size`, a rank of the held tape's subtree end), the interval the made rows are (`contained`).
+    /// Nothing is made, and no tape reader is opened: a reader a call (`tape_of`) cost more than the rows it saved
+    /// in strata that check the same nodes again (t50 step 4).
+    fn below(&self, n: i64, a: i64) -> bool {
+        let (Some((dn, ln)), Some((da, la))) = (self.batch.node(n), self.batch.node(a)) else { return false };
+        dn == da && la < ln && ln <= la + self.batch.docs[da].size(la as usize)
+    }
+
     /// The rows of node row `row` as inner (`side` 0) or outer (1), made on the first lookup.
     fn rows(&self, side: usize, row: u32) -> (u32, u32) {
         if let Some(&run) = self.made.lock().1[side].get(&row) {
@@ -859,6 +875,28 @@ impl Source for Within {
         if column == 0 {
             self.expect(keys);
         }
+    }
+    /// `within(n, a)` with both given is a test, not a join (t50 step 4): `lookup_all` reads `n`'s rows (made, or the
+    /// batch's solve) for the one of them that is `a`, and `holds` reads the projection's interval of `a` (`below`).
+    fn composite(&self) -> bool {
+        self.mode == Mode::Tree
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if self.mode != Mode::Tree || equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return None;
+        }
+        Some(self.lookup(0, &[n])?.into_iter().filter(|&r| self.value(r, 1) == a).collect())
+    }
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        if self.mode != Mode::Tree {
+            return None;
+        }
+        let (Some(&(_, n)), Some(&(_, a))) = (equal.iter().find(|e| e.0 == 0), equal.iter().find(|e| e.0 == 1)) else { return None };
+        if equal.iter().any(|&(c, v)| v != if c == 0 { n } else { a }) {
+            return Some(false);
+        }
+        Some(self.below(n, a))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();

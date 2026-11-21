@@ -270,6 +270,23 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
             println!("top {s:8.3} {k}");
         }
     }
+    // `RERAIL_STAGE_SPANS=<relation>`: the spans under that relation's stratum, by own CPU, the stratum's part of each
+    // path cut: where a stratum's time goes besides its joins.
+    if let Ok(rel) = std::env::var("RERAIL_STAGE_SPANS") {
+        let mut by: HashMap<String, (f64, u64)> = HashMap::new();
+        for (path, t) in &spans {
+            let parts: Vec<&str> = path.split('/').collect();
+            let Some(at) = parts.iter().rposition(|s| s.strip_prefix("stratum ").map(|s| s.trim_end_matches(" (in a job)")) == Some(rel.as_str())) else { continue };
+            let e = by.entry(parts[at + 1..].join("/")).or_default();
+            e.0 += t.own;
+            e.1 += t.calls;
+        }
+        let mut by: Vec<(String, (f64, u64))> = by.into_iter().collect();
+        by.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+        for (k, (s, calls)) in by.into_iter().take(25) {
+            println!("span {s:8.3} {calls:8} {}", if k.is_empty() { "(the stratum itself)" } else { &k });
+        }
+    }
     for (ours, rel) in RELATIONS {
         let shown = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
         side.rows.insert(ours, shown.into_iter().collect());

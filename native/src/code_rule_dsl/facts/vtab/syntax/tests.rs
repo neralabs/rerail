@@ -647,6 +647,51 @@ said(s) :- comment(_, s).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `within(n, a)` with both given is a test (t50 step 4, `Source::holds`): it holds exactly where `a` is on `n`'s
+/// chain of parents, and makes no row. `lookup_all` (the composite probe that reads the row) agrees.
+#[test]
+fn within_with_both_given_is_an_interval_test() {
+    let store = ContentStore::open(&temp("within-holds")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(3).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let place = |r: usize| {
+        let doc = batch.nodes().partition_point(|&o| o <= r) - 1;
+        (doc, r - batch.nodes()[doc])
+    };
+    use crate::code_rule_dsl::facts::vtab::Source;
+    // A sample of nodes against every node (8,398 nodes: every pair is 70 M tests).
+    {
+        let within = within::Within::new(Arc::clone(&batch), within::Mode::Tree);
+        let format = "held";
+        assert!(within.composite(), "both columns at once");
+        let stride = 31;
+        let (mut held, mut pairs) = (0usize, 0usize);
+        for n in (0..nodes).step_by(stride) {
+            for a in 0..nodes {
+                let ((dn, ln), (da, la)) = (place(n), place(a));
+                let p = &batch.docs[dn];
+                let mut up = p.parent(ln);
+                while up != NONE && up as usize != la {
+                    up = p.parent(up as usize);
+                }
+                let want = dn == da && up != NONE;
+                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                assert_eq!(within.holds(&eq), Some(want), "{format:?}: node rows {n} below {a}");
+                held += usize::from(want);
+                pairs += 1;
+            }
+        }
+        assert!(held > nodes / stride && held < pairs, "{format:?}: some pairs hold, not all ({held} of {pairs})");
+        assert!(!within.is_solved() && within.made_rows() == 0, "{format:?}: the test made no row");
+        // The composite probe reads the pair's row: one where the test holds.
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
+        }
+    }
+}
+
 /// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
 /// nodes gives (preorder intervals for the tree, spans for the other): looked up by either column, and scanned.
 /// The documents with errors and empty bodies bring nodes of zero width.
