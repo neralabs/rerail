@@ -101,9 +101,9 @@ function expectGitsAnswers(...folders: string[]): number {
   return expectAnswers(folders, folder => gitsAnswer(folder));
 }
 
-/** {@link expectGitsAnswers} for linked worktrees whose Git folder is gone, where Rerail's answer also says so. */
+/** {@link expectGitsAnswers} for linked worktrees whose Git folder is gone, where Rerail's answer also says so, and no main checkout. */
 function expectGoneWorktreesAnswers(...folders: string[]): number {
-  return expectAnswers(folders, folder => ({ ...gitsAnswer(folder), gitFolderGone: true }));
+  return expectAnswers(folders, folder => ({ ...gitsAnswer(folder), main: false, gitFolderGone: true }));
 }
 
 function expectAnswers(folders: readonly string[], answer: (folder: string) => RepositoryIdentityLocation): number {

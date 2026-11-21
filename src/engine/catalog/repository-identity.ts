@@ -40,7 +40,10 @@ export interface RepositoryIdentityLocation {
   /** The checkout's top folder: the main checkout's, or a linked worktree's own. */
   workspaceRoot: string;
   identityPath: string;
-  /** False only for a linked Git worktree; a folder outside Git is its own main checkout. */
+  /**
+   * False only for a linked worktree: one Git places, or one whose Git folder is gone
+   * ({@link RepositoryIdentityLocation.gitFolderGone}). Any other folder outside Git is its own main checkout.
+   */
   main: boolean;
   /** Set only outside Git, on a linked worktree whose Git folder was gone as this answer was read ({@link worktreeGitFolderGone}). */
   gitFolderGone?: true;
@@ -48,7 +51,7 @@ export interface RepositoryIdentityLocation {
 
 function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIdentityLocation {
   const location = { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
-  return gitFolderGone ? { ...location, gitFolderGone } : location;
+  return gitFolderGone ? { ...location, main: false, gitFolderGone } : location;
 }
 
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
