@@ -233,6 +233,10 @@ pub enum Boundary {
     /// The file-local part done, before the cross part: what it left queued (the files' stats) is written while the
     /// cross part runs (decision 0296).
     Local,
+    /// The cross part's inputs' frames, made before it runs where it lets its inputs go (Q74): written while it runs.
+    /// Left in the wave its rows' end seals, every input's frames were held through the cross part's peak (1.7 GB of
+    /// heap and 2.3 GB queued on 3,089 files).
+    CrossInputs,
     /// The cross part's rows derived: its new atoms (names it made) are written while its kept part is framed
     /// (decision 0296).
     CrossDerived,

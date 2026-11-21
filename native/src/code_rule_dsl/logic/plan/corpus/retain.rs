@@ -3146,7 +3146,7 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
     let atoms_ref = &atoms;
     // Each input's frames are queued as its job makes them (Q74), into the run's wave (`Carry`: the writer takes
     // the wave whole, in one transaction, with the derived relations' frames when they are written together; before
-    // the run, in the wave it seals as it ends, `Boundary::CrossDerived`): placed in segments of
+    // the run, in a wave of their own, `Boundary::CrossInputs`, sealed once they are made): placed in segments of
     // their own (decision 0295 §1), their bytes leave the run's heap then. Collected to be queued at the end, every
     // input's encoded frames were held at once beside the inputs' rows (270 MB at a cold run's peak, 300 files).
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
