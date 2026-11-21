@@ -129,8 +129,9 @@ enum Members {
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
-        // A tape is stored as a symbol (its content key); `tape_type` checks it before lowering.
-        "symbol" | "tape" => "sym".to_owned(),
+        // A tape, a digest and a blob are stored as symbols (their content keys, decision 0103 §3); `tape_type` checks
+        // them before lowering.
+        "symbol" | "tape" | "digest" | "blob" => "sym".to_owned(),
         "span" | "loc" => "node".to_owned(),
         // A float column holds floats' keys (`float_key`).
         "float" => "int".to_owned(),

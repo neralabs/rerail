@@ -77,8 +77,8 @@ which columns may be kept and exported.
 | `symbol`, `number`, `float` | text, integers, decimals | atom or text, integer, the float's key | yes | exist |
 | `node` | a node of a document's tree | integer | no: renumbered on an edit | exists |
 | `tape` | a parsed text's tape, by its content | as a symbol (its content key) | yes | **added** |
-| `digest` | a 32-byte content hash | to be decided | yes | when its cache moves |
-| `blob` | an opaque payload: a compiled plan, a matcher, a device model | to be decided | yes | when its cache moves |
+| `digest` | a 32-byte content hash | as a symbol: its 64 hex digits, as `@sha256` and `@tree_digest` give it | yes | **added** (t32 1.4) |
+| `blob` | an opaque payload: a compiled plan, a matcher, a device model | as a symbol: the content key of its bytes in the store's objects, as a tape is | yes | **added** (t32 1.4) |
 
 A `tape` column holds what `@parse`, `parse_of`, `sub_tape` and `tape_of` give (`core.rr` declares them so). The
 front refuses a variable that stands in a tape column and in a symbol, number or node column
@@ -86,6 +86,12 @@ front refuses a variable that stands in a tape column and in a symbol, number or
 
 A node within a tape needs no type of its own: its place in the tape is fixed by the tape's content, so it can be
 kept as `(tape, number)`.
+
+`digest` and `blob` are checked as a tape is: a variable in a column of one of the three stands in no column of
+another type, a symbol's included (`rr::tape_type`, which checks all three). A functor's value has no type of its
+own, so `@sha256(x)` may fill a digest column or a symbol column, as the pack rules that build text from digests
+need. No engine code knows either type: both are stored as symbols, and a blob's bytes, when a native step makes
+one, are an object of the store's named by the key in its column, as a tape's are.
 
 ## 4. The key and the facts
 
@@ -106,12 +112,14 @@ keeps the rows derived from it, and the expensive step runs only for a derivatio
 
 - **The lint.** `.cache C by K` is read like `.phase` (`front::Program::settings`), and `front::caches` checks §1.
   A refused program's message names the rule.
-- **The `tape` type.** `core.rr` declares the tape columns; `rr::tape_type` checks them before lowering; the engine
-  stores a tape as it always stored one.
+- **The `tape`, `digest` and `blob` types.** `core.rr` declares the tape columns; `rr::tape_type` checks all three
+  before lowering; the engine stores each as a symbol, a tape as it always stored one (t32 1.4 added the other two).
 - **Tests.** `corpus::cache_tests`, without a session and in a session: the cache's rows are what a run with nothing
   kept derives, after an edit, a new key and a gone key; a version bump derives every row again, with the new
   version. `front::caches::tests`: a key rule without a version tag, and an output rule that does not read its
-  key, are refused. `rr::tape_type::tests`: a tape in a symbol or number column is refused.
+  key, are refused. `rr::tape_type::tests`: a tape in a symbol or number column is refused, and so are a digest in
+  a symbol or number column, a blob in a digest column and a tape in a blob column. `corpus::cache_tests`'s
+  `a_cache_keyed_by_a_digest_keeps_it_as_a_symbol`: a key of `@sha256` digests, kept and read back as symbols.
 - **The guard.** `corpus::cache_architecture` fails on a cache's own table, store, hook or lookup, and on any file
   but the lint that knows a relation is a cache.
 

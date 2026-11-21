@@ -57,7 +57,7 @@ exports against a full run; CPU and instructions retired, cold, warm and after t
 | 1.1 | `.cache C by K` linted (`front::caches`): the key rule has a version tag, the output rule reads the key | built, tested |
 | 1.2 | No engine special case: maintenance, retention and support counting treat a cache as any relation. A `cache_rows` table, a lookup hook and a key-only maintenance rewrite were built and removed | built, tested: rows equal a run with nothing kept; a version bump derives them again |
 | 1.3 | The `tape` column type: `core.rr`'s tape columns, checked before lowering (`rr::tape_type`), stored as before | built, tested |
-| 1.4 | `digest` and `blob` column types, when the first cache that needs one moves (0103 §3) | open |
+| 1.4 | `digest` and `blob` column types (0103 §3) | **done**, before any cache needs them: both stored as symbols (a digest its hex digits, a blob the content key of its bytes, as a tape), checked with the tape type (`rr::tape_type`): a value of one of the three stands in no column of another type. Tests: `rr::tape_type::tests`, `cache_tests::a_cache_keyed_by_a_digest_keeps_it_as_a_symbol` |
 | 1.5 | `corpus::cache_architecture`: the tables and freshness calls made before 0103 (may only shrink); no cache table, store, hook or lookup; only the lint knows a relation is a cache | built |
 
 ### Stage 2. P3 and P2 rules (this branch, now)
