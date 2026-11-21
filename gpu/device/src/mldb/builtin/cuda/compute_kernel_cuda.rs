@@ -120,8 +120,15 @@ fn api() -> Result<&'static Api, String> {
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
-                unsafe { std::mem::transmute::<*mut c_void, _>(p) }
+                // SAFETY: the symbol is the driver's function of the field's type.
+                unsafe { symbol(p) }
             }};
+        }
+        /// A symbol's address as the function pointer it is (a pointer's size).
+        unsafe fn symbol<T: Copy>(p: *mut c_void) -> T {
+            assert_eq!(std::mem::size_of::<T>(), std::mem::size_of::<*mut c_void>());
+            // SAFETY: the caller's: `p` is a `T`.
+            unsafe { std::mem::transmute_copy::<*mut c_void, T>(&p) }
         }
         Ok(Api {
             cu_init: sym!(cuda, "cuInit"),
@@ -523,7 +530,7 @@ impl CudaComputeFunctionLibrary {
         let text = self.global(&format!("{function_name}__ukl_params"))?;
         let text = CStr::from_bytes_until_nul(&text).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
         let rows = self.global(&format!("{function_name}__ukl_rows"))?;
-        let rows: Vec<u64> = rows.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let rows: Vec<u64> = rows.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // The shared memory a launch may take beyond the kernel's static storage.
         let a = self.device.current();
