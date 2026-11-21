@@ -217,6 +217,8 @@ async function keepingOutboxLog(root: string, sync: () => Promise<void>): Promis
   const kept = await mkdtemp(join(tmpdir(), "rerail-outbox-log-"));
   roots.push(kept);
   const holder = new Database(path);
+  // A connection counts as open on the log once it has read through it: an idle one would leave the close to the outbox.
+  holder.prepare("SELECT count(*) FROM cursors").get();
   try {
     await sync();
     for (const suffix of ["", "-wal"]) await copyFile(`${path}${suffix}`, join(kept, `outbox${suffix}`));
