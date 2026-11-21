@@ -4794,6 +4794,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // result, and any function's results past the target's registers for them (x86-64's two, Arm's eight). It
     // changes no function whose results fit.
     flags.push(("enable_multi_ret_implicit_sret", "true"));
+    flags.extend(crate::native_cpu_codegen::TARGET_FLAGS);
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {

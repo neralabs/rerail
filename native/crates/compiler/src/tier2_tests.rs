@@ -651,11 +651,14 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
         for (block, lines) in crate::clif_text::hot_loop(&c.parser.tier1.clif) {
             for (i, l) in lines.iter().enumerate() {
                 let Some((v, rest)) = l.split_once(" = ") else { continue };
-                if !rest.starts_with("extractlane ") || rest.starts_with("extractlane.i8x16") {
+                // A mask taken out: a lane of a reduced vector (Arm's), or its bytes' high bits (x86-64's
+                // `vhigh_bits`, a `pmovmskb`).
+                let taken = |rest: &str| (rest.starts_with("extractlane ") && !rest.starts_with("extractlane.i8x16")) || rest.starts_with("vhigh_bits");
+                if !taken(rest) {
                     continue;
                 }
                 // Past the others moved before the same reader (a vector's two halves, say).
-                let j = (i + 1..lines.len()).find(|&j| crate::clif_text::opcode(&lines[j]) != "extractlane").expect("a terminator");
+                let j = (i + 1..lines.len()).find(|&j| !matches!(crate::clif_text::opcode(&lines[j]), "extractlane" | "vhigh_bits")).expect("a terminator");
                 let next = &lines[j];
                 let reads = next.split(|ch: char| !ch.is_alphanumeric()).any(|w| w == v);
                 let last = j + 1 == lines.len() || matches!(crate::clif_text::opcode(next), "brif" | "jump" | "return");
