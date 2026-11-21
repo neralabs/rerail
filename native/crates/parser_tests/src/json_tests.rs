@@ -471,6 +471,17 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let b = body(name);
         assert!(!b.contains("self.push_off(") && !b.contains("self.close_cells(") && !b.contains("_c.add(") && !b.contains("self.row("), "no format 15 cells or rows in a format 16 run's {name}");
     }
+    // The writer's room reserved once (`rust_stream::reserved`, decision 0544), as the lean parser's columns: a node's
+    // `OPEN` and `LEAF` cannot fail, and no node's call is followed by `?`; no deferred extras (`pending`) in a direct
+    // run; the nodes' count checked once, where the run starts.
+    assert!(src16.contains("    fn open16(&mut self, number: u32, start: u32) {\n") && src16.contains("    fn leaf16(&mut self, number: u32, start: u32, end: u32) {\n"), "a node's ops return nothing");
+    assert!(!src16.contains("unsafe fn open_node(&mut self, number: u32, start: u64, push: bool) -> Option<u32>") && src16.contains("unsafe fn open(&mut self, number: u32, start: u64) {\n"), "the writer's node ops cannot fail");
+    let fails: Vec<&str> = src16.lines().filter(|l| (l.contains("s.open16(") || l.contains("s.leaf16(")) && l.trim_end().ends_with(")?;")).collect();
+    assert!(fails.is_empty(), "a node's call that can refuse: {fails:?}");
+    for name in ["    fn open16(", "    fn leaf16(", "    fn close<"] {
+        assert!(!body(name).contains("self.pending"), "no deferred extras in a direct run's {name}");
+    }
+    assert!(src16.contains("if !unsafe { s.wr.fits(c.room_nodes) } {"), "the nodes' count checked once");
     let entry16 = aot_entry(&src16);
     // SAFETY: as the format 15 entry's, on the format 16 run's harness (`write16`: the writer and numbers set).
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(entry16, 4) };
