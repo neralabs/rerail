@@ -893,21 +893,13 @@ const GIT_TRUE = /^(?:1|true|yes|on)$/iu;
 /**
  * The system files Git reads: none under `GIT_CONFIG_NOSYSTEM`; else `GIT_CONFIG_SYSTEM`, or where it is unset the file
  * Rerail's Git was built to read, as the engine's owner of its Git reads names it ({@link nativeGitAccess}), with the
- * file Apple Git reads beside it. On Windows also the program data file Git for Windows reads before them. Undefined
- * where Git named no system file.
+ * file Apple Git reads beside it. Undefined where Git named no system file.
  */
 function systemConfigFiles(): string[] | undefined {
-  const programData = programDataConfig();
-  if (GIT_TRUE.test(process.env["GIT_CONFIG_NOSYSTEM"] ?? "")) return programData;
+  if (GIT_TRUE.test(process.env["GIT_CONFIG_NOSYSTEM"] ?? "")) return [];
   const access = nativeGitAccess();
   const named = process.env["GIT_CONFIG_SYSTEM"] ?? access.systemConfig;
-  return named === null ? undefined : [named, access.installationConfig, ...programData].filter(file => file !== null);
-}
-
-/** `%PROGRAMDATA%\Git\config`, which Git for Windows reads before its system file; none on any other system. */
-function programDataConfig(): string[] {
-  const folder = process.platform === "win32" ? process.env["PROGRAMDATA"] : undefined;
-  return folder === undefined ? [] : [join(folder, "Git", "config")];
+  return named === null ? undefined : [named, access.installationConfig].filter(file => file !== null);
 }
 
 /**

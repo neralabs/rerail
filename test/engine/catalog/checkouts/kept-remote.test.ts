@@ -286,20 +286,6 @@ describe("a clone's remote kept by the daemon, against Git's own answer once a f
     expect(after).not.toEqual(before);
     expect(readRemoteAddress(checkout)).toEqual(after);
   });
-
-  it.runIf(process.platform === "win32")("gives Git's new remote at the next record once Git for Windows' program data file changes", async () => {
-    const at = clone();
-    ownSystemFile(at, "[core]\n");
-    vi.stubEnv("PROGRAMDATA", join(at.root, "program-data"));
-    write(join(at.root, "program-data", "Git", "config"), origin(ONE));
-    const before = gitsRemote(at.main);
-    expect(readRemoteAddress(at.main)).toEqual(before);
-
-    write(join(at.root, "program-data", "Git", "config"), origin(TWO));
-    const after = gitsRemote(at.main);
-    expect(after).not.toEqual(before);
-    expect(readRemoteAddress(at.main)).toEqual(after);
-  });
 });
 
 /** The engine's owner of its Git reads, naming `files` as Rerail's Git reported them. */
