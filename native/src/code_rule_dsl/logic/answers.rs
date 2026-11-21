@@ -178,11 +178,18 @@ impl RulePass for GateRules<'_> {
                 outs.push(Out::DoneAll(done));
             } else {
                 let (ask, done) = (format!("ask_{rel}_{ad}"), format!("done_{rel}_{ad}"));
-                // The keys asked about: the rule's literals before the negation.
+                // The keys asked about: the rule's literals before the negation, less its negations inside the
+                // component. Each of those is gated in the rule itself, but in the ask it would be bare: the ask would
+                // read its relation negatively inside the component (PYI's `type_root` asked `annotated_meta` past
+                // `!typing_sym(h, "Literal")`, both file-local since `pyi_sym`). A negation binds nothing, so the key
+                // stays bound; the ask holds more keys, never fewer, and each is still answered by the gated negation.
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
                 let mut rb = out.rule().head(ask.as_str(), &key);
                 for &l in &lits[..i] {
+                    if in_comp(&l) && l.atom().is_some_and(|a| a.neg() && !a.gated()) {
+                        continue;
+                    }
                     rb = rb.lit(v, r, l);
                 }
                 rb.finish()?;
@@ -442,5 +449,28 @@ pub mod tests {
         let rest = Placed::whole(rest);
         let f = Fields::of(&rest).unwrap();
         assert!(f.is_input("fresh") && f.gates().is_empty() && f.answers().is_empty());
+    }
+
+    /// A rule with two negations inside a loading component: the second's ask is the literals before it less the
+    /// first negation, which is gated in the rule and would be bare in the ask (PYI's `type_root`, past
+    /// `!typing_sym(h, "Literal")`, asking `annotated_meta`).
+    #[test]
+    fn an_ask_past_a_gated_negation_leaves_it_out() {
+        let prog = super::super::rr::parse_version(
+            ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(x: symbol, y: symbol)\n.decl seen(x: symbol)\n.decl kept(x: symbol)\n.decl fresh(x: symbol)\n\
+             want(\"a\").\nwant(y) :- got(_, y).\nseen(y) :- got(_, y).\nkept(y) :- got(y, _).\n\
+             fresh(x) :- want(x), !seen(x), !kept(x).\nreq(x) :- fresh(x).\n",
+        )
+        .unwrap();
+        let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
+        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
+        let sccs = Placed::whole(gated.clone()).components().unwrap();
+        let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
+        for rel in ["ask_seen_b", "done_seen_b", "ask_kept_b", "done_kept_b"] {
+            assert!(loading.contains(rel), "{rel} in {loading:?}");
+        }
+        let ask = gated.rules().find(|r| gated.rel_name(r.head().rel()) == "ask_kept_b").expect("kept's ask");
+        let read: Vec<&str> = ask.body().filter_map(|l| l.atom()).map(|a| gated.rel_name(a.rel())).collect();
+        assert_eq!(read, ["want"], "the ask reads the positive literals before the negation only");
     }
 }
