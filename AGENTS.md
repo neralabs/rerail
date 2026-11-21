@@ -127,7 +127,9 @@ while used: a command that would wait for a slot starts one, and takes it once i
 minute), unless a slot frees first; idle guests stop on their own (`scripts/build/farm/guests`). On a Mac host, the farm kills its
 own GPU-using processes when the GPU or WindowServer stops answering for 15 s (macOS restarts the
 Mac at 120 s); the command's output then says `the farm's GPU watchdog killed ...`. That is a test
-holding the GPU too long, not a flaky host: bound its launches (the farm's README, "The GPU watchdog"). It also compiles this Mac's library
+holding the GPU too long, not a flaky host: bound its launches. A kill stops further GPU work, not a
+command buffer already running, so one launch of minutes can still restart the Mac (the farm's
+README, "The GPU watchdog"). A Linux host also compiles this Mac's library
 crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 

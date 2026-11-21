@@ -675,10 +675,14 @@ why (`farm-agent: the farm's GPU watchdog killed ...`), and the host's
 `kills.log`.
 
 A busy GPU alone trips neither check: macOS time-slices the GPU between processes, and a dispatch
-of 2^18 spinning threads filling an M3 MacBook Pro's GPU for 10 s did not delay the probe's (2026-11-20). So
-the watchdog acts on the stall that precedes the panic, not on load; it cannot make a test that
-holds the GPU for minutes pass, only keep the Mac up and say which program it was. Bounding each
-launch's GPU time is the tests' work.
+of 2^18 spinning threads filling an M3 MacBook Pro's GPU for 10 s did not delay the probe's
+(2026-11-20). So the watchdog acts on the stall that precedes the panic, not on load.
+
+What a kill does and does not do: the killed processes submit no more work, which ends a pile-up
+of many processes' work. A command buffer already on the GPU may run on: on 2026-11-20 a test's
+persistent grid was killed with its process, and WindowServer stopped 6 s later and the Mac
+restarted. Against one launch that runs for minutes the watchdog may only name the program;
+bounding each launch's GPU time is the tests' work.
 
 ## This Mac's disk floor
 
