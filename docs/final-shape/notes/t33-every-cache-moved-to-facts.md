@@ -181,3 +181,9 @@ Decided (user, 2026-11-10):
 1. **K1's layout is frames** per (space, relation, partition), as chosen for SQL access (bd12fc52d).
 2. **This branch builds what the other session is not doing:** K1 to K4, and steps 1 and 4.
 3. **Identity by naming for every relation**; a version is a column of the facts, bumped in the rule (above).
+
+Decided (user, 2026-11-21):
+
+4. **Typing-support-final-shape takes on the rest of this plan** (t32 5.3): K2, K3 and step 1 first, which no
+   other branch is building; then steps 3, 2, 6 and 7. K4 for each document and the statistics stay with the sync
+   branch's Q332, merged from the hub as they land.

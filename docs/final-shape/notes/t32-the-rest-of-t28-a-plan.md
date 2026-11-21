@@ -163,7 +163,7 @@ kept relations' encoding, not a format of their own.
 |---|---|---|
 | 5.1 | Caches in the file-local part: plain rules there already; the per-file memo keeps their rows as any relation's | engine: **built** (0146, 472c8bfaa). An entry's relations are typed rows in its frame |
 | 5.2 | The per-file memo as a cache by `(document, content, program)` (0103 §8) | engine: **built** (0146). One frame per entry in the plan's space, its part keyed by content and path. **Measured** below |
-| 5.3 | Each other cache of 0103 §8 | its owner |
+| 5.3 | Each other cache of 0103 §8 | **this branch** (user, 2026-11-21): t33's plan, from K2 and its step 1 |
 
 **5.1 and 5.2 measured (2026-11-10, after 1515840af).** The test binary's P3 bench on the 54 files of `dl-sub40` used
 a new store. The machine was loaded at 63 to 98. Every run gave 4,815 agree.
