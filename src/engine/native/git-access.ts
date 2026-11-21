@@ -152,29 +152,35 @@ export function standingGitAccess(): NativeGitAccess | undefined {
   return processOwner?.standing();
 }
 
-/** The ask of Git's installation under way without blocking: callers meanwhile share its two Git processes. */
-let learning: Promise<void> | undefined;
+/**
+ * The ask of Git's installation under way without blocking: callers meanwhile share its two Git processes. It gives
+ * true where the signal of the caller that started it stopped it, so it made nothing.
+ */
+let learning: Promise<boolean> | undefined;
 
 /**
  * Makes the process's owner ({@link nativeGitAccess}) unless its answer stands, from asks run as Git processes no thread
- * waits on, so {@link standingGitAccess} gives it after. It never fails: where no engine loads, Git is missing or
+ * waits on, so {@link standingGitAccess} gives it after. Callers meanwhile share one ask; where another caller's signal
+ * stopped it, a caller whose own signal is live asks again. It never fails: where no engine loads, Git is missing or
  * `options.signal` is aborted, it makes nothing.
  */
-export function learnGitAccess(options: GitReadOptions = {}): Promise<void> {
-  if (standingGitAccess() !== undefined) return Promise.resolve();
-  learning ??= learnedGitAccess(options).catch(() => undefined).finally(() => {
+export async function learnGitAccess(options: GitReadOptions = {}): Promise<void> {
+  if (standingGitAccess() !== undefined) return;
+  const shared = (learning ??= learnedGitAccess(options).catch(() => false).finally(() => {
     learning = undefined;
-  });
-  return learning;
+  }));
+  if ((await shared) && options.signal?.aborted !== true) await learnGitAccess(options);
 }
 
-async function learnedGitAccess(options: GitReadOptions): Promise<void> {
+/** Makes the owner from asks run without blocking; true where `options.signal` stopped them, so it made nothing. */
+async function learnedGitAccess(options: GitReadOptions): Promise<boolean> {
   const binding = loadNativeBinding();
   const report = await readGitInstallationWithoutBlocking(options);
-  if (report === undefined) return;
+  if (report === undefined) return true;
   processOwner ??= gitAccessKeeper(binding, Date.now);
   // A blocking ask that answered meanwhile stands: its owner stays, and the readers that opened under it.
   if (processOwner.standing() === undefined) processOwner.take(report);
+  return false;
 }
 
 /**
