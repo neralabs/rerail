@@ -204,6 +204,37 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          hold fails its run (`ChainLevels`), which runs again with twice the levels, from 1. These clauses need 4:
          three runs of about 69 launches each, every run's launches in the evaluation's ledger, past its 200
          (`KERNEL_LAUNCH_LIMIT`, a user decision). Not a GPU's difference.
+       - **Decided (user, 2026-11-21): a rerun charges a budget of its own**, which allows one rerun an evaluation on
+         average. `launch_budget::Reruns` is the run's (decision 0442): each evaluation adds `KERNEL_LAUNCH_LIMIT` as
+         its outermost scope opens, and a rerun (`launch::rerun`: every run of the label sweep after its first, for
+         more chain levels, more budget, wider lanes, more rounds) takes its launches from it, not from the
+         evaluation's own 200; one that needs more takes what others did not. A rerun's plan is checked against what
+         it has left (`launch::rerun_available`), not against the launches before it. The ruf028 clauses pass on the
+         M1 Max and the M3 (`lowered_clauses_find_the_same_roots_on_metal`, all 492).
+       - *Found with it: the plan left out a recursive group's anchors.* `encode` evaluates them once before the
+         group's sweeps, rounds or fused dispatch (Q133), but the plan's `fixed` counted only plain steps' levels, so
+         a wave's plan said 198 launches and its run took more. It counts them now (each anchor once, in `encode`'s
+         order; a round's levels only their formula passes): the wave's plan is 337 and its run 345 (8 files: 326
+         and 342; a level's formulas past the phases' scratch split into more dispatches, which the plan does not
+         see). So the wave's first run alone is past 200, and both wave tests stop at the plan with
+         `BackendLaunchLimit`. Run once with the limit at 400 on the M1 Max, `the_wave_finds_ws_matches_on_metal`
+         finds 219 clauses' matches missing that W finds, and `the_wave_is_one_evaluation_on_metal` runs past its
+         240 s: more than the limit stands between the wave and passing.
+       - *Fixed: the CPU interpreter's labels copied every label set at every write.* `LoweredMatcher::label` held
+         its views (each an `Arc` of the file's sets) while it wrote a label's new set, so `Arc::make_mut` cloned the
+         whole table, a label at a time, every round (decision 0353's copy). `ruff-pyi041`'s
+         `redundant-beside-complex` sat in it past the test's 240 s on the M3; with the views dropped before the
+         write, 1.6 s. `sweeps_needed` (the probe) did the same per marked node, and drops its view too. The whole
+         gate then passes on the M3: 492 of 492 clauses equal on 60 fixtures, 41 s, at most 96 launches a clause.
+       - *Open: the resident interpreter's gate* (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`,
+         every walk interpreted). With reruns funded it passed once on the M1 Max (134 s, the host loaded). With the
+         same GPU code, its next run there was killed by the farm's GPU watchdog (no one-thread dispatch finished for
+         15 s) after the clause `ruff-e711-none-comparison/none-comparison-equal`. On the M3 it finishes in 18 s with
+         14 of 123 clauses differing from the CPU (roots missing and extra: e741, pie790, b013, b021, b029, f707,
+         f901, n801, ret502, sim905, tid252, try400, up035, up039) and 12 refused at the launch limit. Before reruns
+         had a budget, a clause that needed one was refused, and a refused clause is counted, not compared. Not run
+         on Metal again until the cause is found in code. Also open on the M3 only: the two step-budget tests
+         (`a_misplanned_label_sweep_…`, `on_metal_an_unfinished_pass_goes_to_w_…`): no task runs over its budget.
        - *Fixed: the wave tests aborted on the M3* on a pool thread's read of the machine's jobs' walls outside any
          run (decision 0442): the label kernels' warm-up, and `threads::spawn_in`, read them before they entered
          their caller's run. They enter first now.

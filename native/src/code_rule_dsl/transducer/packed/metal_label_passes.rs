@@ -460,7 +460,7 @@ fn decode_roots(roots: RootsEncoded, files: &[TapeDoc]) -> RootsFound {
     }
     let mut sorted = Vec::<()>::with_capacity(written);
     let words = read(&roots.records, written * ROOT_RECORD);
-    for record in words.chunks_exact(ROOT_RECORD) {
+    for record in words.as_chunks::<ROOT_RECORD>().0 {
         let [pass, file, task, start] = roots.items[record[0] as usize];
         let base = bases[file as usize];
         // A pack's record: its member's program, task, label and capture labels.
@@ -1257,7 +1257,7 @@ const MICRO_POOL: usize = 4096;
 /// A SIMD group's lanes on every Apple GPU: the kernels that spread a group's roots over its lanes are written for it
 /// (`simd_roots`), and every pool and stack count here is a multiple of it.
 const SIMD_WIDTH: usize = 32;
-const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
+const _: () = assert!(MICRO_POOL.is_multiple_of(SIMD_WIDTH) && MICRO_DEEP_POOL.is_multiple_of(SIMD_WIDTH));
 /// The lanes a micro walk's item (a group of 64 nodes) takes in each tier (`Shape::lanes`): each lane finds the roots
 /// among its share of the group's nodes, and the SIMD group walks all its lanes' roots. The short walks' tiers
 /// take a SIMD group an item: a thread an item gave their dispatches a 32nd of the threads (at s1000, `label_micro_8`
@@ -1418,7 +1418,7 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_some()).filter(|ready| !ready).count() == 0
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1620,22 +1620,28 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let _evaluation = super::super::metal_backend::evaluation_scope();
     lane::device()?;
-    // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
-    let launches = |level: &Vec<Pass<'_>>| {
-        let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
-        let patterns = level.iter().any(kernel_pass);
-        // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of
-        // the one with the most (0475).
+    // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of the
+    // one with the most (0475). An anchor is evaluated once a run (`Runner::anchors`): `seen` holds those counted, in
+    // the order `encode` runs them; a formula pass runs at each of its level's runs.
+    let formulas = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
         let phases = level
             .iter()
             .filter_map(|pass| match pass {
-                Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor().map(|anchor| &**anchor),
+                Pass::Program { roots, .. } | Pass::Count { roots, .. } => {
+                    roots.anchor().filter(|_| seen.insert(std::sync::Arc::as_ptr(roots) as usize)).map(|anchor| &**anchor)
+                }
                 Pass::Formula { formula, .. } => Some(&**formula),
                 _ => None,
             })
             .map(formula_phase_count)
             .max();
-        2 * usize::from(programs) + usize::from(patterns) + 1 + phases.map_or(0, |phases| 1 + phases)
+        phases.map_or(0, |phases| 1 + phases)
+    };
+    // A level's launches: the programs' dispatch and sink, the derived labels, the settle, its formulas.
+    let launches = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
+        let programs = level.iter().any(|pass| matches!(pass, Pass::Program { .. } | Pass::Count { .. }));
+        let patterns = level.iter().any(kernel_pass);
+        2 * usize::from(programs) + usize::from(patterns) + 1 + formulas(level, seen)
     };
     // The batch's parents, once where a level has formulas (`label_parents`, 0475).
     let parents = plan.steps.iter().flat_map(|(_, levels)| levels.iter().flatten()).any(|pass| match pass {
@@ -1643,12 +1649,15 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         Pass::Formula { .. } => true,
         _ => false,
     });
+    // In `encode`'s order: a plain step's levels, and a recursive group's anchors, once before its sweeps, rounds or
+    // fused dispatch (Q133). A round's levels then find their anchors evaluated (`per_group`).
+    let mut seen = std::collections::HashSet::new();
     let fixed = plan
         .steps
         .iter()
-        .filter(|(recursive, _)| !recursive)
-        .flat_map(|(_, levels)| levels)
-        .map(launches)
+        .map(|(recursive, levels)| {
+            levels.iter().map(|level| if *recursive { formulas(level, &mut seen) } else { launches(level, &mut seen) }).sum::<usize>()
+        })
         .sum::<usize>()
         + usize::from(parents);
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
@@ -1706,11 +1715,13 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             (false, _) => 0,
             (true, true) => 1,
             (true, false) if fused(levels) => 0,
-            (true, false) => levels.iter().map(launches).sum::<usize>(),
+            (true, false) => levels.iter().map(|level| launches(level, &mut seen)).sum::<usize>(),
         })
         .collect::<Vec<_>>();
-    let plan_rounds = |used: usize, wanted: &[usize]| {
-        let budget = LAUNCHES.saturating_sub(used + fixed + groups);
+    // A run's rounds within `limit` launches: the evaluation's own for its first run, what the run's reruns' budget has
+    // left for a rerun (decision 0540).
+    let plan_rounds = |limit: usize, wanted: &[usize]| {
+        let budget = limit.saturating_sub(fixed + groups);
         let rounds = |cap: usize| {
             plan.steps
                 .iter()
@@ -1724,11 +1735,11 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             cap -= 1;
         }
         let rounds = rounds(cap);
-        // The plan-time bound: what this encoding launches, with the runs before it.
-        if used + fixed + groups + cost(&rounds) > LAUNCHES {
+        // The plan-time bound: what this encoding launches.
+        if fixed + groups + cost(&rounds) > limit {
             crate::code_rule_dsl::prof::count("run.launch_limit", 1);
             if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-                eprintln!("launch limit: used {used} fixed {fixed} groups {groups} rounds {rounds:?} per group {per_group:?} files {}", files.len());
+                eprintln!("launch limit: {limit} fixed {fixed} groups {groups} rounds {rounds:?} per group {per_group:?} files {}", files.len());
             }
             return Err(Error::BackendLaunchLimit);
         }
@@ -1739,13 +1750,21 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         let levels = plan.steps.iter().map(|(_, levels)| levels.len()).sum::<usize>();
         eprintln!("PLAN steps {} levels {levels} fixed {fixed} groups {groups} per group {per_group:?} expected {expected:?} files {}", plan.steps.len(), files.len());
     }
-    let mut rounds = plan_rounds(0, &wanted)?;
+    let mut rounds = plan_rounds(LAUNCHES, &wanted)?;
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
     let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
     let mut chain_levels = PHASE_CHAIN_LEVELS;
+    let mut attempt = 0_usize;
     loop {
+        // Every run after the first is a rerun: its launches are the run's reruns' budget's (decision 0540, user
+        // decision 2026-11-21), planned within what it has left.
+        let _rerun = (attempt > 0).then(super::super::metal_backend::launch::rerun);
+        if attempt > 0 {
+            rounds = plan_rounds(super::super::metal_backend::launch::rerun_available(), &wanted)?;
+        }
+        attempt += 1;
         let mut outcome = match encode(plan, files, &rounds, lanes, micro, deep, chain_levels, budget) {
             // A chain's reach outgrew the levels its phases hold (0475): the run again with twice them, the walks
             // micro or interpreted alike (`label_phase` runs a level's formulas either way, so the interpreter's
@@ -1823,7 +1842,6 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         }
         retries += 1;
         wanted = rounds.iter().map(|rounds| rounds * 2).collect();
-        rounds = plan_rounds(used, &wanted)?;
     }
 }
 
@@ -1989,8 +2007,8 @@ fn encode(
         count("mem.nodes", runner.nodes);
         count("mem.labels", plan.labels);
         count("mem.counts", plan.counts);
-        count("mem.scratch_mb", scratch_rows(plan) * words * 4 >> 20);
-        count("mem.counts_mb", tally_rows(plan) * runner.nodes * 4 >> 20);
+        count("mem.scratch_mb", (scratch_rows(plan) * words * 4) >> 20);
+        count("mem.counts_mb", (tally_rows(plan) * runner.nodes * 4) >> 20);
     }
     crate::code_rule_dsl::prof::time("gpu.size", || runner.size(plan))?;
     crate::code_rule_dsl::prof::release();

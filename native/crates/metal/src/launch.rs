@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::launch_budget as budget;
-use budget::LaunchBudget;
+use budget::{LaunchBudget, Reruns};
 pub use budget::KERNEL_LAUNCH_LIMIT;
 
 thread_local! {
@@ -34,6 +34,10 @@ pub struct DispatchRecord {
 #[derive(Default)]
 struct Evaluation {
     budget: LaunchBudget,
+    /// The run's reruns' budget (`Reruns`), and whether the launches now are a rerun's (`rerun`), and one was refused.
+    reruns: std::sync::Arc<Reruns>,
+    rerunning: bool,
+    rerun_refused: bool,
     records: Vec<DispatchRecord>,
     commands: HashMap<usize, u64>,
     next_command: u64,
@@ -60,7 +64,12 @@ impl LaunchScope {
     pub fn enter() -> Self {
         EVALUATION.with_borrow_mut(|slot| {
             let owner = slot.is_none();
-            let budget = slot.get_or_insert_with(|| Rc::new(RefCell::new(Evaluation::default())));
+            let budget = slot.get_or_insert_with(|| {
+                // The run's reruns' budget, which this evaluation adds its share to (decision 0540).
+                let reruns = rerail_context::local::<Reruns>();
+                reruns.grant();
+                Rc::new(RefCell::new(Evaluation { reruns, ..Evaluation::default() }))
+            });
             Self {
                 owner,
                 _budget: Rc::clone(budget),
@@ -81,18 +90,59 @@ impl Drop for LaunchScope {
     }
 }
 
-/// Takes one launch from the evaluation's budget: false past it, or with no evaluation.
+/// Takes one launch from the evaluation's budget (a rerun's from the run's reruns', `rerun`): false past it, or with
+/// no evaluation.
 pub fn reserve() -> bool {
     EVALUATION.with_borrow(|slot| {
-        slot.as_ref()
-            .is_some_and(|budget| budget.borrow_mut().budget.reserve())
+        slot.as_ref().is_some_and(|budget| {
+            let mut evaluation = budget.borrow_mut();
+            if evaluation.rerunning {
+                let taken = evaluation.reruns.take();
+                evaluation.rerun_refused |= !taken;
+                taken
+            } else {
+                evaluation.budget.reserve()
+            }
+        })
     })
+}
+
+/// While held, the evaluation's launches are a rerun's (decision 0540): charged to the run's reruns' budget, not the
+/// evaluation's own. Its first run's refusal is not the rerun's.
+pub struct Rerun(Option<Rc<RefCell<Evaluation>>>);
+
+pub fn rerun() -> Rerun {
+    Rerun(EVALUATION.with_borrow(|slot| {
+        slot.as_ref().map(|evaluation| {
+            let mut e = evaluation.borrow_mut();
+            e.rerunning = true;
+            e.rerun_refused = false;
+            Rc::clone(evaluation)
+        })
+    }))
+}
+
+impl Drop for Rerun {
+    fn drop(&mut self) {
+        if let Some(evaluation) = &self.0 {
+            evaluation.borrow_mut().rerunning = false;
+        }
+    }
+}
+
+/// The launches a rerun may still take (the run's reruns' budget's); 0 with no evaluation.
+pub fn rerun_available() -> usize {
+    EVALUATION.with_borrow(|slot| slot.as_ref().map_or(0, |evaluation| evaluation.borrow().reruns.available()))
 }
 
 pub fn check_submission() -> Result<(), Error> {
     EVALUATION.with_borrow(|slot| {
         let budget = slot.as_ref().ok_or(Error::BackendFailure)?;
-        if budget.borrow().budget.refused() {
+        let refused = {
+            let e = budget.borrow();
+            if e.rerunning { e.rerun_refused } else { e.budget.refused() }
+        };
+        if refused {
             if std::env::var_os("RERAIL_LAUNCHES").is_some() {
                 let mut kernels = std::collections::BTreeMap::<String, usize>::new();
                 for record in &budget.borrow().records {
@@ -230,6 +280,48 @@ mod tests {
         let _replay = LaunchScope::enter();
         assert!(!reserve());
         assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+    }
+
+    /// Decision 0540: a rerun's launches are the reruns' budget's, apart from the evaluation's own: an evaluation that
+    /// spent its own reruns with one rerun's worth, and its own refusal is not the rerun's.
+    #[test]
+    fn a_rerun_charges_the_reruns_budget_not_the_evaluations() {
+        let _evaluation = LaunchScope::enter();
+        for _ in 0..KERNEL_LAUNCH_LIMIT {
+            assert!(reserve());
+        }
+        assert!(!reserve());
+        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+        {
+            let _rerun = rerun();
+            assert_eq!(rerun_available(), KERNEL_LAUNCH_LIMIT);
+            assert_eq!(check_submission(), Ok(()));
+            for _ in 0..KERNEL_LAUNCH_LIMIT / 2 {
+                assert!(reserve());
+            }
+            assert_eq!(check_submission(), Ok(()));
+        }
+        // A second rerun takes what the first left, and is refused past it.
+        let _rerun = rerun();
+        assert_eq!(rerun_available(), KERNEL_LAUNCH_LIMIT - KERNEL_LAUNCH_LIMIT / 2);
+        for _ in 0..KERNEL_LAUNCH_LIMIT - KERNEL_LAUNCH_LIMIT / 2 {
+            assert!(reserve());
+        }
+        assert!(!reserve());
+        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+    }
+
+    /// The reruns' budget is the run's: each evaluation adds one rerun's worth, which another may take.
+    #[test]
+    fn the_reruns_budget_grows_by_an_evaluation_share() {
+        let reruns = std::sync::Arc::new(Reruns::default());
+        reruns.grant();
+        reruns.grant();
+        for _ in 0..2 * KERNEL_LAUNCH_LIMIT {
+            assert!(reruns.take());
+        }
+        assert!(!reruns.take());
+        assert_eq!(reruns.available(), 0);
     }
 
     #[test]
