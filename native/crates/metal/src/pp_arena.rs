@@ -224,7 +224,7 @@ impl<'a> Enc<'a> {
             launch = launch.buffer_at(row, buffer, offset);
         }
         for slab in self.resident {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(a) = args {
             launch = launch.value("args", &a);

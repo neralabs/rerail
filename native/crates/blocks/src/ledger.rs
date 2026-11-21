@@ -147,14 +147,16 @@ impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
         let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
         let mut live = blocks();
-        let i = live.partition_point(|e| e.0 < l.base);
+        // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
+        // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
+        let i = live.partition_point(|e| e.0 <= l.base);
         live.insert(i, (l.base, l.base + len, Arc::downgrade(&l)));
         l
     }
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks().iter_mut().find(|e| e.0 == self.base) {
+        if let Some(e) = blocks().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
             e.1 = self.base + len;
         }
     }
@@ -403,10 +405,11 @@ impl Ledger {
     /// The block is dropped: `release` lets its memory go, now when no GPU use is queued, else when the last one
     /// completes (R5).
     pub(crate) fn let_go(&self, release: Box<dyn FnOnce() + Send>) {
-        let base = self.base;
+        let me = std::ptr::from_ref(self) as usize;
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
-            // No longer found by its address before another mapping can take it.
-            blocks().retain(|e| e.0 != base);
+            // No longer found by its address before another mapping can take it; an outer ledger of the same memory
+            // (a lease's) stays.
+            blocks().retain(|e| e.2.as_ptr() as usize != me);
             release()
         });
         let now = {
@@ -475,12 +478,12 @@ fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>>
     BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The ledger of the live block whose memory holds `addr`.
+/// The ledger of the live block whose memory holds `addr`: the innermost, where one ledger's memory lies in
+/// another's (a block over a pooled lease: the block's, registered after the lease's).
 pub fn of_address(addr: usize) -> Option<Arc<Ledger>> {
     let live = blocks();
-    let i = live.partition_point(|e| e.0 <= addr).checked_sub(1)?;
-    let (start, end, l) = &live[i];
-    (*start <= addr && addr < *end).then(|| l.upgrade()).flatten()
+    let i = live.partition_point(|e| e.0 <= addr);
+    live[..i].iter().rev().filter(|(start, end, _)| *start <= addr && addr < *end).find_map(|(_, _, l)| l.upgrade())
 }
 
 /// A command buffer's uses of blocks: registered before its work is encoded, completed by its completion handler
@@ -766,6 +769,36 @@ mod tests {
         let gone = Arc::new(AtomicBool::new(false));
         drop(Tracked::new(Lease(gone.clone()), base, 4096));
         assert!(gone.load(SeqCst), "unbound: at once");
+        drop(mem);
+    }
+
+    /// R9: memory one ledger holds made another's (a pooled lease made a block's, `Block::over`): its address finds the
+    /// inner ledger while it lives, a bind holds the inner, and the inner gone, the outer is found again. Each goes
+    /// only once the work that bound it completes, the outer after the inner.
+    #[test]
+    fn a_ledger_inside_another_is_the_one_its_address_finds() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        let mem = vec![0u8; 8192];
+        let base = mem.as_ptr().cast_mut();
+        let (outer_gone, inner_gone) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let outer = Tracked::new(Lease(outer_gone.clone()), base, 8192);
+        let inner = Tracked::new(Lease(inner_gone.clone()), base, 8192);
+        assert!(Arc::ptr_eq(&of_address(base as usize + 4100).expect("found"), inner.ledger()), "the inner ledger is found");
+        let f = Fence::new();
+        assert!(f.uses_address(base as usize + 4100));
+        assert!(!inner.ledger().quiet() && outer.ledger().quiet(), "the bind holds the inner");
+        drop(inner);
+        assert!(!inner_gone.load(SeqCst), "held by the queued work");
+        f.complete();
+        assert!(inner_gone.load(SeqCst));
+        assert!(Arc::ptr_eq(&of_address(base as usize + 4100).expect("found"), outer.ledger()), "the outer stays, found again");
+        drop(outer);
+        assert!(outer_gone.load(SeqCst) && of_address(base as usize).is_none());
         drop(mem);
     }
 

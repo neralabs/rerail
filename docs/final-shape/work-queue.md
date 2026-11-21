@@ -7182,6 +7182,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
   Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
 - **Do**: Q314, which lets chunks be large without a guess.
+- **Seen** (2026-11-20, CPU binding): hogql cold now runs as 6 chunks, so the small chunks are not what its wall time
+  is today (Q396's "Wall time").
 
 ### Q313. (Q260 on CUDA-support) A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -7771,13 +7773,18 @@ object.
 - **Built:** step 1 (`rerail_blocks::ledger`: every chunk of a free-listed block tracked, frees and pages through it,
   `Fence`, R1-R8) and step 2's first part: accel's `Pass`, where the device joins bind every buffer, registers the
   block each bound buffer lies in on a fence its command buffer's completion handler ends.
-- **Next, step 2's rest:** the other encoders (the syntax side's `metal_*` passes, `crates/metal`, `blocks::gpu`) made
-  through one constructor that registers its bindings, so none binds unregistered; then `Batch::keep`, `read`, `held`
-  and `Held::kept` go where what they hold is a block's.
-- **Next, step 3:** the pool's buffers (`Pooled`, `Pooled::after`), `Scratch` resets, the residency slabs' `retire`
-  and the deferrable slabs under a ledger of their own.
-- **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
-- **Then:** Q337's format-16 runs again, 20 at 1,629.
+- **Done, steps 2-4** (2026-11-20; decision 0487's "Built"): every queue on the process's device is made by
+  `rerail_accel::gpu::shared::Queue`, whose watch (the device layer's `Watch`) holds every buffer bound, resident,
+  copied or filled; every pooled lease is its own ledger's, and goes back to the pool after the work that bound it;
+  `Scratch` and the deferrable slabs refuse a reset or a seal under queued work; a relation's rows refuse a CPU write
+  into room lent to the device. Tests R9-R11; on a Linux host (CPU backend) rerail-blocks 67, rerail-accel 65,
+  rerail-metal 20 (its five `pp_blocks` tests now skip off Metal: the passes are Metal's library); on a farm Mac
+  (Metal) rerail-blocks 69, rerail-accel 90, rerail-metal 21 and the engine's 33 GPU, residency and slab tests.
+- **Q337's runs under it** (a profiling build, an M3 of the farm, format 16 (the default), cold hogql, each its own
+  store, load 9-10): 16 of 16 gave 1,629 findings, 66-78 B instructions, 3.1-35 s (the first a cold launch; runs 6-10
+  10-14 s), one device budget refusal in all, no panic. The host's link then dropped (it went unreachable), before the
+  last four. It had restarted (its boot time is when the link dropped): the Metal runs likely brought it down, as
+  they did this Mac twice. The last four wait until the cause is found; no Metal load runs until then.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
@@ -7872,6 +7879,15 @@ object.
   statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
   `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection
   (0.34 s) moved.
+- **Wall time** (2026-11-20, the user: 2.1-2.45 s against this morning's 1.75 s at similar load): not Q312's chunk
+  sizing, as hogql now runs as 6 chunks. The gap was the `stats` phase, 0.62 s on the run's thread (this morning
+  0.007 s): the semi-join's counts (`col`, `line`, `node`, `ast_depth`, 0.06-0.08 s each, with the lazy batch's
+  projection inside them), the node rows (0.14 s) and the string annotations (0.09 s), one relation after another.
+  Each base relation read off the corpus batch is now counted on the pool (`Count`, `base_counted`); the results are
+  applied in the relations' order, as before. `stats` is 0.08 s wall (0.65 s CPU). Measured (cold, CPU binding,
+  load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
+  then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
+  memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
 
 ### Q412. (Q266 on Native-GPU-strata, Q397 on it after its merge of the hub) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 

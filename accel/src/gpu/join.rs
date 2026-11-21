@@ -29,7 +29,7 @@
 use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
-use rerail_device::device::{Buffer, BufferRef, ComputeEvent, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
 use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -130,7 +130,7 @@ thread_local! {
     /// This thread's scratch buffers, two sets by slot: a sort's or probe's intermediates, kept for the next. A
     /// submission uses one set (`scratch_set`); the lane has at most two in flight, each on its own set, and starts
     /// a third only once the first completed, so no two in flight share one.
-    static SCRATCH: RefCell<[Vec<Option<rerail_blocks::ledger::Tracked<shared::Pooled>>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
+    static SCRATCH: RefCell<[Vec<Option<shared::Pooled>>; 2]> = const { RefCell::new([Vec::new(), Vec::new()]) };
     static SET: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -215,25 +215,24 @@ pub fn fixed(name: &str) -> Result<Arc<Pipe>, String> {
 /// written by the host when handed out again, and no host write is ordered after a device read, so they return to
 /// the pool only once it completes.
 pub struct Submitted {
-    event: Arc<ComputeEvent>,
+    /// Its committed work, shared with its watchers (`watch`). Its fence (decision 0487) holds what the work reaches
+    /// until the work completes: at the first wait that sees it complete, or when the last of them is dropped, which
+    /// waits for it first.
+    event: Arc<shared::Flushed>,
     reads: Vec<Column>,
     /// The host clock at its commit (`host_clock`); NaN for a second watcher of a submission another waits for
     /// (`watch`), which adds no timeline.
     committed: f64,
     /// Whether this one only watches (`watch`): it waits only while the owner has not.
     watcher: bool,
-    /// The blocks its work uses (decision 0487), the owner's alone: completed once its work has (`wait_ok`, `drop`).
-    fence: Option<Arc<rerail_blocks::ledger::Fence>>,
 }
 
 impl Drop for Submitted {
-    /// Its blocks are held until its work completes: a submission let go unawaited waits for it here first.
+    /// What it reads and reaches is held until its work completes: the owner let go unawaited waits for it here first,
+    /// before its `reads` go back to the pool, whoever else watches it.
     fn drop(&mut self) {
-        if let Some(f) = self.fence.take()
-            && !f.is_complete()
-        {
+        if !self.watcher && !self.event.fence().is_complete() {
             let _ = self.event.await_();
-            f.complete();
         }
     }
 }
@@ -287,7 +286,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub(super) fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, fence: None }
+        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -308,9 +307,6 @@ impl Submitted {
             return (self.event.gpu_seconds(), true);
         }
         let done = crate::score::phase("gpu wait", || self.event.await_());
-        if let Some(f) = &self.fence {
-            f.complete();
-        }
         if let Err(why) = &done {
             say_failure(why);
         }
@@ -318,7 +314,7 @@ impl Submitted {
             let returned = host_clock();
             // Metal's command buffers give each part of the timeline.
             #[cfg(target_os = "macos")]
-            let parts = self.event.metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
+            let parts = self.event.event().metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
             #[cfg(not(target_os = "macos"))]
             let parts = false;
             // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
@@ -357,9 +353,7 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             if let Some(mut old) = s[slot].take() {
                 old.released();
             }
-            let lease = shared::lease_for_join(bytes.max(64), true)?;
-            let (base, len) = (lease.host(), lease.length() as usize);
-            s[slot] = Some(rerail_blocks::ledger::Tracked::new(lease, base, len));
+            s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
         }
         Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
     })
@@ -367,9 +361,9 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
 /// returned when dropped. A buffer the device has seen is resident already: a new one costs its creation and its
-/// mapping at its first use, a pooled one neither. Its lease is held as a block's memory is (decision 0491 step 2,
-/// `rerail_blocks::ledger::Tracked`): a pass that binds it holds it, so dropped while queued work reads it, it goes
-/// back to the pool only once that work completes, and the next lease's host writes are never ordered before it.
+/// mapping at its first use, a pooled one neither. Its lease is held as a block's memory is (decision 0487 step 3, by
+/// the lease's own ledger): a pass that binds it holds it, so dropped while queued work reads it, it goes back to the
+/// pool only once that work completes, and the next lease's host writes are never ordered before it.
 pub struct Held {
     _lease: Lease,
     pub buffer: Buffer,
@@ -378,9 +372,7 @@ pub struct Held {
 /// What keeps a held buffer's memory: a lease of the pool, a staged column whose shared buffer the device reads
 /// in place (`crate::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
 enum Lease {
-    Pooled(#[allow(dead_code)] rerail_blocks::ledger::Tracked<shared::Pooled>),
-    /// A lease whose bytes the host does not map (none to find a kernel's binding by): its holder keeps it.
-    Unmapped(#[allow(dead_code)] shared::Pooled),
+    Pooled(#[allow(dead_code)] shared::Pooled),
     Col(#[allow(dead_code)] crate::col::Col),
     Kept(#[allow(dead_code)] Box<dyn std::any::Any + Send + Sync>),
 }
@@ -411,12 +403,10 @@ impl Held {
         Ok(Held::pooled(shared::lease_for_join(bytes, true)?))
     }
 
-    /// `lease`, tracked by its bytes' address while it lives.
+    /// `lease`, held by its own ledger while it lives (`shared::Pooled`).
     fn pooled(lease: shared::Pooled) -> Held {
         let buffer = lease.device_buffer().clone();
-        let (base, len) = (lease.host(), lease.length() as usize);
-        let lease = if base.is_null() { Lease::Unmapped(lease) } else { Lease::Pooled(rerail_blocks::ledger::Tracked::new(lease, base, len)) };
-        Held { _lease: lease, buffer }
+        Held { _lease: Lease::Pooled(lease), buffer }
     }
 
     /// A buffer holding `values`, written by the host.
@@ -442,23 +432,20 @@ enum Grid<'a> {
 /// The launches of one submission on the process's queue, in order: each sees the last's writes. Committed by
 /// `commit`; dropped without it, nothing it holds runs.
 pub struct Pass {
-    queue: ComputeQueue,
+    /// The process's queue (`shared::Queue`): its fence holds every buffer the launches reach (decision 0487).
+    queue: shared::Queue,
     /// The launches so far (a submission's launch budget counts them).
     dispatches: Cell<usize>,
-    /// Buffers the launches after reach by address (`use_read`), bound by none.
-    resident: RefCell<Vec<Buffer>>,
+    /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
+    /// the launches write it.
+    resident: RefCell<Vec<(Buffer, bool)>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
-    /// Its submission's uses of blocks (decision 0487): every buffer it binds or makes resident that lies in a block
-    /// holds that block's chunks and memory until the submission completes (its `Submitted`'s wait, or drop), or the
-    /// pass is dropped uncommitted.
-    fence: Arc<rerail_blocks::ledger::Fence>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        let layer = shared::layer().ok_or("no device")?;
-        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), fence: rerail_blocks::ledger::Fence::new() })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
     }
 
     /// The launches made so far.
@@ -489,8 +476,8 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for b in self.resident.borrow().iter() {
-                l = l.uses(b);
+            for (b, write) in self.resident.borrow().iter() {
+                l = if *write { l.uses(b) } else { l.uses_read(b) };
             }
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
@@ -572,14 +559,14 @@ impl Pass {
         for b in buffers {
             self.holds(b, "a resident read", 0, false);
         }
-        self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
+        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), false)));
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
         self.holds(buffer, "a resident write", 0, true);
-        self.resident.borrow_mut().push(buffer.clone());
+        self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
@@ -593,21 +580,19 @@ impl Pass {
     /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
     fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
-        let known = at == 0 || rerail_blocks::region::bind_address(&self.fence, at, write, kernel);
+        let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
         #[cfg(any(test, feature = "test-hooks"))]
         assert!(known, "{kernel}'s buffer {arg} ({} bytes) lies in no block or pooled lease the ledger knows: nothing holds it while the work runs (decision 0491 step 2)", b.length());
         let _ = (known, kernel, arg);
     }
 
     /// Commits the launches (checked against the launch budget): what to wait for.
-    pub fn commit(mut self) -> Result<Submitted, String> {
+    pub fn commit(self) -> Result<Submitted, String> {
         if let Some(e) = self.error.take() {
             return Err(e);
         }
         crate::score::phase("gpu commit", shared::guard)?;
-        let event = self.queue.flush();
-        self.fence.mark_committed();
-        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, fence: Some(self.fence.clone()) })
+        Ok(Submitted { event: Arc::new(self.queue.flush()), reads: Vec::new(), committed: host_clock(), watcher: false })
     }
 
     /// Commits the launches and waits for them: their device seconds.

@@ -407,7 +407,7 @@ impl GpuBackend {
     fn execute<'a>(&self, jobs: impl Iterator<Item = &'a [Stage]> + Clone, stats: &mut Stats) -> Result<(), String> {
         let gpu = &*self.gpu;
         let (c0, t0) = (crate::score::thread_cpu(), std::time::Instant::now());
-        let mut q = ComputeQueue::new(gpu.layer.queue);
+        let q = shared::Queue::new()?;
         let depth = jobs.clone().map(|j| j.len()).max().unwrap_or(0);
         for s in 0..depth {
             if s > 0 {
@@ -421,6 +421,7 @@ impl GpuBackend {
         }
         crate::score::add("encode", crate::score::thread_cpu() - c0, t0.elapsed().as_secs_f64());
         let event = crate::score::phase("gpu commit", || q.flush());
+        // What the steps read and write is held until the submission completes (decision 0487 step 2).
         crate::score::phase("gpu wait", || event.await_()).map_err(|e| format!("the submission failed: {e}"))?;
         stats.device += event.gpu_seconds();
         stats.command_buffers += 1;
