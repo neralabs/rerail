@@ -340,6 +340,13 @@ impl AnalysisRun {
         self.publication = Some(outcome);
         self.scope_lease.take();
         self.lease.take();
+        // The collection its lease held off while it ran (its runs leave it to their owner, `record_run`): due once
+        // the run's manifests are written, which a pass needs no lease of a reader to keep. A failed pass leaves the
+        // store as it was, collected by a later one.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+        if let Err(e) = self.store.collect_after(now) {
+            eprintln!("rerail: the store's collection after the run stopped: {e}");
+        }
         Ok(())
     }
 }

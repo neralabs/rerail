@@ -2449,7 +2449,8 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     let also: Vec<[u8; 32]> = also.into_iter().chain(batch.into_iter().flatten()).collect();
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
-    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
+    let policy = crate::content_store::CorpusPolicy::of_run();
+    let collect = policy.is_some() && outer && first_of_batch;
     // Every lane names a set (decision 0302 §4: a lane with none is an older binary's). A run inside another, or one
     // whose programs name none, is its lane's own set: never superseded, protected as before. A run inside another
     // would otherwise supersede the outer run's lane.
@@ -2459,11 +2460,12 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     if collect {
         crate::content_store::upkeep::MemoSweep::register_once(store.database_path());
     }
+    // A run an analysis run owns (decision 0547) is read under its owner's lease, which holds every collection off
+    // until the owner finishes: the owner collects then (`AnalysisRun::finish`). Started here, each of ep2's runs
+    // found the lease held and collected nothing, its store growing by every run's plans.
+    let collect = collect && owner.is_none();
     // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
-    let mut policy = crate::content_store::CorpusPolicy::default();
-    if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
-        (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
-    }
+    let policy = policy.unwrap_or_default();
     // The sources stored by writes queued before the manifest's, and the texts named meanwhile: the record's item
     // takes them as the writer applies it (`take_named_sources`), with these, named on the run's side.
     let mut sources = sources;

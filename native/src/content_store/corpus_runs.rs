@@ -69,6 +69,21 @@ impl Default for CorpusPolicy {
     }
 }
 
+impl CorpusPolicy {
+    /// The policy a run collects under: the default, its history's bounds set by `RERAIL_CORPUS_HISTORY_MB`; `None`
+    /// with `RERAIL_CORPUS_GC=off`.
+    pub fn of_run() -> Option<CorpusPolicy> {
+        if std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") {
+            return None;
+        }
+        let mut policy = CorpusPolicy::default();
+        if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
+            (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
+        }
+        Some(policy)
+    }
+}
+
 /// What one decision kept and dropped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CorpusKept {
@@ -610,6 +625,25 @@ impl ContentStore {
         let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=1")?;
         let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok()?.try_into().ok()).collect();
         Ok(plans)
+    }
+
+    /// The collection a run's owner held off while it ran (its lease, `AnalysisRun`), once it lets go: passes while
+    /// they find work, for up to 200 ms, as a run's own (`record_run`). The passes and the decision, if one was made;
+    /// `None` when none was wanted.
+    pub fn collect_after(&self, now: i64) -> StoreResult<Option<(usize, Option<CorpusKept>)>> {
+        let Some(policy) = CorpusPolicy::of_run() else { return Ok(None) };
+        if !self.corpus_pass_wanted(&policy, now)? {
+            return Ok(None);
+        }
+        let started = std::time::Instant::now();
+        let (mut idle, mut passes, mut kept) = (0, 0, None);
+        while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
+            let pass = self.collect_corpus_pass(&policy, now)?;
+            passes += 1;
+            idle = if pass.did_work() { 0 } else { idle + 1 };
+            kept = pass.kept.or(kept);
+        }
+        Ok(Some((passes, kept)))
     }
 
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
