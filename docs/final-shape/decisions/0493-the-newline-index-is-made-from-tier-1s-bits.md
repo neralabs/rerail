@@ -1,7 +1,7 @@
 # 0493: The newline index is made from tier 1's bits
 
 Status: decided (the user, 2026-11-20: "go ahead in that order", the second of page 40 step 34's three changes).
-Follows 0480.
+Follows 0527.
 
 ## Intro
 
@@ -26,7 +26,7 @@ second pass over the source. In a profile of `twitter.json` it was about 13% of 
 
 3. **The writer takes what writes the index** (`Writer::begin_with`, with the document in a `Document`). `begin` is
    `begin_with` with the scan, for every producer without tier 1's bits. The index is written into the LINES part's own
-   buffer, kept from one document to the next (0480).
+   buffer, kept from one document to the next (0527).
 
 4. **Tier 2's format 16 run passes tier 1's bits** (`Parser::image16_in`). After `Batch::call` the output words are in
    the file's coordinates: the host puts a stripped prefix (the byte order mark) back, and a prefix holds no newline.

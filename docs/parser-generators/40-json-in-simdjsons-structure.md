@@ -745,7 +745,7 @@ the tape with the JIT's and the reference's byte for byte (`aot_tests`, `tier2_w
 
 **Steps 35–37 re-decided by shape.**
 
-- **Step 35 (0480), one writer kept from one document to the next:** kept. simdjson keeps its `parser`, its
+- **Step 35 (0527), one writer kept from one document to the next:** kept. simdjson keeps its `parser`, its
   buffers allocated once; the lean parser reserves its columns once (`reserve_columns`).
 - **Step 36 (0493), the newline index from tier 1's bits:** kept. Neither reference has a newline index, but
   simdjson's stage 1 makes, in its one pass over the bytes, every mask stage 2 needs. The amendment (0493 §5) is
@@ -784,7 +784,7 @@ Tier 1 went from 4.35 to 4.58 instructions a byte, for the one output more.
 
 Left from step 34: the writer's ops, which are most of what remains, against simdjson's tape writes.
 
-## Step 35, done: one writer from one document to the next (decision 0480)
+## Step 35, done: one writer from one document to the next (decision 0527)
 
 The first of step 34's three changes. Tier 2's format 16 run now writes into a writer the caller keeps, as simdjson's
 caller keeps its parser (`Parser::image16_in`). `Writer::begin` keeps each part's buffer and zeroes no room. Only the

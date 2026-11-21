@@ -1,7 +1,7 @@
 # 0494: The writer's per-node ops, cut toward simdjson's tape writes
 
 Status: in progress (the user, 2026-11-20: "go ahead in that order", the third of page 40 step 34's three changes).
-Follows 0434, 0480, 0493.
+Follows 0434, 0527, 0493.
 
 ## Intro
 
@@ -13,7 +13,7 @@ and tier 2's generated Rust run their Rust (`generated_writer.rs`). Tier 2 calls
 **simdjson's tape writes.** simdjson's stage 2 writes one tape word a value, at a cursor (`tape.append`), and copies a
 string's bytes. On `twitter.json` it takes about 6 instructions a byte for everything.
 
-**The gap.** After 0480 and 0493, our parse took 48.7 instructions a byte on `twitter.json`, against simdjson's 5.8.
+**The gap.** After 0527 and 0493, our parse took 48.7 instructions a byte on `twitter.json`, against simdjson's 5.8.
 About two thirds of the samples were in the writer's per-node ops. `twitter.json` has about 60,000 nodes, so the
 parse spent about 400 instructions a node, 300 of them in the ops.
 
