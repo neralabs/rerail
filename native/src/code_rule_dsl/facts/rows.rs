@@ -76,12 +76,12 @@ pub struct Facts {
 
 impl Facts {
     fn new(block: Block) -> Facts {
-        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), fill: usize::MAX }
+        Facts::shared(block, usize::MAX)
     }
 
     /// A block shared by relations made in it until it holds `fill` bytes (`HEADROOM`).
     fn shared(block: Block, fill: usize) -> Facts {
-        Facts { fill, ..Facts::new(block) }
+        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), fill }
     }
 
     /// Whether relations are made in it until its fill line (`shared`), not one alone in it.
@@ -98,6 +98,26 @@ impl Facts {
     /// margin.
     fn admits(&self, need: usize) -> bool {
         self.block.used() + need + MARGIN <= self.fill()
+    }
+}
+
+impl Drop for Facts {
+    /// A shared block's census (`HEADROOM`): how far past its fill line its used extent went, by bucket of used over
+    /// fill, and the bytes past the line.
+    fn drop(&mut self) {
+        if !self.is_shared() || !crate::code_rule_dsl::prof::on() {
+            return;
+        }
+        let (used, fill) = (self.block.used(), self.fill().max(1));
+        let bucket = match used * 4 / fill {
+            0..=4 => "at most 1",
+            5 => "1 to 1.5",
+            6 | 7 => "1.5 to 2",
+            8..=11 => "2 to 3",
+            _ => "3 to 4",
+        };
+        crate::code_rule_dsl::prof::count_named(format!("facts.shared block used over its fill line: {bucket}"), 1);
+        crate::code_rule_dsl::prof::count("facts.shared block bytes past its fill line", used.saturating_sub(fill));
     }
 }
 
@@ -215,8 +235,10 @@ pub struct Chunk {
 impl Chunk {
     /// Notes what it holds now (`most`).
     fn note(&self) {
-        // A shared block counted to its fill line (`HEADROOM`): the room past it is for its relations' indexes.
-        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.fill()).sum();
+        // A shared block counted to its fill line (`HEADROOM`), or to its used extent once its relations' growth and
+        // indexes took it past: the room past both is address space only.
+        let blocks: usize =
+            self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.fill().max(f.block.used())).sum();
         let heap = self.heap.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
         self.most.fetch_max(blocks + heap, std::sync::atomic::Ordering::Relaxed);
     }
@@ -1148,6 +1170,12 @@ impl Part {
         if let Some(base) = &self.base {
             // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
             moved.copy_reads(base, pre);
+        }
+        if crate::code_rule_dsl::prof::on() {
+            let from = if self.held.facts.is_shared() { "a shared" } else { "its own" };
+            let bytes = 8 * k * (rows as usize + pre as usize);
+            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
+            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
         }
         // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, rows);
