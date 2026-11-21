@@ -15,6 +15,7 @@ pub mod ctape;
 pub mod k;
 pub mod lower;
 pub mod ops;
+pub mod run;
 pub mod ty;
 
 /// A failure on the way: the preprocessor's errors, or the parser's refusal, with where.
@@ -71,18 +72,36 @@ impl Source {
     }
 }
 
-/// The kernel `text` at `path` preprocessed for this path: OpenCL C, its sub-groups 32 lanes, with `dirs` searched
-/// for its own includes.
-pub fn source(path: &str, text: &str, dirs: &[&str]) -> Result<Source, Error> {
-    let mut p = rerail_ukl::Preprocess::new(rerail_ukl::Backend::OpenCl).file(path, text).define("UKL_OPENCL_SUBGROUPS", None).define("UKL_SIMD_WIDTH", Some("32u")).define("__UKL_VEC", None);
-    for d in dirs {
-        p = p.dir(*d);
-    }
+/// The preprocessing of this path: OpenCL C, its sub-groups 32 lanes, OpenCL's words spelled as C's grammar reads
+/// them (`SPELLINGS`).
+pub fn preprocess() -> rerail_ukl::Preprocess {
+    let mut p = rerail_ukl::Preprocess::new(rerail_ukl::Backend::OpenCl).define("UKL_OPENCL_SUBGROUPS", None).define("UKL_SIMD_WIDTH", Some("32u")).define("__UKL_VEC", None);
     for (word, spelled) in SPELLINGS {
         p = p.define(word, Some(spelled));
     }
-    let (expanded, paths) = p.expanded(path).map_err(|e| Error(e.0.join("\n")))?;
+    p
+}
+
+/// The kernel `text` at `path` preprocessed for this path (`preprocess`), with `dirs` searched for its own includes.
+pub fn source(path: &str, text: &str, dirs: &[&str]) -> Result<Source, Error> {
+    let mut p = preprocess().file(path, text);
+    for d in dirs {
+        p = p.dir(*d);
+    }
+    source_of(&p, path)
+}
+
+/// `main` preprocessed by `p` (a `preprocess` with its files and defines).
+pub fn source_of(p: &rerail_ukl::Preprocess, main: &str) -> Result<Source, Error> {
+    let (expanded, paths) = p.expanded(main).map_err(|e| Error(e.0.join("\n")))?;
     Ok(Source { expanded, paths })
+}
+
+/// The program of `main` preprocessed by `p`: its source, C tape and kernel tape.
+pub fn program(p: &rerail_ukl::Preprocess, main: &str) -> Result<lower::Program, Error> {
+    let s = source_of(p, main)?;
+    let tape = c_tape(&s)?;
+    lower::lower(&s, &tape)
 }
 
 /// The C tape of `source` (tree-sitter-c's, from its tokens), or where the parser refused it.

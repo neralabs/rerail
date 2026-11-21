@@ -32,9 +32,37 @@ pub struct Program {
     pub structs: Vec<Struct>,
     /// Each function's stack: its frame and its deepest callee's (no kernel recurses).
     pub stacks: Vec<u32>,
+    /// Each builtin call's callee and place in the source, by its `Builtin` node's site.
+    pub sites: Vec<String>,
+    /// The file's typedefs and structure tags, and its variables of static storage (their offsets in `data`).
+    pub typedefs: HashMap<String, Ty>,
+    pub tags: HashMap<String, u32>,
+    pub globals: HashMap<String, (Ty, u32)>,
 }
 
 impl Program {
+    /// The program's constant memory (its `Data` node's bytes), read in place.
+    pub fn data(&self) -> &[u8] {
+        let v = crate::k::View::new(&self.tape);
+        let d = v.children(0).last().expect("the program's data");
+        let n = v.w(d, 0) as usize;
+        let words = v.ws(d, 1, n.div_ceil(4));
+        // SAFETY: the words' bytes, `n` of them.
+        unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), n) }
+    }
+
+    /// A constant string of static storage, by its name (`Name__ukl_params`).
+    pub fn string(&self, name: &str) -> Option<&str> {
+        let (_, at) = self.globals.get(name)?;
+        let d = &self.data()[*at as usize..];
+        std::str::from_utf8(&d[..d.iter().position(|&b| b == 0)?]).ok()
+    }
+
+    /// The type a name names: a primitive's, a typedef's, or a structure tag's.
+    pub fn named(&self, name: &str) -> Option<Ty> {
+        primitive(name).or_else(|| self.typedefs.get(name).cloned()).or_else(|| self.tags.get(name).map(|&k| Ty::Struct(k)))
+    }
+
     /// The kernel named so.
     pub fn kernel(&self, name: &str) -> Option<u32> {
         self.funcs.iter().position(|f| f.kernel && f.name == name).map(|i| i as u32)
@@ -73,6 +101,7 @@ struct L<'a> {
     shared: u32,
     ret: Ty,
     tys: HashMap<usize, Ty>,
+    sites: Vec<String>,
 }
 
 type R<T> = Result<T, Error>;
@@ -96,6 +125,7 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
         shared: 0,
         ret: Ty::Void,
         tys: HashMap::new(),
+        sites: Vec::new(),
     };
     let root = l.b.open(Kind::Program, &[0]);
     for d in l.c.named_children(l.c.root()) {
@@ -112,7 +142,8 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
     l.b.set_word(root, 0, l.funcs.len() as u32);
     l.b.close(root);
     let stacks = cut(&mut l.b, &l.funcs)?;
-    Ok(Program { tape: l.b.finish(), funcs: l.funcs, structs: l.structs, stacks })
+    let globals = l.globals.iter().filter_map(|(n, v)| if let Place::Global(at) = v.place { Some((n.clone(), (v.ty.clone(), at))) } else { None }).collect();
+    Ok(Program { tape: l.b.finish(), funcs: l.funcs, structs: l.structs, stacks, sites: l.sites, typedefs: l.typedefs, tags: l.tags, globals })
 }
 
 /// The cut (decision 0567 §2.3): each node whose subtree reaches a sync point flagged `SYNCS`, a call by whether its
@@ -233,6 +264,25 @@ fn literal(text: &str) -> Option<(Ty, u64)> {
     Some((ty, v))
 }
 
+/// The type a primitive type's name (C's, `stdint.h`'s) names.
+fn primitive(name: &str) -> Option<Ty> {
+    Some(match name {
+        "void" => Ty::Void,
+        "bool" | "_Bool" => Ty::Bool,
+        "char" | "int8_t" => Ty::Int { bits: 8, signed: true },
+        "uint8_t" => Ty::Int { bits: 8, signed: false },
+        "short" | "int16_t" => Ty::Int { bits: 16, signed: true },
+        "uint16_t" => Ty::Int { bits: 16, signed: false },
+        "int" | "int32_t" => I32,
+        "uint32_t" => U32,
+        "long" | "int64_t" | "intptr_t" | "ptrdiff_t" | "ssize_t" => I64,
+        "uint64_t" | "size_t" | "uintptr_t" => U64,
+        "float" => Ty::Float(32),
+        "double" => Ty::Float(64),
+        _ => return None,
+    })
+}
+
 /// A binary operator's operation.
 fn binop(s: &str) -> Option<Op> {
     Some(match s {
@@ -330,21 +380,10 @@ impl L<'_> {
     /// The type a type specifier names.
     fn base(&mut self, t: usize) -> R<Ty> {
         match self.c.kind(t) {
-            "primitive_type" => Ok(match self.c.text(t) {
-                "void" => Ty::Void,
-                "bool" | "_Bool" => Ty::Bool,
-                "char" | "int8_t" => Ty::Int { bits: 8, signed: true },
-                "uint8_t" => Ty::Int { bits: 8, signed: false },
-                "short" | "int16_t" => Ty::Int { bits: 16, signed: true },
-                "uint16_t" => Ty::Int { bits: 16, signed: false },
-                "int" | "int32_t" => I32,
-                "uint32_t" => U32,
-                "long" | "int64_t" | "intptr_t" | "ptrdiff_t" | "ssize_t" => I64,
-                "uint64_t" | "size_t" | "uintptr_t" => U64,
-                "float" => Ty::Float(32),
-                "double" => Ty::Float(64),
-                n => return self.err(t, format!("the type {n}")),
-            }),
+            "primitive_type" => match primitive(self.c.text(t)) {
+                Some(p) => Ok(p),
+                None => self.err(t, "an unknown primitive type"),
+            },
             "sized_type_specifier" => {
                 let s = self.c.text(t);
                 let unsigned = s.contains("unsigned");
@@ -1479,7 +1518,10 @@ impl L<'_> {
             }
             Callee::Builtin(b, params) => {
                 let ret = if b == Builtin::SubGroupBallot { M::U32 } else { self.m(t) };
-                let mut words = vec![b as u32, ret.0, params.len() as u32];
+                let site = self.sites.len() as u32;
+                let name = self.c.text(self.c.child(e, "function").expect("a callee"));
+                self.sites.push(format!("{name} at {}", self.src.place(self.c.start(e) as u32)));
+                let mut words = vec![b as u32, ret.0, params.len() as u32, site];
                 words.extend(params.iter().map(|p| self.m(p).0));
                 let n = self.b.open(Kind::Builtin, &words);
                 for (a, p) in args.into_iter().zip(params) {

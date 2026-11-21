@@ -222,10 +222,30 @@ pub fn gpu_seconds_awaited() -> f64 {
     CPU_NANOS.load(Ordering::Relaxed) as f64 * 1e-9
 }
 
-/// A compiled library: the shared object the host's compiler made of the source, loaded.
+/// A compiled library: the shared object the host's compiler made of the source, loaded; or the kernels run by an
+/// interpreter (`CpuInterpreter`).
 pub struct CpuComputeFunctionLibrary {
-    handle: crate::sys::Library,
+    code: Code,
     name: String,
+}
+
+enum Code {
+    Compiled(crate::sys::Library),
+    Interpreted(Arc<dyn CpuInterpreter>),
+}
+
+/// Kernels the CPU runs from their source without its compiler (`rerail_ukl_vec`, decision 0567): given by the layer
+/// above the preprocessor (`rerail_gpu`), which this one is below. Its kernels' arguments are the shim's rows, as a
+/// compiled library's.
+pub trait CpuInterpreter: Send + Sync {
+    /// Kernel `kernel`'s rows (`Name__ukl_params`'s text), and each row's type's size, alignment and code
+    /// (`Name__ukl_rows`).
+    fn rows(&self, kernel: &str) -> Result<(String, Vec<u64>), String>;
+    /// An `ARGS` structure's field names (`Type__ukl_fields`) and layout (its layout function's numbers).
+    fn layout(&self, ty: &str) -> Result<(String, Vec<u64>), String>;
+    /// A launch of `kernel` over `grid` groups of `block` threads: each argument's words (a buffer's address, an
+    /// `ARGS` row's bytes, a threadgroup row's offset in the `shared` bytes past the kernel's own).
+    fn launch(&self, kernel: &str, params: &[Vec<u64>], grid: [u32; 3], block: [u32; 3], shared: u64) -> Result<(), String>;
 }
 
 unsafe impl Send for CpuComputeFunctionLibrary {}
@@ -274,7 +294,7 @@ impl CpuComputeFunctionLibrary {
                 Ok(handle) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() });
+                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(handle), name: file_name_to_appear_in_error_messages.to_string() });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -320,11 +340,19 @@ impl CpuComputeFunctionLibrary {
             }
         }
         let handle = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() })
+        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(handle), name: file_name_to_appear_in_error_messages.to_string() })
+    }
+
+    /// The kernels `interpreter` runs, named `name` in errors.
+    pub fn interpreted(interpreter: Arc<dyn CpuInterpreter>, name: &str) -> Self {
+        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string() }
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        self.handle.symbol(name).ok_or_else(|| format!("{}: no {name}", self.name))
+        match &self.code {
+            Code::Compiled(handle) => handle.symbol(name).ok_or_else(|| format!("{}: no {name}", self.name)),
+            Code::Interpreted(_) => Err(format!("{}: an interpreted library has no symbol {name}", self.name)),
+        }
     }
 
     fn string(&self, name: &str) -> Result<String, String> {
@@ -335,6 +363,10 @@ impl CpuComputeFunctionLibrary {
 
     /// An `args` structure's layout: its layout function called (`UKL_REFLECT_STRUCT`).
     fn struct_type(&self, ty: &str) -> Result<KernelBaseType, String> {
+        if let Code::Interpreted(i) = &self.code {
+            let (names, l) = i.layout(ty)?;
+            return crate::rows::struct_type(ty, &names, &l);
+        }
         let names = self.string(&format!("{ty}__ukl_fields")).map_err(|e| format!("{ty} is an ARGS row's type with no UKL_REFLECT_STRUCT: {e}"))?;
         let f = self.symbol(&format!("{ty}__ukl_layout"))?;
         let mut l = vec![0u64; crate::rows::layout_len(&names)];
@@ -346,6 +378,11 @@ impl CpuComputeFunctionLibrary {
 
     /// The kernel `function_name`, with its arguments from its rows (`Name__ukl_params`, `Name__ukl_rows`).
     pub fn get_function(&self, _device: &CpuDevice, function_name: &str) -> Result<CpuComputeFunction, String> {
+        if let Code::Interpreted(i) = &self.code {
+            let (text, rows) = i.rows(function_name)?;
+            let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
+            return Ok(CpuComputeFunction { entry: Run::Interpreted(i.clone()), name: function_name.to_string(), arguments, param_sizes });
+        }
         let entry = self.symbol(function_name)?;
         let text = self.string(&format!("{function_name}__ukl_params"))?;
         let n = crate::rows::split_top(&text).len() / 4 * 3;
@@ -355,7 +392,7 @@ impl CpuComputeFunctionLibrary {
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
-        Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
+        Ok(CpuComputeFunction { entry: Run::Compiled(entry), name: function_name.to_string(), arguments, param_sizes })
     }
 }
 
@@ -420,12 +457,19 @@ pub fn resident_groups(threads: usize) -> usize {
     (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
+/// How a kernel runs: its compiled entry, or its library's interpreter.
+#[derive(Clone)]
+enum Run {
+    Compiled(Entry),
+    Interpreted(Arc<dyn CpuInterpreter>),
+}
+
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
 type Entry = extern "C" fn(*const *const c_void, *const Launch) -> i32;
 
 /// A kernel of a library, with its arguments (`MetalComputeFunction`).
 pub struct CpuComputeFunction {
-    entry: Entry,
+    entry: Run,
     pub name: String,
     arguments: Vec<GridComputeFunctionArgument>,
     param_sizes: Vec<usize>,
@@ -680,7 +724,7 @@ impl CpuBindContext<'_> {
             return Ok(());
         }
         let threads = block.iter().map(|&b| b as usize).product::<usize>();
-        let (entry, name, shared) = (f.entry, f.name.clone(), self.shared);
+        let (entry, name, shared) = (f.entry.clone(), f.name.clone(), self.shared);
         let params = std::mem::take(&mut self.params);
         self.params = vec![Vec::new(); params.len()];
         let keep = std::mem::take(&mut self.keep);
@@ -694,6 +738,10 @@ impl CpuBindContext<'_> {
             if grid.contains(&0) {
                 return Ok(());
             }
+            let entry = match entry {
+                Run::Compiled(e) => e,
+                Run::Interpreted(i) => return i.launch(&name, &params, grid, block, shared).map_err(|e| format!("{name} on the CPU: {e}")),
+            };
             let groups = grid.iter().map(|&g| g as usize).product::<usize>();
             let resident = resident_groups(threads).min(groups);
             let slot = (shared as usize).div_ceil(16) * 16;

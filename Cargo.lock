@@ -3625,6 +3625,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-device",
  "rerail-ukl",
+ "rerail-ukl-vec",
 ]
 
 [[package]]

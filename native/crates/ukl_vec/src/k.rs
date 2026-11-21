@@ -79,7 +79,7 @@ pub enum Kind {
     Func,
     /// The program's constant memory (its tables and strings): `[bytes]`, then the bytes, padded to a word.
     Data,
-    /// Statements in order.
+    /// Statements in order (as an expression, an initializer list's stores: its value 0).
     Block,
     /// An expression evaluated for its effect: one child.
     Expr,
@@ -124,7 +124,8 @@ pub enum Kind {
     /// `[function, type, temp]`: a call of the program's function, its arguments the children; an aggregate's
     /// result copied to the caller's frame at `temp`, its value that address.
     Call,
-    /// `[builtin, type, arguments, argument types...]`: one of OpenCL's builtins (`Builtin`).
+    /// `[builtin, type, arguments, site, argument types...]`: one of OpenCL's builtins (`Builtin`), its call's place
+    /// in the source `Program::sites[site]`.
     Builtin,
     /// `a, b`: `b`'s value.
     Comma,

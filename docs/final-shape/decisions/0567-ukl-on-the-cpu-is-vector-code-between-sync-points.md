@@ -67,6 +67,12 @@ slow". The answers below are the user's, given to the questions of the design pa
    thread of its group together, and the uniformity pass proves it or refuses the kernel with its place. There is
    no fallback to the coroutine backend: some GPUs deadlock on such a kernel, so it is wrong everywhere. Loosening
    the rule on hardware that supports it (independent thread scheduling) is later work.
+
+   A thread that has ended the kernel is no longer its group's: a barrier waits for the threads that have not, as
+   on the GPUs and the coroutine backend (decision 0440). A thread that has not ended and is not at a sync point
+   its group meets (it returned from the function the barrier is in, or took the other branch) is let off only if
+   it then ends without reaching another sync point. If it reaches one, the kernel fails, naming both. The
+   interpreter of step 1 checks this as it runs, and the uniformity pass of step 2 proves it, or refuses the kernel.
 4. **The SIMD-group width is 32** (`UKL_SIMD_WIDTH`), as on Metal and CUDA, and other widths stay possible (the
    library passes at 32, 16, 8 and 1). Where the hardware's vector is narrower, a SIMD group is several vectors,
    looped, a value taking as many registers as its type needs (decision 6). With little register pressure, a group's wider span means fewer loop iterations and less overhead per

@@ -56,8 +56,12 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         .entry(key.clone())
         .or_insert_with(|| {
             let shared = crate::shared::get().ok_or("no device")?;
-            let source = preprocess_with(name, text, defines)?;
-            let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
+            let library = if crate::vec::on(&shared.device) {
+                crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?
+            } else {
+                let source = preprocess_with(name, text, defines)?;
+                ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?
+            };
             Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
         })
         .clone()

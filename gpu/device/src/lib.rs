@@ -24,7 +24,7 @@ pub mod compute_kernel_cpu;
 #[path = "mldb/builtin/opencl/compute_kernel_opencl.rs"]
 pub mod compute_kernel_opencl;
 pub mod device;
-mod rows;
+pub mod rows;
 pub mod store;
 mod sys;
 /// The system's page size (the unit drivers use host memory in place by).
