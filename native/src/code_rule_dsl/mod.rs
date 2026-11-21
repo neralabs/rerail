@@ -4776,9 +4776,7 @@ impl napi::Task for CompileTask {
     type JsValue = CompiledCodeRuleDsl;
 
     fn compute(&mut self) -> Result<CompiledCodeRule> {
-        contain_compile_panic(|| {
-            compile_rule(&self.source, &self.format, &self.capabilities_json)
-        })
+        contain_compile_panic(|| compile_rule(&self.source, &self.format, &self.capabilities_json))
     }
 
     fn resolve(
