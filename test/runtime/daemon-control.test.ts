@@ -1031,7 +1031,7 @@ describe("a state file Windows left behind", () => {
     // The error a session's start answers with the line that tells the person (`answerAutostartOff`).
     const refused = runningDaemonEngineEndpoint(undefined, machine);
     await expect(refused).rejects.toThrow(new OtherDaemonKeptError(
-      "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
+      "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package, and the running one is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
     ));
     await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
     expect(events.filter(event => event !== "/healthz")).toEqual([]);
@@ -1052,7 +1052,7 @@ describe("a state file Windows left behind", () => {
     }));
     const refused = daemonEngineEndpoint(true, undefined, machine);
     await expect(refused).rejects.toThrow(
-      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+      new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start"),
     );
     await expect(refused).rejects.not.toBeInstanceOf(OtherDaemonKeptError);
     expect(events).toEqual(["/healthz", "/healthz"]);
@@ -2260,7 +2260,7 @@ describe("the engine endpoint of a busy daemon", () => {
     await holdHome(home, DEAD_PID);
     const machine = fakeMachine("linux", { env, kill: () => true, homeDaemonLockHeld: () => true });
     await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
-      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+      new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start"),
     );
     expect(probes).toBe(2);
   });
