@@ -15,7 +15,7 @@ mod tier2;
 
 pub use tier1::{Lexed, lex};
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
-pub use tier2::ENTRIES;
+pub use tier2::{ENTRIES, WIDTHS};
 
 /// `src`'s tape into `w` (a format 16 writer of a language whose table is `ENTRIES`), or the byte the parser
 /// refused it at (0: tier 1 sends it to tree-sitter).

@@ -1526,7 +1526,7 @@ fn json_rusts_tapes_are_the_jits() {
     let jit = simdjson_form();
     let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
-    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     let mut inputs = tree_inputs();
     inputs.extend(deep_nests(1023..1026));

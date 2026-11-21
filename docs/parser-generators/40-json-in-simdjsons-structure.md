@@ -593,6 +593,12 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 57, done: the cells at constant widths (decision 0554)
+
+The generated parser names its language's widths (`WIDTHS`) and calls the writer's open, leaf and close at them as
+constants (`Fixed`): each column's offset and each cell's width known where the code is compiled, a cell one store.
+The writer's other callers keep the state's widths, with the same code.
+
 ## Step 56, done: the empty container and the root's closer, in the loop (decision 0553)
 
 Steps 49 and 53 again, from the grammar: a level whose rule is a one-byte opener, what may be empty and a one-byte
