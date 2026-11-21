@@ -172,10 +172,12 @@ describe("the daemon's change stream (GET /api/changes)", () => {
 
   it("sends a new token by the next beat when another process commits and keeps the database open", async () => {
     // On Windows no notice comes for such a commit: the beat reads the version, which every other connection's commit
-    // moves.
+    // moves. The folder watches here report nothing, as Windows' does for it, so the case shows the beat on every system:
+    // on Linux and macOS the watch hears the commit before the beat.
     const writer = await startDatabaseWriter(databasePath);
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const stream = await open();
+    const silent = storesFor({ changeFeed: { beatMs: BEAT_MS, watch: drivenWatch().watch } });
+    const stream = messagesOf(await createRerailApi(silent, operations, { version: "0.0.0-test" }).request("/api/changes"));
     try {
       const first = await stream.next();
       await writer.commit("remote:github.com/acme/web");
@@ -185,6 +187,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     } finally {
       await stream.stop();
       await writer.close();
+      silent.close();
     }
   });
 

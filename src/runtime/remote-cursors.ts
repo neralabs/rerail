@@ -40,6 +40,15 @@ function handedOut(database: RerailDatabase): number {
 }
 
 /**
+ * Whether the next event of `database` would take a number a remote of its home has taken: what
+ * `keepEventNumbersPastRemotes` would move. Reads only, so a writer can skip that write, and its write lock, when not.
+ */
+export function eventNumbersBehindRemotes(database: RerailDatabase, databasePath: string): boolean {
+  const taken = takenByRemotes(databasePath);
+  return taken !== 0 && handedOut(database) < taken;
+}
+
+/**
  * Makes the next event of `database` take a number past every one a remote of its home has taken. Numbers are never
  * handed out twice while the file keeps every commit, even past `rerail reset`'s deletes. A power cut or an operating
  * system crash can take the last commits (`synchronous = NORMAL`, `database.ts`): the counter goes back with the rows,
@@ -50,15 +59,6 @@ function handedOut(database: RerailDatabase): number {
  * event after one belongs to a session a process opened after it. Reads one file's existence when the home has no
  * remote; writes only when the counter is behind.
  */
-/**
- * Whether the next event of `database` would take a number a remote of its home has taken: what
- * `keepEventNumbersPastRemotes` would move. Reads only, so a writer can skip that write, and its write lock, when not.
- */
-export function eventNumbersBehindRemotes(database: RerailDatabase, databasePath: string): boolean {
-  const taken = takenByRemotes(databasePath);
-  return taken !== 0 && handedOut(database) < taken;
-}
-
 export function keepEventNumbersPastRemotes(database: RerailDatabase, databasePath: string): void {
   const taken = takenByRemotes(databasePath);
   if (taken === 0 || handedOut(database) >= taken) return;
