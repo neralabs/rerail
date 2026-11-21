@@ -57,6 +57,15 @@ fn tier1_same(texts: &[&str]) {
     }
 }
 
+/// "A `0x` or `0b` with no digit", tested at a number's first byte and, where a `0` may start a
+/// number inside one (`1e+0x`), over its bytes after (decision 0587). There the `x` is also a name
+/// touching a number, refused either way.
+#[test]
+fn the_0x_escape_is_the_interpreters() {
+    refused(&["val a = 0x\n", "val a = 0xg\n", "val a = 0b\n", "val a = 0b2\n", "val a = 1e+0x\n"]);
+    tier1_same(&["val a = 0x", "val a = 0x1F\n", "val a = 0b10\n", "val a = x0x\n", "val a = \"0x\"\n", "val a = 0\nval x = 1\n", "val a = 10x\n"]);
+}
+
 /// "A dotted type after `as` before a `<`", which the token loop keeps (decision 0586): after a
 /// token, over a gap, over a token's bytes after its first (`..<`), and never from an `as` in a
 /// region or across one.

@@ -645,7 +645,7 @@ struct Gen<'a> {
     region_checks: Vec<Vec<RegionCheck>>,
     /// The escapes over the bytes outside every region token, tested over each token of code's
     /// bytes: each its reason and its mask there.
-    code_checks: Vec<(String, String)>,
+    code_checks: Vec<(String, String, Expr)>,
     /// Each class's bytes.
     class_bytes: HashMap<String, [bool; 256]>,
     /// The regions (`regions H { … }`) and the name of their hidden bytes.
@@ -2253,6 +2253,17 @@ impl Gen<'_> {
 
     /// The bytes `e` can hold at, `d` bytes on from where it holds (`d` < 0: before): the
     /// bytes of each way it may hold (its `Cubes`) there, together. Every byte where it says nothing.
+    /// Whether `e` may hold at a byte, given the bytes about it (`ctx`): some way it holds
+    /// (`cubes`) needs only bytes `ctx` allows at each offset.
+    fn may_hold(&self, e: &Expr, ctx: &Ctx) -> bool {
+        self.cubes(e, &mut HashMap::new()).iter().any(|c| {
+            c.iter().all(|(&o, b)| {
+                let a = ctx.at(o);
+                (0..256).any(|i| b[i] && a[i])
+            })
+        })
+    }
+
     fn bytes_at(&self, e: &Expr, d: i64, memo: &mut ByteMemo) -> [bool; 256] {
         let mut v = [false; 256];
         for c in self.cubes(e, memo) {
@@ -2294,10 +2305,25 @@ impl Gen<'_> {
                 memo.insert(n.clone(), r.clone());
                 r
             }
-            // A class's complement, at its own byte; `~~a`, `a`'s; else nothing known.
+            // A class's complement, at its own byte, or shifted at the byte it reads (where the
+            // class's bytes are exact); `~~a`, `a`'s; else nothing known.
             Expr::Not(a) => match &**a {
                 Expr::Name(n) if self.class_bytes.contains_key(n) => one(0, self.class_bytes[n].map(|b| !b)),
                 Expr::Not(b) => self.cubes(b, memo),
+                Expr::Call(f, args) if f == "prev" || f == "next" => {
+                    let k = match args.get(1) {
+                        None => 1,
+                        Some(Arg::N(k)) => *k as i64,
+                        _ => return all(),
+                    };
+                    match args.first() {
+                        Some(Arg::E(x)) => match self.exact_bytes(x) {
+                            Some(b) => one(if f == "next" { k } else { -k }, b.map(|t| !t)),
+                            None => all(),
+                        },
+                        _ => all(),
+                    }
+                }
                 _ => all(),
             },
             // A fill holds at its start, or at a byte its stop is not at.
@@ -2884,6 +2910,7 @@ impl Gen<'_> {
         }
         let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
         let mut out = Vec::new();
+        let mut on_tokens = Vec::new();
         for t in flat {
             let mut cs = vec![t];
             let mut conj = Vec::new();
@@ -2913,11 +2940,33 @@ impl Gen<'_> {
                 }
             }
             let Some(x0) = self.in_region(x, None, 0).filter(|v| !self.regional(v)) else { return Ok(false) };
+            let mut y = Expr::Not(Box::new(Expr::Empty));
+            for r in &rest {
+                y = Expr::And(Box::new(y), Box::new(r.clone()));
+            }
+            on_tokens.push(Expr::And(Box::new(x0.clone()), Box::new(Expr::Call("next".to_owned(), vec![Arg::E(simplify(y)), Arg::N(j as _)]))));
             let mut t = Expr::Call("prev".to_owned(), vec![Arg::E(x0), Arg::N(j as _)]);
             for r in rest {
                 t = Expr::And(Box::new(t), Box::new(r));
             }
             out.push((j, simplify(t)));
+        }
+        // Where no `X₀` is a skipped byte, each holds at a byte of a token of code: tested over
+        // each such token's bytes, `X₀ & next(Y, j)`, as the lean lexer reads the token.
+        let skipped = self.skipped;
+        if on_tokens.iter().all(|t| {
+            let Expr::And(x0, _) = t else { return false };
+            let b = self.bytes_at(x0, 0, &mut HashMap::new());
+            !(0..256).any(|i| b[i] && skipped[i])
+        }) {
+            let mut v = Expr::Empty;
+            for t in on_tokens {
+                v = if matches!(v, Expr::Empty) { t } else { Expr::Or(Box::new(v), Box::new(t)) };
+            }
+            let v = simplify(v);
+            let name = self.val(&v)?;
+            self.code_checks.push((why.to_owned(), name, v));
+            return Ok(true);
         }
         let mut code = Vec::new();
         for (j, t) in out {
@@ -3050,8 +3099,8 @@ impl Gen<'_> {
             self.region_checks[k].push(RegionCheck { why: why.to_owned(), at: v[0].clone(), body: b, closer: v[1].clone() });
         }
         if let Some(v) = outside {
-            let v = self.val(&v)?;
-            self.code_checks.push((why.to_owned(), v));
+            let name = self.val(&v)?;
+            self.code_checks.push((why.to_owned(), name, v));
         }
         Ok(true)
     }
@@ -3933,10 +3982,25 @@ impl Gen<'_> {
                     let _ = write!(hits, "            // {why}: over the token's bytes after its first.\n            if {t} {{\n                refused = true;\n                break;\n            }}\n");
                 }
             }
-            // The escapes outside the regions, over a token of code's bytes.
+            // The escapes outside the regions, over a token of code's bytes: at its first byte and
+            // over the bytes after, where each may hold among the bytes about it.
             if !region_row {
-                for (why, v) in &self.code_checks {
-                    let _ = write!(hits, "            // {why}\n            if any_in(&{v}, s, l) {{\n                refused = true;\n                break;\n            }}\n");
+                let sb = self.bytes_at(start, 0, &mut HashMap::new());
+                let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && !self.skipped[i]);
+                let tb = self.row_tail_bytes(kind, rule, last);
+                let in_token: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
+                let mut at_tail = Ctx::of(tb);
+                at_tail.0[3] = in_token;
+                for (why, v, e) in &self.code_checks {
+                    let first = self.may_hold(e, &Ctx::of(sb));
+                    let after = (0..256).any(|i| tb[i]) && self.may_hold(e, &at_tail);
+                    let test = match (first, after) {
+                        (false, false) => continue,
+                        (true, false) => format!("bit(&{v}, s)"),
+                        (false, true) => format!("any_in(&{v}, s + 1, l)"),
+                        (true, true) => format!("any_in(&{v}, s, l)"),
+                    };
+                    let _ = write!(hits, "            // {why}\n            if {test} {{\n                refused = true;\n                break;\n            }}\n");
                 }
             }
             for t in &token_escapes {
