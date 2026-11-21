@@ -139,7 +139,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
     // Started first: its compiles take a line of their own, so they run beside the starting checkout's.
     this.#builtAhead = this.#buildAhead(sessionId);
-    await this.#prepare(this.#options.startingCheckout, false);
+    await this.#prepare(this.#options.startingCheckout);
     await this.#lane(this.#options.startingCheckout)?.opening;
   }
 
@@ -152,7 +152,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   async prepareRules(paths: readonly string[]): Promise<void> {
     if (this.#closing) return;
     const roots = new Set(paths.flatMap(path => this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot ?? []));
-    await Promise.all([...roots].map(async root => await this.#prepare(root, false)));
+    await Promise.all([...roots].map(async root => await this.#prepare(root)));
   }
 
   /** Settles once the rules `openWorkspace` builds ahead are built, or their build ended. */
@@ -165,12 +165,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     let roots: string[];
     try {
       roots = this.#aheadRoots(sessionId);
-    } catch {
+    } catch (error) {
+      this.#notBuiltAhead(`session ${sessionId}`, error);
       return;
     }
     for (const root of roots) {
       if (this.#closing) return;
-      await this.#prepare(root, true);
+      await this.#prepare(root, this);
     }
   }
 
@@ -198,9 +199,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #aheadRepositoryOf(root: string): string | undefined {
     try {
       return this.#repositoryOf(root);
-    } catch {
+    } catch (error) {
+      this.#notBuiltAhead(root, error);
       return undefined;
     }
+  }
+
+  /**
+   * Says on stderr why the rules of `where` were not built ahead, so a first edit there that compiles them can be
+   * traced. Nothing once the session closes, which lets go of its rules still waiting (`interrupt`).
+   */
+  #notBuiltAhead(where: string, error: unknown): void {
+    if (this.#closing) return;
+    process.stderr.write(`rerail: rules not built ahead for ${where}: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
   /** The repository `root` is a checkout of, or `root` itself while it is not recorded. */
@@ -209,15 +220,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `root`'s catalog built off the thread, while it may run rules and has no lane; a failure is left to its lane's open.
-   * `ahead`: built for this session before any call asks, and let go of when the session closes (`interrupt`).
+   * `root`'s catalog built off the thread, while it may run rules and has no lane. `aheadFor` (this router): built for
+   * this session before any call asks, and let go of when the session closes (`interrupt`).
    */
-  async #prepare(root: string, ahead: boolean): Promise<void> {
+  async #prepare(root: string, aheadFor?: object): Promise<void> {
     try {
       if (this.#closing || this.#lanes.has(root) || !this.#mayRun(root)) return;
-      await this.#options.catalogs.prepare(root, ahead ? this : undefined);
-    } catch {
-      // The lane's open builds the catalog on the thread as before, and reports what fails there.
+      await this.#options.catalogs.prepare(root, aheadFor);
+    } catch (error) {
+      // A call's build that fails is left to its lane's open, which builds the catalog on the thread and reports it there.
+      if (aheadFor !== undefined) this.#notBuiltAhead(root, error);
     }
   }
 

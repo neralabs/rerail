@@ -101,6 +101,14 @@ async function sessionWithNested(usedRules = [needle("test:used", "USED")]) {
   return { session, used, unused, catalogs, open };
 }
 
+/** What the test's code writes to stderr from now on, kept from the terminal. */
+function stderrLines(): string[] {
+  const lines: string[] = [];
+  const write = vi.spyOn(process.stderr, "write").mockImplementation(chunk => (lines.push(String(chunk)), true));
+  cleanups.push(async () => write.mockRestore());
+  return lines;
+}
+
 describe("rules a session builds ahead", () => {
   it("are let go of when the session closes, unless one of its tool calls used them", async () => {
     const { session, used, unused, catalogs, open } = await sessionWithNested();
@@ -167,10 +175,35 @@ describe("rules a session builds ahead", () => {
       if (root === gone) throw new Error("its record cannot be read");
       return checkout(root);
     });
+    const written = stderrLines();
     const auditor = open();
 
     await auditor.openWorkspace("one-unreadable");
     await auditor.rulesBuiltAhead();
     expect([catalogs.holdsCatalog(used), catalogs.holdsCatalog(unused)]).toEqual([true, true]);
+    expect(written).toContain(`rerail: rules not built ahead for ${gone}: its record cannot be read\n`);
+  });
+
+  it("say on stderr why when the session's checkouts cannot be read, or a build of one fails", async () => {
+    const { used, catalogs, open } = await sessionWithNested();
+    const written = stderrLines();
+    const editedBy = vi.spyOn(catalogs, "checkoutsEditedBy").mockImplementation(() => {
+      throw new Error("database is locked");
+    });
+    const unreadable = open();
+    await unreadable.openWorkspace("unreadable");
+    await unreadable.rulesBuiltAhead();
+    expect(written).toContain("rerail: rules not built ahead for session unreadable: database is locked\n");
+
+    editedBy.mockReturnValue([used]);
+    const prepare = catalogs.prepare.bind(catalogs);
+    vi.spyOn(catalogs, "prepare").mockImplementation(async (root, aheadFor) => {
+      if (root === used && aheadFor !== undefined) throw new Error("its rules cannot be read");
+      await prepare(root, aheadFor);
+    });
+    const failing = open();
+    await failing.openWorkspace("failing");
+    await failing.rulesBuiltAhead();
+    expect(written).toContain(`rerail: rules not built ahead for ${used}: its rules cannot be read\n`);
   });
 });
