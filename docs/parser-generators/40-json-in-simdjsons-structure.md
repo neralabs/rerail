@@ -593,6 +593,18 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 44, done: a string's place its argument, a dispatch's value named (decision 0526)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A string's place | `self.string(sink, v, field)`: an argument | `s.part_at`, set by the `"` arm, read by `string` | `s.string(s.start + 1)?`, `fn string(&mut self, mut at: u32)`; no field |
+| Where a dispatch goes on to | `Label::ObjectBegin`, … | `d = 3;`, `3 => {` | `d = L::Close41;`, `L::Close41 => {`: one enum, each named for its place |
+
+Left, set beside the lean parser's `walk` (0526, "Left"): three dispatch loops and arms that only pass a value on
+where it has one `match label`; names of places, not of the grammar's meaning; the token's state in `S`'s fields
+where it keeps locals; `token_all`'s clamp and end test per token where `take!()` is one load; a writer call per node
+that can fail; empty containers through the general path; the end tested at each token.
+
 ## Step 43, done: a token's end made only where a word reads it (decision 0521)
 
 | | the lean parser | before | now |

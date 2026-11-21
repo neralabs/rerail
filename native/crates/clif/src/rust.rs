@@ -453,8 +453,20 @@ impl Shape {
     /// As `tree`, each label named by `name` (its node, whether a loop's): a loop's and a merge's of one node differ,
     /// and so do two nodes' (each name its node's, a copy's its own: `copy_of`).
     pub fn tree_named(&self, emit: Emit<'_>, x: usize, name: Names<'_>) -> Result<String, String> {
-        let within = self.within(emit, x, &self.merges[x], name)?;
+        self.tree_labelled(emit, x, name, &|_, k| k.to_string())
+    }
+
+    /// As `tree_named`, each dispatch's value named by `label` (the dispatch's node, and the place of the entry it
+    /// goes on to): `d = {label}` at an edge into the loop, `{label} =>` its arm, as the lean parser's named
+    /// `Label`s. `tree_named`'s are the places, numbers.
+    pub fn tree_labelled(&self, emit: Emit<'_>, x: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
+        let within = self.within(emit, x, &self.merges[x], name, label)?;
         Ok(if self.header[x] { format!("'{}: loop {{\n{within}}}\n", name(x, true)) } else { within })
+    }
+
+    /// The node a dispatch's `k`th entry is: what its label names.
+    pub fn entry_of(&self, dispatch: usize, k: usize) -> usize {
+        self.succ[dispatch][k]
     }
 
     /// The graph's node that node `x` is (a copy of), `None` for a dispatch.
@@ -468,25 +480,25 @@ impl Shape {
     }
 
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
-    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize, name: Names<'_>) -> Result<String, String> {
+    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
             format!("continue '{};", name(to, true))
         } else if self.merge[to] {
             format!("break '{};", name(to, false))
         } else {
-            self.tree_named(emit, to, name)?
+            self.tree_labelled(emit, to, name, label)?
         };
         Ok(match self.label.get(&(x, k)) {
-            Some(j) => format!("d = {j}; {jump}"),
+            Some(&j) => format!("d = {}; {jump}", label(to, j)),
             None => jump,
         })
     }
 
-    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize], name: Names<'_>) -> Result<String, String> {
+    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize], name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         if let Some((&y, rest)) = ys.split_first() {
-            let inner = self.within(emit, x, rest, name)?;
-            let after = self.tree_named(emit, y, name)?;
+            let inner = self.within(emit, x, rest, name, label)?;
+            let after = self.tree_labelled(emit, y, name, label)?;
             return Ok(format!("'{}: {{\n{inner}}}\n{after}", name(y, false)));
         }
         let Some(b) = self.block[x] else {
@@ -494,22 +506,26 @@ impl Shape {
             // Only the arms an edge labels (`thread` leaves some none).
             for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
                 // An arm of one line on its line, a longer one's lines within it.
-                let arm = self.transfer(emit, x, k, name)?;
+                let arm = self.transfer(emit, x, k, name, label)?;
+                let l = label(x, k);
                 if arm.trim_end().contains('\n') {
-                    writeln!(s, "{k} => {{\n{}\n}}", arm.trim_end()).unwrap();
+                    writeln!(s, "{l} => {{\n{}\n}}", arm.trim_end()).unwrap();
                 } else {
-                    writeln!(s, "{k} => {{ {arm} }}").unwrap();
+                    writeln!(s, "{l} => {{ {arm} }}").unwrap();
                 }
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
             return Ok(s);
         };
-        emit(b, &|k| self.transfer(emit, x, k, name))
+        emit(b, &|k| self.transfer(emit, x, k, name, label))
     }
 }
 
 /// A label's name (`Shape::tree_named`): of its node, and whether a loop's.
 pub type Names<'a> = &'a dyn Fn(usize, bool) -> String;
+
+/// A dispatch's value (`Shape::tree_labelled`): of the dispatch's node, and its entry's place.
+pub type Labels<'a> = &'a dyn Fn(usize, usize) -> String;
 
 /// A node's own code (`Shape::tree`): the node, and its branches' code.
 pub type Emit<'a> = &'a dyn Fn(usize, &dyn Fn(usize) -> Result<String, String>) -> Result<String, String>;

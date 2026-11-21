@@ -194,7 +194,7 @@ fn flat(src: &str) -> String {
     src.lines().map(str::trim).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-/// Each dispatch's arm (`'X: loop { match d { … } }`, its top level) that is only `d = M;
+/// Each dispatch's arm (`'X: loop { match d { … } }`, its top level) that is only `d = L::M;
 /// continue 'X;`, back into its own loop, in generated Rust whose comments hold no braces.
 #[cfg(target_arch = "aarch64")]
 fn dispatch_resets(src: &str) -> Vec<String> {
@@ -206,8 +206,8 @@ fn dispatch_resets(src: &str) -> Vec<String> {
         let own = format!("continue '{b}; }}");
         let mut depth = 1i64;
         for l in &lines[m + 1..] {
-            let arm = l.split_once(" => { d = ").filter(|(a, _)| a.parse::<u32>().is_ok());
-            if depth == 1 && arm.is_some_and(|(_, rest)| rest.split_once("; ").is_some_and(|(n, tail)| n.parse::<u32>().is_ok() && tail == own)) {
+            let arm = l.split_once(" => { d = ").filter(|(a, _)| a.starts_with("L::"));
+            if depth == 1 && arm.is_some_and(|(_, rest)| rest.split_once("; ").is_some_and(|(n, tail)| n.starts_with("L::") && tail == own)) {
                 out.push(format!("'{b}: {l}"));
             }
             depth += l.matches('{').count() as i64 - l.matches('}').count() as i64;
@@ -327,10 +327,12 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(src.matches("fn number(").count() == 1 && number.lines().take(3).any(|l| l.trim().starts_with("match s.run_") && l.contains("_check_")), "the number read once, in one method");
     // Each word written once, a method each arm calls (decision 0518): one string loop (`string`, as the lean
     // parser's), one atom test (`atom`), called from each place a value is read.
-    for m in ["fn string(&mut self) -> R {", "fn atom(&self, st: u32) -> u32 {"] {
+    // The string is given the opener's place, as the lean parser's `string(v)`: no field the opener's arm sets.
+    for m in ["fn string(&mut self, mut at: u32) -> R {", "fn atom(&self, st: u32) -> u32 {"] {
         assert_eq!(src.matches(m).count(), 1, "one method: {m}");
     }
-    assert!(src.matches("s.string()?;").count() >= 3 && src.matches("s.atom(st)").count() >= 2, "the methods called from each place");
+    assert!(src.matches("s.string(s.start + 1)?;").count() >= 3 && src.matches("s.atom(st)").count() >= 2, "the methods called from each place");
+    assert!(!src.contains("part_at"), "the place a string's next part is at is the method's own");
     assert_eq!(src.matches("s.part_stop(").count(), 1, "one string loop");
     // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
     // place a loop was entered at (the array's first value goes to the one value switch), and a
@@ -379,6 +381,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let made = src.matches("s.open(").count() + src.matches("s.leaf::<").count();
     assert!(!src.contains("self.commit(") && src.matches("s.code_now(").count() == made, "each node's code as it is made");
     // No dispatch's arm only sets `d` again for its own loop (`Shape::threaded`).
+    // The dispatches' values are named, as the lean parser's `Label`s: each the place it goes on to.
+    let numbered: Vec<&str> = src.lines().map(str::trim).filter(|l| l.split(['{', ';']).any(|st| st.trim().strip_prefix("d = ").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))).collect();
+    assert!(numbered.is_empty() && src.contains("enum L {") && src.contains("match d {"), "a dispatch's value a number: {numbered:?}");
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
     // No room check a token: the harness sizes the tape from the input once, as simdjson's.
@@ -426,6 +431,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
     // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
     let flat16 = flat(&src16);
+    assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32) -> R {"), "a direct run's string is given the opener's place");
     for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
         let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {byte}");
