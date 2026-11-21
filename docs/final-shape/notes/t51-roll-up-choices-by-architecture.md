@@ -313,6 +313,63 @@ is the divergence the user asks to keep small.
   every platform. Run it on a Windows host too.
 - The next main merge's conflicts in these files are the measure: there should be none past ours' bodies.
 
+**Done** (the main thread: e7dc15faf5; the decompositions: this item's commit).
+
+- The main thread. `rerail_context::MainThread`, the machine's `OnceLock<ThreadId>`, is set in `Machine::here`.
+  `is_main_thread` is true on the run's machine's main thread on every platform. libc's `pthread_main_np` and
+  `gettid` are gone, and so is the crate's libc dependency. `the_machines_main_thread_sleeps_on_its_bell` passed on
+  Linux and on win1, and rerail-accel passed 88 of 88.
+- `block_program.rs`. `run_batch` is main's sequence: `check_supported`, `BatchForms::new`, the slabs, then
+  `FileTable::new` and `dispatch`. `dispatch` calls `BatchBlocks::new` (`lanes_and_states`, `sinks_and_tickets`),
+  `executor_pipeline` (`interpreter_blocks`, `InterpreterTables::new`, `program_row`, `push_steps`,
+  `push_outputs`), `bindings`, `launch_until_done` and `read_back`. `fit` and `FileRow::fitted` are main's too.
+  Ours' bodies are kept:
+  - `check_supported` is `missing_form` and `ready()`, not `METAL_DEVICE`;
+  - the kernel is UKL, `lane::kernel` / `lane::kernel_fixed`;
+  - `bindings` binds by name (`Pass::buffers`), not by index;
+  - the repeated-launch count is the run's (`with_local::<RepeatedLaunches>`).
+
+  `BatchBlocks` declares its blocks in reverse lease order, so they go back to the pool in the order the old locals
+  did. Main's `bytes_of`, `command_error`, `objc_msg`, `sel_register` and `batch_helpers` are Metal's Objective-C
+  calls, which UKL replaced (0440). They stay gone.
+- `runtime.rs`. `BufferReservation::acquire` calls `reserve` and `trace_large`, as main's does. `reserve` keeps
+  ours' one account (Q203): the bytes bound to admissions (`bound_bytes`), and a draw from this thread's admission
+  (`draw_reserved`). Main's counts the leases alone.
+
+  `count_driver_refusal` is main's profile of a driver refusal: `capacity.metal_pool_driver`, the driver's,
+  pool's and accelerator's MB at the refusal. Ours had lost it. It is back at ours' one refusal site,
+  `HostMapped::over`. Main's two call sites were `MappedBuffer`'s, which ours removed.
+
+  Main's other names here are `MappedBuffer`, the private uploads, Metal pipelines and `metal_execution_guard`.
+  Ours replaced them with `HostMapped`, the pool's blocks, the kernel store (0395) and `evaluation_scope`, and they
+  stay gone.
+- `metal_program_backend.rs`. Ours' body is in `execute_packed_once`, run by 0334's `restarting`. It is split under
+  main's names:
+  - `pack_batch`, `print_batch_error`, `assign_batch_workspace`, `lease_workspace`, `execute_on_device`;
+  - `upload_batch`, `resident_doc_table`, `upload_documents`, `copy_scheduler_state`, `print_workspace_profile`;
+  - `dispatch_batch`, `collect_results`, and `MetalWorkspace::count_buffer_sizes`.
+
+  Ours' differences are kept:
+  - `assign_batch_workspace` takes the lanes;
+  - `lease_workspace` holds 0334 §9's halving of the lanes on a refused workspace, which main does not have;
+  - `resident_doc_table` is `DocTable::new` (the slabs and the 16z cache), not main's `one_block`;
+  - `dispatch_batch` is a `lane::Command` that binds by name and uses the other slabs and the cache.
+
+  Main's `device_and_queue`, `pipeline` and `untouched_path_buffers` / `untouched_result_buffers` /
+  `untouched_results` have no counterpart: ours has no queue (`lane::device`) and zeroes `HostMapped` blocks.
+- Fixed on the way: under test builds, `DeviceState`'s `pool` and `peak` were dead on macOS, because a test's
+  ledgers are `test_pool`'s. They now carry their readers' cfg. The relocation tests' `FAR_*` constants are now
+  `#[cfg(test)]`, as their only reader is.
+- Tests (the M3, `RERAIL_GPU=cpu RERAIL_DEVICE=cpu`, no Metal):
+  - clippy over rerail-metal, rerail-engine and rerail-compiler, all targets, is clean;
+  - rerail-metal: 25 of 25;
+  - the engine's packed and block-program tests: 182 of 182;
+  - `extract_equals_reference_on_every_executor` and `lookback_fallback_equals_reference` (`run_batch`, both
+    executors, against the reference): 2 of 2.
+- `a_run_on_two_threads_ends` takes 20 s, against about 1 s on main. The time is the library's cold phase 0 under
+  `RERAIL_TAPE_CACHE=off`: 2.45 s with a warm store. Starting from the template copy still took 16 s, so that is
+  not the cause.
+
 ## 7. Roll-up 34: the radix sort's rank groups and virtual threads
 
 These are two axes, not two mechanisms:
