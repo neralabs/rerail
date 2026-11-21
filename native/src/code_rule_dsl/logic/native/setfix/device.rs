@@ -2816,14 +2816,14 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 return Err(format!("a recursive head of {} rows past its block's room", had + n));
             }
             // Bound after the room was made in the block, so its buffer reaches it.
-            let dst = mj::DevRel::in_block(&part.in_block((had + n) as u32), k).map_err(|e| format!("{e:?}: a recursive head in its block"))?;
+            let placed = part.in_block((had + n) as u32);
+            let dst = mj::DevRel::in_block(&placed, k).map_err(|e| format!("{e:?}: a recursive head in its block"))?;
             batch.place_rows(mj::Rows::Table(&rows), n, None, &no_counts, &ident, dst, had).map_err(|e| format!("{e:?}"))?;
             grown.push((h, n));
-            let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
-            // The round's new rows a second time, as its delta: the head's rows `had..` (0353 step 6, "a round's new
-            // rows are the relation's delta range"), counted for that step.
-            crate::code_rule_dsl::prof::count("device.delta written again (a set head's new rows), bytes", 8 * k * n);
-            batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
+            // Its delta: the head's rows `had..` the round just placed, read where they lie by their ids in it (0353
+            // step 6, "a round's new rows are the relation's delta range"); its indexes go in the head's block, told
+            // from the head's own by their rows, and forgotten with them at the next round that grows it (above).
+            let delta = mj::DevRel::in_block_from(&placed, k, had, n).map_err(|e| format!("{e:?}: a recursive head's delta in its block"))?;
             own.delta.insert(h, Rc::new(delta));
             rows_held.push(rows);
         }

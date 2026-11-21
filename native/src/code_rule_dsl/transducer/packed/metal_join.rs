@@ -259,7 +259,10 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) v_set: u64,
     pub(in crate::code_rule_dsl) v_has: u32,
     pub(in crate::code_rule_dsl) v_nset: u32,
-    pub(in crate::code_rule_dsl) has_pad: [u32; 2],
+    /// The probed relation's first row (`DevRel::from`): a stage reads its rows `r_from..r_from + nr`, by their ids in
+    /// it (a fixpoint's delta, its head's rows past those it held: 0353 step 6). 0 for every row.
+    pub(in crate::code_rule_dsl) r_from: u32,
+    pub(in crate::code_rule_dsl) has_pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>().is_multiple_of(16));
@@ -424,6 +427,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// Its descriptor's arity and base rows when it was made (Q265): a descriptor found otherwise later was
     /// overwritten, not misread.
     made: (u32, u32),
+    /// Its first row: it is its relation's rows `from..from + rows`, read by their ids there (`Stage::r_from`): a
+    /// fixpoint's delta, its head's rows past those it held, read in place (0353 step 6). 0 for every row.
+    pub(in crate::code_rule_dsl) from: u32,
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
@@ -460,7 +466,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -547,7 +553,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -563,7 +569,18 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None }.noted())
+    }
+
+    /// Rows `from..from + rows` of `b`'s relation, of `cols` columns, read where they lie (`in_block`): a fixpoint's
+    /// delta, the rows its head took this round, past those it held (0353 step 6). Its readers read them by their ids
+    /// in the head; an index of it is of them alone, and is told from the head's by its rows.
+    pub(in crate::code_rule_dsl) fn in_block_from(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize, from: usize, rows: usize) -> Result<DevRel, Error> {
+        assert!(from + rows <= b.rows as usize, "rows {from}..{} of a relation of {}", from + rows, b.rows);
+        let mut d = DevRel::in_block(b, cols)?;
+        d.rows = rows;
+        d.from = from as u32;
+        Ok(d)
     }
 
     /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
@@ -724,7 +741,9 @@ struct CopyParams {
     dst_stride: u32,
     dst_off: u32,
     count_slot: u32,
-    pad: [u32; 2],
+    /// A source relation's first row (`DevRel::from`): its row `t` is its id `src_from + t`.
+    src_from: u32,
+    pad: u32,
     src_at: u64,
     dst_rows_at: u64,
     /// A source view read in place (`Stage::v_dir`, `r_view`; 0: none).
@@ -747,9 +766,12 @@ struct IxParams {
     cols: [u32; 8],
     dir: u64,
     kind: u64,
+    /// The relation's first row (`DevRel::from`): the index is of its rows `from..from + n`, by their ids.
+    from: u32,
+    pad: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<IxParams>() == 72);
+const _: () = assert!(std::mem::size_of::<IxParams>() == 80);
 
 impl IxParams {
     fn bytes(&self) -> &[u8] {
@@ -822,6 +844,7 @@ pub(in crate::code_rule_dsl) struct Screen {
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
+    stage.r_from = rel.from;
     stage.r_at = rel.at;
     stage.r_dead = rel.dead;
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
@@ -1386,7 +1409,7 @@ impl Batch {
             let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
             let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
+            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
             for (k, &c) in cols.iter().enumerate() {
                 ix.cols[k] = c as u32;
             }
@@ -1407,7 +1430,7 @@ impl Batch {
                     return Err(e.into());
                 }
             };
-            pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32],
+            pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32, rel.from],
                      &[room.offs as i64, room.rows as i64], groups(n));
         }
         let index = room.index as u32;
@@ -1696,6 +1719,13 @@ impl Batch {
         let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
         let (s, src_rows, src_at, _) = src.of();
         let (d, dst_rows, _, dst_rows_at) = dst.of();
+        let src_from = match src {
+            Rows::Rel(r) => r.from,
+            Rows::Table(_) => 0,
+        };
+        if let Rows::Rel(r) = dst {
+            assert_eq!(r.from, 0, "a copy into a relation's rows from its first");
+        }
         if let Rows::Rel(r) = dst {
             self.writes(r, "rows copied");
         }
@@ -1703,7 +1733,7 @@ impl Batch {
         assert!(dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
         let mut p = CopyParams {
             konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_rows as u32, dst_stride: dst_rows as u32,
-            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), pad: [0; 2], src_at, dst_rows_at, v_dir: 0, r_view: 0, v_pad: 0,
+            dst_off: dst_off as u32, count_slot: count.map_or(NONE, |c| c.0 as u32), src_from, pad: 0, src_at, dst_rows_at, v_dir: 0, r_view: 0, v_pad: 0,
         };
         let view = match src {
             Rows::Rel(r) => r.view.as_ref().map(|_| r),
