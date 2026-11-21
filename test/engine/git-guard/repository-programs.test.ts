@@ -476,7 +476,7 @@ describe("Rerail's listings of changed files answer as the person's Git does", (
  * A `git` in `root/bin` that answers as Git `version` does where Rerail's guard needs a newer one: it names that
  * version, after running the shell commands `beforeVersion`, ignores the command-line config of `GIT_CONFIG_COUNT`
  * (Git 2.31), and before Git 2.26 refuses `--show-scope` as an unknown option. Every other call runs the Git this test
- * found first, as it is.
+ * found first, as it is. Each start writes its arguments as a line to `root/bin/ran` ({@link standInDiffs}).
  */
 async function olderGit(root: string, version: string, beforeVersion = ""): Promise<string> {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
@@ -487,6 +487,7 @@ async function olderGit(root: string, version: string, beforeVersion = ""): Prom
   const ignoresCount = "for name in $(env | sed -n 's/^\\(GIT_CONFIG_\\(COUNT\\|KEY_[0-9]*\\|VALUE_[0-9]*\\)\\)=.*/\\1/p'); do unset \"$name\"; done";
   const program = [
     "#!/bin/sh",
+    `printf '%s\\n' "$*" >> '${join(bin, "ran")}'`,
     "for argument in \"$@\"; do",
     `  case "$argument" in version|--version) ${beforeVersion} echo "git version ${version}"; exit 0;; ${refusesScope} esac`,
     "done",
@@ -496,6 +497,11 @@ async function olderGit(root: string, version: string, beforeVersion = ""): Prom
   await writeFile(join(bin, "git"), `${program}\n`);
   chmodSync(join(bin, "git"), 0o755);
   return bin;
+}
+
+/** How many `git diff --name-only` the stand-in Git in `root/bin` ran ({@link olderGit}). */
+function standInDiffs(root: string): number {
+  return readFileSync(join(root, "bin", "ran"), "utf8").split("\n").filter(line => line.includes(" diff --name-only ")).length;
 }
 
 /** A checkout whose `notes.txt` was rewritten at the same size under a driver its own config names. */
@@ -519,7 +525,7 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     const root = await folder();
     vi.stubEnv("PATH", `${await olderGit(root, version)}${delimiter}${process.env.PATH ?? ""}`);
     vi.resetModules();
-    const { gitModifiedOrUntrackedPaths, runGit } = await import("../../../src/engine/git.js");
+    const { gitModifiedOrUntrackedPaths, runGitWithoutBlocking } = await import("../../../src/engine/git.js");
     const { work } = await checkoutWithDriver(root);
     const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const git = (...args: string[]) => execFileSync("git", ["-c", "core.fsmonitor=false", ...args], { cwd: work, encoding: "utf8" });
@@ -527,6 +533,7 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
     const walk = await gitModifiedOrUntrackedPaths(work);
 
+    expect(standInDiffs(root)).toBe(2);
     expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(...AUDIT_DIFF)], [0, git(...SCAN_DIFF)]]);
     expect(walk).toEqual(git("ls-files", "-z", "--modified", "--others", "--exclude-standard").split("\0").filter(path => path !== ""));
     const notice = `Git ${version} is older than 2.31, so Rerail's Git calls run the filter programs a repository's own config names, as that Git runs them. Update Git to 2.31 or later.`;
@@ -537,12 +544,12 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     const root = await folder();
     vi.stubEnv("PATH", `${await olderGit(root, "2.31.0")}${delimiter}${process.env.PATH ?? ""}`);
     vi.resetModules();
-    const { runGit } = await import("../../../src/engine/git.js");
+    const { runGitWithoutBlocking } = await import("../../../src/engine/git.js");
     const { work, marker } = await checkoutWithDriver(root);
     const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     expect((await runGitWithoutBlocking(work, AUDIT_DIFF)).stdout).toBe("notes.txt\0");
-    expect(existsSync(marker)).toBe(false);
+    expect([standInDiffs(root), existsSync(marker)]).toEqual([1, false]);
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toEqual([]);
   }, 60_000);
 
