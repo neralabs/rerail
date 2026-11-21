@@ -44,6 +44,10 @@ pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
+/// What tier 2's stream program is, apart from any lowering of it.
+pub mod stream_analysis;
+/// Tier 1's record tables, as the token loop reads them.
+pub mod record_tables;
 pub mod stream_ir;
 /// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
 pub mod token_local;

@@ -25,13 +25,7 @@ pub const AT_END: i32 = 8;
 
 /// No code for a key yet (`id_of`).
 pub const NO_CODE: i64 = 0xffff;
-/// The id table's slots: a key's kind (10 bits) and field (6), then a bit for each supertype
-/// class the program names (`classes`, at most `MAX_CLASSES`).
-pub const fn id_slots(classes: usize) -> usize {
-    1 << (16 + classes)
-}
-/// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
-pub const MAX_CLASSES: usize = 4;
+pub use crate::stream_analysis::{MAX_CLASSES, id_slots};
 /// Bytes past each column's cells that a word copy may read (`finish`).
 pub const SLACK: usize = 16;
 
