@@ -770,6 +770,8 @@ export class SessionNotices {
   #seen: WorktreeRead | undefined;
   /** Whether the next pass reads the whole folder. */
   #whole = true;
+  /** What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass began (`begin`). */
+  #ignores: string | undefined;
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
   /**
@@ -815,21 +817,25 @@ export class SessionNotices {
   }
 
   /**
-   * What the pass that begins now reads: the whole folder when `#readsWhole` says so or the paths to read reach the bound
-   * (`#noticed`), else the paths notices named since the last pass and the linked files. A whole pass watches the
-   * folder again first when its watch is down, so a write made while it runs is a notice. Until `ended`, the next pass
-   * reads whole: one that stops midway leaves unread what it took.
+   * What the pass that begins now reads: the whole folder when `#readsWhole` says so, when `ignores` (the text of the
+   * files that tell Git what to ignore beyond the folder's `.gitignore` files: `info/exclude`, `core.excludesFile` and
+   * the configuration naming it, `WorktreeLook.ignores`) is not what it was as the last whole pass began, since no
+   * notice in the folder tells of a change to those, or when the paths to read reach the bound (`#noticed`); else the
+   * paths notices named since the last pass and the linked files. A whole pass watches the folder again first when its
+   * watch is down, so a write made while it runs is a notice. Until `ended`, the next pass reads whole: one that stops
+   * midway leaves unread what it took.
    */
-  begin(whole: boolean): SessionReads {
+  begin(whole: boolean, ignores?: string): SessionReads {
     this.#collect();
     const began = this.#now();
-    const paths = this.#readsWhole(whole, began) ? undefined : this.#noticed();
+    const paths = this.#readsWhole(whole || ignores !== this.#ignores, began) ? undefined : this.#noticed();
     this.#began = began;
     this.#paths = new Set();
     this.#whole = true;
     // A pass of noticed paths reads fewer paths than the bound, so it notes them all.
     const linked = new LinkedFiles(this.#looks);
     if (paths !== undefined) return { whole: false, paths, linked };
+    this.#ignores = ignores;
     this.#seen = undefined;
     this.#open();
     return { whole: true, linked };

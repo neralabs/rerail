@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { type Dir, writeFileSync } from "node:fs";
 import { link, mkdir, mkdtemp, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
@@ -638,6 +639,44 @@ describe("a shell command's result reads the session folder by its change notice
       await bridge.close();
       clock.mockRestore();
     }
+  });
+
+  // Git reads these from outside what the folder's notices weigh: `.git` is left out, and `core.excludesFile` lies
+  // elsewhere. The other worktrees' walk reads each worktree once they change (`WorktreeLooks`).
+  it.each([
+    ["the repository's info/exclude stops ignoring a folder", async (root: string) => {
+      await writeFile(join(root, ".git", "info", "exclude"), "gen/\n");
+      return async () => await writeFile(join(root, ".git", "info", "exclude"), "");
+    }],
+    ["its configuration names another excludes file", async (root: string) => {
+      const elsewhere = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-excludes-")));
+      folders.push(elsewhere);
+      await writeFile(join(elsewhere, "ignore"), "gen/\n");
+      execFileSync("git", ["-C", root, "config", "core.excludesFile", join(elsewhere, "ignore")]);
+      return async () => {
+        execFileSync("git", ["-C", root, "config", "core.excludesFile", join(elsewhere, "none")]);
+      };
+    }],
+  ] as const)("walks the whole folder at a result after a command changed what Git ignores outside the folder's .gitignore files: %s", async (_case, ignoring) => {
+    const root = await workspace();
+    const git = (...args: string[]): void => void execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd: root, stdio: "ignore" });
+    git("init", "--quiet");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "seed");
+    await mkdir(join(root, "gen"));
+    const stopIgnoring = await ignoring(root);
+    const { bridge, audits } = await opened(root, platformWatch());
+    // In a repository too, a result reads only the paths notices named while what Git ignores stays as it was.
+    await command(bridge, "shell-1", async () => await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(a)\n"));
+    expect(listed.folders).toEqual([]);
+    await command(bridge, "shell-2", async () => {
+      await stopIgnoring();
+      await writeFile(join(root, "gen", "bad.py"), "eval(e)\n");
+    });
+    // Before, the result read only the paths notices named, and a notice of a file under a folder Git ignored counted
+    // for nothing: the write waited for the turn's end.
+    expect(listed.folders.length).toBeGreaterThan(0);
+    expect(checked(audits)).toEqual([["src/pkg_0/m.py"], ["gen/bad.py"]]);
   });
 
   it("walks the whole folder at a result after a command changed Git's ignore rules", async () => {

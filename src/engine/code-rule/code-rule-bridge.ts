@@ -45,6 +45,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
+import { WorktreeLooks } from "./worktree-look.js";
 import { type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
@@ -985,6 +986,8 @@ interface SourceDiscovery {
   readonly toolCalls: ToolCallWindows;
   /** The session folder's change notices: which paths a pass for a command's result reads, when not every file. */
   readonly notices: SessionNotices;
+  /** The files that tell Git what to ignore beyond the session folder's `.gitignore` files, read at each pass. */
+  readonly ignoreFiles: WorktreeLooks;
   /**
    * Whether a shell command of the session ran while the session folder's first walk read it, or ended since it began:
    * that walk keeps what was seen before of a file the command may have been part way through writing (`stampOfRead`)
@@ -2185,6 +2188,7 @@ export class CodeRuleBridge {
         // A write no notice tells of is found by a whole walk at the first command result ten minutes after the last
         // one began; the other worktrees reread on a timer of the same length.
         notices: new SessionNotices(root, { fullWalkMs: WORKTREE_FULL_WALK_MS }),
+        ignoreFiles: new WorktreeLooks(),
         commandDuringPass: false,
       };
       this.#unwatched = new ToolCallWindows();
@@ -3147,8 +3151,9 @@ export class CodeRuleBridge {
    * last pass when they vouch for the rest (`SessionNotices`); every other pass reads the whole folder.
    */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
-    // Taken first: a write made from here on is a notice for the next pass.
-    const reads = discovery.notices.begin(readsWholeFolder(discovery, checkpoint));
+    const ignores = await discovery.ignoreFiles.ignoresOf(discovery.git, discovery.root);
+    // Taken before the walk: a write made from here on is a notice for the next pass.
+    const reads = discovery.notices.begin(readsWholeFolder(discovery, checkpoint), ignores);
     const worktrees = this.#syncWorktrees(discovery);
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
