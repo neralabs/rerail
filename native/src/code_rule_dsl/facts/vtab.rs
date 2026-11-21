@@ -77,17 +77,35 @@ pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
-    pub cache: Option<rerail_device::device::Buffer>,
+    pub cache: Option<ZCache>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+/// A batch's 16z cache (decision 0353 step 4b, `view::cache`): its bytes at `at` in a block of its own (a home of its
+/// views' directory), which the host's and the device's reads of its views share, and that block's device buffer
+/// where there is a device.
+#[derive(Clone)]
+pub struct ZCache {
+    pub block: Arc<rerail_blocks::Block>,
+    pub at: usize,
+    pub len: usize,
+    pub buffer: Option<rerail_device::device::Buffer>,
+}
+
+impl ZCache {
+    /// Its counts, as its reads left them.
+    pub fn counts(&self) -> rerail_clif::view::cache::Counts {
+        // SAFETY: the cache's bytes in the block, which this holds.
+        rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(self.block.ptr::<u8>(self.at), self.len) })
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
-        // SAFETY: the cache's shared buffer, all of it, which this view keeps.
-        self.cache.as_ref().map(|c| rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(c.contents().cast::<u8>(), c.length() as usize) }))
+        self.cache.as_ref().map(ZCache::counts)
     }
 
     /// The failures its batch's cache has counted (0 without one).

@@ -792,6 +792,27 @@ The kernels search the directory by hand too: four bisections with no memo, by r
 
 Each step ends with findings unchanged (1,629 on cold hogql), instructions measured against the step before, and
 Metal checked on the farm's Macs (the mini, then the M3, then the M1 Max, one test at a time).
+
+**Step 1, done (2026-11-21).** The directory holds no address of its own:
+- `ViewDir::at` is the directory's offset in the batch's block. An executor finds the block's start as the
+  directory's address less it (`view_block` in the kernels).
+- `rows` and `homes` are offsets in the block.
+- A row's tape and lines are a home's number and an offset in it (`ViewRow::homes`, `tape`, `lines`).
+- The homes table (`ViewHome`) is the one place a base lies. It gives each slab's, or each tape vector's, host and
+  device address, and each executor reads its own column.
+
+The 16z cache is a home too: a block of its own, which the reads of both executors share and write. Binding the
+batch's block for writing would make the host wait on every pass that reads it. The cache offset in a stored view
+(`TapeView::side`) is still the device's: the join kernels read the view where it lies, in global memory, and
+cannot set it per read. The host's reads will set their own from the same homes (step 3).
+
+`build_dir` no longer asks for a device. It refuses a batch only for a document in another block, or one with no
+tape read in place. The device's address (`ViewsInPlace::dir`) is given only when every home has a device address.
+The directory is made on its first ask. The CPU asks from step 3, so until then a CPU run makes none: cold hogql
+still gives 1,629 findings, at 88.1 B instructions against 87.1 B before. Test:
+`the_views_directory_is_the_hosts_too`. On Metal, the mini passes `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`, and the M3
+passes the first. A home's device base is `ViewHome::gpu`, since `device` is a Metal keyword.
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

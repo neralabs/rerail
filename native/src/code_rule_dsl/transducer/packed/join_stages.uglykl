@@ -59,7 +59,7 @@ typedef UKL_GLOBAL const int64_t* Longs;
 // first row in the view is at or before it: an empty one starts where the next does), then the view's read written
 // once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
 UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col) {
-    UKL_GLOBAL const ViewRow* rows = d->rows;
+    UKL_GLOBAL const ViewRow* rows = view_rows(d);
     uint32_t k = kind - 1u;
     uint32_t lo = 0u, hi = d->ndocs;
     while (hi - lo > 1u) {
@@ -69,16 +69,19 @@ UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, u
     UKL_GLOBAL const ViewRow* e = &rows[lo];
     uint32_t i = r - e->rows[k];
     UKL_GLOBAL const uint32_t* v = e->view;
+    UKL_GLOBAL const uint8_t* c = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* l = view_lines(d, e);
     switch (k) {
-        case 0u: return (int64_t)clif_view_node(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 1u: return (int64_t)clif_view_child(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 2u: return (int64_t)clif_view_field(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 3u: return (int64_t)clif_view_core(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 4u: return (int64_t)clif_view_line(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 5u: return (int64_t)clif_view_loc_line(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 6u: return (int64_t)clif_view_loc_end(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        case 7u: return (int64_t)clif_view_loc_col(d->chunk, e->entry, e->tape, v, e->lines, i, col);
-        default: return (int64_t)clif_view_loc_docof(d->chunk, e->entry, e->tape, v, e->lines, i, col);
+        case 0u: return (int64_t)clif_view_node(c, e->entry, t, v, l, i, col);
+        case 1u: return (int64_t)clif_view_child(c, e->entry, t, v, l, i, col);
+        case 2u: return (int64_t)clif_view_field(c, e->entry, t, v, l, i, col);
+        case 3u: return (int64_t)clif_view_core(c, e->entry, t, v, l, i, col);
+        case 4u: return (int64_t)clif_view_line(c, e->entry, t, v, l, i, col);
+        case 5u: return (int64_t)clif_view_loc_line(c, e->entry, t, v, l, i, col);
+        case 6u: return (int64_t)clif_view_loc_end(c, e->entry, t, v, l, i, col);
+        case 7u: return (int64_t)clif_view_loc_col(c, e->entry, t, v, l, i, col);
+        default: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, i, col);
     }
 }
 
@@ -214,7 +217,7 @@ UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const
 // the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
 // parent's children from row lo, each step the next sibling's row (`NONE` ends it).
 UKL_INLINE UKL_GLOBAL const ViewDoc* vdoc(UKL_GLOBAL const ViewDir* d, uint32_t m) {
-    return (UKL_GLOBAL const ViewDoc*)(d->chunk + d->rows[m].entry);
+    return (UKL_GLOBAL const ViewDoc*)(view_block(d) + view_rows(d)[m].entry);
 }
 
 // A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
@@ -231,12 +234,15 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
         if (vdoc(d, m)->key <= k) a = m; else b = m;
     }
     if (vdoc(d, a)->key != k) return;
-    UKL_GLOBAL const ViewRow* e = &d->rows[a];
-    uint32_t l = clif_view_number(d->chunk, e->entry, e->tape, e->view, e->lines, (uint32_t)((uint64_t)key & 0xfffffffful));
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
-    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? d->rows[a + 1u].rows[1] : s->nr; return; }
-    uint32_t c = clif_view_child_first(d->chunk, e->entry, e->tape, e->view, e->lines, l);
+    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
 }
@@ -244,14 +250,14 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
-    UKL_GLOBAL const ViewRow* rows = d->rows;
+    UKL_GLOBAL const ViewRow* rows = view_rows(d);
     uint32_t lo = 0u, hi = d->ndocs;
     while (hi - lo > 1u) {
         uint32_t m = (lo + hi) / 2u;
         if (rows[m].rows[1] <= r) lo = m; else hi = m;
     }
     UKL_GLOBAL const ViewRow* e = &rows[lo];
-    uint32_t n = clif_view_child_next(d->chunk, e->entry, e->tape, e->view, e->lines, r - e->rows[1]);
+    uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), r - e->rows[1]);
     return n == NONE ? NONE : e->rows[1] + n;
 }
 

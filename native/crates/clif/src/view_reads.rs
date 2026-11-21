@@ -63,32 +63,53 @@ const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 16 + 
 pub const PLACED_COPIED: u32 = 1;
 pub const PLACED_AT: u32 = 2;
 
-/// A document of a batch, as a kernel finds its views' rows (decision 0353 step 4d): its entry's offset in the
-/// batch's block, its tape's and its lines' GPU addresses, its tape's view (the reads' own), and its first row in
-/// each view (`VIEWS`).
+/// A document of a batch, as an executor finds its views' rows (decision 0353 step 4d, and step 3 on the CPU): its
+/// entry's offset in the batch's block, its tape's and its lines' places (a home of the directory's, `ViewHome`, and
+/// an offset in it), its tape's view (the reads' own), and its first row in each view (`VIEWS`). Nothing in it is an
+/// address: the host and the device read the same row.
+///
+/// The view's 16z cache offset (`TapeView::side`, the cache's address less the tape's) is the device's, as the
+/// kernels read the view where it lies; the host's reads take the view with their own, from the same homes
+/// (`ViewDir::cache`).
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// Device addresses: `UKL_GLOBAL const uint8_t*` in the kernels.
+    /// Offsets in their homes (`homes`: the tape's, then the lines').
     pub tape: u64,
     pub lines: u64,
+    pub homes: [u32; 2],
     pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 36 + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
 
-/// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
-/// documents' rows (their GPU address), how many.
+/// Where a home of a directory's tapes and lines lies for each executor: a slab's (or a tape's vector's) host
+/// address, and its device address (`gpu`; 0 where the device has none: no device, or the home is a vector of the
+/// host's). A row's tape is at its home's base plus its offset, the executor's base.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ViewHome {
+    pub host: u64,
+    pub gpu: u64,
+}
+const _: () = assert!(std::mem::size_of::<ViewHome>() == 16);
+
+/// A batch's documents as its views' reads find them, in the batch's block and self-relative: its own offset in the
+/// block (`at`: the block's start is the directory's address less it, whoever reads it), its documents' rows and its
+/// homes (offsets in the block), how many of each, and its 16z cache's home (its number + 1, 0 for none: a block of
+/// its own, which both executors' reads share and write).
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct ViewDir {
-    pub chunk: u64,
+    pub at: u64,
     pub ndocs: u32,
-    pub pad: u32,
+    pub nhomes: u32,
     pub rows: u64,
+    pub homes: u64,
+    pub cache: u64,
 }
-const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
+const _: () = assert!(std::mem::size_of::<ViewDir>() == 40);
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`.
@@ -154,15 +175,26 @@ pub fn ukl() -> String {
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    UKL_GLOBAL const uint8_t* tape;\n    UKL_GLOBAL const uint8_t* lines;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
-         typedef struct ViewDir {{\n    UKL_GLOBAL const uint8_t* chunk;\n    uint32_t ndocs;\n    uint32_t pad;\n    UKL_GLOBAL const ViewRow* rows;\n}} ViewDir;\n",
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
+         typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
+         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n}} ViewDir;\n",
         VIEWS.len(),
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == {}, \"ViewRow.homes\");\n", std::mem::offset_of!(ViewRow, homes));
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(sizeof(ViewHome) == {}, \"ViewHome: size\");\n", std::mem::size_of::<ViewHome>());
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
     s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == {}, \"ViewDir.cache\");\n", std::mem::offset_of!(ViewDir, cache));
+    // A directory's places as a kernel reads them: the block's start, a row, and a row's tape and lines at their
+    // homes' device bases.
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }\n";
+    s += "UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], e->lines); }\n";
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");

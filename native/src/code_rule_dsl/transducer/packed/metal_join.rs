@@ -472,7 +472,7 @@ impl DevRel {
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
-            if let Some(cache) = &v.cache {
+            if let Some(cache) = v.cache.as_ref().and_then(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
         }
@@ -1967,7 +1967,7 @@ pub mod tests {
                 }
                 room.index
             };
-            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
             if std::ptr::eq(dev, &placed) {
                 let end = dev.home.as_ref().unwrap().block.offset_of(d.rows.as_slice().as_ptr()) + 4 * n;
                 assert!(end as u64 > placed.buffer.buffer.length(), "the case: the index past the buffer its relation was bound by");
@@ -2037,7 +2037,7 @@ pub mod tests {
                 }
                 room.index
             };
-            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
         }

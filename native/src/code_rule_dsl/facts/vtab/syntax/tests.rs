@@ -2439,3 +2439,36 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     seen.sort();
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
+
+/// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
+/// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
+/// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
+/// given only where the device reads every home.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn the_views_directory_is_the_hosts_too() {
+    use rerail_clif::view_reads::{ViewDir, ViewDoc, ViewHome, ViewRow};
+    let store = ContentStore::open(&temp("views-dir-host")).unwrap();
+    let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return g(x, {k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let chunk = batch.chunk();
+    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory, device or not");
+    let block = &chunk.block;
+    // SAFETY: the directory, its rows and its homes, in the batch's block, which the batch holds.
+    let dir = unsafe { &*block.ptr::<ViewDir>(views.at) };
+    assert_eq!(dir.at as usize, views.at, "the directory's own offset");
+    assert_eq!(dir.ndocs as usize, batch.docs.len());
+    let rows = unsafe { std::slice::from_raw_parts(block.ptr::<ViewRow>(dir.rows as usize), dir.ndocs as usize) };
+    let homes = unsafe { std::slice::from_raw_parts(block.ptr::<ViewHome>(dir.homes as usize), dir.nhomes as usize) };
+    for (row, p) in rows.iter().zip(batch.docs.iter()) {
+        let entry = unsafe { &*block.ptr::<ViewDoc>(row.entry as usize) };
+        assert_eq!(entry.key, p.key, "the row's entry is its document's");
+        let (bytes, view) = p.facts.tape.as_ref().unwrap().in_place().unwrap();
+        assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key);
+        assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
+        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key);
+    }
+    let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && homes.iter().all(|h| h.gpu != 0);
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");
+}
