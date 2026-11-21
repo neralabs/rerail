@@ -748,9 +748,15 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
 
 /// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
 /// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
-/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept. The workspace is
+/// reached through a symbolic link: a unit's reads are kept under their canonical names, and the edit is named
+/// under the workspace's as given too (`Observer::changed_since`), as where the temporary directory is a link (macOS's
+/// `/var`).
 #[test]
 fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not.
+    let _switches = super::switches::reading();
     crate::install_store_functions();
     // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
     // (after the first observer, which turns it off once a process).
@@ -760,8 +766,12 @@ fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
     crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
     let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("real/sys")).unwrap();
     let ws = dir.join("ws");
-    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.join("real"), &ws).unwrap();
+    #[cfg(not(unix))]
+    let ws = dir.join("real");
     std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
     std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
     std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
@@ -867,6 +877,10 @@ unused(f) :- def(f, _), !used(f).
 /// decode one into (`front::tests::no_tree_program_comes_back`). The outputs are a run's with an empty store.
 #[test]
 fn a_maintained_run_decodes_and_copies_no_tree() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("no-trees");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1586,6 +1600,10 @@ fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce()
 /// wrote ("a write gathered for the store in a warm run").
 #[test]
 fn the_run_after_a_cold_one_writes_nothing() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
@@ -1679,6 +1697,10 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
 /// (e70f79dab). The runs are processes of their own, as `the_run_after_a_cold_one_writes_nothing`'s are.
 #[test]
 fn a_rule_edit_over_known_files_writes_their_entries_with_no_sql_in_the_waves() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path();
     let src = base.join("src");
@@ -1745,6 +1767,10 @@ fn one_corpus_run_for_a_parent() {
 /// ran another plan and recorded two manifests of its own).
 #[test]
 fn a_second_run_in_one_process_records_the_first_runs_manifest() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let temp = tempfile::tempdir().unwrap();
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
     let base = kept.as_deref().unwrap_or(temp.path());

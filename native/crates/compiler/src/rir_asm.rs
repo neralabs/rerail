@@ -731,6 +731,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 program.totals.push(line.number("%")?);
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
+            } else if first == "newlines" {
+                program.newlines = Some(line.number("%")?);
             } else if first == "records" {
                 let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
                 let kinds = line.word()?;

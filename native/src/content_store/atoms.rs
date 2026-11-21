@@ -393,10 +393,8 @@ pub const TEXT_MOST: usize = 4096;
 // and the most they keep.
 const _: () = assert!(rerail_clif::view::cache::LEN == 12 && rerail_clif::view::cache::PAYLOAD == 16 && TEXT_MOST == 4096);
 
-/// A verdict (`rerail_clif::verdict_reads`): none yet, the symbol fails, it passes.
-pub const UNKNOWN: u32 = 0;
-pub const FAILS: u32 = 1;
-pub const PASSES: u32 = 2;
+/// A verdict (`rerail_clif::view::cache`'s, the reads'): none yet, the symbol fails, it passes.
+pub use rerail_clif::view::cache::{FAILS, PASSES, UNKNOWN};
 
 // SAFETY: the cache's words are read and written by its reads' atomics alone.
 unsafe impl Send for Kept {}
@@ -428,7 +426,7 @@ impl Kept {
     /// Test `test`'s verdict for `sym`: `PASSES`, `FAILS` or `UNKNOWN`.
     pub fn get(&self, test: u32, sym: u32) -> u32 {
         // SAFETY: a cache `new` made, in the block it keeps.
-        unsafe { rerail_blocks::generated_reads::verdict_get(self.cache(), test, sym) }
+        unsafe { rerail_clif::view::cache::verdict_get(self.cache(), test, sym) }
     }
 
     /// The text functions `fns` (`text::automata::text_functions`) made of `sym`, if kept.
@@ -436,7 +434,7 @@ impl Kept {
         use rerail_clif::view::cache::{LEN, PAYLOAD};
         // SAFETY: as `get`'s; an entry found is complete, and its bytes are read before this returns.
         unsafe {
-            let r = rerail_blocks::generated_reads::text_find(self.cache(), fns, sym);
+            let r = rerail_clif::view::cache::text_find(self.cache(), fns, sym);
             if r & 3 != 0 {
                 return None;
             }
@@ -455,13 +453,13 @@ impl Kept {
         }
         // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
         unsafe {
-            let r = rerail_blocks::generated_reads::text_open(self.cache(), fns, sym, text.len() as u32);
+            let r = rerail_clif::view::cache::text_open(self.cache(), fns, sym, text.len() as u32);
             if r & 3 != rerail_clif::view::cache::TAKEN as u64 {
                 return false;
             }
             let e = (r & !3) as *mut u8;
             std::ptr::copy_nonoverlapping(text.as_ptr(), e.add(PAYLOAD as usize), text.len());
-            rerail_blocks::generated_reads::cache_done(self.cache(), r);
+            rerail_clif::view::cache::done(self.cache(), r);
         }
         true
     }
@@ -489,7 +487,7 @@ impl Kept {
     /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
     pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
         // SAFETY: as `get`'s.
-        unsafe { rerail_blocks::generated_reads::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) != 0 }
+        unsafe { rerail_clif::view::cache::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) }
     }
 }
 

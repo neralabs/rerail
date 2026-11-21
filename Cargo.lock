@@ -4301,6 +4301,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",

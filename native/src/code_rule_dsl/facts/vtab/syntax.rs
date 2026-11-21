@@ -58,9 +58,6 @@ pub mod ranks;
 /// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
 mod cells;
-/// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
-#[rustfmt::skip]
-pub mod id_reads;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod device_chunk;
 pub mod view_docs;
