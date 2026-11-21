@@ -8,8 +8,38 @@ import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import type { NativeBinding } from "../../../../src/engine/native/native.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
+
+/** The engine's compiles off the thread: one of the rule `id` names starts (`started`), then waits for `released`. */
+const held = vi.hoisted(() => ({
+  id: undefined as string | undefined,
+  started: () => {},
+  released: Promise.resolve(),
+}));
+
+vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
+  const actual = await importOriginal<{ loadNativeBinding: () => NativeBinding }>();
+  let holding: NativeBinding | undefined;
+  const hold = (binding: NativeBinding): NativeBinding => {
+    const engine = binding.CodeRuleDslRuntime;
+    const runtime = {
+      pythonAstBatch: (documents: string) => engine.pythonAstBatch(documents),
+      testRr: (paths: string, filter?: string | null) => engine.testRr(paths, filter),
+      compile: (...args: Parameters<typeof engine.compile>) => engine.compile(...args),
+      compileAsync: async (...args: Parameters<typeof engine.compile>) => {
+        if ((JSON.parse(args[0]) as { id: string }).id === held.id) {
+          held.started();
+          await held.released;
+        }
+        return await engine.compileAsync!(...args);
+      },
+    };
+    return new Proxy(binding, { get: (target, key) => (key === "CodeRuleDslRuntime" ? runtime : Reflect.get(target, key)) });
+  };
+  return { ...actual, loadNativeBinding: () => (holding ??= hold(actual.loadNativeBinding())) };
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -42,10 +72,11 @@ async function repository(path: string): Promise<string> {
 const audits: AuditRecorder = { start: () => "0", finish: () => undefined, progress: () => undefined, interrupt: () => undefined };
 
 /**
- * A session folder holding two started repositories in a folder it ignores (`used`, `unused`), each running a rule of
- * its own, so a session opened there builds their rules ahead; `open` gives a session's router over the same catalogs.
+ * A session folder holding two started repositories in a folder it ignores (`used`, running `usedRules`, and `unused`),
+ * each running rules of its own, so a session opened there builds their rules ahead; `open` gives a session's router
+ * over the same catalogs.
  */
-async function sessionWithNested() {
+async function sessionWithNested(usedRules = [needle("test:used", "USED")]) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-built-ahead-")));
   cleanups.push(() => removeFolder(root));
   const databasePath = join(root, "rerail.sqlite");
@@ -54,7 +85,7 @@ async function sessionWithNested() {
   const used = await repository(join(session, ".scratch", "used"));
   const unused = await repository(join(session, ".scratch", "unused"));
   setUpTestRepository(session, { library: [needle("test:session", "SESSION")] }, databasePath);
-  setUpTestRepository(used, { library: [needle("test:used", "USED")] }, databasePath);
+  setUpTestRepository(used, { library: usedRules }, databasePath);
   setUpTestRepository(unused, { library: [needle("test:unused", "UNUSED")] }, databasePath);
   const owners = new CheckoutOwners();
   const catalogs = new CheckoutCatalogs(databasePath);
@@ -101,6 +132,30 @@ describe("rules a session builds ahead", () => {
     expect(catalogs.holdsCatalog(unused)).toBe(true);
     await second.close();
     expect(catalogs.holdsCatalog(unused)).toBe(false);
+  });
+
+  it("are built for a session that joined their build when the session that started it closes first", async () => {
+    const { used, catalogs, open } = await sessionWithNested([needle("test:joined", "JOINED"), needle("test:joined-next", "NEXT")]);
+    // `used` comes first in each session's builds ahead, so the second session joins the first one's build of it.
+    vi.spyOn(catalogs, "checkoutsEditedBy").mockReturnValue([used]);
+    const started = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    Object.assign(held, { id: "test:joined", started: started.resolve, released: released.promise });
+    cleanups.push(async () => {
+      held.id = undefined;
+    });
+    const first = open();
+    const second = open();
+    await first.openWorkspace("first");
+    // The first session's build of `used` compiles its first rule; the next one waits behind it.
+    await started.promise;
+    await second.openWorkspace("second");
+
+    const closed = first.close();
+    released.resolve();
+    await closed;
+    await second.rulesBuiltAhead();
+    expect(catalogs.holdsCatalog(used)).toBe(true);
   });
 
   it("are built for the other repositories when one checkout's record cannot be read", async () => {
