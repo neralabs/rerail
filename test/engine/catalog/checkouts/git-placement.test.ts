@@ -364,7 +364,7 @@ describe("a placement asked without blocking the caller's thread", () => {
 
     expect(await placeWithoutBlocking(folder)).toEqual(gitsAnswer(folder));
     const before = locateCalls(folder);
-    expect(worktreeRegistry(folder)?.worktrees).toEqual([join(root, "main")]);
+    expect(worktreeRegistry(folder)?.worktrees).toEqual(gitsRegistry(folder));
     expect(locateCalls(folder) - before).toBe(0);
   });
 
@@ -377,7 +377,7 @@ describe("a placement asked without blocking the caller's thread", () => {
     vi.mocked(runGitAsync).mockResolvedValueOnce({ status: 0, stdout: `worktree ${other}\nHEAD ${"0".repeat(40)}\nbranch refs/heads/main\n\n`, stderr: "" });
 
     expect(await learnWorktreeRegistry(main)).toBeUndefined();
-    expect(worktreeRegistry(main)?.worktrees).toEqual([main]);
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
   });
 });
 
