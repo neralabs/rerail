@@ -1,6 +1,8 @@
 //! In-process Git and worktree discovery through `gix`.
 //! Production code in this module never executes an external Git process.
 
+#[allow(unused_imports)]
+use crate::source_tree::Canonical as _;
 use crate::content_store::{
     ContentStore, GitTree, GitTreeEntry, HashKey, SnapshotId, SourceId, StoreResult, WorkspaceId,
     WorkspaceRegistration,
@@ -231,8 +233,8 @@ fn read_anchored_prefix(
 /// The path of `relative_path` below `root`, refused where it resolves outside `root`.
 #[cfg(not(unix))]
 fn anchored_path(root: &Path, relative_path: &str) -> std::io::Result<PathBuf> {
-    let root = root.canonicalize()?;
-    let path = root.join(relative_path).canonicalize()?;
+    let root = root.canonical()?;
+    let path = root.join(relative_path).canonical()?;
     if !path.starts_with(&root) {
         return Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
     }
@@ -806,7 +808,7 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 /// as [`discover`] opens it: a repository Git refuses has none.
 pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
     let repository = crate::git_access::opener::open(root).ok()?;
-    let canonical = |p: &Path| p.canonicalize().ok();
+    let canonical = |p: &Path| p.canonical().ok();
     Some((canonical(repository.workdir()?)?, canonical(repository.git_dir())?, canonical(repository.common_dir())?))
 }
 
@@ -828,7 +830,7 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
         .ok_or_else(|| {
             DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
         })?
-        .canonicalize()
+        .canonical()
         .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
     let case = if repository
         .filesystem_options()
@@ -853,7 +855,7 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
     // Scoped: the root's path in the worktree ("" at the top), its subtree, and a pathspec for status.
     let scope = if scoped {
         let canonical = root
-            .canonicalize()
+            .canonical()
             .map_err(|error| discovery_error("cannot resolve the root", error))?;
         canonical
             .strip_prefix(&worktree)
@@ -1343,7 +1345,7 @@ mod tests {
 
         assert_eq!(
             workspace.nested_roots,
-            [parent.canonicalize().unwrap().join("vendor/sub")]
+            [parent.canonical().unwrap().join("vendor/sub")]
         );
 
         assert_eq!(
@@ -1445,7 +1447,7 @@ mod tests {
             ],
         );
 
-        let linked_root = linked.canonicalize().unwrap();
+        let linked_root = linked.canonical().unwrap();
         let workspace = discover(&linked).unwrap();
         assert_eq!(workspace.worktree_root, linked_root);
         assert!(
@@ -1464,7 +1466,7 @@ mod tests {
 
         std::fs::copy(parent.join("nested/.git"), linked.join("nested/.git")).unwrap();
         let workspace = discover(&linked).unwrap();
-        assert_eq!(workspace.worktree_root, linked.canonicalize().unwrap());
+        assert_eq!(workspace.worktree_root, linked.canonical().unwrap());
         assert!(
             !workspace
                 .base_files

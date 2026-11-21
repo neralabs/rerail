@@ -9628,6 +9628,33 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   `-tape-format`, `-clif`, `-metal` or `-engine`. Tests: `rerail-gpu` 25, `-clif` 17, `-tape-format` 40, `-ukl` 9,
   `-metal` 24, the engine's lattice, work queue, label pass and 16z tests 22.
 
+### Q448. Roll-up 33 (Typing-support-final-shape onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): Typing-support-final-shape at 4e36a1a085, seven commits: the JIT on x86-64 (frame
+  pointers, a return area), blocks on Windows (reserved address space committed as used, files mapped), paths named
+  one way on Windows (`dunce`, `Canonical`), phase 0 on Windows, a partial hit's cone and its annotations' requests.
+  No decisions or Q items.
+- **Blocks** hold both sides: theirs' `commit_to` before ours' free-list ledger (`listed`); ours' `map_read` and
+  `check_frozen` split, with theirs' Windows mapping as a `map_read` of its own and its rule that a Windows file may
+  run past its header's length; the scratch region has ours' ledger and theirs' committed bytes.
+- **The JIT writer** is ours' `builder()`, which already takes theirs' `flags`.
+- **Phase 0's path spelling** is ours': `bootstrap_spelling` and `host_spelling` at both boundaries, and
+  bootstrap's `rerail.windows_paths` aliases (abc55431b4, the CLI on Windows). Theirs' `native()` renaming (only what
+  the rules write) is a second scheme for the same paths and was removed; its separator-tolerant module directory in
+  `bootstrap.rerail` is kept, right under both. Ours' in-memory phase 0 run (`run_handed`, its image) is kept over
+  theirs' temporary root.
+- **The partial hit's cone** is ours': `DEMAND` joins a cone whose rule compares against the widened bound. Theirs'
+  `sees_annotations` (every request, keyed on `ANNOTATION_KEYS`, which 0512 renamed `RUN_VALUE_KEYS`) duplicated
+  `guests::widened` and was removed.
+- **Canonical paths**: ours' snapshot-aware helpers (`git_workspace::snapshot`), with the std `canonicalize`s left in
+  the conflicted files' code made `dunce`'s or `Canonical`'s, as theirs has it (the same on Unix).
+- **Ours kept** in tests: the demand split's `phase types: run`; a child process of `--help`.
+- **Fixed on the way**: clippy's `needless_range_loop` in `setfix/runs/index_spike.rs`.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-blocks`, `-clif`, `-logic`, `-store`
+  or `-engine`. Tests: `rerail-blocks` 72, `-clif` 17, `-store` 279; the engine's phase 0, run state, corpus runs,
+  observe, policies and demand-split tests 16; its plan tests 264 of 265, the one red the coverage gate's
+  `replace/3` (Q445, open). Not run on Windows.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never

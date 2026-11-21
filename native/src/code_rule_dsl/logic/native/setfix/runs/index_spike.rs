@@ -198,8 +198,7 @@ impl Dense {
         let mut offsets = vec![0u32; slot as usize];
         // offsets[base + l] = the first position of local l (or of the next local present).
         let mut pos = 0usize;
-        for d in 0..docs.len() {
-            let (doc, base, locals) = docs[d];
+        for &(doc, base, locals) in &docs {
             for l in 0..=locals {
                 while pos < ids.len() && {
                     let v = t.at(ids[pos], 0);

@@ -675,7 +675,7 @@ fn populate_with(
                     let mut failure = None;
                     for file in paths {
                         if !crate::git_workspace::snapshot::is_file(&file) { continue; }
-                        let name = file.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+                        let name = file.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
                         match readers.rows(&name, io, pointer, records, vec![Json::String(name.clone())], columns, read) {
                             Ok(part) => rows.extend(part), Err(e) => { failure = Some(e); break; }
                         }
