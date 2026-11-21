@@ -12,6 +12,10 @@
 // - every loop is bounded (`UKL_WQ_TURNS`); a bound reached ends the worker, as an idle one does;
 // - an idle worker polls a bounded number of times, then exits. A worker that pushed is still running, so a queued
 //   item has a live worker; the host launches the dispatch again while any remain at its end (`control[2]`).
+// - a worker takes at most `budget` items in a launch (decision 0540), more than an even share where it finishes its
+//   items sooner, then ends, as an idle one does (`ukl_wq_spent`): a launch's GPU time is so bounded by its workers'
+//   budgets, not by the work. The host launches again while items are left. A launch that leaves any had a worker
+//   that spent its budget, so the launches are at most the capacity over the budget, and one more.
 // - the control words are read by polls (`ukl_atomic_poll`, decision 0540): on Apple's GPUs a relaxed load in a loop
 //   may keep reading the core's copy (Q123), and a worker would see the queue empty, or its work active, for ever.
 //
@@ -35,6 +39,8 @@ typedef struct UklWorkQueue {
     UKL_GLOBAL uint32_t* slots;
     UKL_GLOBAL uint32_t* control;
     uint32_t capacity;
+    // A worker's items in a launch at most (a SIMD group's takes, for `ukl_wq_take_sg`); 0, the capacity's.
+    uint32_t budget;
 } UklWorkQueue;
 
 // Pushes `item`. False when the queue is full (the overflow flag is set).
@@ -109,6 +115,10 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     *item = value - 1u;
     return true;
 }
+
+// Whether a worker that has taken `taken` items in this launch (a SIMD group: its takes that got any) has spent its
+// budget: it ends, and the items left are the next launch's.
+UKL_INLINE bool ukl_wq_spent(UklWorkQueue q, uint32_t taken) { return q.budget != 0u && taken >= q.budget; }
 
 // An item's work is done (after the items it pushed).
 UKL_INLINE void ukl_wq_done(UklWorkQueue q) { ukl_atomic_sub(&q.control[2], 1u); }

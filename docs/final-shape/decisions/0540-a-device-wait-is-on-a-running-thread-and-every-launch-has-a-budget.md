@@ -56,9 +56,14 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
    ticket from an atomic counter as it starts, the first closes the count after a short window, and only the groups
    that took a ticket before it closed take part, numbered in ticket order. A barrier waits only for them. The host
    no longer guesses the resident count and halves it on a failure.
-4. **Every persistent launch has a budget** (step 3): a worker of a work queue takes at most a launch's share of
-   items, then ends, as an idle one does; the host launches again while any are left (`control[2]`), as it does
-   now. A launch's GPU time is so its budget's items, not the work's.
+4. **Every persistent launch has a budget** (step 3), the user, 2026-11-21: "we need to relaunch when work is left.
+   And the workers should be able to take more than their share if they finish faster, but up to a bound. The goal
+   is to ensure that we can't ever wait forever." And the launches are "a limited, bounded number of launches and a
+   limited occupancy of a single run", not a fixed count. A worker of a work queue takes items up to its budget, a
+   few shares of a launch's items, then ends, as an idle one does; the host launches again while any are left
+   (`control[2]`). A launch's GPU time is so its workers' budgets', not the work's, and the launches are bounded: a
+   launch that leaves items had a worker that spent its budget, so it took that many at least, and a linear queue
+   holds at most its capacity.
 
 ## Steps
 
@@ -94,6 +99,21 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      1,024 dispatched, 24 took part on the Mac mini (in 9.8 ms), 48 on a GB10, 1 on the CPU, and every barrier passed.
    - The barrier, scan, segmented scan and sort tests pass on the Mac mini's Metal, spark1's CUDA and a Linux CPU.
      They stay ignored (Q367) until the M3 and the M1 Max pass them (step 5).
-3. The budget: the work queue's workers (`label_passes`, `lattice`, `pp_expand`) end after their launch's share.
+3. **The budget.**
+   - **Done (2026-11-21): the queue and the lattice.**
+     - `<ukl/workqueue.h>`: `UklWorkQueue.budget`, a worker's items in a launch at most (a SIMD group's takes that
+       got any, for `ukl_wq_take_sg`); `ukl_wq_spent` says when a worker has spent it.
+     - `metal_work_queue::run` relaunches within `capacity / budget + 1` launches, not 8. `budget` is 4 shares of
+       2^20 items over the workers: 820 visits a worker for the lattice test's 20 groups, which still takes one
+       launch.
+     - The lattice's workers stop at it.
+     - `a_work_queue_budget_ends_a_launch_and_the_next_takes_the_rest`: at a budget of 1 and 4, every node of a
+       100,000-node tree is visited once, in more than one launch and within the bound. It passes on a Linux CPU,
+       spark1's CUDA and the Mac mini's Metal.
+   - The label passes' spill queue needs no item budget: its frames are walks' pieces, and every walk is within
+     its task's step budget (decision 0334), past which it stops and goes to W or runs again.
+   - **Still to do: `pp_expand`'s workers.** Its host already encodes a bounded number of work launches
+     (`WORK_LAUNCHES`) and refuses what is left (`px_check`). Its workers are Metal-only, and pp runs on Metal are
+     off until they are allowed again.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
 5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.

@@ -190,8 +190,17 @@ DEFINE_KERNEL2(tests, t_lz4,
 }
 
 // ukl/workqueue.h: a persistent dispatch walking the binary tree of `w` nodes from node 0, each node pushing its
-// children; `visits` counts each node's visits. A worker stops after `n` empty polls in a row. `t_workqueue` takes a
-// thread at a time, `t_workqueue_sg` a SIMD group at a time.
+// children; `visits` counts each node's visits. A worker stops after `n` empty polls in a row, or once it has taken
+// `b` items in the launch (0: no budget). `t_workqueue` takes a thread at a time, `t_workqueue_sg` a SIMD group at a
+// time.
+typedef struct QueueArgs {
+    uint32_t n;
+    uint32_t w;
+    uint32_t b;
+    uint32_t pad;
+} QueueArgs;
+UKL_REFLECT_STRUCT(QueueArgs, n, w, b, pad)
+
 UKL_INLINE void visit(UklWorkQueue q, UKL_GLOBAL uint32_t* visits, uint32_t nodes, uint32_t item)
 {
     ukl_atomic_add(&visits[item], 1u);
@@ -201,29 +210,31 @@ UKL_INLINE void visit(UklWorkQueue q, UKL_GLOBAL uint32_t* visits, uint32_t node
     ukl_wq_done(q);
 }
 
-UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* control, uint32_t nodes)
+UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* control, QueueArgs args)
 {
     UklWorkQueue q;
     q.slots = slots;
     q.control = control;
-    q.capacity = 4u * nodes;
+    q.capacity = 4u * args.w;
+    q.budget = args.b;
     return q;
 }
 
 DEFINE_KERNEL2(tests, t_workqueue,
-               ARGS,     TestArgs, args,    ,
+               ARGS,     QueueArgs, args,   ,
                RWBUFFER, uint32_t, slots,   "[4 * w]",
                RWBUFFER, uint32_t, control, "[4]",
                RWBUFFER, uint32_t, visits,  "[w]",
                GID0,     uint32_t, i,       )
 {
-    UklWorkQueue q = test_queue(slots, control, args.w);
-    uint32_t polls = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    UklWorkQueue q = test_queue(slots, control, args);
+    uint32_t polls = 0u, taken = 0u;
+    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         if (ukl_wq_take(q, &item)) {
             visit(q, visits, args.w, item);
             polls = 0u;
+            taken++;
         } else if (ukl_wq_idle(q, &polls, args.n)) {
             break;
         }
@@ -231,19 +242,21 @@ DEFINE_KERNEL2(tests, t_workqueue,
 }
 
 DEFINE_KERNEL2(tests, t_workqueue_sg,
-               ARGS,     TestArgs, args,    ,
+               ARGS,     QueueArgs, args,   ,
                RWBUFFER, uint32_t, slots,   "[4 * w]",
                RWBUFFER, uint32_t, control, "[4]",
                RWBUFFER, uint32_t, visits,  "[w]",
                LANE,     uint16_t, lane,    )
 {
-    UklWorkQueue q = test_queue(slots, control, args.w);
-    uint32_t polls = 0u;
-    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    UklWorkQueue q = test_queue(slots, control, args);
+    uint32_t polls = 0u, taken = 0u;
+    for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
         if (got)
             visit(q, visits, args.w, item);
+        // The group's takes that got any item: the same count in every lane.
+        taken += ukl_sg_count(got __UKL_ARGS) != 0u ? 1u : 0u;
         if (ukl_wq_idle_sg(q, got, &polls, args.n __UKL_ARGS))
             break;
     }
