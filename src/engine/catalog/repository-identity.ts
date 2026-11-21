@@ -232,7 +232,7 @@ function rememberGitPlaced(common: string): void {
  */
 export async function repositoryIdentityLocationAsync(workspace: string, signal?: AbortSignal): Promise<RepositoryIdentityLocation> {
   const requested = resolve(workspace);
-  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
+  const result = gitFindsNone(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
   return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
 }
 
@@ -244,17 +244,25 @@ function noGitInstalled(error: unknown): undefined {
 
 /**
  * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
- * would find no repository there ({@link outsideGit}), so a folder outside Git, asked about on every hook event of a
+ * would find no repository there ({@link gitFindsNone}), so a folder outside Git, asked about on every hook event of a
  * session working in it, starts no Git process.
  */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
-  // Git refuses a worktree whose Git folder is gone (exit 128), so it is not asked there either.
-  if (outsideGit(requested) || worktreeGitFolderGone(requested)) return undefined;
+  if (gitFindsNone(requested)) return undefined;
   try {
     return runGit(requested, LOCATE_ARGS);
   } catch (error) {
     return noGitInstalled(error);
   }
+}
+
+/**
+ * Whether Git, asked where `requested`'s repository is, would answer none, read from the disk without starting Git: the
+ * folder is outside Git ({@link outsideGit}), or it is a linked worktree whose Git folder is gone, which Git refuses
+ * (exit 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}).
+ */
+function gitFindsNone(requested: string): boolean {
+  return outsideGit(requested) || worktreeGitFolderGone(requested);
 }
 
 /**

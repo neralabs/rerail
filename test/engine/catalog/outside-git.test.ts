@@ -375,6 +375,14 @@ describe("the location read off the thread", () => {
     expect(vi.mocked(runGitAsync).mock.calls.filter(([cwd]) => cwd === outside)).toEqual([]);
   });
 
+  it("is the blocking read's for a linked worktree whose main checkout was deleted, with no Git, since Git refuses it", async () => {
+    const root = await plainRoot();
+    const worktree = goneMainWorktree(root);
+
+    expect(await repositoryIdentityLocationAsync(worktree)).toEqual(repositoryIdentityLocation(worktree));
+    expect(vi.mocked(runGitAsync).mock.calls.filter(([cwd]) => cwd === resolve(worktree))).toEqual([]);
+  });
+
   it("starts no Git once its signal is aborted, so even a checkout reads as outside Git", async () => {
     const root = await plainRoot();
     const main = checkout(root, "main");
