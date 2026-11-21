@@ -19,6 +19,7 @@ export {
   readDaemonState,
   START_LOCK_DIR,
   startDaemon,
+  startingDaemonNotice,
   stopDaemon,
 } from "./daemon-control.js";
 export { type EngineService, ingestEngineEvent, startEngineService } from "./engine-service.js";

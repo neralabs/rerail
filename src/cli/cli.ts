@@ -53,6 +53,7 @@ import {
   openInBrowser,
   openDashboard,
   startDaemon,
+  startingDaemonNotice,
   STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
@@ -319,7 +320,9 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const launch = daemonStartLaunch(parsed);
-  const result = await startDaemon({ home, packageRoot }, launch);
+  // A daemon still in its start, one set-up or another start launched, is waited for; the person is told whose.
+  const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, home)}\n`);
+  const result = await startDaemon({ home, packageRoot, onWaiting }, launch);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);

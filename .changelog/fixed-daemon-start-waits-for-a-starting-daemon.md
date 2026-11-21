@@ -1,0 +1,1 @@
+`rerail daemon start` run right after `rerail setup`, or beside another start, no longer exits 1 while the daemon just launched is still starting: it waits until that daemon answers, then reports it running. Set-up waits for the daemon it launches the same way.

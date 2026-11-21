@@ -17,6 +17,7 @@ import {
   homeDaemonHolderFile,
   homeDaemonHolderWrittenAt,
   homeDaemonLockHeld,
+  homeDaemonStarting,
 } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
@@ -888,6 +889,10 @@ export interface DaemonControl {
   packageRoot: string;
   /** Repairs the SQLite binding below `packageRoot` before a daemon is spawned; tests substitute it. */
   ensureSqlite?: (packageRoot: string) => Promise<SqliteRepairResult>;
+  /** Told the pid of a daemon still in its start each time the start begins to wait for it ({@link untilStarted}). */
+  onWaiting?: (pid: number) => void;
+  /** When (epoch ms) the start stops waiting for a daemon still in its start, as a hook's does; unset, it waits it out. */
+  waitUntil?: number;
 }
 
 /**
@@ -912,7 +917,7 @@ async function repairSqlite(control: DaemonControl, machine: DaemonMachine): Pro
  * another process is that launcher's, still running its start: a start that gave up waiting for the start lock it
  * holds, or one a person ran beside it, leaves the claim to it.
  */
-async function startUnderLock(home: string, start: () => Promise<StartDaemonResult>): Promise<StartDaemonResult> {
+async function startUnderLock<T>(home: string, start: () => Promise<T>): Promise<T> {
   makeRerailHome(home);
   try {
     return await withStartLock(home, start);
@@ -1010,13 +1015,85 @@ function unrecordedDaemonProblem(home: string, platform: NodeJS.Platform): strin
     + "it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.";
 }
 
+/** A daemon still in its start ({@link daemonComingUp}): its pid, and whether this start launched it. */
+interface ComingUp {
+  status: "coming-up";
+  pid: number;
+  launched: boolean;
+}
+
+/**
+ * The pid of the daemon that holds `home` and is still in its start, or undefined: the record beside the home's lock
+ * says it is starting (`homeDaemonStarting`), that pid runs, and the lock is held, asked as `homeDaemonRuns` asks it.
+ * A daemon killed in its start leaves that record and lets go of the lock, so it is not coming up. On Windows the
+ * engine pipe is not asked: a daemon binds it well into its start.
+ */
+function daemonComingUp(home: string, machine: DaemonMachine): number | undefined {
+  const pid = homeDaemonStarting(home);
+  if (pid === undefined || !processAlive(pid, machine.kill)) return undefined;
+  return machine.homeDaemonLockHeld(home) === true ? pid : undefined;
+}
+
+/**
+ * What a start finds in `home`, a daemon still in its start first: that one has not answered yet, recorded or not, and
+ * is waited for, never reported as a daemon that does not answer nor started beside. One that takes the home while the
+ * lookup runs is found after it.
+ */
+async function startLookup(home: string, machine: DaemonMachine): Promise<DaemonLookup | ComingUp> {
+  const before = daemonComingUp(home, machine);
+  if (before !== undefined) return { status: "coming-up", pid: before, launched: false };
+  const lookup = await lookupHomeDaemon(home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
+  if (lookup.status === "running") return lookup;
+  const after = daemonComingUp(home, machine);
+  return after === undefined ? lookup : { status: "coming-up", pid: after, launched: false };
+}
+
+/** What a start says while it waits for the daemon `pid` of `home`, still in its start. */
+export function startingDaemonNotice(pid: number, home: string): string {
+  return `Rerail daemon (pid ${pid}) is still starting; this start waits until it answers. See ${join(home, DAEMON_LOG_FILE)}`;
+}
+
+/**
+ * Waits while a daemon of `control.home` is still in its start ({@link daemonComingUp}), from `pid` on, telling
+ * `control.onWaiting` first. It waits on that record and lock alone, until the start is over or the daemon is gone,
+ * however long that takes; only a start given `control.waitUntil` stops there, saying the daemon is still starting.
+ */
+async function untilStarted(control: DaemonControl, pid: number, machine: DaemonMachine): Promise<void> {
+  control.onWaiting?.(pid);
+  for (let starting: number | undefined = pid; starting !== undefined; starting = daemonComingUp(control.home, machine)) {
+    if (control.waitUntil !== undefined && Date.now() >= control.waitUntil) throw new Error(startingDaemonNotice(starting, control.home));
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
+/**
+ * Runs `locked` under the start lock in `control.home` until it ends with a daemon. One that ends with a daemon still
+ * in its start lets go of the lock, waits for that daemon ({@link untilStarted}) and looks again: another start then
+ * finds it and waits beside, never behind the lock. The daemon this start launched, found running after the wait, is
+ * reported as started.
+ */
+async function startBesideStarting(
+  control: DaemonControl,
+  machine: DaemonMachine,
+  locked: () => Promise<StartDaemonResult | ComingUp>,
+): Promise<StartDaemonResult> {
+  let launched: number | undefined;
+  for (;;) {
+    const outcome = await startUnderLock(control.home, locked);
+    if (!("status" in outcome)) return outcome.daemon.state.pid === launched ? { ...outcome, started: true } : outcome;
+    if (outcome.launched) launched = outcome.pid;
+    await untilStarted(control, outcome.pid, machine);
+  }
+}
+
 export async function startDaemon(
   control: DaemonControl,
   options: DaemonLaunchOptions,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
-  return await startUnderLock(control.home, async () => {
-    const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
+  return await startBesideStarting(control, machine, async () => {
+    const lookup = await startLookup(control.home, machine);
+    if (lookup.status === "coming-up") return lookup;
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -1033,8 +1110,9 @@ export async function startDaemonForPackage(
   options: DaemonLaunchOptions,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
-  return await startUnderLock(control.home, async () => {
-    const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
+  return await startBesideStarting(control, machine, async () => {
+    const lookup = await startLookup(control.home, machine);
+    if (lookup.status === "coming-up") return lookup;
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -1146,7 +1224,7 @@ async function startedDaemon(
 ): Promise<RunningDaemon> {
   const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
   try {
-    return (await start(control, { dev: false }, machine)).daemon;
+    return (await start(deadline === undefined ? control : { ...control, waitUntil: deadline }, { dev: false }, machine)).daemon;
   } catch (error) {
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
     const answered = await patientLookup(control.home, machine, deadline, error.lookup);
@@ -1303,7 +1381,7 @@ function launchDaemonProcess(control: DaemonControl, launch: Omit<DetachedLaunch
   return launchDetached({ ...launch, cwd: control.home }, machine);
 }
 
-async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions, machine: DaemonMachine): Promise<StartDaemonResult> {
+async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions, machine: DaemonMachine): Promise<StartDaemonResult | ComingUp> {
   await repairSqlite(control, machine);
   await mkdir(control.home, { recursive: true, mode: 0o700 });
   // A Rerail home an earlier release made outside the profile folder kept its parent's ACL on Windows, which there lets
@@ -1316,29 +1394,32 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions,
   const logOffset = await stat(logFile).then(info => info.size, () => 0);
   const args = daemonArguments(control, options, stateFile);
   const launched = launchDaemonProcess(control, { args, env, logFile }, machine);
-  return { started: true, daemon: await readyDaemon(launched, { stateFile, logFile, logOffset, platform: machine.platform }) };
+  const ready = await readyDaemon(launched, { home: control.home, stateFile, logFile, logOffset }, machine);
+  return "status" in ready ? ready : { started: true, daemon: ready };
 }
 
-/** Where a launched daemon records itself and writes its output, from `logOffset` on, read for `platform`. */
+/** The home a launched daemon holds, where it records itself and where it writes its output, from `logOffset` on. */
 interface LaunchRecords {
+  home: string;
   stateFile: string;
   logFile: string;
   logOffset: number;
-  platform: NodeJS.Platform;
 }
 
 /**
- * The daemon `launched` started, once its state file names it and it answers its probe as itself. A launch that exits
- * first fails with what it wrote to the log; one that has not answered within `START_TIMEOUT_MS` fails as
- * {@link unansweredLaunch} says.
+ * The daemon `launched` started, once its state file names it and it answers its probe as itself, or once it holds the
+ * home and records itself still in its start ({@link daemonComingUp}), for the start to wait for outside the lock. A
+ * launch that exits first fails with what it wrote to the log; one that has done neither within `START_TIMEOUT_MS`
+ * fails as {@link unansweredLaunch} says.
  */
-async function readyDaemon(launched: LaunchedDaemon, records: LaunchRecords): Promise<RunningDaemon> {
+async function readyDaemon(launched: LaunchedDaemon, records: LaunchRecords, machine: DaemonMachine): Promise<RunningDaemon | ComingUp> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const exit = launched.exitReason();
     if (exit !== undefined) throw await exitedLaunch(exit, records);
-    const daemon = await answeringDaemon(records.stateFile, launched.pid, records.platform);
+    const daemon = await answeringDaemon(records.stateFile, launched.pid, machine.platform);
     if (daemon !== undefined) return daemon;
+    if (launched.pid !== undefined && daemonComingUp(records.home, machine) === launched.pid) return { status: "coming-up", pid: launched.pid, launched: true };
     await sleep(POLL_INTERVAL_MS);
   }
   throw await unansweredLaunch(launched, records);

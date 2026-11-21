@@ -11,6 +11,7 @@ import {
   HomeDaemonConflictError,
   homeDaemonHolder,
   homeDaemonLockHeld,
+  homeDaemonStarting,
   type HomeDaemonLease,
 } from "../../../src/engine/native/home-daemon-lock.js";
 import { LOCKS_DIR } from "../../../src/engine/native/file-lock.js";
@@ -88,6 +89,22 @@ describe("the daemon lock of a Rerail home", () => {
     expect(homeDaemonHolder(home)).toBeUndefined();
     expect(homeDaemonLockHeld(home)).toBe(false);
   }, 30_000);
+
+  // A start beside a daemon still in its start waits for it on this record: before, nothing told a daemon in its start
+  // from one that had started and did not answer.
+  it("records its holder as starting from the lock on, and as started once it says so, its pid kept throughout", async () => {
+    const home = await temporaryHome();
+    const lease = await holdHomeDaemonLock(home);
+    expect(lease).toBeDefined();
+    leases.push(lease!);
+    expect(homeDaemonStarting(home)).toBe(process.pid);
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+    lease!.started();
+    expect(homeDaemonStarting(home)).toBeUndefined();
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+    lease!.release();
+    expect(homeDaemonStarting(home)).toBeUndefined();
+  });
 
   it("waits out a process that holds the lock for an instant, as a start asking whether a daemon runs does", async () => {
     const home = await temporaryHome();

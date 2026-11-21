@@ -40,6 +40,7 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  startingDaemonNotice,
   STOP_ANSWERS,
   stopDaemon,
   type DaemonMachine,
@@ -1001,7 +1002,8 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   if (lookup.status === "running") await stopDaemon(context.home);
   const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
-  return (await startDaemon({ home: context.home, packageRoot }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
+  const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, context.home)}\n`);
+  return (await startDaemon({ home: context.home, packageRoot, onWaiting }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */

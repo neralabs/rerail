@@ -42,6 +42,11 @@ export interface HomeDaemonLease {
    * missing file, or no file id), the home counts as held, as before the check.
    */
   holdsHome(): boolean;
+  /**
+   * Records that the daemon's start is over: it has written daemon.json and answers. Until then its record beside the
+   * lock says it is starting, so a start that finds it waits for it ({@link homeDaemonStarting}).
+   */
+  started(): void;
   /** Gives the lock up before process exit, once the daemon has closed. */
   release(): void;
 }
@@ -65,15 +70,30 @@ function fileAt(path: string): Pick<BigIntStats, "dev" | "ino"> | "none" | undef
 /** Module state keeps the native handle reachable: a collected handle would close, and so release, the lock. */
 let held: NativeExclusiveFileLock | undefined;
 
-/** The pid the holder of `home`'s lock recorded, if it recorded one. */
-export function homeDaemonHolder(home: string): number | undefined {
+/** What the holder of `home`'s lock recorded: its pid, and `starting` until its start is over. */
+function holderRecord(home: string): { pid: number; starting: boolean } | undefined {
   try {
     // JSON null throws here too, and is no record.
-    const { pid } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown };
-    return typeof pid === "number" && Number.isInteger(pid) ? pid : undefined;
+    const { pid, starting } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown; starting?: unknown };
+    return typeof pid === "number" && Number.isInteger(pid) ? { pid, starting: starting === true } : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** The pid the holder of `home`'s lock recorded, if it recorded one. */
+export function homeDaemonHolder(home: string): number | undefined {
+  return holderRecord(home)?.pid;
+}
+
+/**
+ * The pid the holder of `home`'s lock recorded while its start is not over ({@link HomeDaemonLease.started}), or
+ * undefined. The record alone proves nothing: a holder killed in its start leaves it, so a reader asks whether that pid
+ * runs and the lock is held.
+ */
+export function homeDaemonStarting(home: string): number | undefined {
+  const record = holderRecord(home);
+  return record?.starting === true ? record.pid : undefined;
 }
 
 /** Where the holder of `home`'s lock records its pid. */
@@ -119,7 +139,7 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
     return undefined;
   }
   const taken = lock ?? await waitForLock(home, tryLock);
-  recordHolder(home);
+  recordHolder(home, true);
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
@@ -128,6 +148,9 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
       if (locked === undefined || locked === "none") return true;
       const now = fileAt(path);
       return now === undefined || (now !== "none" && now.dev === locked.dev && now.ino === locked.ino);
+    },
+    started() {
+      if (held === taken && homeDaemonHolder(home) === process.pid) recordHolder(home, false);
     },
     release() {
       if (held !== taken) return;
@@ -167,15 +190,15 @@ async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock 
 }
 
 /**
- * Writes this process's pid beside the lock, whole, since a refusal may read the record at any moment: the replace is
- * atomic, so a reader sees the record a holder killed outright left, or this one, never none. Never fails the daemon:
- * a holder that could not record itself holds the home all the same, and removes the record an earlier holder left, so
- * the refusal names no pid rather than one that runs no daemon.
+ * Writes this process's pid beside the lock, whole, with `starting` while its start is not over, since a refusal or a
+ * start may read the record at any moment: the replace is atomic, so a reader sees the record a holder killed outright
+ * left, or this one, never none. Never fails the daemon: a holder that could not record itself holds the home all the
+ * same, and removes the record an earlier holder left, so the refusal names no pid rather than one that runs no daemon.
  */
-function recordHolder(home: string): void {
+function recordHolder(home: string, starting: boolean): void {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
-    replaceFileSync(record, `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
+    replaceFileSync(record, `${JSON.stringify(starting ? { pid: process.pid, starting } : { pid: process.pid })}\n`, { mode: 0o600 });
   } catch {
     try {
       rmSync(record, { force: true });

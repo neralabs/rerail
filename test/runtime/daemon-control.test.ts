@@ -2,6 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -200,6 +201,46 @@ describe("Rerail daemon control", () => {
     await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, holding))
       .rejects.toThrow(/alive but not answering/);
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
+  });
+
+  // A daemon still in its start, recorded and not answering yet, used to fail a start beside it after one 2 s probe,
+  // named as a daemon that does not answer. The record beside the home's lock now says it is starting.
+  it("waits for a recorded daemon still in its start, and finds it running once its start is over", async () => {
+    let started = false;
+    const server = createHttpServer((_request, response) => {
+      response.writeHead(started ? 200 : 503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ status: "ok", pid: process.pid }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const { port } = server.address() as AddressInfo;
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: process.pid, url: `http://127.0.0.1:${port}/`, port })));
+      await mkdir(join(home, LOCKS_DIR), { recursive: true });
+      await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid, starting: true }));
+      const holding = { ...posix, homeDaemonLockHeld: () => true };
+      const told: number[] = [];
+      const onWaiting = (pid: number): void => {
+        told.push(pid);
+        started = true;
+        writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+      };
+      const result = await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, holding);
+      expect(result).toMatchObject({ started: false, daemon: { state: { pid: process.pid } } });
+      expect(told).toEqual([process.pid]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("stops waiting for a daemon still in its start at a hook's deadline, saying it is still starting, and leaves it be", async () => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: process.pid, url: "http://127.0.0.1:1/" })));
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid, starting: true }));
+    const holding = { ...posix, homeDaemonLockHeld: () => true };
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail", waitUntil: Date.now() }, { dev: true }, holding))
+      .rejects.toThrow(`Rerail daemon (pid ${process.pid}) is still starting; this start waits until it answers.`);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
   });
 
   it("stops an unresponsive daemon that holds the home and clears its state file", async () => {
