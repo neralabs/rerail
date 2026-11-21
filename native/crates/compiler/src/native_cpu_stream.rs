@@ -4790,11 +4790,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if pinned_ctx || pin_one {
         flags.push(("enable_pinned_reg", "true"));
     }
-    // The passed fields come back with a function's result: more results than registers go
-    // through a return area.
-    if clustered && !cut.pass.is_empty() {
-        flags.push(("enable_multi_ret_implicit_sret", "true"));
-    }
+    // More results than registers go through a return area: the passed fields that come back with a function's
+    // result, and any function's results past the target's registers for them (x86-64's two, Arm's eight). It
+    // changes no function whose results fit.
+    flags.push(("enable_multi_ret_implicit_sret", "true"));
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {
