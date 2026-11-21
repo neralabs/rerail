@@ -277,7 +277,7 @@ impl Layered {
         }
         v.dir = views.dir?;
         v.buffers = views.buffers.clone();
-        v.cache = views.cache.clone();
+        v.caches = views.caches.clone();
         v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
         v.failed = v.cache_failed();
         dv_ref.rows = self.len();

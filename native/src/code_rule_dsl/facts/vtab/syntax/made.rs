@@ -613,8 +613,10 @@ impl Batch {
     pub(super) fn ensure(&self, want: &[usize]) {
         let me = std::thread::current().id();
         loop {
-            let (need, waits) = {
-                let s = self.rows.state.lock();
+            // What this read makes, claimed under the lock that found it unclaimed: two reads that both found a
+            // document unclaimed both made it, and one group was set aside.
+            let (need, waits, claim) = {
+                let mut s = self.rows.state.lock();
                 let making = s.makers.contains(&me);
                 let mut need: Vec<usize> = Vec::new();
                 let mut waits = false;
@@ -640,20 +642,20 @@ impl Batch {
                     }
                     continue;
                 }
-                (need, waits)
+                if need.is_empty() {
+                    (need, waits, None)
+                } else {
+                    let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
+                    for &i in &docs {
+                        s.claimed[i] = Some(me);
+                    }
+                    s.makers.push(me);
+                    (need, waits, Some(Claim { rows: &self.rows, me, docs }))
+                }
             };
-            if need.is_empty() {
+            let Some(claim) = claim else {
                 debug_assert!(!waits);
                 return;
-            }
-            let claim = {
-                let mut s = self.rows.state.lock();
-                let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
-                for &i in &docs {
-                    s.claimed[i] = Some(me);
-                }
-                s.makers.push(me);
-                Claim { rows: &self.rows, me, docs }
             };
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
             self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -754,7 +756,7 @@ impl Batch {
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         self.complete();
         let shared = self.shared.lock();
-        (shared.strings.clone(), shared.atoms.clone())
+        texts_of(&self.atoms, &shared.vocabulary).expect("the atoms directory reads the batch's vocabulary")
     }
 }
 

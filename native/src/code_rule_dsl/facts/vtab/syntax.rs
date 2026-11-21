@@ -1771,15 +1771,40 @@ pub struct Batch {
     outer: Option<Arc<Batch>>,
 }
 
-/// What a batch's groups share, and the batches it grows into (decision 0431 §6): its strings and their atoms, by
-/// index (the rows a group makes name strings by index, and a producer keeps what it read of a file by them), and the
-/// producers of its relations, kept so a later group's or round's rows are read with what they know of the files.
+/// What a batch's groups share, and the batches it grows into (decision 0431 §6): its vocabulary, and the producers of
+/// its relations, kept so a later group's or round's rows are read with what they know of the files.
+///
+/// A string is named by its atom, the atoms directory's (decision 0353 step 4): the rows a group makes, and what a
+/// producer keeps of a file, name strings by atom, the same in every group and batch. The batch holds no strings.
 #[derive(Default)]
 pub(super) struct Shared {
-    strings: Vec<String>,
-    at: rustc_hash::FxHashMap<String, usize>,
-    atoms: Vec<u32>,
+    /// The batch's strings' atoms, each once, in the order first met: the text tests read their texts from the atoms
+    /// directory.
+    vocabulary: Vec<u32>,
+    /// Which atoms are in the vocabulary: a bit an atom.
+    met: Vec<u64>,
     produced: Option<Vec<(Option<u8>, Box<dyn ProducerRun>)>>,
+}
+
+/// Atom `a` into a vocabulary (`Shared`), where it is not.
+fn meet(vocabulary: &mut Vec<u32>, met: &mut Vec<u64>, a: u32) {
+    let (w, b) = (a as usize / 64, a % 64);
+    if met.len() <= w {
+        met.resize(w + 1, 0);
+    }
+    if met[w] & (1 << b) == 0 {
+        met[w] |= 1 << b;
+        vocabulary.push(a);
+    }
+}
+
+/// The texts of `atoms`, read from the atoms directory, with the atoms: the text tests' input.
+fn texts_of(atoms_dir: &crate::content_store::atoms::Atoms, atoms: &[u32]) -> StoreResult<(Vec<String>, Vec<u32>)> {
+    let mut texts = Vec::with_capacity(atoms.len());
+    for &a in atoms {
+        texts.push(atoms_dir.value(a)?.unwrap_or_default());
+    }
+    Ok((texts, atoms.to_vec()))
 }
 
 /// What a chunk's batch keeps to grow by a round's documents (decision 0431 §6): the batch it grew last, whose
@@ -2846,7 +2871,7 @@ impl Batch {
         let made = batch.make_rows(&(0..batch.docs.len()).collect::<Vec<_>>(), true, &[])?;
         let vocabulary = {
             let shared = batch.shared.lock();
-            (shared.strings.clone(), shared.atoms.clone())
+            texts_of(&batch.atoms, &shared.vocabulary)?
         };
         Ok((batch, made.relations, made.matched, vocabulary))
     }
@@ -3223,19 +3248,26 @@ impl Batch {
         };
         // The batch's strings (`Shared`), held from here to the group's atoms.
         let mut shared = self.shared.lock();
-        let Shared { strings, at, atoms, produced } = &mut *shared;
-        let strings_from = strings.len();
+        let strings_from = shared.vocabulary.len();
+        let Shared { vocabulary, met: seen, produced } = &mut *shared;
         // Kept by the batch's groups and the batches it grows into (`ProducerRun::relations`): what a producer knows of
         // a file (its annotations) stays for its guests a later group or round adds.
         let produced = produced.get_or_insert_with(|| producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect());
-        // Every string of every node passes here: Fx, not SipHash (a third of the projection's time with SipHash).
+        // Every string of every node passes here: its atom, the atoms directory's, through the group's memo of what it
+        // interned (scratch, dropped with the group: Fx, not SipHash, a third of the projection's time with SipHash).
+        let mut memo: rustc_hash::FxHashMap<Box<str>, u32> = rustc_hash::FxHashMap::default();
+        let mut failed: Option<StoreError> = None;
+        let atoms_dir = Arc::clone(&self.atoms);
         let mut string = |s: &str| -> usize {
-            if let Some(&i) = at.get(s) {
-                return i;
+            if let Some(&a) = memo.get(s) {
+                return a as usize;
             }
-            strings.push(s.to_owned());
-            at.insert(s.to_owned(), strings.len() - 1);
-            strings.len() - 1
+            let a = atoms_dir.intern(s).unwrap_or_else(|e| {
+                failed.get_or_insert(e);
+                0
+            });
+            memo.insert(s.into(), a);
+            a as usize
         };
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
         // key is past every file's (`corpus::guests`), so its host is projected first and its lines are known.
@@ -3402,14 +3434,20 @@ impl Batch {
             let identities: usize = docs.iter().map(|p| p.ranks().bytes() + p.idx.get().map_or(0, |v| v.len() * 4)).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities}).to_string()
         });
-        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":strings.len() - strings_from,"reads":projection.reads}).to_string());
-        let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (strings.len() - strings_from) as u64);
-        let new_atoms = self.atoms.intern_all(&strings[strings_from..].iter().map(String::as_str).collect::<Vec<_>>())?;
-        atoms.extend(new_atoms);
-        drop(intern);
-        let atoms = &*atoms;
-        let atom = |i: i64| i64::from(atoms[i as usize]);
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"coreNodes":if core_nodes {docs.iter().map(|p| p.len() as usize).sum::<usize>()}else{0},"scalarNodes":visited,"nodes":docs.iter().map(|p| p.len() as usize).sum::<usize>(),"strings":memo.len(),"reads":projection.reads}).to_string());
+        if let Some(e) = failed {
+            return Err(e);
+        }
+        // The group's strings, into the batch's vocabulary (each atom once).
+        let met: Vec<u32> = memo.into_values().collect();
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, met.len() as u64);
+        let mut sorted = met;
+        sorted.sort_unstable();
+        for a in sorted {
+            meet(vocabulary, seen, a);
+        }
+        // A string's id is its atom.
+        let atom = |a: i64| a;
         let _relations_span = crate::code_rule_dsl::logic::profile::span(|| "relations".into());
         // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
         let relation: Make = if first { Relation::from_rows } else { Relation::staged };
@@ -3742,7 +3780,7 @@ impl Source for Viewed {
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .and_then(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
                 in_place.failed = in_place.cache_failed();
                 Some(in_place)
             });
@@ -4766,7 +4804,7 @@ impl Grower {
         let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
         let (strings, symbols) = {
             let shared = self.growth.shared.lock();
-            (shared.strings[strings_from..].to_vec(), shared.atoms[strings_from..].to_vec())
+            texts_of(&batch.atoms, &shared.vocabulary[strings_from..])?
         };
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let tested: Vec<(String, Relation)> = tests

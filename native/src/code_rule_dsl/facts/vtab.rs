@@ -69,15 +69,16 @@ pub struct DeviceView<'a> {
 /// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
 /// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
 /// addresses (`device_chunk::views_in_place`).
-/// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
-/// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
+/// A 16z batch's views read their blocks through its cache (`caches`, decision 0353 step 4b), which its reads write:
+/// a stage that reads the view is refused when the caches' failures rise past `failed` (no room found). A layered
+/// source's view reads each of its batches' caches.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
-    pub cache: Option<ZCache>,
+    pub caches: Vec<ZCache>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
@@ -105,14 +106,14 @@ impl ZCache {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
-    /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
-    pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
-        self.cache.as_ref().map(ZCache::counts)
+    /// Its batches' caches' counts (none without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
+    pub fn cache_counts(&self) -> Vec<rerail_clif::view::cache::Counts> {
+        self.caches.iter().map(ZCache::counts).collect()
     }
 
-    /// The failures its batch's cache has counted (0 without one).
+    /// The failures its batches' caches have counted (0 without one).
     pub fn cache_failed(&self) -> u32 {
-        self.cache_counts().map_or(0, |c| c.failed)
+        self.cache_counts().iter().map(|c| c.failed).sum()
     }
 }
 

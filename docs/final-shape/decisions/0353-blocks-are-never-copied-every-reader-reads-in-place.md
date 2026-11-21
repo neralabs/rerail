@@ -924,15 +924,25 @@ batch's block:
 - `given_rows`: the families' relations' kept counts are a table in the batch's block, one slot a relation, by
   family and then relation.
 
-Left of the table: `made::Docs::slots` (each document's input and its projection, made on its first read),
-`Shared` (`strings`, `at`, `atoms`), the batch's strings by index, whose home is the atoms directory, and the
-layered directory (`views_over`), still made whole from its batches' rows rather than written through each batch's
-reads layer.
+- `Shared` (`strings`, `at`, `atoms`): the batch's strings are atoms of the atoms directory (`Atoms::intern`,
+  `value`), interned as the rows are made; `Shared` keeps only the batch's atom ids and their meets, and the
+  admitted texts are read back from the directory (`texts_of`).
+- The layered directory (`views_over`): made in the chunk's block from each batch's own reads layer
+  (`views_in_place`), its rows and homes renumbered (a derived row each, `// copy: derived`); it names each batch's
+  entries and keeps each batch's caches (`caches`), so no projection is read again for it. A batch not in the
+  chunk's block is refused (`views.refused.block`, counted).
+
+`Batch::ensure` now claims the documents it makes under the same lock that finds them missing: two readers side by
+side could both find a document missing and both make it (`reads_side_by_side_make_each_document_once`, 1 run in 3
+before; 10 of 10 after).
+
+Left of the table: `made::Docs::slots` (each document's input and its projection, made on its first read).
 
 Cold hogql gives 1,629 findings at 90.2 B and 89.9 B instructions (91.3 B and 91.3 B before; this Mac at a load of
-about 12), and its profile counts no `views.refused.*`: every scan's rows are read through the directory. On
-Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
-`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`.
+about 12; 90.8 B and 90.5 B with `Shared` as atoms), and its profile counts no `views.refused.*`: every scan's
+rows are read through the directory. On Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows`, `a_view_made_on_the_device_is_made_at_each_stratum` and
+`cpu_and_metal_read_the_same_tape_values` (with the layered directory over the batches' reads).
 
 ## What it replaces
 
