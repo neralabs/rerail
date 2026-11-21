@@ -679,6 +679,7 @@ impl MadeRows {
         } else if self.batch.rows.path_column[self.rel] == Some(column) {
             self.batch.keys_of_paths(values)?
         } else {
+            profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], by.column()));
             return None;
         };
         let groups = self.batch.groups_of(keys);
