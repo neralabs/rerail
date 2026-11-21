@@ -4747,13 +4747,14 @@ pub fn measured_sorted(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
             }
             values.sort_unstable();
             let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
-            let shadow = crate::code_rule_dsl::logic::plan::sketch::shadowing();
-            let mut sketch = crate::code_rule_dsl::logic::plan::sketch::Sketch::default();
+            // The shadow's sketch, made only when a shadow is written: a sketch is a block's chunk, and one a column
+            // that nothing reads took 177 MB of blocks on the data layer's 50 files (R7 against 0458).
+            let mut sketch = crate::code_rule_dsl::logic::plan::sketch::shadowing().then(crate::code_rule_dsl::logic::plan::sketch::Sketch::default);
             let mut at = 0;
             while at < values.len() {
                 let v = values[at].0;
                 let end = at + values[at..].partition_point(|x| x.0 == v);
-                if shadow {
+                if let Some(sketch) = &mut sketch {
                     sketch.add(v, (end - at) as i64);
                 }
                 ndv += 1;
@@ -4767,8 +4768,8 @@ pub fn measured_sorted(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)>
                 }
                 at = end;
             }
-            if shadow {
-                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, ndv, sq, &sketch);
+            if let Some(sketch) = &sketch {
+                crate::code_rule_dsl::logic::plan::sketch::shadow("measured", &name, rows as i64, ndv, sq, sketch);
             }
             (name, rows as i64, ndv, sq, sqd)
         })
