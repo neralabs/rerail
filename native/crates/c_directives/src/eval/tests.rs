@@ -801,6 +801,12 @@ fn expanded(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Ve
 
 /// `expanded` under `cfg`, its search path `dirs`.
 fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize) {
+    let (got, want, rung, launches, _) = expanded_run(files, cfg, dirs);
+    (got, want, rung, launches)
+}
+
+/// `expanded_in`, and the givings back the run made (decision 0478 §10).
+fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32) {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
@@ -814,9 +820,9 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let x = &*s.part.x;
     if x.refused != 0 {
-        return (Err(x.refused), serial.0, x.rung, x.launches);
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives);
     }
-    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives)
 }
 
 /// Decisions 0460 §4 and 0475 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
@@ -1470,8 +1476,8 @@ fn a_unit_past_its_room_runs_again_larger() {
     // run both run it again larger before reading what the lines decided (a request made from
     // a line cut short is none).
     let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
-               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
-    let main = format!("{fan}#if A4 == 32768\n#include \"h.h\"\n#endif\nend\n");
+               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n";
+    let main = format!("{fan}#if A3 == 4096\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
         let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);
@@ -1507,16 +1513,21 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0478 §10: the expansion's tokens no item reads again are given back between the
-/// queue's runs. Chains of 150 calls each passing a state of 120 tokens on make more tokens than
-/// rung 0 holds, while few stay live: each settles at rung 0, the serial pass's. The state passed
-/// through plain calls, through an argument scanned at each level (a dead argument's list), and
-/// through an exit at each level (a join); `__LINE__` in it (its origin read from the lists'
-/// `lref`, not their tokens), `#` of it at the end, and in C and C++.
+/// Decision 0478 §10: the blocks no item reads again are given back between rounds, and used
+/// again. Chains of calls each passing a state of 120 tokens on, the blocks given back every 16
+/// units of a store's growth (`RERAIL_PP_GIVE_GAP`; a chain's pieces are a few a level, decision
+/// 0520, so at the default gap of a 32nd of the room a chain this short would give nothing back):
+/// each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
+/// plain calls, through an argument scanned at each level (a dead argument's list), and through
+/// an exit at each level (a join); `__LINE__` in it (its origin read from the lists' `lref`, not
+/// their tokens), `#` of it at the end, and in C and C++.
 #[test]
 fn reclaimed_tokens_keep_a_chain_at_rung_0() {
+    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
+    // more often, which changes no result.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
-    let levels = 150;
+    let levels = 40;
     let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
         let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n");
         t += &format!("#define L0(s) {last}\n");
@@ -1536,10 +1547,12 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
     for (what, text) in &shapes {
         let files = [("main.c", text.as_str())];
         for cpp in [false, true] {
-            let (got, want, rung, _) = expanded(&files, cpp);
+            let (got, want, rung, _, gives) = expanded_run(&files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
             let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
             same(show(&got), show(&want), what);
             assert_eq!(rung, 0, "{what}: grew to rung {rung}");
+            assert!(gives > 0, "{what}: gave nothing back");
+            eprintln!("{what}: {gives} givings");
         }
     }
 }

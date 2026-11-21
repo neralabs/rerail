@@ -62,7 +62,7 @@
               AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), \
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], \
-              AT(uint32_t, SCANS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa)
+              AT(uint32_t, SCANS), AT(uint32_t, SUBS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa)
 // This SIMD group of the grid, and their count.
 #define SG_ID (g.group * (g.lsz / UKL_SIMD_WIDTH) + g.lid / UKL_SIMD_WIDTH)
 #define SG_N (g.groups * (g.lsz / UKL_SIMD_WIDTH))
@@ -114,6 +114,69 @@
                 EACH(t, sc_.total) px_sc_child(xu, xa, sc_, t);                                        \
                 BARRIER();                                                                             \
                 px_sc_finish(xu, xa, sc_, SG_ID, SG_N, lane __UKL_ARGS);                               \
+            }                                                                                          \
+        }                                                                                              \
+    }
+
+// A round's substitutions (decision 0523 §2): every list its items gave, a thread a body item,
+// then a thread a piece. The scan's stores hold them (it runs after).
+#define PX_SUBSTS(T, CLOSES)                                                                         \
+    {                                                                                                  \
+        PX_UA(T, CLOSES);                                                                            \
+        Sb s_;                                                                                         \
+        s_.set = AT(const uint32_t, SUBS); s_.ns = ukl_min(ukl_atomic_load(&AT(uint32_t, QCTL)[6]), W(Q_CAP)); s_.qcap = W(Q_CAP); \
+        s_.l = AT(uint32_t, SB_L); s_.n = AT(uint32_t, SC_N); s_.base = AT(uint32_t, SC_BASE);       \
+        s_.v = AT(uint32_t, SC_M); s_.off = AT(uint32_t, SC_CAT);                                      \
+        s_.brk = AT(uint32_t, SC_HEADS); s_.lenv = AT(uint32_t, SC_K); s_.sum = AT(uint32_t, SC_DEPTH); \
+        s_.hv = AT(uint32_t, SC_E); s_.hidx = AT(uint32_t, SC_CLOSE); s_.keep = AT(uint32_t, SC_LIVE); \
+        s_.rank = AT(uint32_t, SC_RANK); s_.run = AT(uint32_t, SC_REACH);                              \
+        s_.items = 0u; s_.pieces = 0u; s_.kept = 0u;                                                   \
+        if (s_.ns != 0u) {                                                                             \
+            EACH(i, s_.ns) px_sb_count(xu, xa, s_, i);                                                 \
+            BARRIER();                                                                                 \
+            SCAN(s_.ns, SC_N, SC_BASE, SC_TOTAL);                                                      \
+            s_.items = N(SC_TOTAL);                                                                    \
+            if (s_.items <= W(SC_CAP)) {                                                               \
+                EACH(t, s_.items) px_sb_item(xu, xa, s_, t);                                           \
+                BARRIER();                                                                             \
+                SCAN(s_.items, SC_M, SC_CAT, SC_CTOTAL);                                               \
+                s_.pieces = N(SC_CTOTAL);                                                              \
+            }                                                                                          \
+            if (s_.items > W(SC_CAP) || s_.pieces > W(SC_CAP)) {                                       \
+                ONE(x) { AT(uint32_t, CTL)[24] = ukl_max(AT(const uint32_t, CTL)[24], ukl_max(s_.items, s_.pieces)); px_refuse(AT(uint32_t, CTL), X_ROOM); } \
+            } else {                                                                                   \
+                EACH(i, s_.ns) px_sb_alloc(xa, s_, i);                                                 \
+                BARRIER();                                                                             \
+                EACH(p, s_.pieces) px_sb_piece(xu, xa, s_, p);                                         \
+                BARRIER();                                                                             \
+                EACH(i, s_.ns) px_sb_va(xu, xa, s_, i);                                                \
+                BARRIER();                                                                             \
+                EACH(p, s_.pieces) px_sb_paste(xu, xa, s_, p);                                         \
+                BARRIER();                                                                             \
+                EACH(p, s_.pieces) px_sb_flags(xa, s_, p);                                             \
+                BARRIER();                                                                             \
+                SEG(UKL_SEG_ADD, s_.pieces, SC_K, SC_HEADS, SC_DEPTH);                                 \
+                SEG(UKL_SEG_MAX, s_.pieces, SC_E, SC_HEADS, SC_CLOSE);                                 \
+                SCAN(s_.pieces, SC_LIVE, SC_RANK, SC_LTOTAL);                                          \
+                s_.kept = N(SC_LTOTAL);                                                                \
+                EACH(p, s_.pieces) px_sb_run(s_, p);                                                   \
+                EACH(i, s_.ns) px_sb_kbase(s_, i);                                                     \
+                BARRIER();                                                                             \
+                /* The compaction in place: a chunk of the grid's width read, then written. */          \
+                for (uint32_t c0_ = 0u; c0_ < s_.pieces; c0_ += g.groups * g.lsz) {                    \
+                    Pc pc_ = px_sb_take(xa, s_, c0_ + g.group * g.lsz + g.lid);                        \
+                    BARRIER();                                                                         \
+                    px_sb_put(xa, pc_);                                                                \
+                    BARRIER();                                                                         \
+                }                                                                                      \
+                if (s_.kept != 0u) {                                                                   \
+                    EACH(k, s_.kept) px_sb_klen(xa, s_, k);                                            \
+                    BARRIER();                                                                         \
+                    SEG(UKL_SEG_ADD, s_.kept, SC_K, SC_HEADS, SC_DEPTH);                               \
+                }                                                                                      \
+                EACH(k, s_.kept) px_sb_place(xa, s_, k);                                               \
+                EACH(i, s_.ns) px_sb_finish(xu, xa, s_, i);                                            \
+                BARRIER();                                                                             \
             }                                                                                          \
         }                                                                                              \
     }
@@ -285,6 +348,7 @@
                     ukl_atomic_store(&q_[2], n_);                                                      \
                     ukl_atomic_store(&q_[1], 0u);                                                      \
                     ukl_atomic_store(&q_[5], 0u);                                                      \
+                    ukl_atomic_store(&q_[6], 0u);                                                      \
                     ukl_atomic_store(&q_[4], (q_[4] & 1u) ^ 1u);                                       \
                     c_[25]++;                                                                          \
                 }                                                                                      \
@@ -294,6 +358,7 @@
             if (ukl_atomic_load(&c_[17]) == 0u) break;                                                 \
             PX_WORK_ON(T, CLOSES);                                                                   \
             BARRIER();                                                                                 \
+            PX_SUBSTS(T, CLOSES);                                                                    \
             PX_SCANS(T, CLOSES);                                                                     \
             BARRIER();                                                                                 \
             PX_WALKS(T, CLOSES, 0u);                                                                   \

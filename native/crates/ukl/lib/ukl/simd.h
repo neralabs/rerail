@@ -67,6 +67,20 @@ UKL_INLINE uint32_t ukl_sg_inclusive_sum(uint32_t v, uint32_t lane __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_exclusive_sum(uint32_t v, uint32_t lane __UKL_PARAMS) { return ukl_sg_exclusive_sum_ref(v, lane __UKL_ARGS); }
 #endif
 
+// The inclusive sum of the SIMD group's `v` up to this lane, and in `*total` the whole group's: the backend's in one
+// operation (`UKL_NATIVE_SG_TOTALS`), else the scan and its last lane's.
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_total(uint32_t v, uint32_t lane, UKL_PRIVATE uint32_t* total __UKL_PARAMS)
+{
+#if defined(UKL_NATIVE_SG_TOTALS)
+    (void)lane;
+    return ukl_sg_inclusive_sum_total_native(v, total __UKL_ARGS);
+#else
+    uint32_t inc = ukl_sg_inclusive_sum(v, lane __UKL_ARGS);
+    *total = ukl_sg_shuffle(inc, UKL_SIMD_WIDTH - 1u __UKL_ARGS);
+    return inc;
+#endif
+}
+
 // Votes: the lanes whose `b` holds, as a mask; how many; how many below this lane (a compaction's slot); the
 // lowest such lane (`UKL_NONE` when none).
 UKL_INLINE uint32_t ukl_sg_count(bool b __UKL_PARAMS) { return ukl_popcount32(ukl_sg_ballot(b __UKL_ARGS)); }

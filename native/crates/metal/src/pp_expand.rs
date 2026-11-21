@@ -1127,6 +1127,9 @@ pub struct Exp {
     pub out: Buf,
     /// A round's scan (decision 0523 §2): the lists (`q` of them) and their tokens (`sc_cap`).
     scans: Buf,
+    /// The lists a round substitutes (decision 0523 §2), and their `SB_COLS` columns of `q` words.
+    subs: Buf,
+    sb_l: Buf,
     /// The lists a round's walks make final and place (decision 0523 §2): two halves of `q` each.
     fins: Buf,
     places: Buf,
@@ -1142,6 +1145,9 @@ pub struct Exp {
     sc_first: Buf,
     sc_cap: u32,
 }
+
+/// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
+const SB_COLS: usize = 20;
 
 /// A round's scan's stores a token (`Exp::sc_tok`), by slot.
 const SC_TOK: [&str; 12] = ["SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK"];
@@ -1255,7 +1261,7 @@ impl Exp {
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
             // A round's items and the next's (decision 0523).
             slots: zeroed(2 * q)?,
-            qctl: zeroed(6)?,
+            qctl: zeroed(8)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1274,6 +1280,8 @@ impl Exp {
             // The output's pieces: five columns, `out` words each (decision 0520 §3).
             out: zeroed(5 * out)?,
             scans: zeroed(q)?,
+            subs: zeroed(q)?,
+            sb_l: zeroed(SB_COLS * q)?,
             fins: zeroed(2 * q)?,
             places: zeroed(2 * q)?,
             sc_n: zeroed(q)?,
@@ -1308,7 +1316,7 @@ impl Exp {
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
-        l.at("SCANS", &self.scans).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
+        l.at("SCANS", &self.scans).at("SUBS", &self.subs).at("SB_L", &self.sb_l).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
         for (name, b) in SC_TOK.iter().zip(&self.sc_tok) {
             l.at(name, b);
         }
@@ -1332,6 +1340,11 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
+    pub fn gives(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` 16 counts the givings back (decision 0478 §10).
+        unsafe { *self.ctl.host().cast::<u32>().add(16) }
+    }
+
     pub fn rounds(&self) -> u32 {
         // SAFETY: the device finished; `ctl` 25 counts the rounds.
         unsafe { *self.ctl.host().cast::<u32>().add(25) }
@@ -1469,6 +1482,8 @@ pub struct Expanded {
     pub passes: (u32, u32),
     /// The expansion's rounds (decision 0523 §1), every top's (a measurement).
     pub rounds: u32,
+    /// The givings back between rounds (decision 0478 §10), every top's.
+    pub gives: u32,
     pub def_rung: u32,
 }
 
@@ -1560,7 +1575,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs);
@@ -1573,7 +1588,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1581,7 +1596,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
     }
 }
 

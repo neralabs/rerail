@@ -146,11 +146,10 @@ fn the_pool_gives_each_block_once() {
     let mut supply: BTreeMap<u32, usize> = BTreeMap::new();
     let mut owner = vec![u32::MAX; at as usize];
     for (i, w) in ranges.chunks(2).enumerate() {
-        let (mut s, mut n) = (w[0], w[1]);
+        let mut n = w[1];
         while n > 0 {
             let c = floor(n);
             *supply.entry(c).or_default() += 1;
-            s += size(c);
             n -= size(c);
         }
         for u in w[0]..w[0] + w[1] { owner[u as usize] = i as u32; }
@@ -309,10 +308,15 @@ fn the_source_is_opencl_c_1_2() {
 
 /// §4 of decision 0460: the grid is the device's resident count at the grid kernels' threadgroup
 /// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
-/// that gives no cores.
+/// that gives no cores. On the CPU it is one group (decision 0523 §3: its groups are coroutines
+/// on one host thread).
 #[test]
 fn the_grid_is_the_devices_resident_count() {
     let device = lane::device().unwrap();
+    if matches!(device, lane::Device::Cpu(_)) {
+        assert_eq!(groups(), 1, "the CPU's grid");
+        return;
+    }
     let local = kernel("pp_setup").threadgroup_bytes();
     match device.gpu_cores() {
         Some(cores) => {

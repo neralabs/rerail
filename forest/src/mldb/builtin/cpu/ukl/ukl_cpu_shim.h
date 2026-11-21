@@ -188,6 +188,11 @@ struct __ukl_cpu_sched {
     // done, and each SIMD group's lanes at its operation and done.
     uint32_t at_tg, done;
     uint32_t sg_at[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH], sg_done[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH];
+    // A SIMD-group operation's lanes' results, made once by the first lane past its wait (`__ukl_cpu_once`), and
+    // the operation (its lanes' `sgop`) each SIMD group's are of. One set suffices: the next operation's are made
+    // past its wait, when every lane has read these.
+    uint64_t res[__UKL_CPU_MAX_THREADS];
+    uint32_t res_op[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH];
 };
 
 static thread_local __ukl_cpu_sched* __ukl_sched;
@@ -338,6 +343,7 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
     for (uint32_t k = 0; k < __UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH; k++) {
         s->sg_at[k] = 0;
         s->sg_done[k] = 0;
+        s->res_op[k] = 0;
     }
     for (;;) {
         // A pass: the first runnable thread, which hands on to the others in order (`__ukl_cpu_pass`); the last
@@ -597,62 +603,118 @@ static inline uint64_t __ukl_cpu_exchange(uint64_t v, uint32_t from_lane)
     return __ukl_self->simd * UKL_SIMD_WIDTH + l < __ukl_sched->n ? g[l] : v;
 }
 
+// This operation's results for the calling thread's SIMD group (`g` its lanes' values, `__ukl_cpu_put`): made by
+// the first of its lanes to ask (`make(g, live, r)`, `live` the mask of the lanes that took part), read by the
+// rest. A scan is then one pass over the lanes, not one a lane.
+template <typename M>
+static inline const uint64_t* __ukl_cpu_once(const uint64_t* g, M make)
+{
+    __ukl_cpu_thread* t = __ukl_self;
+    __ukl_cpu_sched* s = __ukl_sched;
+    uint64_t* r = s->res + (uint64_t)t->simd * UKL_SIMD_WIDTH;
+    if (s->res_op[t->simd] != t->sgop) {
+        uint32_t live = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            if (__ukl_cpu_in(l))
+                live |= 1u << l;
+        make(g, live, r);
+        s->res_op[t->simd] = t->sgop;
+    }
+    return r;
+}
+
 static inline uint32_t __ukl_cpu_ballot(bool b)
 {
-    const uint64_t* g = __ukl_cpu_put(b);
-    uint32_t m = 0;
-    for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
-        if (__ukl_cpu_in(l) && g[l])
-            m |= 1u << l;
-    return m;
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(b), [](const uint64_t* g, uint32_t live, uint64_t* r) {
+        uint32_t m = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            if ((live >> l & 1u) && g[l])
+                m |= 1u << l;
+        r[0] = m;
+    });
+    return (uint32_t)r[0];
 }
 
 // The SIMD group's reduction of its live lanes' `v` (`op` 0 sum, 1 minimum, 2 maximum), in one wait.
 static inline uint32_t __ukl_cpu_reduce(uint32_t v, uint32_t op)
 {
-    const uint64_t* g = __ukl_cpu_put(v);
-    uint32_t r = op == 0u ? 0u : op == 1u ? 0xffffffffu : 0u;
-    for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
-        if (!__ukl_cpu_in(l))
-            continue;
-        uint32_t x = (uint32_t)g[l];
-        r = op == 0u ? r + x : op == 1u ? (x < r ? x : r) : (x > r ? x : r);
-    }
-    return r;
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [op](const uint64_t* g, uint32_t live, uint64_t* r) {
+        uint32_t a = op == 0u ? 0u : op == 1u ? 0xffffffffu : 0u;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            if (!(live >> l & 1u))
+                continue;
+            uint32_t x = (uint32_t)g[l];
+            a = op == 0u ? a + x : op == 1u ? (x < a ? x : a) : (x > a ? x : a);
+        }
+        r[0] = a;
+    });
+    return (uint32_t)r[0];
 }
 
-// The sum of the live lanes' `v` below this lane (`inclusive`: and its own), in one wait.
+// The sum of the live lanes' `v` below this lane (`inclusive`: and its own), and in `*total` all of theirs, in one
+// wait.
+static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, bool inclusive, uint32_t* total)
+{
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(v), [](const uint64_t* g, uint32_t live, uint64_t* r) {
+        uint32_t a = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            r[l] = a;
+            if (live >> l & 1u)
+                a += (uint32_t)g[l];
+        }
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            r[l] |= (uint64_t)a << 32;
+    });
+    uint64_t x = r[__ukl_self->lane];
+    *total = (uint32_t)(x >> 32);
+    return inclusive ? (uint32_t)x + v : (uint32_t)x;
+}
 static inline uint32_t __ukl_cpu_prefix(uint32_t v, bool inclusive)
 {
-    uint32_t self = __ukl_self->lane;
-    const uint64_t* g = __ukl_cpu_put(v);
-    uint32_t r = 0;
-    for (uint32_t l = 0; l < self; l++)
-        if (__ukl_cpu_in(l))
-            r += (uint32_t)g[l];
-    return inclusive ? r + v : r;
+    uint32_t t;
+    return __ukl_cpu_prefix_total(v, inclusive, &t);
 }
+static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, uint32_t* total) { return __ukl_cpu_prefix_total(v, true, total); }
 
 // The inclusive segmented scan (`add`: a sum, else a maximum) of the live lanes' `v` up to this lane, from the last
-// lane at or before it whose `f` is set; whether there is one in `*fin`. In one wait.
+// lane at or before it whose `f` is set; whether there is one in `*fin`; the last live lane's in `*tv`, `*tf`. In
+// one wait.
+static inline uint32_t __ukl_cpu_seg_total(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* tv, uint32_t* tf)
+{
+    const uint64_t* r = __ukl_cpu_once(__ukl_cpu_put(((uint64_t)(f != 0u) << 32) | v), [add](const uint64_t* g, uint32_t live, uint64_t* r) {
+        uint32_t a = 0, h = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            if (live >> l & 1u) {
+                uint32_t x = (uint32_t)g[l];
+                if (g[l] >> 32) {
+                    a = x;
+                    h = 1;
+                } else {
+                    a = add ? a + x : (x > a ? x : a);
+                }
+            }
+            r[l] = ((uint64_t)h << 32) | a;
+        }
+    });
+    uint64_t x = r[__ukl_self->lane], last = r[UKL_SIMD_WIDTH - 1];
+    *fin = (uint32_t)(x >> 32);
+    *tv = (uint32_t)last;
+    *tf = (uint32_t)(last >> 32);
+    return (uint32_t)x;
+}
+// `__ukl_cpu_seg_total`, and the lane before's in `*ev`, `*ef` (0 for lane 0), from the same operation's results.
+static inline uint32_t __ukl_cpu_seg_ex(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* ev, uint32_t* ef, uint32_t* tv, uint32_t* tf)
+{
+    uint32_t x = __ukl_cpu_seg_total(add, f, v, fin, tv, tf), l = __ukl_self->lane;
+    uint64_t b = l > 0 ? __ukl_sched->res[(uint64_t)__ukl_self->simd * UKL_SIMD_WIDTH + l - 1] : 0;
+    *ev = (uint32_t)b;
+    *ef = (uint32_t)(b >> 32);
+    return x;
+}
 static inline uint32_t __ukl_cpu_seg(bool add, uint32_t f, uint32_t v, uint32_t* fin)
 {
-    uint32_t self = __ukl_self->lane;
-    const uint64_t* g = __ukl_cpu_put(((uint64_t)(f != 0u) << 32) | v);
-    uint32_t r = 0, h = 0;
-    for (uint32_t l = 0; l <= self; l++) {
-        if (!__ukl_cpu_in(l))
-            continue;
-        uint32_t x = (uint32_t)g[l];
-        if (g[l] >> 32) {
-            r = x;
-            h = 1;
-        } else {
-            r = add ? r + x : (x > r ? x : r);
-        }
-    }
-    *fin = h;
-    return r;
+    uint32_t tv, tf;
+    return __ukl_cpu_seg_total(add, f, v, fin, &tv, &tf);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

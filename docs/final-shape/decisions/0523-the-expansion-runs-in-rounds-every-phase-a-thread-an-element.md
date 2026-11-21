@@ -87,6 +87,18 @@ SIMD-group operation switches each thread of the group.
   switch a wait, not two), and the counts of threads at the barrier, at each SIMD group's
   operation and done replace three scans of the 256 threads at every release (22% of a run's
   samples before, under 1% after).
+- **A SIMD-group operation's results are made once.** The lanes' values written, the first lane
+  past the wait makes every lane's result (a scan's, a segmented scan's, a reduction's, a
+  ballot's) in one pass over the 32, and the others read theirs: a scan had cost each lane its own
+  pass over the lanes before it, 528 reads a SIMD group.
+- **A group of one SIMD group scans in one operation a tile.** `ukl_tg_sum`, `ukl_tg_exclusive_sum`
+  and `ukl_tg_seg_inclusive` at 32 threads are the SIMD group's operation, its total read from the
+  same results (`UKL_NATIVE_SG_TOTALS`), with no threadgroup memory and no barrier: 1 wait a tile,
+  not 4 to 6.
+- **A scan's tile is 16 values a thread on the CPU** (`UKL_SCAN_VT`; 1 on a GPU, whose code is
+  unchanged): each thread folds its own in order, the group scans the threads' folds once, and
+  each thread writes its values from the one before's. A scan or a segmented scan of `n` values
+  waits `n / 512` times, not `n / 32`.
 - **One program a source:** each kernel of the preprocessor's source was its own program,
   preprocessed and loaded again (`accel::gpu::kernels::elsewhere`, keyed by the kernel's name). Now
   the program is keyed by the source's library key.
@@ -168,5 +180,46 @@ SIMD-group operation switches each thread of the group.
    barriers a level (a group's barrier switches the CPU's 256 coroutines as a grid's does). The
    `#if` line's time is `px_subst`'s body, a SIMD group a list (half its samples).
 
-   Next: the substitution, then the call, as grid phases.
+   - **The substitution is phases** (§2's "substitute" row), `px_sb_*`. A round's items add each
+     definition's list to substitute to a set (`QCTL` 6; `_Pragma` and the built-ins stay their
+     SIMD group's), and after the items the round runs, over every list of the set:
+     - a thread a list: its body's items, its `__VA_OPT__`s, its pieces' origin;
+     - a scan of the items; a thread an item: its role and its pieces' count;
+     - a scan of the pieces; a thread a list: its pieces' first in the round's array, its block;
+     - a thread a piece, writing it (a literal, a piece of an argument's flatten or raw tokens, a
+       placemarker, a `#`'s literal);
+     - a thread a list: a present `__VA_OPT__`'s space;
+     - a thread a `##` chain, from its head (a chain is its operators two pieces apart: no other
+       chain reads or writes their operands);
+     - a thread a piece: kept, and joined to the one before; two segmented scans (the runs'
+       lengths, each piece's run's first) and a scan of the kept;
+     - the compaction in place, a chunk of the grid's width read, then after a barrier written
+       at its rank (never past where it was);
+     - a segmented scan of the kept pieces' lengths: their places; a thread a list: its length,
+       its first token's space, done, and into the round's scan.
+
+     `px_pastes`, `px_compact` and `px_places` are gone. What is still one thread an element of
+     a list: a variadic definition's `__VA_OPT__` search (a thread its list), and a `#`'s
+     literal (a thread the `#`).
+
+   | Unit (CPU backend, here) | Rounds | Before the substitution's phases | Now |
+   |---|---|---|---|
+   | A chain of 150 plain levels | 154 | 53 ms | 31 ms |
+   | 150 levels, an argument scanned at each | 454 | 136 ms | 75 ms |
+   | 150 levels, an exit at each | 302 | 74 ms | 50 ms |
+   | A 32,768-token `#if` line, a run (C) | 12 | 574 ms | 126 ms |
+
+   The substitution alone took the `#if` line from 574 to 507 ms: the rest is §3's SIMD-group
+   operations once (446 ms), one operation a tile (210 ms) and 16 values a thread (126 ms).
+
+   Next: the call as grid phases.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
+   Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
+   the longest 0.68 s.
+   - `a_unit_past_its_room_runs_again_larger`'s `#if` line is `A3 == 4096` (8,191 tokens, not
+     32,767): it is still past rung 0's room (the test holds `rung > 0`).
+   - `reclaimed_tokens_keep_a_chain_at_rung_0` gave nothing back: since 0520 a level is a few
+     pieces, and 150 levels never came near rung 0's room (its shapes all settled at rung 0 with
+     giving back off). It now gives back every 16 units of a store's growth
+     (`RERAIL_PP_GIVE_GAP`, as `a_chains_use_is_flat_in_its_length`), holds that each shape gives
+     back (`Expanded::gives`, `ctl` 16: 8 to 40 givings), and runs 40 levels.
