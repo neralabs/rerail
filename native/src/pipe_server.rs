@@ -131,6 +131,9 @@ mod windows {
     }
 
     fn open_pipe_once(name: &[u16]) -> PipeOpen<OwnedHandle> {
+        // No quality-of-service flags (the 0 after OPEN_EXISTING): this open writes nothing, so Windows lets the
+        // process serving the pipe act as no one, which the case below checks. `SECURITY_SQOS_PRESENT` with
+        // `SECURITY_IDENTIFICATION` would hand that process this user's identity at the open.
         // SAFETY: `name` is NUL-terminated; no security attributes and no template file.
         let handle = unsafe {
             CreateFileW(
@@ -173,6 +176,57 @@ mod windows {
         }
         let ticks = (u64::from(times[0].dwHighDateTime) << 32) | u64::from(times[0].dwLowDateTime);
         Some((ticks / 10_000) as f64 - FILETIME_EPOCH_MS)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{PipeOpen, open_pipe_once};
+        use std::ptr::{null, null_mut};
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_CANNOT_IMPERSONATE, GetLastError, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::Security::RevertToSelf;
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{
+            ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+
+        /// The process serving a pipe the lookup opens to ask its pid may not act as the process that asks.
+        #[test]
+        fn the_process_serving_the_pipe_may_not_act_as_the_one_that_asks() {
+            let path = format!(r"\\.\pipe\rerail-pipe-server-test-{}", std::process::id());
+            let name: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
+            // SAFETY: `name` is NUL-terminated; no security attributes.
+            let server = unsafe {
+                CreateNamedPipeW(
+                    name.as_ptr(),
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_BYTE | PIPE_WAIT,
+                    1,
+                    512,
+                    512,
+                    0,
+                    null(),
+                )
+            };
+            assert_ne!(server, INVALID_HANDLE_VALUE);
+            let client = open_pipe_once(&name);
+            assert!(matches!(client, PipeOpen::Opened(_)));
+            // SAFETY: `server` is the pipe's server end, open until closed below; the client end above is already
+            // connected, so the call returns at once. The last-error value is read right after the call that set it.
+            let (acted, error) = unsafe {
+                ConnectNamedPipe(server, null_mut());
+                (ImpersonateNamedPipeClient(server), GetLastError())
+            };
+            if acted != 0 {
+                // SAFETY: ends the impersonation the call above began on this thread.
+                unsafe { RevertToSelf() };
+            }
+            drop(client);
+            // SAFETY: `server` is open and closed here alone.
+            unsafe { CloseHandle(server) };
+            assert_eq!((acted, error), (0, ERROR_CANNOT_IMPERSONATE));
+        }
     }
 }
 
