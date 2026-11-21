@@ -4703,8 +4703,10 @@ impl CodeRuleDslRuntime {
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        compile_rule(&source, &format, &capabilities_json).map(|rule| CompiledCodeRuleDsl {
-            inner: Arc::new(rule),
+        contain_compile_panic(|| compile_rule(&source, &format, &capabilities_json)).map(|rule| {
+            CompiledCodeRuleDsl {
+                inner: Arc::new(rule),
+            }
         })
     }
 
@@ -4726,6 +4728,12 @@ impl CodeRuleDslRuntime {
             capabilities_json,
         })
     }
+}
+
+/// Runs `work`, a code rule compile, with a panic in it an error that reads the same whether
+/// `compile` ran it on the host's thread or `compile_async` on a pool thread.
+fn contain_compile_panic<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
+    crate::panic_boundary::contain_panic("code rule compile", work)
 }
 
 /// One code rule document compiled against the capability manifest `capabilities_json`.
@@ -4768,7 +4776,7 @@ impl napi::Task for CompileTask {
     type JsValue = CompiledCodeRuleDsl;
 
     fn compute(&mut self) -> Result<CompiledCodeRule> {
-        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+        contain_compile_panic(|| {
             compile_rule(&self.source, &self.format, &self.capabilities_json)
         })
     }
@@ -4781,6 +4789,19 @@ impl napi::Task for CompileTask {
         Ok(CompiledCodeRuleDsl {
             inner: Arc::new(output),
         })
+    }
+}
+
+#[cfg(test)]
+mod compile_panic_tests {
+    #[test]
+    fn a_compile_panic_reads_the_same_on_either_thread() {
+        let error = super::contain_compile_panic::<()>(|| panic!("index out of range"))
+            .expect_err("a panic is an error");
+        assert_eq!(
+            error.reason,
+            "code rule compile panicked: index out of range"
+        );
     }
 }
 
