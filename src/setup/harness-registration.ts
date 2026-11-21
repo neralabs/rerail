@@ -581,11 +581,13 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
  * recorded one as a second process on every hook event; the PATH set-up runs with tells nothing of the host's, which a
  * version manager's shell, an editor started from another shell or an installer run since can make differ. The `node`
  * entry stays only where cmd.exe cannot start the paths (`cmdHookEntry`). Registration reads no PATH. With
- * `keepHookCommand`, an entry in either form that the settings already hold stays as it is (`keptHookEntry`).
+ * `keepHookCommand`, an entry in either form that the settings already hold stays as it is (`keptHookEntry`). A
+ * removal writes no entry (`updateGroupedHooks`), so it does not look for cmd.exe.
  */
 async function hookExecEntry(context: Context, executable: string): Promise<JsonObject> {
   const launched: LauncherArgs = [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)];
-  return (await cmdHookEntry(context, launched)) ?? nodeHookEntry(launched);
+  const viaCmd = context.mode === "register" ? await cmdHookEntry(context, launched) : undefined;
+  return viaCmd ?? nodeHookEntry(launched);
 }
 
 /** The `node` exec-form entry: `node` from PATH starts the hook launcher with `launched`. */
@@ -667,14 +669,13 @@ function cmdReadsAsOneWord(path: string): boolean {
 /**
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
  * `settings` already hold: versions 0.2.0 and earlier wrote the `node` form where their PATH found the recorded node,
- * and such a hook still runs, so a check of whether Rerail is connected reads it as current. A cmd.exe entry stays only
- * while a file is at its path: one with nothing there starts no hook, so it reads as out of date.
+ * and such a hook still runs, so a check of whether Rerail is connected reads it as current. `entry` is the cmd.exe form
+ * only while a file is at its path (`hookExecEntry`): one with nothing there starts no hook, so it reads as out of date.
  */
-async function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): Promise<JsonObject> {
+function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
   const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
   if (launched === undefined) return entry;
-  const forms = [nodeHookEntry(launched), await cmdHookEntry(context, launched)].filter(form => form !== undefined);
-  return forms.find(form => holdsHookEntry(settings, form)) ?? entry;
+  return [nodeHookEntry(launched), entry].find(form => holdsHookEntry(settings, form)) ?? entry;
 }
 
 /** Whether `settings` hold `entry` among their hooks: the same command with the same arguments. */
@@ -904,7 +905,7 @@ async function updateGroupedHooks(
   entry: JsonObject,
 ): Promise<JsonObject> {
   const hooks = await stripHookEvents(hooksObject(value, path), context, executable);
-  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, await keptHookEntry(context, value, entry), path);
+  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, keptHookEntry(context, value, entry), path);
   return withHooks(value, hooks);
 }
 
@@ -2005,7 +2006,7 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
 
 /**
  * Whether a file or folder is at `path`, asked of this computer's file system off the event loop: the daemon asks it in
- * the check of whether Rerail is connected (`keptHookEntry`), and a synchronous look would hold every request it serves.
+ * the check of whether Rerail is connected (`cmdHookEntry`), and a synchronous look would hold every request it serves.
  */
 function fileThere(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);

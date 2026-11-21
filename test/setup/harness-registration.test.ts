@@ -518,6 +518,26 @@ describe("Claude Code settings.json", () => {
     expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
   });
 
+  it.each([
+    // A removal writes no hook entry, so it needs no cmd.exe.
+    ["a removal", 0, (options: RegistrationOptions) => unregisterHarnesses(options)],
+    // A check of whether Rerail is connected compares the entry registration would write, looked for once, with both forms.
+    ["a check of whether Rerail is connected", 1, (options: RegistrationOptions) => registerHarnesses({ ...options, dryRun: true, keepHookCommand: true })],
+  ])("%s looks for cmd.exe %i times on Windows", async (_case, looks, run) => {
+    const { home, root } = await fixture();
+    const asked: string[] = [];
+    const fileExists = (file: string) => {
+      asked.push(file);
+      return cmdThere(file);
+    };
+    const windows = { root, home, nodePath: await windowsNode(home, "recorded-node"), platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists };
+    await registerHarnesses(windows);
+    asked.length = 0;
+
+    await run(windows);
+    expect(asked).toEqual(Array.from({ length: looks }, systemCmd));
+  });
+
   it("replaces and removes a cmd.exe hook entry set-up wrote once that cmd.exe is gone, and keeps a person's bare cmd.exe hook", async () => {
     const { home, root } = await fixture();
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
