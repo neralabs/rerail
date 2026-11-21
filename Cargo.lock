@@ -4863,6 +4863,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-ukl-vec"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-tape-format",
+ "rerail-ukl",
+ "rerail-ukl-vec",
+]
+
+[[package]]
 name = "rerail-vue-lean"
 version = "0.1.0"
 dependencies = [

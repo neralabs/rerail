@@ -1,0 +1,22 @@
+[package]
+name = "rerail-ukl-vec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL on the CPU as vector code between sync points (decision 0567): a kernel's C tape lowered by passes from tape to tape, and run."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-ukl/test-hooks", "rerail-c-lean/test-hooks", "rerail-tape-format/test-hooks"]
+
+[dependencies]
+# The kernel's source: UKL preprocessed as OpenCL C (its shim and library, carried).
+rerail-ukl = { path = "../ukl" }
+# Its C tape (tree-sitter-c's).
+rerail-c-lean = { path = "../c_lean" }
+# The tapes the passes read and write.
+rerail-tape-format = { path = "../tape_format" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-ukl-vec = { path = ".", features = ["test-hooks"] }

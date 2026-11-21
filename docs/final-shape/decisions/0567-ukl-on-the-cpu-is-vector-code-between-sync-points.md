@@ -35,10 +35,19 @@ slow". The answers below are the user's, given to the questions of the design pa
 2. **The path is passes from tape to tape**, each one reading its input tape in place and writing its output once,
    in a block. Each output is a derived fact, not a copy (0353). The tapes are in **the existing tape format**, with
    node kinds of their own, so the reads, blocks and rules work on them unchanged.
-   1. A "cpu-simd" shim for `rerail-c-pp`: the macros become marked calls (barriers, SIMD-group operations, atomics,
-      address spaces), not coroutines.
-   2. **Lower:** the C tape becomes a typed SSA kernel tape. `UKL_CALLED` functions are inlined, structs split into
-      fields, address spaces explicit, overloads resolved.
+   1. **The source is the OpenCL backend's** (`rerail-ukl-vec`'s `source`, 2026-11-21): the kernel preprocessed as
+      OpenCL C with 32-lane sub-groups (`UKL_OPENCL_SUBGROUPS`), into the C frontends' tokens (`Preprocess::expanded`:
+      no line markers, each token's origin kept). One C dialect for the GPU drivers and this path, and no shim of its
+      own: the intrinsics are OpenCL's builtins (`get_local_id`, `barrier`, `sub_group_*`, `atomic_*`), known by
+      name. Where C's grammar has no place for OpenCL's words they are respelled (`__UKL_VEC`):
+      - the address spaces are nothing, as the CPU's memory is one;
+      - a threadgroup's own storage is marked where it is declared (`__UKL_LOCAL_STORAGE`, the `SHARED` rows);
+      - OpenCL's scalar names are C's fixed-width types;
+      - a kernel's rows and a structure's fields are constants (`Name__ukl_params`, `Type__ukl_fields`), not the
+        reflection kernels OpenCL's host runs.
+   2. **Lower:** the C tape becomes a typed kernel tape, its control flow structured (`if`, the loops and `switch` as
+      nodes: the kernels have no `goto`), its variables numbered. `UKL_CALLED` functions are inlined, structs split
+      into fields, overloads resolved.
    3. **Cut at sync points:** barriers, grid barriers, SIMD-group operations and `SYNC_FUNCTION` calls end a region.
       A value live across a cut is kept per lane, as a struct of arrays: the coroutine stack's replacement. A
       barrier then costs nothing; it is the boundary between two regions.
@@ -83,7 +92,7 @@ slow". The answers below are the user's, given to the questions of the design pa
 
 ## Order of work, each step gated
 
-1. The cpu-simd shim, the kernel tape and the cuts, run by the interpreter at one lane. Gate: equal to the coroutine
+1. The source, the kernel tape and the cuts, run by the interpreter at one lane. Gate: equal to the coroutine
    backend on the library's tests.
 2. Uniformity and vectorization, with the interpreter at 32 lanes, and the barrier rule's refusal. Gate: the same,
    with the SIMD-group operations native, and a test kernel that breaks the rule refused with its place.
