@@ -26,10 +26,9 @@ import { sameFile } from "./same-file.js";
  * folder that cannot be made, runs the hook as before.
  */
 function turnOnCompileCache(): void {
-  // A node before 22.8 has no such export; the namespace then holds none.
-  const enable = (nodeModule as { enableCompileCache?: typeof nodeModule.enableCompileCache }).enableCompileCache;
   try {
-    enable?.();
+    // A node before 22.8 has no such export, so the call throws there.
+    nodeModule.enableCompileCache();
   } catch {
     // The hook runs without the cache, as on a node that has none.
   }

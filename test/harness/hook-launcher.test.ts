@@ -264,6 +264,17 @@ describe("hook launcher started by a node without Node's compile cache", () => {
     expect(second.stderr).toMatch(/\[compile cache\] V8 code cache for \S+ \S*claude-hook\.mjs was accepted/u);
   }, 60_000);
 
+  // A node without it that runs the hook itself: the recorded node, or the node the launcher falls back to once that is
+  // gone.
+  it("runs the hook without the cache where the node that runs it has none", async () => {
+    const place = await cachePlace("itself");
+    const preload = join(place.base, "no-compile-cache.mjs");
+    await writeFile(preload, 'import nodeModule, { syncBuiltinESMExports } from "node:module";\ndelete nodeModule.enableCompileCache;\nsyncBuiltinESMExports();\n');
+    const { status, answer, stderr } = launchAt(place, {}, preload);
+    expect(status, stderr).toBe(0);
+    expect(answer).toHaveProperty("cache", null);
+  }, 30_000);
+
   it("starts a launcher under the recorded node once, and that one runs the hook itself", async () => {
     const { place, preload } = await olderNodePlace();
     const starts = join(place.base, "starts");
