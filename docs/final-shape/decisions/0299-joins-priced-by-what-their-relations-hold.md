@@ -36,7 +36,11 @@ region(r, c, k) :- comp_kind(ck, k), kind(c, ck), child(c, r, _), !kind(r, "comm
 4. **A probe on several bound columns, none constant, reads at least one combination's rows**: the relation's rows
    over the product of the columns' distinct counts, capped at its rows. Independence multiplied each column's
    selectivity: `walk($n, $x, $s)` with `$n` and `$x` bound was priced as if `$x` narrowed `$n`'s rows again,
-   though `$x` is `$n`'s name and narrows nothing.
+   though `$x` is `$n`'s name and narrows nothing. Only where the atoms placed tie the bound variables together
+   (2026-11-21): two bound by atoms joined by nothing are a cross product, and independent. `open_tuple`'s
+   `child($t, $c, _)` after `kind($t, "tuple")` and a scan of `unparen($c, $m)` was priced at a row a pair (10.7 M
+   rows for 682), so the tail past the head's binding (Q146) looked witnessed at every tuple and free: 47 M rows
+   read, ep2's cold run 1,266 G instructions and 95.7 s CPU on an M3, 828 G and 61.7 s with the tie required.
 
 ## Measured
 
@@ -71,3 +75,4 @@ demand lines, renumbered from run to run); their work follows the demand each ru
 - `a_relation_of_facts_is_sized_when_planned`
 - `a_kind_bound_by_counted_values_reads_their_nodes`
 - `a_probe_on_several_columns_reads_a_combinations_rows`
+- `a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair`

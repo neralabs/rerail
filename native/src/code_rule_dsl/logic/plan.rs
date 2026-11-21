@@ -4021,7 +4021,25 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 {
+            // Only where the bound variables are tied by the atoms placed: two bound by atoms joined by nothing are a
+            // cross product, independent of each other. `open_tuple`'s `child($t, $c, _)` after `kind($t, "tuple")`
+            // and a scan of `unparen($c, $m)` was priced at a row a pair, 10.7 M for 682, so its tail (Q146) looked
+            // witnessed at every tuple and free: 47 M rows read, 32 s of ep2's cold run.
+            let tied = || {
+                let mut reach = VarSet::of(cols.iter().take(1).filter_map(|&c| args[c].var()));
+                let mut grew = true;
+                while grew {
+                    grew = false;
+                    for (d, vars, _) in &binding_domains {
+                        if *d != i && vars.is_subset(bound) && !vars.is_disjoint(&reach) && !vars.is_subset(&reach) {
+                            reach.extend(vars);
+                            grew = true;
+                        }
+                    }
+                }
+                cols.iter().all(|&c| args[c].var().is_some_and(|v| reach.contains(v) || pinned.contains(v)))
+            };
+            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && tied() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
                 rows = rows.max(card / combinations);
             }

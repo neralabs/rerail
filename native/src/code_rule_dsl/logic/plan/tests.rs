@@ -3638,6 +3638,36 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     assert!(work < 5e6, "a range a pair: {work}");
 }
 
+/// A probe by two columns whose variables atoms joined by nothing bound is not priced at a row a binding (decision
+/// 0299's floor of one combination is for columns one row binds together). `pyflakes`' `open_tuple(t) :- kind(t,
+/// "tuple"), child(t, c, _), unparen(c, m), !py_literal(m)` was planned as the tuples crossed with every `unparen` row,
+/// then `child` by both: priced at a row a pair, every tuple looked witnessed and the tail (Q146) free, and 1,106 tuples
+/// read 47 M rows (ep2's cold run, 32 s of 95). From the tuples, `child` by its parent, then `unparen` by the child.
+#[test]
+fn a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair() {
+    let p = parse(".decl tk(t:number)\n.decl un(c:number,m:number)\n.decl ch(p:number,c:number,i:number)\n.decl lit(m:number)\n.input tk, un, ch, lit\n.decl ot(t:number)\not(t) :- tk(t), un(c,m), !lit(m), ch(t,c,_).\n.output ot\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("tk", 198.0, vec![198.0]),
+        ("un", 64_447.0, vec![64_447.0, 64_000.0]),
+        ("ch", 65_741.0, vec![22_000.0, 65_741.0, 50.0]),
+        ("lit", 30_000.0, vec![30_000.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "ot").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tk", "ch", "un"], "{order:?}, work={work}");
+}
+
 /// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
 /// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
 /// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
