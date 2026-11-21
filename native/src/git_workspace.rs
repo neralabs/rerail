@@ -823,19 +823,19 @@ impl GitWorkspace {
     /// A clean base file's blob, unread: the path has no overlay, its worktree stat is exactly its index entry's
     /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or its volume leaves
     /// the stat to decide (`VerifiedFiles::proof`), so its bytes are the blob's (phase 0, t23). `None` where only a
-    /// hash could tell.
-    pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
+    /// hash could tell. `verified` keeps each volume's answer across calls, so each volume is asked once.
+    pub fn clean_blob_unread(
+        &self,
+        relative_path: &str,
+        verified: &mut VerifiedFiles<'_>,
+    ) -> Option<HashKey> {
         let file = self.unedited_base_file(relative_path)?;
         let recorded = file.checkout?;
         let current = WorktreeStat::read(&self.worktree_root.join(relative_path))?;
         let proven = current.metadata.is_file()
             && current.matches(&recorded)
             && matches!(
-                VerifiedFiles::new(None, &self.worktree_root).proof(
-                    relative_path,
-                    file.blob,
-                    &current
-                ),
+                verified.proof(relative_path, file.blob, &current),
                 Proof::Held
             );
         proven.then_some(file.blob)
@@ -2431,7 +2431,11 @@ mod tests {
         }
         let (root, path, workspace) = committed_long_ago("unread-blob", b"print(1)\n");
         let base = &workspace.base_files[0];
-        assert_eq!(workspace.clean_blob_unread("a.py"), Some(base.blob));
+        let mut memory = VerifiedFiles::new(None, &root);
+        assert_eq!(
+            workspace.clean_blob_unread("a.py", &mut memory),
+            Some(base.blob)
+        );
         rewrite_keeping_its_time(&path, b"pront(1)\n");
         assert!(
             WorktreeStat::read(&path)
@@ -2439,7 +2443,35 @@ mod tests {
                 .matches(&base.checkout.unwrap()),
             "the stat Git recorded"
         );
-        assert_eq!(workspace.clean_blob_unread("a.py"), None, "other bytes");
+        let unread = workspace.clean_blob_unread("a.py", &mut memory);
+        assert_eq!(unread, None, "other bytes");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The memory a caller keeps across looks at clean blobs asks a volume whether it keeps change
+    /// times once, as a restore's does: every later look at a file whose change time moved makes
+    /// the file id query alone.
+    #[cfg(windows)]
+    #[test]
+    fn looks_at_clean_blobs_ask_a_volume_about_its_change_times_once() {
+        if ran_with_a_git_setup(
+            module_path!(),
+            "looks_at_clean_blobs_ask_a_volume_about_its_change_times_once",
+        ) {
+            return;
+        }
+        let (root, path, workspace) = committed_long_ago("unread-volume-once", b"print(1)\n");
+        rewrite_keeping_its_time(&path, b"print(1)\n");
+        let mut memory = VerifiedFiles::new(None, &root);
+        worktree_stat::queries_made();
+        for _ in 0..3 {
+            assert_eq!(workspace.clean_blob_unread("a.py", &mut memory), None);
+        }
+        assert_eq!(
+            worktree_stat::queries_made(),
+            3 + 2,
+            "three file id queries and the volume's two, once"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
