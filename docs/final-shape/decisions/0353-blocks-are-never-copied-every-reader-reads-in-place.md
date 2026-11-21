@@ -813,6 +813,31 @@ still gives 1,629 findings, at 88.1 B instructions against 87.1 B before. Test:
 `the_views_directory_is_the_hosts_too`. On Metal, the mini passes `a_views_index_is_in_its_block_for_every_thread`,
 `views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`, and the M3
 passes the first. A home's device base is `ViewHome::gpu`, since `device` is a Metal keyword.
+
+**Step 2, the reads (2026-11-21).** The directory's two searches are written once: `dir_doc_of_row(view, row, memo)`
+and `dir_doc_of_key(key, memo)` in CLIF, in the relation family, with the directory as the descriptor. The host's
+twins, written directly, are `ViewDir::doc_of_row` and `doc_of_key`. Each tries the memo first and then bisects.
+A stale memo costs a comparison, never a wrong document. The memo is a value the caller passes and keeps; it is
+never thread or process state.
+
+The kernels' three bisections by row (`vread`, `child_next`) and by key (`by_parent`) now call the reads. `vread`
+takes its caller's memo: the copy kernel and `ix_bucket` share one across a row's columns, and every other caller
+passes a fresh one, which costs what the bisection cost. `view_expand`'s search (`chunk_views.uglykl`) is over the
+chunk's copied document array, not the directory, and goes with that copy.
+
+Tests:
+- `the_directorys_searches_are_the_jits`: the host's searches against the JIT's.
+- `the_kernels_directory_searches_are_the_hosts`: the device's against the host's, for every row of every view,
+  every key and keys of none, with each memo.
+
+**Step 2, the CPU's searches (next).** `Batch::doc` runs before documents are made (decision 0494), and
+`Batch::locate` reads offsets made from the documents' counts alone. So the directory comes in two layers:
+- **The search layer**, made from keys and counts the first time the batch is asked: each row's key and first row
+  in every view, `child`'s sibling view among them. It replaces `made::Offsets` and the key search over
+  `made::Docs`.
+- **The reads layer**: each row's entry, tape and view, written when its document is made.
+
+`locate` and `doc` then take their callers' memo in place of the `DOC` and `LOCATED` thread-locals.
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

@@ -55,17 +55,14 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 typedef UKL_GLOBAL const Stage* StageP;
 typedef UKL_GLOBAL const int64_t* Longs;
 
-// A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the last whose
-// first row in the view is at or before it: an empty one starts where the next does), then the view's read written
-// once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
-UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col) {
+// A view's row `r`'s value in column `col` (decision 0353 step 4d): the document whose rows hold it (the
+// directory's search written once, `clif_dir_doc_of_row`, the caller's `memo` tried first and set to it), then the
+// view's read written once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
+UKL_COLD int64_t vread(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t r, uint32_t col, UKL_PRIVATE uint32_t* memo) {
     UKL_GLOBAL const ViewRow* rows = view_rows(d);
     uint32_t k = kind - 1u;
-    uint32_t lo = 0u, hi = d->ndocs;
-    while (hi - lo > 1u) {
-        uint32_t m = (lo + hi) / 2u;
-        if (rows[m].rows[k] <= r) lo = m; else hi = m;
-    }
+    uint32_t lo = clif_dir_doc_of_row(view_block(d), d->at, k, r, *memo);
+    *memo = lo;
     UKL_GLOBAL const ViewRow* e = &rows[lo];
     uint32_t i = r - e->rows[k];
     UKL_GLOBAL const uint32_t* v = e->view;
@@ -105,7 +102,8 @@ UKL_INLINE int64_t lane_of(int64_t v, uint32_t w) {
 // A value of the probed relation: row `r`'s in column `col`, read in its block through the generated reads (`r_at`,
 // decision 0325). Every relation the device reads lies in a block (step 5).
 UKL_INLINE int64_t rget(StageP s, Longs R, uint32_t r, uint32_t col) {
-    if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col);
+    uint32_t memo = NONE;
+    if (s->r_view != 0u) return vread(s->r_view, s->v_dir, r, col, &memo);
     return (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)R, s->r_at, r, col);
 }
 
@@ -216,9 +214,6 @@ UKL_INLINE void group_of(Longs R, uint64_t at, uint32_t index, UKL_PRIVATE const
 // the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
 // the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
 // parent's children from row lo, each step the next sibling's row (`NONE` ends it).
-UKL_INLINE UKL_GLOBAL const ViewDoc* vdoc(UKL_GLOBAL const ViewDir* d, uint32_t m) {
-    return (UKL_GLOBAL const ViewDoc*)(view_block(d) + view_rows(d)[m].entry);
-}
 
 // A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
 // key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
@@ -227,13 +222,8 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     UKL_GLOBAL const ViewDir* d = s->v_dir;
     *lo = 0u; *hi = 0u; *how = 0u;
     if (key < 0 || d->ndocs == 0u) return;
-    uint32_t k = (uint32_t)((uint64_t)key >> 32);
-    uint32_t a = 0u, b = d->ndocs;
-    while (b - a > 1u) {
-        uint32_t m = (a + b) / 2u;
-        if (vdoc(d, m)->key <= k) a = m; else b = m;
-    }
-    if (vdoc(d, a)->key != k) return;
+    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (a == NONE) return;
     UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
     UKL_GLOBAL const uint8_t* ch = view_block(d);
     UKL_GLOBAL const uint8_t* t = view_tape(d, e);
@@ -250,13 +240,7 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
 UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
-    UKL_GLOBAL const ViewRow* rows = view_rows(d);
-    uint32_t lo = 0u, hi = d->ndocs;
-    while (hi - lo > 1u) {
-        uint32_t m = (lo + hi) / 2u;
-        if (rows[m].rows[1] <= r) lo = m; else hi = m;
-    }
-    UKL_GLOBAL const ViewRow* e = &rows[lo];
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 1u, r, NONE)];
     uint32_t n = clif_view_child_next(view_block(d), e->entry, view_tape(d, e), e->view, view_lines(d, e), r - e->rows[1]);
     return n == NONE ? NONE : e->rows[1] + n;
 }
@@ -1149,10 +1133,11 @@ DEFINE_KERNEL2(join, rows_copy,
 {
     uint32_t n = c->count_slot == NONE ? c->n : ukl_min(totals[c->count_slot], c->n);
     if (t >= n) return;
+    uint32_t memo = NONE;
     for (uint32_t k = 0; k < c->ncols && k < 16; k++) {
         uint32_t from = c->src[k];
         int64_t v = from == NONE ? c->konst[k]
-                  : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from)
+                  : c->r_view != 0u ? vread(c->r_view, c->v_dir, t, from, &memo)
                   : c->src_at == 0ul ? ((UKL_GLOBAL const int64_t*)S)[(uint64_t)from * c->src_stride + t]
                   : (int64_t)clif_rel_get(S, c->src_at, t, from);
         if (c->dst_rows_at == 0ul) ((UKL_GLOBAL int64_t*)D)[(uint64_t)k * c->dst_stride + c->dst_off + t] = v;
@@ -1330,8 +1315,9 @@ DEFINE_KERNEL2(join, ix_bucket,
 {
     if (t >= p->n) return;
     uint64_t h = KEY_SEED;
+    uint32_t memo = NONE;
     for (uint32_t i = 0; i < p->ncols && i < 8; i++)
-        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i]) : (int64_t)clif_rel_get(B, p->at, t, p->cols[i]));
+        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], &memo) : (int64_t)clif_rel_get(B, p->at, t, p->cols[i]));
     out[t] = (uint32_t)(h & p->mask);
 }
 

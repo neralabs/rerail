@@ -111,6 +111,72 @@ pub struct ViewDir {
 }
 const _: () = assert!(std::mem::size_of::<ViewDir>() == 40);
 
+/// No document (`ViewDir::doc_of_key`).
+pub const NO_DOC: u32 = u32::MAX;
+
+/// The directory's searches on the host, written directly beside their CLIF (`dir_doc_of_row`, `dir_doc_of_key`,
+/// decision 0353 step 3 on the CPU, step 2), which the kernels and the JIT read: each takes a memo, the document its
+/// caller found last, tried before the bisection. A stale memo costs a comparison, never a wrong document.
+impl ViewDir {
+    /// The batch's block's start: the directory's address less its offset in it.
+    fn block(&self) -> *const u8 {
+        (self as *const Self).cast::<u8>().wrapping_sub(self.at as usize)
+    }
+    /// Its rows.
+    ///
+    /// # Safety
+    /// The directory lies in its block as `build_dir` wrote it, and the block is alive.
+    pub unsafe fn rows(&self) -> &[ViewRow] {
+        // SAFETY: the caller's.
+        unsafe { std::slice::from_raw_parts(self.block().add(self.rows as usize).cast::<ViewRow>(), self.ndocs as usize) }
+    }
+    /// Its homes.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn homes(&self) -> &[ViewHome] {
+        // SAFETY: the caller's.
+        unsafe { std::slice::from_raw_parts(self.block().add(self.homes as usize).cast::<ViewHome>(), self.nhomes as usize) }
+    }
+    /// Row `m`'s entry.
+    ///
+    /// # Safety
+    /// As `rows`, and `m` below `ndocs`.
+    pub unsafe fn entry(&self, m: u32) -> &ViewDoc {
+        // SAFETY: the caller's.
+        unsafe { &*self.block().add(self.rows()[m as usize].entry as usize).cast::<ViewDoc>() }
+    }
+    /// The document whose rows of view `k` (`VIEWS`) hold row `r`: the last whose first row is at or before it (an
+    /// empty one starts where the next does); 0 for a directory of none.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn doc_of_row(&self, k: u32, r: u32, memo: u32) -> u32 {
+        // SAFETY: the caller's.
+        let rows = unsafe { self.rows() };
+        let first = |m: u32| rows[m as usize].rows[k as usize];
+        let n = self.ndocs;
+        if memo < n && first(memo) <= r && (memo + 1 == n || first(memo + 1) > r) {
+            return memo;
+        }
+        crate::ids::bisect_n(n, |m| first(m) <= r).saturating_sub(1)
+    }
+    /// The document of key `key` (the batch's documents are in key order), or `NO_DOC`.
+    ///
+    /// # Safety
+    /// As `rows`.
+    pub unsafe fn doc_of_key(&self, key: u32, memo: u32) -> u32 {
+        // SAFETY: the caller's.
+        let key_of = |m: u32| unsafe { self.entry(m) }.key;
+        let n = self.ndocs;
+        if memo < n && key_of(memo) == key {
+            return memo;
+        }
+        let c = crate::ids::bisect_n(n, |m| key_of(m) <= key);
+        if c > 0 && key_of(c - 1) == key { c - 1 } else { NO_DOC }
+    }
+}
+
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`.
 pub const VIEWS: [&str; 9] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof"];
@@ -578,6 +644,108 @@ pub fn loc_col(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
     b.loc(Place::Docof)
+}
+
+#[cfg(feature = "ir")]
+mod dir_at {
+    use super::{ViewDir, ViewDoc, ViewRow};
+    use std::mem::{offset_of, size_of};
+    pub const AT: i32 = offset_of!(ViewDir, at) as i32;
+    pub const NDOCS: i32 = offset_of!(ViewDir, ndocs) as i32;
+    pub const ROWS: i32 = offset_of!(ViewDir, rows) as i32;
+    pub const ROW_SIZE: i64 = size_of::<ViewRow>() as i64;
+    pub const ROW_ENTRY: i32 = offset_of!(ViewRow, entry) as i32;
+    pub const ROW_ROWS: i32 = offset_of!(ViewRow, rows) as i32;
+    pub const KEY: i32 = offset_of!(ViewDoc, key) as i32;
+}
+
+#[cfg(feature = "ir")]
+impl B<'_, '_> {
+    /// The directory's rows (`self.tape` is the directory, in its block): their address, and how many.
+    fn dir_rows(&mut self) -> (Value, Value) {
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let rows = self.word_at(I64, self.tape, dir_at::ROWS);
+        let rows = self.f.ins().iadd(block, rows);
+        let n = self.word_at(I32, self.tape, dir_at::NDOCS);
+        (rows, n)
+    }
+    /// Row `m`'s first row of view `k`.
+    fn dir_first(&mut self, rows: Value, m: Value, k: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        let p = self.item(row, k, 4);
+        self.word_at(I32, p, dir_at::ROW_ROWS)
+    }
+    /// Row `m`'s document's key (its entry's).
+    fn dir_key(&mut self, rows: Value, m: Value) -> Value {
+        let row = self.item(rows, m, dir_at::ROW_SIZE);
+        let entry = self.word_at(I64, row, dir_at::ROW_ENTRY);
+        let at = self.word_at(I64, self.tape, dir_at::AT);
+        let block = self.f.ins().isub(self.tape, at);
+        let p = self.f.ins().iadd(block, entry);
+        self.word_at(I32, p, dir_at::KEY)
+    }
+}
+
+/// `dir_doc_of_row(k, r, memo)`: the document whose rows of view `k` hold row `r` (`ViewDir::doc_of_row`), memo
+/// `memo` tried first.
+#[cfg(feature = "ir")]
+pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
+    let (k, r, memo) = (b.arg(0), b.arg(1), b.arg(2));
+    let (rows, n) = b.dir_rows();
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let held = b.either(I32, inside, |b| {
+        let first = b.dir_first(rows, memo, k);
+        let from = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r);
+        let next = b.f.ins().iadd_imm(memo, 1);
+        let last = b.f.ins().icmp(IntCC::Equal, next, n);
+        let before = b.either(I32, last, |b| b.c32(1), |b| {
+            let after = b.dir_first(rows, next, k);
+            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, after, r);
+            b.f.ins().uextend(I32, past)
+        });
+        let from = b.f.ins().uextend(I32, from);
+        b.f.ins().band(from, before)
+    }, |b| b.c32(0));
+    let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
+    b.either(I32, hit, |_| memo, |b| {
+        let c = b.bisect(n, &mut |b, m| {
+            let first = b.dir_first(rows, m, k);
+            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, r)
+        });
+        let one = b.c32(1);
+        let c = b.f.ins().umax(c, one);
+        b.f.ins().isub(c, one)
+    })
+}
+
+/// `dir_doc_of_key(key, memo)`: the document of key `key` (`ViewDir::doc_of_key`), or `NO_DOC`, memo `memo` tried
+/// first.
+#[cfg(feature = "ir")]
+pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
+    let (key, memo) = (b.arg(0), b.arg(1));
+    let (rows, n) = b.dir_rows();
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
+    let held = b.either(I32, inside, |b| {
+        let k = b.dir_key(rows, memo);
+        let same = b.f.ins().icmp(IntCC::Equal, k, key);
+        b.f.ins().uextend(I32, same)
+    }, |b| b.c32(0));
+    let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
+    b.either(I32, hit, |_| memo, |b| {
+        let c = b.bisect(n, &mut |b, m| {
+            let k = b.dir_key(rows, m);
+            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k, key)
+        });
+        let any = b.f.ins().icmp_imm(IntCC::NotEqual, c, 0);
+        b.either(I32, any, |b| {
+            let m = b.f.ins().iadd_imm(c, -1);
+            let k = b.dir_key(rows, m);
+            let same = b.f.ins().icmp(IntCC::Equal, k, key);
+            let no = b.c32(i64::from(NO_DOC));
+            b.f.ins().select(same, m, no)
+        }, |b| b.c32(i64::from(NO_DOC)))
+    })
 }
 
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
