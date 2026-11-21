@@ -194,6 +194,28 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     expect(seen.map(options => options.timeout)).toEqual([500]);
   });
 
+  // One ended at the bound once it said it ended the process, as while it waits for the exit, has ended it.
+  it("reads a PowerShell ended at its bound after it ended the process as an end still running", { timeout: 30_000 }, async () => {
+    await standIn(process.execPath, ["-e", "process.stdout.write('asked\\r\\n'); setTimeout(() => {}, 60_000)"]);
+    expect(endProcessStartedByPowerShell(process.pid, Date.now(), 3_000)).toBe("running");
+  });
+
+  // The real PowerShell prints that it ended the process before it waits: a wait that never ends stands in for the exit's.
+  it.runIf(process.platform === "win32")("says through PowerShell that it ended a process before it waits for the exit", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => runSync(
+      program, args.map(arg => arg.replace("Wait-Process -InputObject $p", "Start-Sleep -Seconds 60")), options,
+    )) as unknown as typeof childProcess.spawnSync);
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    const closed = once(child, "close");
+    try {
+      expect(endProcessStartedByPowerShell(child.pid!, Date.now(), 8_000)).toBe("running");
+      await closed;
+    } finally {
+      child.kill();
+    }
+  }, 30_000);
+
   it("reads nothing from a PowerShell the machine cannot run, and starts none with no time left", async () => {
     await standIn(join(tmpdir(), "rerail-no-such-powershell", "powershell.exe"), []);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBeUndefined();
@@ -239,8 +261,8 @@ describe("processStartedAtThroughEngine", () => {
     expect(asked).toEqual([7]);
   });
 
-  // A daemon keeps its stderr in its log, and a hook's in the hook failure log: without the engine's read a daemon of
-  // 0.1.4 or earlier is kept as it runs, and the first failure says why, once per process.
+  // A daemon keeps its stderr in its log: without the engine's read a daemon of 0.1.4 or earlier is kept as it runs,
+  // and the first failure says why, once per process.
   it("reports the first failure of the engine's read once, and reads nothing", async () => {
     vi.resetModules();
     const fresh = await import("../../src/engine/process-liveness.js");

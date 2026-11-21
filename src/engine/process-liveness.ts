@@ -162,17 +162,32 @@ export function endProcessStartedBy(
  * {@link endProcessStartedBy} through Windows PowerShell, which loads no Rerail engine, for the uninstall: the process
  * object `Get-Process` returns keeps the handle it opened for `.Handle` and reads its start, ends it and waits on that
  * one handle for the end, with cmdlets and properties alone, which Constrained Language Mode allows. The wait has no
- * limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call only so that a PowerShell or an
- * end that hangs cannot hold the uninstall for good; a PowerShell ended there, or one that cannot run, ends nothing it
- * reports: `unread`.
+ * limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call, PowerShell's own start
+ * included, only so that a PowerShell or an end that hangs cannot hold the uninstall for good. It prints
+ * {@link END_ASKED} once it has ended the process, so a PowerShell ended at the bound after that reads `running`; one
+ * ended before it, or one that cannot run, ends nothing it reports: `unread`.
  */
 export function endProcessStartedByPowerShell(pid: number, startedAt: number, waitMs: number): ProcessEnd {
   const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
   const script = `$p = Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
     + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { Stop-Process -InputObject $p -Force -ErrorAction Stop; `
-    + `Wait-Process -InputObject $p; 'ended' }`;
+    + `'${END_ASKED}'; Wait-Process -InputObject $p; 'ended' }`;
   const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs });
-  return processEnd(run.status === 0 ? String(run.stdout ?? "").trim() : "");
+  return powerShellEnd(run.status, String(run.stdout ?? ""));
+}
+
+/** What {@link endProcessStartedByPowerShell} prints once it has ended the process, before it waits for the exit. */
+const END_ASKED = "asked";
+
+/**
+ * The {@link ProcessEnd} a run of {@link endProcessStartedByPowerShell} that exited with `status` came to by what it
+ * printed (`stdout`): its last line once it exited, `running` when it was ended after it ended the process and before
+ * that process exited, and `unread` otherwise.
+ */
+function powerShellEnd(status: number | null, stdout: string): ProcessEnd {
+  const lines = stdout.trim().split(/\r?\n/u);
+  if (status === 0) return processEnd(lines.at(-1) ?? "");
+  return lines.includes(END_ASKED) ? "running" : "unread";
 }
 
 /** The {@link ProcessEnd} an engine or PowerShell answered; anything else is `unread`. */

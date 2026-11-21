@@ -57,7 +57,7 @@ import {
   stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
-import { endProcessStartedByPowerShell, LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
+import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/daemon/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/daemon/engine-proof.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
@@ -1001,7 +1001,8 @@ describe("a state file Windows left behind", () => {
     await writeFile(stateFile, JSON.stringify(state));
     expect(await stopDaemon(home, machine)).toBe("stopped");
     // The stop's lookup reads the start within the stop's own 10 s, not a hook's 2 s: `rerail install --remove` reads
-    // it through Windows PowerShell, which can take longer, and a start not read would drop the record.
+    // it through Windows PowerShell, which can take longer, and a start not read would keep the record as not
+    // answering and end nothing.
     expect(limits[0]).toBeGreaterThan(2_000);
     expect(asked).toEqual([]);
     expect(signals.filter(signal => signal !== 0)).toEqual([]);
@@ -1110,6 +1111,37 @@ describe("a state file Windows left behind", () => {
     expect(events).toEqual(["end", "launch"]);
   });
 
+  // The start names the daemon it ended only when the end answered that it ended it: a pid that passed to a later
+  // process since the lookup was let alone, and the start says nothing of it.
+  it.each([
+    ["ended", { pid: DEAD_PID, version: "0.1.4" }],
+    ["later", undefined],
+  ] as const)("names the daemon whose engine has no proof that `rerail daemon start` ended when its end answers %s", async (end, replaced) => {
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, []);
+    const launched = DEAD_PID - 1;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: launched })));
+    let running = true;
+    const machine: DaemonMachine = {
+      ...older,
+      kill: pid => {
+        if (pid === launched || (pid === DEAD_PID && running)) return true;
+        throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      },
+      endProcessStartedBy: () => {
+        running = end === "later";
+        return end;
+      },
+      spawnDetached: () => {
+        writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: launched, kernelSocketPath: PIPE })));
+        return { pid: launched };
+      },
+    };
+    const control = { home, packageRoot: OWN_ROOT, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const result = await startDaemon(control, { dev: true, port: 0 }, machine);
+    expect(result.started).toBe(true);
+    expect(result.replaced).toEqual(replaced);
+  });
+
   // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
   // when it ran from the hook's own package. Its replacement ends here at the end of its process, which the test makes
   // fail.
@@ -1215,7 +1247,35 @@ describe("a state file Windows left behind", () => {
   // folder next, and Windows keeps a loaded DLL from being deleted.
   it("gives a process that must not load the engine a machine that reads a process's start without it", () => {
     expect(MACHINE_WITHOUT_ENGINE.processStartedAt).toBe(processStartedAt);
-    expect(MACHINE_WITHOUT_ENGINE.endProcessStartedBy).toBe(endProcessStartedByPowerShell);
+  });
+
+  // The uninstall ends such a daemon through Windows PowerShell, which on a cold or loaded machine takes seconds to start
+  // before it can end the process: it gets the stop's wait for a daemon to end, then the kill's wait for the exit.
+  it("ends a daemon whose engine has no proof through a Windows PowerShell that takes 6 s to end it", { timeout: 30_000 }, async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const bounds: unknown[] = [];
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((_program: string, _args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      bounds.push(options.timeout);
+      return runSync(process.execPath, ["-e", "setTimeout(() => process.stdout.write('asked\\r\\nended\\r\\n'), 6_000)"], options);
+    }) as unknown as typeof childProcess.spawnSync);
+    let running = true;
+    const machine: DaemonMachine = {
+      ...olderEngine(OLDER_STARTED_AT - 600),
+      kill: () => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+      endProcessStartedBy: (pid, startedAt, waitMs) => {
+        const end = MACHINE_WITHOUT_ENGINE.endProcessStartedBy(pid, startedAt, waitMs);
+        running = end !== "ended";
+        return end;
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT })));
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(bounds).toEqual([15_000]);
+    expect(existsSync(stateFile)).toBe(false);
   });
 
   it.runIf(process.platform === "win32")("finds a daemon whose engine has no proof on this machine, starting no process for it", async () => {

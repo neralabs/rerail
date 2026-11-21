@@ -583,9 +583,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   not replace it (`RERAIL_AUTOSTART=0`, or a daemon found only after the start looked) sends it nothing and logs each
   event it lost, which `rerail status` reports with the stop to run before the start. Under `RERAIL_AUTOSTART=0` a
   session's start also tells the person that nothing is recorded until a daemon from the active package runs, and to
-  run `rerail daemon stop`, then `rerail daemon start`. A pid behind such an engine that started later, or that this
-  user may not signal, is not that daemon, and the record is removed; one whose start is not read is kept as a busy
-  daemon is, and sent nothing. Every other reader
+  run `rerail daemon stop`, then `rerail daemon start`. A pid behind such an engine that started more than 10 s later,
+  or that this user may not signal, is not that daemon, and the record is removed; one whose start is not read, or is
+  later by 10 s or less, is kept as a busy daemon is, and sent nothing. Every other reader
   (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
   nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
   before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
@@ -598,8 +598,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   user may not query, or an engine that does not load (the first such failure goes to stderr), leaves it unread, and
   the record is kept. `rerail install --remove` reads it, and ends a daemon of 0.1.4 or earlier, through Windows
   PowerShell instead, since it deletes the folder the engine loads from next and Windows keeps a loaded DLL from being
-  deleted; PowerShell is ended at what is left of the lookup's limit, and one ended there, or one that cannot run,
-  reads nothing. The lookup's limit counts from its start
+  deleted. The read's PowerShell is ended at what is left of the lookup's limit, and one ended there, or one that
+  cannot run, reads nothing; the end's PowerShell is ended at the stop's 10 s wait and its 5 s kill wait, 15 s with its
+  own start, and one ended after it ended the process reads as still running. The lookup's limit counts from its start
   and bounds this read for a busy daemon and for one whose engine has no proof alike: 2 s, which the proof shares, for
   `rerail status`, set-up's look for a daemon to keep and a hook's start of the daemon; the stop's 10 s wait for
   `rerail daemon stop`, set-up's stop of a daemon it replaces and both stops of `rerail install --remove`. So on a

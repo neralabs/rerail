@@ -625,9 +625,15 @@ const THIS_MACHINE: DaemonMachine = {
  * This machine as a process that must not load the engine reads it: one that deletes the engine's folder after it
  * stops the daemon, as the uninstall deletes `versions/`, since Windows keeps a loaded DLL from being deleted. It reads
  * a process's start, and ends a daemon of a release before the engine's proof, through Windows PowerShell
- * (`processStartedAt`, `endProcessStartedByPowerShell`), which takes about a second each time.
+ * (`processStartedAt`, `endProcessStartedByPowerShell`), which takes about a second each time. PowerShell starts before
+ * it can end the process, so its end gets the time a stop gives a daemon to end, {@link STOP_TIMEOUT_MS}, before the
+ * wait for the exit it is given.
  */
-export const MACHINE_WITHOUT_ENGINE: DaemonMachine = { ...THIS_MACHINE, processStartedAt, endProcessStartedBy: endProcessStartedByPowerShell };
+export const MACHINE_WITHOUT_ENGINE: DaemonMachine = {
+  ...THIS_MACHINE,
+  processStartedAt,
+  endProcessStartedBy: (pid, startedAt, waitMs) => endProcessStartedByPowerShell(pid, startedAt, STOP_TIMEOUT_MS + waitMs),
+};
 
 /**
  * Whether the engine pipe `state` records exists. Windows ends a daemon without its shutdown handler (logoff, reboot,
@@ -670,15 +676,16 @@ export type RecordedDaemon = "alive" | "gone" | "silent";
 
 /**
  * {@link RecordedDaemon} as the engine's proof leaves it, with `no-proof` for a live pid this user may signal whose
- * engine has no proof to give: Rerail 0.1.4 or earlier, or a listener without the proof's path on a gone daemon's pipe
- * name. A lookup reads on ({@link lookedUpEngine}); every other reader takes it as `gone` ({@link recordedDaemon}).
+ * engine has no proof to give and whose record a release before the proof wrote, Rerail 0.1.4 or earlier
+ * ({@link noProofVerdict}). A lookup reads on ({@link lookedUpEngine}); every other reader takes it as `gone`
+ * ({@link recordedDaemon}).
  */
 type ProofVerdict = RecordedDaemon | "no-proof";
 
 /**
- * {@link RecordedDaemon} as a lookup makes it, with `older` for a daemon that may be sent the capability and runs a
- * release before the engine's proof, Rerail 0.1.4 or earlier ({@link olderDaemon}). A hook's start replaces such a
- * daemon whatever package it ran from (`startDaemonForPackage`).
+ * {@link RecordedDaemon} as a lookup makes it, with `older` for the daemon that wrote the record, of a release before
+ * the engine's proof, Rerail 0.1.4 or earlier, which is sent nothing ({@link olderDaemon}). A hook's start replaces such
+ * a daemon whatever package it ran from (`startDaemonForPackage`).
  */
 type RecordedEngine = RecordedDaemon | "older";
 
@@ -885,9 +892,10 @@ function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: numb
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
  * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
  * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}),
- * within what is left of `readLimitMs` from the lookup's start (that limit, unless a stop passes its own wait): a busy
- * daemon is kept, and a process that took a dead daemon's pid is not. A start time not read by then proves nothing, and
- * the record is kept. The start of a daemon whose engine has no proof is read by the same limit ({@link olderDaemon}).
+ * its start read with what is left of `readLimitMs` from the lookup's start (that limit, unless a stop passes its own
+ * wait), which a read through Windows PowerShell keeps to and the engine's system call needs not: a busy daemon is
+ * kept, and a process that took a dead daemon's pid is not. A start time not read proves nothing, and the record is
+ * kept. The start of a daemon whose engine has no proof is read the same way ({@link olderDaemon}).
  */
 export async function lookupDaemon(
   home: string,
@@ -1155,9 +1163,12 @@ async function replacedOlderDaemon(
   older: OlderDaemon & { status: "running" },
   machine: DaemonMachine,
 ): Promise<StartDaemonResult> {
-  await stopFoundDaemon(control.home, older, machine);
+  const ended = await stopFoundDaemon(control.home, older, machine);
+  const started = await spawnDaemon(control, options, machine);
+  // A pid that passed to a later process since the lookup was let alone: no daemon was ended.
+  if (ended !== "stopped") return started;
   const { pid, version } = older.state;
-  return { ...(await spawnDaemon(control, options, machine)), replaced: { pid, version } };
+  return { ...started, replaced: { pid, version } };
 }
 
 /**
