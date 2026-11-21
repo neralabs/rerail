@@ -1216,8 +1216,8 @@ export async function daemonEngineEndpoint(
  */
 function otherPackageDaemon(env: NodeJS.ProcessEnv): Error {
   return autostartOff(env)
-    ? new OtherDaemonKeptError(`RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`)
-    : new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start");
+    ? new OtherDaemonKeptError(`RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package, and the running one is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`)
+    : new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start");
 }
 
 /**
