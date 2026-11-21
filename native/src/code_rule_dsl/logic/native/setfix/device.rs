@@ -2003,7 +2003,9 @@ fn open_wave() -> Result<u64, String> {
     let n = WAVES.get() + 1;
     WAVES.set(n);
     wave::defer(Box::new(move || {
-        let Some(mut batch) = WAVE.with_borrow_mut(|w| w.take(n)) else { return Ok(()) };
+        // Deferred only once the buffer was opened (`OpenWaves`, way 8): a missing one is a broken invariant, and the
+        // flush's error.
+        let Some(mut batch) = WAVE.with_borrow_mut(|w| w.take(n)) else { return Err(format!("device wave {n}: its deferred commit found it not open")) };
         let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
         // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
         FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
