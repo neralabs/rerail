@@ -98,4 +98,9 @@ describe("shards and outputs", () => {
     expect(outputs({ unit: "some", tests: ["test/a.test.ts"], all: 449, windowsExtra: false })).toEqual({ unit: "some", "unit-tests": "test/a.test.ts", "unit-shards": "[1]", "windows-shards": "[1]" });
     expect(outputs({ unit: "all", tests: [], all: 449, windowsExtra: true })["unit-shards"]).toBe("[1,2,3]");
   });
+
+  it("run Linux's shards and no Windows shard for prose alone", () => {
+    expect(outputs({ unit: "some", tests: ["test/a.test.ts"], all: 449, windowsExtra: true, prose: true })).toEqual({ unit: "some", "unit-tests": "test/a.test.ts", "unit-shards": "[1]", "windows-shards": "[]" });
+    expect(outputs({ unit: "none", tests: [], all: 449, windowsExtra: true, prose: true })["windows-shards"]).toBe("[]");
+  });
 });
