@@ -454,7 +454,10 @@ impl State {
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
-                    Err(_) => rerail_prof::count("capacity.residency_slab", 1),
+                    Err(Error::BackendCapacity) => rerail_prof::count("capacity.residency_slab", 1),
+                    // No device (`UnsupportedBackend`) or another failure: no retiring makes room for it, and a
+                    // caller that took it for capacity split its batch down to one file before failing.
+                    Err(e) => return Err(e),
                 }
             }
             if !self.retire(keep) {
