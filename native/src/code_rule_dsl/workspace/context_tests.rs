@@ -92,7 +92,7 @@ impl TempDir {
             std::process::id()
         ));
         std::fs::create_dir_all(&path).unwrap();
-        Self(path.canonicalize().unwrap())
+        Self(dunce::canonicalize(path).unwrap())
     }
 
     fn store(&self) -> PathBuf {
@@ -144,6 +144,7 @@ fn apply_json(workspace: &CodeRuleDslWorkspace, revision: u32, files: Value) -> 
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -183,6 +184,7 @@ fn apply_buffer(workspace: &CodeRuleDslWorkspace, revision: u32, files: &Value) 
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: String::new(),
         request_buffer: Some(buffer_request(revision, files)),
         request_direct: None,
@@ -383,8 +385,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
     let repository = git_workspace::discover(&root).unwrap();
     let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
     let mut indexed = |path: &str, language: &str| {
-        repository_package(&mut manifests, &repository, path, language)
-            .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
+        repository_package(&mut manifests, &repository, path, language).map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
     let entries = files
@@ -404,7 +409,11 @@ fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
         crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
             entries.get(directory)
         })
-        .map(|manifest| crate::code_rule_dsl::package_manifest::of_file(&manifest).expect("an ECMA manifest").to_wire())
+        .map(|manifest| {
+            crate::code_rule_dsl::package_manifest::of_file(&manifest)
+                .expect("an ECMA manifest")
+                .to_wire()
+        })
     };
     // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
     // one outside it never names a file below it); an unparsable `engines.node` falls through to
@@ -481,6 +490,7 @@ fn apply_host(workspace: &CodeRuleDslWorkspace, revision: u32, files: Value, rem
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed })
             .to_string(),
         request_buffer: None,
@@ -1341,6 +1351,7 @@ fn an_interactive_apply_runs_while_a_repository_index_plans_its_restore() {
     let mut edit = WorkspaceApplyTask {
         state: Arc::clone(&session.state),
         closed: Arc::clone(&session.closed),
+        shared: Arc::clone(&session.shared),
         request_json: json!({ "revision": 1, "removed": [], "files": [
             { "path": "edit.py", "language": "python", "source": "helper()\n" }] })
         .to_string(),
@@ -1985,6 +1996,7 @@ fn package_marker_overlays_refresh_unchanged_siblings_for_json_and_buffer_reques
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 3, "files": [], "removed": ["pkg/__init__.py"] })
             .to_string(),
         request_buffer: None,
@@ -2025,6 +2037,7 @@ fn removing_a_package_marker_never_reintroduces_the_removed_file() {
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 2, "files": [], "removed": ["pkg/__init__.py"] })
             .to_string(),
         request_buffer: None,
@@ -2655,6 +2668,73 @@ fn a_clause_that_runs_out_of_work_fails_alone() {
     restarted.close();
 }
 
+/// A clause comparing each integer with every one before it (`follows` to the end, a `compare` of two captures) runs
+/// out of its allowance on a list of 20,000 and fails alone with `budget-exceeded`, its sibling walks reading the
+/// list's gaps made once for the file (`gap::gaps_of`), not once a walk: each walk made them before, 6,125 times
+/// under the full allowance, uncharged (Q134's n² on the workspace's path, where no tape's `GapScope` is).
+#[test]
+fn a_quadratic_compare_over_the_siblings_runs_out_of_its_allowance_making_the_gaps_once() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("compare-allowance");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let costly = json!({
+        "id": "costly", "violation": { "anchor": "witness.span", "code": "LEAST", "message": "least so far" },
+        "forbid": { "ast": { "language": "python", "rule": {
+            "kind": "integer", "pattern": "$A",
+            "not": { "follows": { "stopBy": "end", "kind": "integer", "pattern": "$B",
+                "compare": { "left": "A", "op": "le", "right": "B" } } } } } }
+    });
+    let code_rule = compile("compare-allowance", json!([costly]));
+    let numbers = (0..20_000).map(|n| n.to_string()).collect::<Vec<_>>().join(", ");
+    let file = json!([{ "path": "generated.py", "language": "python", "source": format!("x = [{numbers}]\n") }]);
+    let workspace = stored_workspace(&store, "/compare-allowance", &code_rule);
+    // About 500 walks' worth of the allowance (the full one is 50,000 polls, 6,125 walks).
+    TEST_CLAUSE_WORK_BUDGET.set(Some(4_000));
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed);
+    let evaluated = apply_json(&workspace, 1, file);
+    let made = crate::code_rule_dsl::matcher::gap::GAPS_MADE.load(std::sync::atomic::Ordering::Relaxed) - made;
+    TEST_CLAUSE_WORK_BUDGET.set(None);
+    let failures = evaluated["evaluation"]["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{evaluated}");
+    assert_eq!(failures[0]["code"], json!("budget-exceeded"), "{evaluated}");
+    // Other tests' files may make theirs meanwhile, on other threads: well under the walks' 500.
+    assert!(made < 100, "the parents' gaps made {made} times");
+    workspace.close();
+}
+
+/// Tests of a token the tape leaves out (RER-131) that say more than its text: the comma right before a node that is its
+/// parent's first (the React packs' state setter, `[value, setValue]`), and a count of the commas before a node
+/// (`eslint-no-setter-return`'s descriptor, the third argument). Asked of the parent's gaps, they find what a full
+/// tree's tokens did; before, the first found nothing and the second counted no implied comma.
+#[test]
+fn a_token_test_on_an_implied_comma_reads_the_parents_tokens() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = TempDir::new("implied-comma");
+    let store = StdArc::new(ContentStore::open(&directory.store()).unwrap());
+    let clause = |id: &str, rule: Value| json!({
+        "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+        "forbid": { "ast": { "language": "javascript", "rule": rule } }
+    });
+    let code_rule = compile("implied-comma", json!([
+        clause("second", json!({ "kind": "identifier", "inside": { "kind": "array_pattern", "stopBy": "neighbor" },
+            "follows": { "stopBy": "neighbor", "regex": "^,$", "not": { "follows": { "stopBy": "end", "regex": "^,$" } } } })),
+        clause("third", json!({ "kind": "identifier", "inside": { "kind": "arguments", "stopBy": "neighbor" },
+            "count": { "follows": { "regex": "^,$", "stopBy": "end" }, "min": 2, "max": 2 } })),
+    ]));
+    let source = "const [a, b, c] = x;\nf(p, q, r, s);\n";
+    let file = json!([{ "path": "a.js", "language": "javascript", "source": source }]);
+    let workspace = stored_workspace(&store, "/implied-comma", &code_rule);
+    let evaluated = apply_json(&workspace, 1, file);
+    let mut found: Vec<(String, String)> = evaluated["evaluation"]["violations"].as_array().unwrap().iter().map(|v| {
+        let (start, end) = (v["span"]["startByte"].as_u64().unwrap() as usize, v["span"]["endByte"].as_u64().unwrap() as usize);
+        let text = source[start..end].to_owned();
+        (v["clauseId"].as_str().unwrap().to_owned(), text)
+    }).collect();
+    found.sort();
+    assert_eq!(found, [("second".to_owned(), "b".to_owned()), ("third".to_owned(), "r".to_owned())], "{evaluated}");
+    workspace.close();
+}
+
 /// A utility verdict a clause computed while its allowance ran out is not remembered for the
 /// clauses after it: the second clause reads the same utility at the same node and either finds
 /// its violation or fails, never reports nothing. Both share a `define`'s utility, so a verdict
@@ -3098,31 +3178,31 @@ fn paged_results_equal_complete_results_for_each_violations_and_capture_anchors(
     workspace.close();
 }
 
-/// Every stored local result as `(path, clause, codec, raw length, frame)`, in that order.
-fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, i64, i64, Vec<u8>)> {
+/// Every stored local result as `(path, clause, bytes)`, in that order: its bytes read where its segment holds
+/// them (decision 0450 step 2).
+fn stored_local_results(store: &std::path::Path) -> Vec<(String, String, Vec<u8>)> {
     let connection = rusqlite::Connection::open(store).unwrap();
+    let mut maps = crate::content_store::ObjectMaps::new(store);
     let mut statement = connection
         .prepare(
-            "SELECT ps.value,cs.value,r.codec_id,r.raw_length,r.frame FROM context_check_results r \
+            "SELECT ps.value,cs.value,r.seg,r.seg_at,r.seg_len FROM context_check_results r \
              JOIN workspace_overlay o ON o.source_id=r.source_id \
              JOIN paths p ON p.path_id=o.path_id JOIN strings ps ON ps.string_id=p.string_id \
              JOIN candidate_checks c ON c.check_id=r.check_id \
              JOIN strings cs ON cs.string_id=c.check_string_id ORDER BY 1,2",
         )
         .unwrap();
-    statement
-        .query_map([], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        })
+    let rows: Vec<(String, String, [i64; 3])> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))
         .unwrap()
         .collect::<rusqlite::Result<_>>()
-        .unwrap()
+        .unwrap();
+    rows.into_iter()
+        .map(|(path, clause, [seg, at, len])| {
+            let frame = maps.frame(seg, at, len).expect("a stored result's segment");
+            (path, clause, frame.segment().bytes().to_vec())
+        })
+        .collect()
 }
 
 #[test]
@@ -3161,14 +3241,12 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
             "{clause}: {stored:?}"
         );
     }
-    for (path, clause, _, raw_length, frame) in &stored {
-        let bytes = zstd::stream::decode_all(std::io::Cursor::new(frame)).unwrap();
-        assert_eq!(bytes.len() as i64, *raw_length, "{path} {clause}");
+    for (path, clause, bytes) in &stored {
         // A result is the canonical (key-ordered) serialization of its JSON value.
-        let value = serde_json::from_slice::<Value>(&bytes).unwrap();
+        let value = serde_json::from_slice::<Value>(bytes).unwrap();
         assert_eq!(
             serde_json::to_vec(&value).unwrap(),
-            bytes,
+            *bytes,
             "{path} {clause}"
         );
         assert_eq!(value["version"], 4, "{path} {clause}");
@@ -3363,6 +3441,7 @@ fn node_references_resolve_through_the_store_and_refuse_stale_versions() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 3, "files": [], "removed": ["a.py"] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -3483,6 +3562,7 @@ fn evicted_resident_and_unstored_workspaces_publish_the_same_results() {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&workspace.state),
                 closed: Arc::clone(&workspace.closed),
+                shared: Arc::clone(&workspace.shared),
                 request_json: json!({ "revision": revision, "files": files, "removed": removed })
                     .to_string(),
                 request_buffer: None,
@@ -3704,6 +3784,7 @@ fn a_bulk_restored_package_marker_names_unhosted_files_and_its_removal_rederives
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&restored.state),
         closed: Arc::clone(&restored.closed),
+        shared: Arc::clone(&restored.shared),
         request_json:
             json!({ "revision": next + 1, "files": [], "removed": ["alpha/__init__.py"] })
                 .to_string(),
@@ -3882,7 +3963,9 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
     let lookup = |tape_id| SearchKindLookup {
         tape_id,
         index_version: POSITIONAL_INDEX_VERSION,
-        kind_tokens: vec![kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap()],
+        kind_tokens: vec![
+            kind_index_token(crate::code_rule_dsl::language::GrammarDialect::Python, call).unwrap(),
+        ],
     };
     assert_eq!(
         store
@@ -4454,7 +4537,11 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     assert_eq!(reported(), ["app/a.ts", "app/page.tsx"]);
     let context = || {
         let state = workspace.state.lock().unwrap();
-        let project = state.project.as_any().downcast_ref::<super::ingest::ecma::EcmaProject>().expect("ECMAScript's project context");
+        let project = state
+            .project
+            .as_any()
+            .downcast_ref::<super::ingest::ecma::EcmaProject>()
+            .expect("ECMAScript's project context");
         (
             project.graph_entries.keys().cloned().collect::<Vec<_>>(),
             project.server_graph_directories.clone(),
@@ -4470,6 +4557,7 @@ fn a_request_that_fails_partway_leaves_the_package_context_unchanged() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 2, "removed": ["../escape.ts"], "files": [
             file("app/page.tsx", "tsx", &page("../lib/b")),
             file("tsconfig.json", "json", "{}"),

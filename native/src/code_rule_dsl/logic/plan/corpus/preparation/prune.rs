@@ -1,4 +1,4 @@
-//! `front::prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
+//! T's `prune` on the version (decision 0281's path, step 6d): the rules of relations no output reads, directly
 //! or through other rules, dropped, and the request rules none of whose readers is read (decision 0174). The record
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay. A
 //! reader outside the version (another part's, decision 0345) keeps its ask.
@@ -37,8 +37,9 @@ impl ProgramPass for Prune {
         let native_reads: HashMap<&str, Vec<&str>> = about.natives.iter().map(|n| (v.rel_name(n.rel), n.reads.iter().map(|&r| v.rel_name(r)).collect())).collect();
         let reads = |i: usize| -> Vec<String> { rules[i].body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect() };
         // A reader the version neither declares nor makes is another program's: a part prepared alone (decision
-        // 0345) whose request another part reads. Whether it is read is not this version's to know, so its ask is
-        // kept. In a whole program every reader is declared or has rules.
+        // 0345) whose request another part reads, or a reader gone from the program (merged, renamed or inlined since
+        // the requests were made, Typing-support's 52e04565d). Whether it is read is not this version's to know, so
+        // its ask is kept, as an ungated rule is. A reader it declares and makes nothing of is unread: its ask goes.
         let outside = |b: &str| v.decl_of(b).is_none() && !body_of.contains_key(b);
         let mut kept = vec![false; rules.len()];
         let (mut need, mut todo): (BTreeSet<String>, Vec<String>) = (BTreeSet::new(), roots.clone());
@@ -72,6 +73,7 @@ impl ProgramPass for Prune {
             }
         }
         // The record follows the rules kept.
+        let dropped: BTreeSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
         let mut asked_after: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
         for (req, readers) in &asked {
             let mine: Vec<bool> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).map(|i| kept[i]).collect();
@@ -79,6 +81,13 @@ impl ProgramPass for Prune {
             if mine.len() == readers.len() {
                 let mut it = mine.iter();
                 readers.retain(|_| *it.next().unwrap());
+            }
+            // A reader `prune` drops is not needed: it leaves the record, beside one it keeps, so a later gate (the
+            // embed slice's) does not take it for one gone by a rename, whose requests stay.
+            for by in &mut readers {
+                if by.iter().any(|b| dropped.contains(b.as_str())) && by.iter().any(|b| !dropped.contains(b.as_str())) {
+                    by.retain(|b| !dropped.contains(b.as_str()));
+                }
             }
             let has_rules = (0..rules.len()).any(|i| kept[i] && head(i) == req.as_str());
             if !readers.is_empty() || has_rules {
@@ -114,13 +123,13 @@ impl ProgramPass for Prune {
         if !gone.is_empty() {
             w.keep(|r| !gone.contains(&r.id()))?;
         }
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
         let b = w.on()?;
         if !revived.is_empty() {
-            let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         if asked_after != asked {
-            b.set_asked(&asked_after);
+            b.fields().set_asked(&asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
@@ -146,9 +155,10 @@ mod tests {
         let text = ".decl k(x: number)\n.input k\n.decl req(x: number)\n.decl dead(x: number)\n.decl o(x: number)\n.output o\n\
                     req(x) :- k(x).\no(x) :- req(x).\n";
         let pruned = |reader: &str| {
-            let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-            tree.asked_by.insert("req".into(), vec![BTreeSet::from([reader.to_owned()])]);
-            let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+            let read = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+            let mut b = Builder::on(&read);
+            b.fields().set_asked(&std::collections::BTreeMap::from([("req".to_owned(), vec![BTreeSet::from([reader.to_owned()])])]));
+            let (v, _) = b.finish().unwrap();
             let mut p = Pipeline::new("test", v);
             let mut prune = super::Prune::default();
             p.program(&mut prune);

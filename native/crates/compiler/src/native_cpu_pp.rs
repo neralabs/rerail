@@ -40,7 +40,7 @@ macro_rules! em {
 
 /// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
 /// each the interpreter's reason.
-const REASONS: &[&str] = &[
+pub const REASONS: &[&str] = &[
     "the compiled words refuse",
     "the program stopped",
     "past the calls' bound",
@@ -202,7 +202,7 @@ pub struct CompiledPp {
     pub code_bytes: Vec<usize>,
     /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
-    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`disassemble`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
@@ -310,7 +310,7 @@ impl Lower<'_, '_> {
 
     /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
     /// table. Cranelift's code has it as a tree of compares
-    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier);
     /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
@@ -1687,8 +1687,8 @@ impl Lower<'_, '_> {
         let p = self.f.ins().iadd(base, n);
         // Eight bytes a store, then the rest one by one.
         let words = b.len() / 8;
-        for (i, w) in b.chunks_exact(8).enumerate() {
-            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w.try_into().unwrap()));
+        for (i, &w) in b.as_chunks::<8>().0.iter().enumerate() {
+            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w));
             self.f.ins().store(bytes_flags(), c, p, (i * 8) as i32);
         }
         for (i, &c) in b[words * 8..].iter().enumerate() {
@@ -2593,7 +2593,7 @@ impl Lower<'_, '_> {
         let lastp = self.f.ins().iadd(lp, ln);
         let c = self.f.ins().load(types::I8, bytes_flags(), lastp, -1);
         let mut e = self.f.ins().iconst(types::I8, 0);
-        for x in [b'e', b'E', b'p', b'P'] {
+        for x in *b"eEpP" {
             let q = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(x));
             e = self.f.ins().bor(e, q);
         }
@@ -3267,10 +3267,18 @@ impl Lower<'_, '_> {
         let keep = self.f.create_block();
         self.f.ins().brif(room, keep, &[], head, &[n1.into()]);
         self.f.switch_to_block(keep);
-        let base = self.f.ins().iadd_imm(ctx, i64::from(pt));
-        let slot = elem(self.f, base, n, TOK);
-        copy_tok(self.f, ctx, at!(t), slot, 0);
-        self.f.ins().jump(head, &[n1.into()]);
+        // `pragma_toks[n]`, each `n` its own field's offset: the context is only ever a field's
+        // base (the device holds it by fields, 0408).
+        let (first, rest, second, third) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(n, rest, &[], first, &[]);
+        for (blk, k) in [(first, 0), (second, 1), (third, 2)] {
+            self.f.switch_to_block(blk);
+            copy_tok(self.f, ctx, at!(t), ctx, pt + k * TOK as i32);
+            self.f.ins().jump(head, &[n1.into()]);
+        }
+        self.f.switch_to_block(rest);
+        let is1 = self.f.ins().icmp_imm(IntCC::Equal, n, 1);
+        self.f.ins().brif(is1, second, &[], third, &[]);
         self.f.switch_to_block(done);
         let n = self.f.block_params(done)[0];
         self.pragma_of(pc, file, n, next);
@@ -3466,11 +3474,10 @@ impl Lower<'_, '_> {
         self.like_tok(LITERAL, start, end);
     }
 
-    /// `Machine::line_of` of the token at `tok`: its physical line, moved by its file's `#line`.
-    fn line_of(&mut self, tok: Value) -> Value {
+    /// `Machine::line_of` of a token's `buf` and `start`: its physical line, moved by its file's
+    /// `#line`.
+    fn line_of_at(&mut self, buf: Value, start: Value) -> Value {
         let ctx = self.ctx;
-        let buf = ldu(self.f, types::I32, tok, offset_of!(Tok, buf) as i32);
-        let start = ldu(self.f, types::I32, tok, offset_of!(Tok, start) as i32);
         let nf = ld(self.f, types::I64, ctx, at!(nfiles));
         let join = self.f.create_block();
         self.f.append_block_param(join, types::I64);
@@ -3597,24 +3604,30 @@ impl Lower<'_, '_> {
             match c {
                 B_LINE => {
                     // The outermost call's end: the expansions' ends followed (`Step::Item`).
+                    // The walk carries the token's `exp`, `buf` and `start`, not its address:
+                    // the first is `like`, a field of the context, which is never an address (0408).
                     let head = self.f.create_block();
-                    self.f.append_block_param(head, types::I64);
+                    for _ in 0..3 {
+                        self.f.append_block_param(head, types::I64);
+                    }
                     self.heads.push((head, Step::Item));
-                    let at = self.f.ins().iadd_imm(ctx, i64::from(at!(like)));
-                    self.f.ins().jump(head, &[at.into()]);
+                    let read = |l: &mut Self, tok: Value, off: i32| -> [Value; 3] {
+                        [offset_of!(Tok, exp), offset_of!(Tok, buf), offset_of!(Tok, start)].map(|o| ldu(l.f, types::I32, tok, off + o as i32))
+                    };
+                    let first = read(self, ctx, at!(like));
+                    self.f.ins().jump(head, &first.map(Into::into));
                     self.f.switch_to_block(head);
-                    let r = self.f.block_params(head)[0];
-                    let exp = ldu(self.f, types::I32, r, offset_of!(Tok, exp) as i32);
+                    let [exp, buf, start] = [0, 1, 2].map(|i| self.f.block_params(head)[i]);
                     let up = self.f.create_block();
                     let found = self.f.create_block();
                     self.f.ins().brif(exp, up, &[], found, &[]);
                     self.f.switch_to_block(up);
                     let k = self.f.ins().iadd_imm(exp, -1);
                     let e = self.vat(EXPS, k);
-                    let e1 = self.f.ins().iadd_imm(e, EXP.2 as i64);
-                    self.f.ins().jump(head, &[e1.into()]);
+                    let next = read(self, e, EXP.2 as i32);
+                    self.f.ins().jump(head, &next.map(Into::into));
                     self.f.switch_to_block(found);
-                    let line = self.line_of(r);
+                    let line = self.line_of_at(buf, start);
                     self.number_tok(pc, line);
                 }
                 B_FILE | B_FILE_NAME | B_BASE_FILE => {
@@ -4063,11 +4076,10 @@ impl Lower<'_, '_> {
         let kept = ld(self.f, types::I64, ctx, at!(kept));
         let n = self.f.ins().isub(hi, lo);
         let lo_p = elem(self.f, kept, lo, TOK);
-        let marker = self.f.ins().iadd_imm(ctx, i64::from(at!(marker)));
         // first: the marker, else kept[lo] (where n > 0); second: kept[lo] (marker, n > 0), else
-        // kept[lo + 1] (n > 1).
+        // kept[lo + 1] (n > 1). The first is chosen word by word, not by address: the marker is
+        // a field of the context, which is never an address (0408).
         let lo1_p = self.f.ins().iadd_imm(lo_p, TOK);
-        let first = self.f.ins().select(mk, marker, lo_p);
         let one = self.f.ins().iconst(types::I8, 1);
         let n1 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 0);
         let n2 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 1);
@@ -4076,7 +4088,12 @@ impl Lower<'_, '_> {
         let has_second = self.f.ins().select(mk, n1, n2);
         // Copied aside before kept is cut (the copies' tokens are read after).
         let pt = at!(pragma_toks);
-        copy_tok(self.f, first, 0, ctx, pt);
+        for w in 0..(TOK as i32 / 4) {
+            let m = self.f.ins().load(types::I32, flags(), ctx, at!(marker) + 4 * w);
+            let k = self.f.ins().load(types::I32, flags(), lo_p, 4 * w);
+            let x = self.f.ins().select(mk, m, k);
+            self.f.ins().store(flags(), x, ctx, pt + 4 * w);
+        }
         copy_tok(self.f, second, 0, ctx, pt + TOK as i32);
         self.vset_len(KEPT, lo);
         let s = self.file_src(pc);
@@ -6693,6 +6710,7 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
+/// **Deprecated** (decision 0550): `rerail-pp-aot`'s source, through `clif_rust`.
 /// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
 /// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
 /// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
@@ -6701,6 +6719,15 @@ pub fn rust_source(program: &Words) -> Result<String, String> {
     let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
     let h = crate::clif_rust::fingerprint(&one);
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
+}
+
+/// The words' compiled code as UKL (`clif_ukl`, decisions 0348 stage 5, 0440 step D): the JIT's functions, the
+/// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
+pub fn ukl_source(program: &Words) -> Result<String, String> {
+    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
+    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let h = crate::clif_rust::fingerprint(&one);
+    Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
 }
 
 /// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
@@ -6735,7 +6762,7 @@ pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, 
 }
 
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
-/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+/// Cranelift's code.
 pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, true)
 }
@@ -6875,10 +6902,10 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         f.finalize();
     }
     // A debug aid: the verifier's errors, annotated on the function, written to this file.
-    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF") {
-        if let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa()) {
-            let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
-        }
+    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF")
+        && let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa())
+    {
+        let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
     }
     branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;

@@ -20,11 +20,6 @@ mod image;
 /// (they cannot since decision 0053: the plan names the engine build, and dead plans are collected).
 const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
 
-/// The entry's key for a base relation's rows (`rows`), kept for the cross-file part that reads them: a memoised
-/// file hands on its base rows as an evaluated one does.
-pub(super) fn base_key(rel: &str) -> String {
-    format!("base:{rel}")
-}
 
 /// The entry's key for the identities of the relations it holds (decision 0225 §2): two words of each export's and
 /// file-local output's identity (`identities`) it was made under. A relation's rows in an entry are its rows only
@@ -40,29 +35,65 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
     rel.starts_with("own:")
 }
 
-/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
-/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
-/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
-/// running the slice. Not an output: they are no relation of the file-local part.
-pub(super) const GUESTS: &str = "guests:";
+/// An entry's `outputs` key of the requests its chunk's fixpoint answered with tape values at a string of its file,
+/// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s string node and grammar, `@parse`'s and `@splice`'s
+/// requests, `Answered`), in the order answered. A chunk that reads the entry makes its values in the corpus batch
+/// from them, as the fixpoint admitted them (`Guests::admit`, `Guests::admit_value`): each tape found by its text among
+/// the root's last runs' and its source named in the manifest (0431 R6), as the run that parsed it named it. A chunk of
+/// partial hits whose cone sees guests admits them before its run, as far as the cone sees them (a cone reading a
+/// relation hiding widened to annotations, `FoldOwn`, asks none itself): no entry keeps a base relation's rows
+/// (decision 0458 step 4), so they are made again. Not an output.
+pub(super) const VALUES: &str = "values:";
 
-/// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
-pub(super) fn guest_key(round: usize, rel: &str) -> String {
-    format!("{GUESTS}{round}:{rel}")
+/// A request the fixpoint answered with a tape value (`VALUES`): a string asked as a grammar's (`rr_embed_req`), or
+/// a value `@parse` or `@splice` asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Answered {
+    /// The string at node `at`, parsed as `grammar`.
+    Embed { at: i64, grammar: String },
+    /// `@parse`'s or `@splice`'s request.
+    Value(super::guests::Request),
 }
 
-/// The round and slice relation of a `guest_key`, `None` for an output's key.
-pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
-    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
-    Some((round.parse().ok()?, rel))
-}
+impl Answered {
+    /// The node it was asked at: the files that own its document keep it.
+    pub(super) fn at(&self) -> i64 {
+        match self {
+            Self::Embed { at, .. } | Self::Value(super::guests::Request::Parse { at, .. }) => *at,
+            Self::Value(super::guests::Request::Splice { node, .. }) => *node,
+        }
+    }
 
-/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
-pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
-    let of = |e: &Entry| -> Vec<(String, Vec<Vec<String>>)> {
-        e.outputs.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, r))| (k.clone(), r.shown())).filter(|(_, l)| !l.is_empty()).collect()
-    };
-    of(a) == of(b)
+    /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
+    /// grammar and a text, a grammar, or the tape spliced in).
+    pub(super) fn rows() -> super::super::output::Rows {
+        use super::super::output::col;
+        super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
+    }
+
+    /// Its row of `rows`.
+    pub(super) fn push(&self, rows: &mut super::super::output::Rows) {
+        use super::super::output::Cell;
+        let (kind, a, b) = match self {
+            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
+            Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
+        };
+        rows.push(&[Cell::Int(kind), Cell::Int(self.at()), Cell::Text(a), Cell::Text(b)]);
+    }
+
+    /// The requests `rows` hold (`push`'s), in order.
+    pub(super) fn read(rows: &super::super::output::Rows) -> Vec<Self> {
+        use super::super::output::Cell;
+        (0..rows.len())
+            .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
+                (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// The words `identity` is held by in `COVERED`.
@@ -72,7 +103,7 @@ pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
 
 /// The identities `entry` holds (`COVERED`).
 pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
-    entry.rows.get(COVERED).map(|(_, v)| v.chunks_exact(2).map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
+    entry.rows.get(COVERED).map(|(_, v)| v.as_chunks::<2>().0.iter().map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
@@ -340,14 +371,7 @@ pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
         let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-        let text = match v.program(&crate::code_rule_dsl::logic::front::Lists::default()) {
-            Ok(p) => format!(
-                "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
-                p.rules, p.decls, p.facts, p.inputs, p.outputs, p.rx_spans, p.ast_patterns
-            ),
-            Err(e) => format!("no program: {e}\n"),
-        };
-        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest
 }
@@ -376,6 +400,23 @@ pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>)
         hash.update(path.as_bytes());
         hash.update(b"\0");
         hash.update(module.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.finalize().into()
+}
+
+/// `digest` with the folders whose Python files no regular package holds folded in (`corpus::package_root_modules`,
+/// core.rerail's `unpackaged`): a file's `unpackaged` row follows from its folder, which an `__init__.py` added or removed
+/// changes. A file added to such a folder changes nothing. None leaves the digest as it was.
+pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
+    if folders.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-unpackaged/v1\0");
+    hash.update(digest);
+    for folder in folders {
+        hash.update(folder.as_bytes());
         hash.update(b"\0");
     }
     hash.finalize().into()
@@ -503,25 +544,15 @@ impl Syms {
         Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
     }
 
-    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own, a base
-    /// relation's (`base:`); the `own:` rows hold none. None for a relation the plan does not declare.
+    /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own; the `own:`
+    /// rows hold none. None for a relation the plan does not declare.
     ///
     /// A posting (`own:postings:rel:col`) is a count of a program's integer constant (`Own::constants`) in a column,
     /// as the column's source encodes it: a kind's or a field's is the grammar's code (`field`'s `f`, 65555), not an
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
-    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
-    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
-        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
-        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
-        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
-    }
-
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
-        if let Some(rel) = key.strip_prefix("base:") {
-            return self.0.get(rel).cloned();
-        }
         if key.starts_with("own:") {
             return Some(vec![false; width]);
         }
@@ -734,7 +765,7 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
 /// content's and path's, and the entry names both. No source is read. Before the waves, from the store (the
 /// snapshot holds a run's entries only for what its waves look up: `admit_memo_entries`); in them, from the
 /// snapshot, in memory. A hit marks nothing (decision 0227): an entry is kept while its plan is live and a kept
-/// manifest names its content (`collect_unreachable_frames`), not by the runs that read it.
+/// manifest names its content (`collect_unreachable_memo`), not by the runs that read it.
 fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
     let stored = !crate::code_rule_dsl::logic::profile::inside_waves();
     let space = crate::content_store::local_space(&plan_digest(program));
@@ -848,7 +879,7 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
             }
         }
         let mut by: Vec<_> = by.into_iter().collect();
-        by.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+        by.sort_by_key(|b| std::cmp::Reverse(b.1.1));
         let top: Vec<String> = by.iter().take(12).map(|(r, (n, b))| format!("{r}: {n} rows, {:.1} MB", *b as f64 / 1048576.0)).collect();
         eprintln!("rerail: the memo's entries: {:.1} MB over {} documents; by relation: {}", estimate as f64 / 2097152.0, held.len(), top.join("; "));
     }
@@ -925,11 +956,14 @@ impl Entry {
 }
 
 /// What the run's memo entries held, by relation (rows, values), and the documents' nodes: counted when profiling,
-/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`.
-static SIZES: std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)> = std::sync::Mutex::new((0, BTreeMap::new()));
+/// so the profile names what makes the memo large (t31 A2). Read and cleared by `sizes`. The run's own
+/// (`run::local`, decision 0442).
+#[derive(Default)]
+struct Sizes(std::sync::Mutex<(u64, BTreeMap<String, (u64, u64)>)>);
 
 fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
-    let mut sizes = SIZES.lock().expect("the memo's sizes");
+    let sizes = crate::code_rule_dsl::logic::run::local::<Sizes>();
+    let mut sizes = sizes.0.lock().expect("the memo's sizes");
     for entry in entries {
         sizes.0 += entry.nodes;
         for (rel, (width, values)) in &entry.rows {
@@ -942,7 +976,7 @@ fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
 
 /// The nodes of the documents remembered, and each relation's (rows, values) over their entries, since the last call.
 pub(super) fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
-    std::mem::take(&mut *SIZES.lock().expect("the memo's sizes"))
+    crate::code_rule_dsl::logic::run::local_if_any::<Sizes>().map(|s| std::mem::take(&mut *s.0.lock().expect("the memo's sizes"))).unwrap_or_default()
 }
 
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
@@ -953,8 +987,53 @@ pub(super) enum Memo<'a> {
     Held(&'a Held),
 }
 
-/// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
-pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
+/// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
+/// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
+pub(super) type Held = std::sync::Mutex<HeldEntries>;
+
+/// The session memo's entries. Per file and program it holds two: its current content's, and the one before it,
+/// which an edit's input deltas read as the file's old rows (`input_delta::changed`, after the run remembered the
+/// new one). An entry older than those two goes when a newer one comes. So the memo is bounded by the tree: two
+/// entries a file, whatever the session's length, with no count to pass. (It held at most 4,096 entries and was
+/// emptied past them: the data layer's 2,410 files and two programs passed that within each run, so no edit's run
+/// found a file in it, and an edit cost a first run.)
+#[derive(Default)]
+pub(super) struct HeldEntries {
+    entries: std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>,
+    /// Per (path, program): the current content's digest, and the one before.
+    files: std::collections::HashMap<(String, [u8; 32]), ([u8; 32], Option<[u8; 32]>)>,
+}
+
+impl HeldEntries {
+    pub(super) fn get(&self, key: &([u8; 32], String, [u8; 32])) -> Option<&std::sync::Arc<Entry>> {
+        self.entries.get(key)
+    }
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+    /// `entry` as `path`'s under `program` for content `digest`: it becomes the file's current entry, its current
+    /// one the one before, and the one before that goes.
+    fn insert(&mut self, digest: [u8; 32], path: &str, program: [u8; 32], entry: std::sync::Arc<Entry>) {
+        let file = (path.to_owned(), program);
+        let gone = match self.files.get_mut(&file) {
+            None => {
+                self.files.insert(file, (digest, None));
+                None
+            }
+            Some((now, _)) if *now == digest => None,
+            Some((now, before)) => {
+                let gone = before.filter(|b| *b != digest);
+                *before = Some(*now);
+                *now = digest;
+                gone
+            }
+        };
+        if let Some(g) = gone {
+            self.entries.remove(&(g, path.to_owned(), program));
+        }
+        self.entries.insert((digest, path.to_owned(), program), entry);
+    }
+}
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
@@ -988,9 +1067,6 @@ impl Content {
         }
     }
 }
-
-/// The most entries a session holds: past it, the memo starts again empty (its entries are a cache).
-const HELD_ENTRIES: usize = 4096;
 
 impl Memo<'_> {
     /// `text` as the memo knows it.
@@ -1066,7 +1142,7 @@ impl Memo<'_> {
                 Ok(docs
                     .iter()
                     .map(|(c, p)| match c {
-                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::clone(e))),
                         Content::Stored(_) | Content::Unstored(_) => None,
                     })
                     .collect())
@@ -1093,7 +1169,7 @@ impl Memo<'_> {
                 },
             },
             (Memo::Held(held), Content::Held(digest)) => {
-                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).cloned())
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).map(|e| (**e).clone()))
             }
             _ => Ok(None),
         }
@@ -1125,11 +1201,7 @@ impl Memo<'_> {
         match (self, content) {
             (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
             (Memo::Held(held), Content::Held(digest)) => {
-                let mut held = held.lock().expect("the session memo");
-                if held.len() >= HELD_ENTRIES {
-                    held.clear();
-                }
-                held.insert((digest, path.to_owned(), program.id), Entry { key, ..entry.clone() });
+                held.lock().expect("the session memo").insert(digest, path, program.id, std::sync::Arc::new(Entry { key, ..entry.clone() }));
                 Ok(())
             }
             _ => Ok(()),
@@ -1149,18 +1221,46 @@ pub mod tests {
     /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
     #[test]
     fn an_empty_relation_of_facts_reads_back_as_present() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
-        prog.facts.insert("a".to_owned(), Vec::new());
-        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
-        let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
-        assert_eq!(back.facts, prog.facts);
-        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::program_digest(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap().v);
-        assert_eq!(key(&back), key(&prog));
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
+        let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        let mut b = Builder::on(&read);
+        b.fields().set_facts("a", &[]);
+        let (v, _) = b.finish().unwrap();
+        // Stored as an image, and opened again.
+        let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+        assert!(back.states_facts("a") && back.fact_rows("a").is_empty(), "a's empty facts read back:\n{}", back.show());
+        assert_eq!(super::program_digest(&back), super::program_digest(&v));
     }
 
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
+
+    /// A session's memo holds every file of a tree past any count (the data layer's 2,410 files under two programs:
+    /// 4,820 entries), and per file and program its current entry and the one before, which an edit's input deltas
+    /// read. An older one goes.
+    #[test]
+    fn a_session_memo_holds_the_tree_and_each_file_s_entry_before() {
+        let mut h = HeldEntries::default();
+        let e = |k: i64| std::sync::Arc::new(Entry { key: k, ..Entry::default() });
+        let d = |n: u8| [n; 32];
+        let (main, sources) = ([1; 32], [2; 32]);
+        for f in 0..5000 {
+            for prog in [main, sources] {
+                h.insert(d(0), &format!("f{f}.py"), prog, e(f));
+            }
+        }
+        assert_eq!(h.len(), 10_000, "every file's entry under both programs is held");
+        h.insert(d(1), "f0.py", main, e(0));
+        assert!(h.get(&(d(0), "f0.py".into(), main)).is_some() && h.get(&(d(1), "f0.py".into(), main)).is_some(), "an edit keeps the entry before");
+        h.insert(d(2), "f0.py", main, e(0));
+        assert!(h.get(&(d(0), "f0.py".into(), main)).is_none(), "the entry before the one before goes");
+        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
+        // Back to an earlier content: the two kept are that one and the one it replaced.
+        h.insert(d(1), "f0.py", main, e(0));
+        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
+        assert_eq!(h.len(), 10_001);
+        assert!(h.get(&(d(0), "f0.py".into(), sources)).is_some(), "another program's entry of the file is its own");
+    }
 
     /// Rows of columns typed `types`, of `rows`.
     pub fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
@@ -1225,9 +1325,6 @@ pub mod tests {
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
         entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
-        entry.rows.insert("base:named".into(), (2, vec![1, -1]));
-        entry.rows.insert("named".into(), (2, vec![1, 3]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("base:named".to_owned(), -1)));
     }
 
     /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
@@ -1239,7 +1336,6 @@ pub mod tests {
         let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
         let syms = Syms::of(&domains);
         assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
-        assert_eq!(syms.columns("base:field", 3), Some(vec![false, false, false]), "a field's code is no atom");
         assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
         let mut entry = Entry { key: 1, ..Entry::default() };
         entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));

@@ -41,7 +41,7 @@ refused by the no-new-caches check, decision 0104: the lines are the report.)
 
 ## What only the check reads
 
-The mode changes no computation and no write. Two things hold that, and `scripts/check/check-warm-mode.py` checks
+The mode changes no computation and no write. Two things hold that, and `scripts/check/check_warm_mode.py` checks
 both before every commit (the commit hook runs it beside the cache and thread-state checks):
 
 - **Who reads it.** Only `profile.rs` (the mode itself), the maintained part's delta check in `corpus.rs` (it reads

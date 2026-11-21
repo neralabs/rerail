@@ -158,6 +158,7 @@ fn native_shards_match_the_original_batch_and_both_probe_directions() {
                 tape: None,
                 guest: None,
                 module: None,
+                unpackaged: false,
             }
         })
         .collect();
@@ -350,7 +351,7 @@ fn mixed_file_patches_match_cold_execution_with_shared_values_and_lazy_queries()
     for step in 0..40 {
         seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
         let path = format!("m{}.py", seed % 13);
-        if seed % 4 == 0 {
+        if seed.is_multiple_of(4) {
             files.remove(&path);
             patch(&mut e, &[], &[&path]);
         } else {

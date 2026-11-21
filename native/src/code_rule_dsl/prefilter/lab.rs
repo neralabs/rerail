@@ -266,13 +266,8 @@ fn run(policy: &str) {
 
 #[cfg(test)]
 fn cpu_ns() -> u64 {
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `now` is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
-    now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
+    // This thread's CPU time, on every platform (`rerail_prof::thread_cpu`).
+    rerail_prof::thread_cpu().as_nanos() as u64
 }
 
 #[cfg(test)]
@@ -329,7 +324,7 @@ fn capture_lab_corpus() {
         .iter()
         .map(|name| (name.clone(), super::tests::put(&store, &std::fs::read_to_string(corpus.join(name)).unwrap(), GrammarDialect::Python).0))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python");
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python");
     let mut documents = Vec::new();
     for dir in [pack.join("rules"), pack.join("candidates/rules")] {
         documents.extend(std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "json")));

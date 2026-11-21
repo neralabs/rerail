@@ -1,0 +1,85 @@
+// A recursive group's sweep (06-first-slice S4, O25): one thread per file runs the group's work in
+// node order (preorder on even rounds, reverse preorder on odd ones or where the round's word has
+// bit 31), each node's in the order of its labels (`local_levels`). A task's results mark its label
+// at once (`SWEEP_MARK` in `run_task`), so later work of the same sweep reads it; a complement op
+// sets its label at the node from the label it complements. A recursion that runs one way settles
+// in one sweep; mixed directions alternate. Without complements labels only grow, so the sweeps
+// reach the rounds' fixpoint; with them every walk moves forward in preorder (`matcher::lower`),
+// so a reverse sweep computes each node from final verdicts. The sweep's words follow the labels in
+// the prefix: the round's word (bits 0..16 the round, 16..31 the group), a task failed, then per
+// group whether its even and its odd rounds changed a label, which the host reads at the end; a
+// round after one that changed nothing does nothing. A task stopped by its step budget, or at the ceiling, fails nothing:
+// its evaluation records it (decision 0334, `Runner::unfinished`), and the host replans that (pass, file).
+// The work at a node (decision 0033) is the group's entries in order, with no per-node list: a
+// program runs where its rule admits the node's code and its evaluation for the file exists (one
+// per program and file with roots), a complement sets its label from the label it complements.
+// The entries (in place of the tasks): their count, then per entry {kind (0 a program, 1 a
+// complement), program or target, -, the rule's word} or {1, target, of, -}; then the rules, each
+// {kind count or NONE (any kind), kinds, test count, tests (op << 16 | argument)}.
+// The evaluation of (file, program), or NONE: evaluations are ordered by file, then program.
+UKL_INLINE uint32_t sweep_evaluation(UKL_GLOBAL const Evaluation* evaluations,uint32_t count,uint32_t file,uint32_t program){uint32_t low=0u,high=count;while(low<high){uint32_t middle=(low+high)/2u;uint32_t f=evaluations[middle].file,p=evaluations[middle].program;if(f<file||(f==file&&p<program))low=middle+1u;else high=middle;}return low<count&&evaluations[low].file==file&&evaluations[low].program==program?low:0xffffffffu;}
+#define SWEEP_TASK(E,NODE) {uint32_t sweepEvaluation=(E);UKL_GLOBAL Evaluation* evaluation=&evaluations[sweepEvaluation];lane_begin(lane,evaluation);Task own={sweepEvaluation,0u,evaluation->file,evaluation->program,(NODE),0u,resident_work(chunk,doc,evaluation->workLimit,(NODE)-doc.node_base)};UKL_GLOBAL Status* sweepStatus=&statuses[tid];run_task(own,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,sweepStatus,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,lane,evaluation);if(sweepStatus->error==4u)ukl_atomic_or(&evaluation->outcome,own.workLimit<(1u<<26u)?1u:2u);else if(sweepStatus->error!=0u)failed=true;else if((sweepStatus->reserved&0x80000000u)!=0u)changed=true;}
+#define SWEEP_NODE(LOCAL) {uint32_t sweepLocal=(LOCAL),node=doc.node_base+sweepLocal;UKL_GLOBAL const DeviceCode* code=tape_code(chunk,doc,sweepLocal);for(uint32_t e=0u;e<entryCount;e++){UKL_GLOBAL const uint32_t* entry=entries+4u*e;if(entry[0]==0u){if(!code_admits(sweep+entry[3],code))continue;uint32_t at=sweep_evaluation(evaluations,header->evaluationCount,file,entry[1]);if(at!=0xffffffffu)SWEEP_TASK(at,node)}else{uint32_t bit=1u<<(node%32u);UKL_GLOBAL uint32_t* target=&labelBits[entry[1]*labelWords+node/32u];bool set=(ukl_atomic_load(&labelBits[entry[2]*labelWords+node/32u])&bit)==0u;uint32_t old=set?ukl_atomic_or(target,bit):ukl_atomic_and(target,~bit);if(((old&bit)!=0u)!=set)changed=true;}}}
+// The sweep's rows are the batch's (`run_batch`'s, bound alike), then its thread and the grid's size.
+DEFINE_KERNEL2(batch_runtime, label_sweep,
+               ROBUFFER, Task,           tasks,           "[header.taskCount]",
+               ROBUFFER, BatchHeader,    header,          "[1]",
+               ROBUFFER, DocView,        files,           "[header.fileCount]",
+               ROBUFFER, uint8_t,        nodes,           "[the batch's block]",
+               ROBUFFER, Program,        programs,        "[header.programCount]",
+               ROBUFFER, uint32_t,       words,           "[header.structuralWordCount]",
+               ROBUFFER, uint64_t,       longs,           "[longs]",
+               ROBUFFER, uint8_t,        children,        "[header.childCount]",
+               ROBUFFER, Supertype,      supertypes,      "[header.supertypeCount]",
+               RWBUFFER, Pending,        pending,         "[arena 0]",
+               RWBUFFER, Link,           captures,        "[arena 1]",
+               RWBUFFER, Link,           cursors,         "[arena 2]",
+               RWBUFFER, RepeatLink,     repeats,         "[arena 3]",
+               RWBUFFER, uint8_t,        schedulerStorage, "[header's scheduler bytes]",
+               RWBUFFER, Result,         results,         "[results]",
+               RWBUFFER, Status,         statuses,        "[header.taskCount]",
+               ROBUFFER, ValueRecord,    values,          "[header.valueInstructionCount]",
+               ROBUFFER, StringRecord,   strings,         "[header.stringCount]",
+               ROBUFFER, NfaState,       nfaStates,       "[nfa states]",
+               ROBUFFER, uint32_t,       nfaData,         "[nfa data]",
+               ROBUFFER, NfaRange,       nfaRanges,       "[nfa ranges]",
+               ROBUFFER, LuaInstruction, luaInstructions, "[lua instructions]",
+               ROBUFFER, LuaMember,      luaMembers,      "[lua members]",
+               ROBUFFER, Assertion,      assertions,      "[assertions]",
+               ROBUFFER, uint32_t,       assertionData,   "[assertion data]",
+               ROBUFFER, uint8_t,        stringBytes,     "[string bytes]",
+               ROBUFFER, uint8_t,        source,          "[the batch's source]",
+               RWBUFFER, uint32_t,       valueWork,       "[value work]",
+               ROBUFFER, uint8_t,        lineStarts,      "[the batch's block]",
+               RWBUFFER, FinalCapture,   finalCaptures,   "[final captures]",
+               RWBUFFER, uint8_t,        outputStorage,   "[output bytes]",
+               GID0, uint32_t, tid, ,
+               GSZ0, uint32_t, lanesCount, )
+{
+ UKL_GLOBAL uint32_t* head=(UKL_GLOBAL uint32_t*)supertypes;
+ UKL_GLOBAL uint32_t* sweepFlags=head+2u+(head[0]&0x7fffffffu)*head[1];
+ uint32_t roundWord=ukl_atomic_load(&sweepFlags[0]),round=roundWord&0xffffu;
+ UKL_GLOBAL uint32_t* changes=sweepFlags+2u+2u*((roundWord>>16u)&0x7fffu);
+ bool reverse=(roundWord>>31u)!=0u||round%2u!=0u;
+ uint32_t labelWords=head[1];UKL_GLOBAL uint32_t* labelBits=head+2u;
+ if(round>0u&&ukl_atomic_load(&changes[(round-1u)%2u])==0u)return;
+ if(tid>=header->fileCount)return;
+ UKL_GLOBAL GlobalArenas* globalArenas=(UKL_GLOBAL GlobalArenas*)schedulerStorage;
+ UKL_GLOBAL Evaluation* evaluations=(UKL_GLOBAL Evaluation*)(schedulerStorage+sizeof(GlobalArenas));
+ UKL_GLOBAL Evaluation* lane=&evaluations[header->evaluationCount+tid];
+ if(lane_arenas_full(lane,globalArenas)){
+  ukl_atomic_or(&sweepFlags[1],1u);
+  return;
+ }
+ UKL_GLOBAL const uint32_t* sweep=(UKL_GLOBAL const uint32_t*)tasks;
+ uint32_t entryCount=sweep[0];UKL_GLOBAL const uint32_t* entries=sweep+1u;
+ UKL_GLOBAL const uint8_t* chunk=nodes;
+ bool changed=false,failed=false;
+ for(uint32_t file=tid;file<header->fileCount;file+=lanesCount){
+  DocView doc=files[file];
+  if(!reverse){for(uint32_t here=0u;here<doc.nodes;here++)SWEEP_NODE(here)}
+  else{for(uint32_t here=doc.nodes;here>0u;here--)SWEEP_NODE(here-1u)}
+ }
+ if(failed)ukl_atomic_or(&sweepFlags[1],1u);
+ if(changed)ukl_atomic_or(&changes[round%2u],1u);
+}

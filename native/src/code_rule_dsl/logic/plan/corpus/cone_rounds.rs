@@ -125,20 +125,20 @@ impl RulePass for Rounds<'_> {
         let mut kept = Vec::new();
         for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
-            if !answers.contains_key(req) || f.arity(req) != Some(1) {
+            let Some(keys) = f.arity(req).filter(|&keys| keys > 0 && keys <= width && answers.contains_key(req)) else {
                 continue;
-            }
+            };
             let input = fs_input(answer);
-            b.declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
+            b.fields().declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
             let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
             let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
-            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish()?;
+            b.rule().head(answer, &vars).atom(req, &vars[..keys]).atom(input.as_str(), &vars).finish()?;
             // Read back by the rest of the cross part: kept, not inlined.
             kept.push(((*answer).to_owned(), "no_inline".to_owned()));
             inputs.retain(|r| r != answer);
             self.fs.push(((*answer).to_owned(), input));
         }
-        b.add_qualifiers(&kept);
+        b.fields().add_qualifiers(&kept);
         for (answer, input) in &self.fs {
             for p in produced.iter_mut().filter(|(r, _)| r == answer) {
                 p.0 = input.clone();
@@ -150,12 +150,12 @@ impl RulePass for Rounds<'_> {
             }
         }
         self.requests = answers.keys().filter_map(|r| Some(((*r).to_owned(), f.arity(r)?))).collect();
-        b.set_inputs(&inputs);
-        b.set_answers(&BTreeMap::new());
-        b.keep_relation_fields(&|_| true, &|_| true, &|_| false);
+        b.fields().set_inputs(&inputs);
+        b.fields().set_answers(&BTreeMap::new());
+        b.fields().keep_relation_fields(&|_| true, &|_| true, &|_| false);
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
         // each is kept in the frames as any derived relation, with its rows.
-        b.set_outputs::<&str>(&[]);
+        b.fields().set_outputs::<&str>(&[]);
         self.inputs = inputs;
         self.produced = produced;
         Ok(())
@@ -379,7 +379,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) modes: &'a str,
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
-    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vec<i64>]) -> bool>,
     /// The run's text tests (`plan::Hooks::texts`).
     pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
@@ -391,6 +391,7 @@ pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64
 }
 
 /// Where the rounds start.
+#[allow(clippy::large_enum_variant)]
 pub(in crate::code_rule_dsl) enum Start {
     /// From the last run's final round.
     Kept(retain::Retained),
@@ -440,8 +441,8 @@ impl RoundProgram {
         let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.
         let was = match &kept {
-            Some(k) => k.frames().cloned(),
-            None => retain::Retained::from_frames(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.frames().cloned(),
+            Some(k) => k.in_kept().cloned(),
+            None => retain::Retained::bind_kept(on.store, on.space, on.key, on.key, &self.placed, &self.sccs, &inputs.constant_digests(&atoms, &self.placed, domains))?.in_kept().cloned(),
         };
         if let Some(k) = &kept {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/the last run's, from the frames".into());
@@ -484,22 +485,27 @@ impl RoundProgram {
                         read_by.insert(a.request(), by);
                     }
                 }
-                let kept_key = |q: &str, k: &[i64]| -> bool {
+                // Any other request keeps its answer as the run's `still` says, given the kept rows of its key (a Git
+                // object's stamp is among them).
+                let kept_key = |q: &str, k: &[i64], rows: &[&Vec<i64>]| -> bool {
                     match read_by.get(q) {
-                        Some(by) => still(q, &k[..1]) && by.get(k).into_iter().flatten().all(|p| still("rr_file_req", std::slice::from_ref(p))),
-                        None => k.len() == 1 && still(q, k),
+                        Some(by) => still(q, &k[..1], &[]) && by.get(k).into_iter().flatten().all(|p| still("rr_file_req", std::slice::from_ref(p), &[])),
+                        None => still(q, k, rows),
                     }
                 };
-                for &(answer, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
-                    let produced = self.kept_as(answer);
+                for &(answer_relation, req) in crate::code_rule_dsl::logic::rr::WORLD.iter() {
+                    let produced = self.kept_as(answer_relation);
                     let Some(rows) = provisional.get(&produced) else { continue };
-                    let keys: Vec<&Vec<i64>> = carried.iter().filter(|(q, k)| q == req && !k.is_empty() && kept_key(q, k)).map(|(_, k)| k).collect();
-                    let n = keys.first().map_or(1, |k| k.len());
+                    let width = self.width(req);
                     let mut by: HashMap<&[i64], Vec<&Vec<i64>>> = HashMap::new();
-                    for r in rows.iter().filter(|r| r.len() >= n) {
-                        by.entry(&r[..n]).or_default().push(r);
+                    for row in rows.iter().filter(|row| row.len() >= width) {
+                        by.entry(&row[..width]).or_default().push(row);
                     }
-                    let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(k.as_slice()).into_iter().flatten().map(|r| (*r).clone())).collect();
+                    let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
+                        (q == req && key.len() == width).then_some(key)
+                    }).collect();
+                    let keys: Vec<_> = candidates.into_iter().filter(|key| kept_key(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))).collect();
+                    let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
                     answers.rows.entry(produced).or_default().extend(given);
@@ -533,7 +539,7 @@ impl RoundProgram {
                     let all = corpus_rows.get(rel.as_str()).into_iter().flatten().chain(provisional.get(&rel).into_iter().flatten()).chain(answers.rows.get(&rel).into_iter().flatten()).filter(|r| seen.insert(*r));
                     of_rows(width, all)
                 };
-                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, &domains, &rel, width));
+                let digest = retain::digest(source.as_ref(), &retain::cells_of(&atoms, &self.placed, domains, &rel, width));
                 bound.insert(rel, (source, digest));
             }
             let given: Vec<(String, Arc<dyn Source>, u64, bool)> = bound.iter().map(|(r, (s, d))| (r.clone(), Arc::clone(s), *d, !fresh.contains(r))).collect();
@@ -642,7 +648,7 @@ impl RoundProgram {
                 let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_frames(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), None)?
+                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeMap::new())?
             }
             None => 0,
         };

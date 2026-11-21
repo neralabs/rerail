@@ -138,7 +138,8 @@ exponential, so a refusal is the answer to it, not a larger budget.
 3. **Conditionals and `#if`** by the directive tree's chains. Includes from the resolution table.
    The built-ins. The corpus's TUs must match the lean pass's `Expanded`.
 4. **Cranelift.**
-5. **Tier 2 on Metal,** then expansion on the work queue.
+5. **Tier 2 on Metal,** then expansion on the work queue. Spiked (5a, below): one TU a thread
+   does not pay.
 
 ## Stage 1, built: the whole file's tokens
 
@@ -168,6 +169,14 @@ directives' ladder, so mode (a) keeps its lean tape.
   `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
   its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
   (`run lit_bytes & ~lit_start`). Work queue Q129 has the guard this needs.
+- **Digit separators and `u8'…'`, read since (Q132).** A separator's `'` (`1'000'000`, `0x'1`)
+  must open no character constant, but the regions are found before the numbers. Both grammars
+  (this one and the directives' `06-raw`) find it first, from a run of numbers made without the
+  regions (`sep`). They check it after, against the code's numbers: an escape where they differ.
+  That is a separator inside a character constant (`'.5'a`), or a `'` one side takes and the
+  other does not. The old escape (a character constant after a digit) also refused `u8'a'`, and
+  is gone. Corpus: tokens 3,073 the same, 62 refused, 0 differ; expansion 3,073 of 3,135 equal
+  to the lean pass, the JIT equal to the interpreter on each.
 
 ## Stage 2, built: the words, on the interpreter
 
@@ -443,6 +452,60 @@ need a profiler run, which is open.
   where it was made from the words this process has (`Build::words`, `expand.rir`'s
   fingerprint, checked once), else Cranelift's code, compiled once a thread. Its cost is a
   rustc compile of 3.4 MB of generated Rust when the words or the compiler change.
+
+## Stage 5a, the spike: the words on Metal, one TU a thread
+
+The words' Cranelift IR is printed as MSL (`clif_msl`), as `clif_rust` prints it as Rust. So
+the device runs the same code as the JIT and rustc's build: one meaning, three printers of one
+IR. On the device, `run_native` is split in two. `pp_words::prepare` lays out the machine,
+given where each buffer goes, and `complete` reads the result back. The CPU places each buffer
+where it is. Metal (`metal::pp_on`) copies each one into one arena a batch, and copies back the
+ones the words write. The kernel `pp_batch` takes contexts by ticket.
+
+- **It runs, and equals the interpreter:** `the_metal_words_are_the_interpreters`, on
+  `EXAMPLES` and `TUS`, in C and C++, 62 of 62, on the M5 Max (Relax) and the M3 (cargo).
+- **MSL has no labels and no `goto`.** `Shape`'s labelled loops become `do`/`for` blocks
+  with a target variable, which each block tests when a `break` leaves it (`Shape::msl`).
+- **Found: no access through an integer cast to a pointer.** The first form cast each GPU
+  address back to a `device` pointer. Then `#if !(1/0)` was true on Metal: `#if`'s `live`
+  stack read its first byte as 0, after a store of 1 to the same byte that a callee had already
+  read back. Marking every access `volatile` fixed it, so the stored bytes were right and the
+  device compiler had reordered the accesses. Every access is now the arena's pointer at the
+  address's offset (`AT`), so the compiler sees one object. A probe of a byte's stores also
+  fixed it, so a failure that disappears under a probe points here.
+- **Unaligned accesses:** the IR's `aligned` flag is the CPU's, which also covers a 64-bit
+  access at a 4-byte boundary. A byte, or a context field at its size's multiple, is one
+  access. Any other access goes through helpers over the aligned words around it.
+
+Measured on the M5 Max, not a quiet run (`the_metal_words_time_against_the_jit`, the 11
+rounds of `TUS`'s 8 TUs, each batch made of copies of one round, so its threads never diverge):
+
+| | |
+|---|---|
+| MSL | 90,607 lines |
+| Compile | library 3.9 s, pipeline 11.9 s cold; 0.13 s from Metal's cache |
+| One run, the Cranelift JIT on one core, `prepare` and `complete` included | 6.4 µs |
+| One run, one GPU thread | 3,798 µs |
+| A batch of 32 / 64 / 128 copies, a run | 118 / 58 / 25 µs |
+| The arena a run | 1.4–3.2 MB, so 512 MB of device budget holds about 128–170 runs |
+
+A batch takes about 3.7 ms whatever its thread count, so a run's time is one thread's
+latency. One GPU thread runs one serial machine about 600× slower than a CPU core. Even 128
+threads that never diverge give a quarter of one core's throughput, and the budget allows no
+more. Real batches are distinct TUs, whose threads diverge on every token.
+
+**Finding: one TU per thread does not pay** (the plan's stop point; the go/no-go is the
+user's). Expansion is a serial machine per TU: its state
+changes at every token, and its branches depend on the token. A GPU pays for that with one
+thread's latency. To pay, the device needs data-parallel work: stage 1's masks (already on
+Metal) or many TUs' independent steps in lockstep. That would be a different design from the
+words. Stages 5b–5e (a complete `clif_msl`, the batch host, rounds as batches) wait on that
+decision. `clif_msl`, the split `run_native` and `pp_on` stay, tested, as the measured basis.
+
+The user chose (c), "lockstep at scale first, then the pass-through mask". That is decision
+0408: rooms by use, contexts across the batch, rounds as batches. The corpus equals the
+interpreter on Metal, but takes 18.7 s of GPU against about 0.15 s on one core. A thread runs
+about 9 µs a token, and a dispatch lasts as long as its longest TU.
 
 ## Open
 

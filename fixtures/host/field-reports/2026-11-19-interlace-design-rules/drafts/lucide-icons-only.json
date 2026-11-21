@@ -1,0 +1,86 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:lucide-icons-only",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Use icons from lucide-react-native only; no other icon sets in the app or its dependencies.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "package.json"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "icon-import",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:from\\s+|require\\(\\s*|import\\s+)['\"](?:@expo/vector-icons|react-native-vector-icons|phosphor-react-native|react-native-heroicons|@heroicons/[\\w-]+|@tabler/icons[\\w-]*|react-native-feather|@fortawesome/[\\w-]+|react-icons|@radix-ui/react-icons|iconsax-react-native|expo-symbols|@mdi/[\\w-]+|lucide-react)(?:/[^'\"]*)?['\"]",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "OTHER_ICON_SET",
+          "anchor": "witness.span",
+          "message": "Import this icon from lucide-react-native and render it with `<Icon as={...} />` from '@/components/ui/icon'."
+        }
+      },
+      {
+        "id": "icon-dependency",
+        "forbid": {
+          "regex": {
+            "pattern": "\"(?:@expo/vector-icons|react-native-vector-icons|phosphor-react-native|react-native-heroicons|@heroicons/[\\w-]+|@tabler/icons[\\w-]*|react-native-feather|@fortawesome/[\\w-]+|react-icons|@radix-ui/react-icons|iconsax-react-native|expo-symbols|@mdi/[\\w-]+|lucide-react)\"\\s*:",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "OTHER_ICON_DEPENDENCY",
+          "anchor": "witness.span",
+          "message": "Drop this icon package and use lucide-react-native, the only icon set DESIGN.md allows."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/app/a.tsx",
+        "content": "import { Ionicons } from '@expo/vector-icons';\n"
+      },
+      {
+        "path": "src/app/b.tsx",
+        "content": "import { House } from 'lucide-react';\n"
+      },
+      {
+        "path": "src/app/b3.tsx",
+        "content": "import { SymbolView } from 'expo-symbols';\n"
+      },
+      {
+        "path": "package.json",
+        "content": "{\n  \"dependencies\": {\n    \"phosphor-react-native\": \"^2.0.0\"\n  }\n}\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/c.tsx",
+        "content": "import { ChevronLeft, Plus } from 'lucide-react-native';\n"
+      },
+      {
+        "path": "package.json",
+        "content": "{\n  \"dependencies\": {\n    \"lucide-react-native\": \"^1.62.0\"\n  }\n}\n"
+      },
+      {
+        "path": "src/app/d.tsx",
+        "content": "// we chose lucide-react-native over @expo/vector-icons\nconst x = 1;\n"
+      }
+    ]
+  }
+}

@@ -362,6 +362,7 @@ impl View {
             text: self.text,
             segments: self.segments,
             host_errors: self.syntax_errors,
+            at: None,
         }
     }
 
@@ -370,7 +371,9 @@ impl View {
     pub fn root(&self) -> TsNode<'_> {
         let tree = self.tree.get_or_init(|| match &self.parse {
             Parse::Tree(tree) => tree.clone(),
-            Parse::Tape(_) => Parse::tree_sitter(GrammarDialect::Php, &self.text).expect("tree-sitter-php parses"),
+            Parse::Tape(_) => {
+                Parse::tree_sitter(GrammarDialect::Php, &self.text).expect("tree-sitter-php parses")
+            }
         });
         tree.root_node()
     }

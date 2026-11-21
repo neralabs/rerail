@@ -1,20 +1,20 @@
 //! Relations sorted by a key on the device, and the equi-joins that probe them: moved into the executor's GPU lane
-//! (`rerail_accel::gpu::join`, decision 0100 §1). What stays here is the engine's side of the one Metal manager:
+//! (`rerail_accel::gpu::join`, decision 0100 §1). What stays here is the engine's side of the one device manager:
 //! its launch budget as the check of every relational submission.
 
 use super::Error;
 use super::metal_backend::launch::LaunchScope;
-use metal::CommandQueue;
 
 pub use rerail_accel::gpu::join::Held;
 /// The relational lab's (`setfix::lab`) and the tests' names for the device's joins.
 #[cfg(any(test, feature = "test-hooks"))]
 pub use rerail_accel::gpu::join::{Column, Keyed, probe};
 
-/// The one queue of relational work (decision 0100 §2), shared with the executor's GPU lane.
-pub(super) fn queue() -> Result<CommandQueue, Error> {
+/// Whether the process has a device for relational work (decision 0100 §2, its one queue shared with the
+/// executor's GPU lane), with the launch budget installed as every submission's check.
+pub(super) fn ready() -> Result<(), Error> {
     install_guard();
-    rerail_accel::gpu::join::queue().map_err(|_| Error::UnsupportedBackend)
+    rerail_accel::gpu::join::device().map(|_| ()).map_err(|_| Error::UnsupportedBackend)
 }
 
 /// Makes the engine's launch budget the check of every submission the executor makes (once per process).

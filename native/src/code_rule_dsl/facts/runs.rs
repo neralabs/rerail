@@ -163,7 +163,7 @@ impl Run {
         for _ in 0..arity {
             let mut bytes = vec![0; rows * 4];
             input.read_exact(&mut bytes)?;
-            columns.push(bytes.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect());
+            columns.push(bytes.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect());
         }
         Ok(Run { relation, key, rows, columns: columns.into() })
     }
@@ -172,8 +172,8 @@ impl Run {
 /// A digest as eight u32 cells.
 pub(crate) fn lanes(digest: &[u8; 32]) -> [u32; 8] {
     let mut lanes = [0; 8];
-    for (lane, chunk) in lanes.iter_mut().zip(digest.chunks_exact(4)) {
-        *lane = u32::from_le_bytes(chunk.try_into().expect("four bytes"));
+    for (lane, chunk) in lanes.iter_mut().zip(digest.as_chunks::<4>().0) {
+        *lane = u32::from_le_bytes(*chunk);
     }
     lanes
 }
@@ -181,7 +181,7 @@ pub(crate) fn lanes(digest: &[u8; 32]) -> [u32; 8] {
 /// The digest of eight u32 cells.
 pub(crate) fn digest(lanes: impl IntoIterator<Item = u32>) -> [u8; 32] {
     let mut digest = [0; 32];
-    for (chunk, lane) in digest.chunks_exact_mut(4).zip(lanes) {
+    for (chunk, lane) in digest.as_chunks_mut::<4>().0.iter_mut().zip(lanes) {
         chunk.copy_from_slice(&lane.to_le_bytes());
     }
     digest

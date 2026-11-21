@@ -11,7 +11,7 @@ the Python-only long-lived (reactor) build first ("A long-lived engine" there):
     CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS="${CARGO_TARGET_WASM32_WASIP1_RUSTFLAGS/crt1-command.o/crt1-reactor.o}" \\
       cargo build --release -p rerail-engine --lib --target wasm32-wasip1 --no-default-features --features headless,lang-python
 
-python.json holds every hand-written Python pack rule (its .rr, its part files, its description) and the library
+python.json holds every hand-written Python pack rule (its .rerail, its part files, its description) and the library
 files they include, transitively: the page mounts them where `logic` looks for them (/lib, and beside the rule). It
 also holds the scenarios in explorer/scenarios: a rule with Python files that show what it finds and what it leaves.
 """
@@ -37,8 +37,8 @@ def read(path):
 
 
 def library_closure(texts):
-    """Library files (paths relative to lib/) the texts include, and what those include, `core.rr` always."""
-    found, todo = {}, ["core.rr"]
+    """Library files (paths relative to lib/) the texts include, and what those include, `core.rerail` always."""
+    found, todo = {}, ["core.rerail"]
     for text in texts:
         todo += INCLUDE.findall(text)
     while todo:
@@ -74,11 +74,11 @@ def main():
         doc = json.loads(read(f))
         described[doc.get("id", os.path.basename(f)[:-5])] = doc.get("description", "")
     rules = []
-    for f in sorted(glob.glob(os.path.join(RS, "packs", "python", "*.rr"))):
-        rid = os.path.basename(f)[:-3]
+    for f in sorted(glob.glob(os.path.join(RS, "packs", "python", "*.rerail"))):
+        rid = os.path.basename(f).removesuffix(".rerail")
         if "." in rid:
-            continue  # a part file: <id>.<part>.rr
-        parts = {os.path.basename(p): read(p) for p in sorted(glob.glob(os.path.join(RS, "packs", "python", rid + ".*.rr")))}
+            continue  # a part file: <id>.<part>.rerail
+        parts = {os.path.basename(p): read(p) for p in sorted(glob.glob(os.path.join(RS, "packs", "python", rid + ".*.rerail")))}
         rules.append({"id": rid, "d": described.get(rid, ""), "rr": read(f), "parts": parts})
     lib = library_closure([r["rr"] for r in rules] + [t for r in rules for t in r["parts"].values()])
     bundle = {"rules": rules, "lib": lib, "scenarios": scenarios({r["id"] for r in rules})}

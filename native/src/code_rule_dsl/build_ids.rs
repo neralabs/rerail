@@ -17,8 +17,10 @@ pub fn set(engine: &'static str, grammar: &'static str) {
 pub fn engine() -> &'static str {
     #[cfg(any(test, feature = "test-hooks"))]
     {
-        if let Some(rebuilt) = REBUILT.with(std::cell::Cell::get) {
-            return rebuilt;
+        let rebuilt = REBUILT.load(std::sync::atomic::Ordering::Acquire);
+        if !rebuilt.is_null() {
+            // SAFETY: set only by `rebuild_for_tests`, from a leaked box that is never freed.
+            return unsafe { *rebuilt };
         }
         if ENGINE.get().is_none() {
             set_for_tests();
@@ -36,21 +38,17 @@ pub fn grammar() -> &'static str {
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
 }
 
-thread_local! {
-    /// The build a test's runs are of after `rebuild_for_tests`: its thread's, carried to its runs' jobs
-    /// (`run_state`), so a test beside it in the same process keeps its own build.
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub static REBUILT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-}
+#[cfg(any(test, feature = "test-hooks"))]
+static REBUILT: std::sync::atomic::AtomicPtr<&'static str> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
-/// A test's next runs as another build of the engine's (the next of this thread's), over the stores the earlier
-/// runs left: what a rebuild of the engine gives a store's next run. The grammar's identity stays. The test's own:
-/// the jobs its runs start are given it, and other tests in the process keep theirs.
+/// A test's next runs as another build of the engine's (the next of this process's), over the stores the earlier
+/// runs left: what a rebuild of the engine gives a store's next run. The grammar's identity stays. The whole
+/// process's: a test calling it runs in a process of its own (nextest's).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn rebuild_for_tests() {
     let now = engine();
     let next: &'static str = Box::leak(format!("{now}+rebuilt").into_boxed_str());
-    REBUILT.with(|r| r.set(Some(next)));
+    REBUILT.store(Box::into_raw(Box::new(next)), std::sync::atomic::Ordering::Release);
 }
 
 /// A crate's own test binary, which the engine does not load: identities of that binary (its path and when it was

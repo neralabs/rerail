@@ -8,7 +8,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 for path in package.json scripts/generate/docs/code-rule-dsl-reference.mjs src/engine/code-rule/code-rule-schema.ts src/engine/code-rule/code-rule-schema-semantic.ts \
   src/engine/code-rule/code-rule-languages.ts src/engine/code-rule/code-rule-language-registry.generated.ts src/engine/catalog/rule-mode.ts \
-  native/src/code_rule_dsl/compile/ast_rule.rs docs/code-rule-dsl-reference.html; do
+  native/src/code_rule_dsl/compile/ast_rule.rs docs/code-rule-dsl-reference.html test/support/oracles.ts; do
   mkdir -p "$work/$(dirname "$path")"
   cp "$root/$path" "$work/$path"
 done
@@ -20,9 +20,10 @@ node -e '
   const fs = require("node:fs");
   const [path] = process.argv.slice(1);
   const html = fs.readFileSync(path, "utf8");
-  const scope = "<b class=\"k\">exclude</b>: [Glob] }";
+  // The opening tag of the Scope production, so the injected key lands in its body whatever the layout inside.
+  const scope = "data-zod=\"codeRuleScopeSchema\">";
   if (!html.includes(scope)) throw new Error("the Scope production moved; update the injected drift");
-  fs.writeFileSync(path, html.replace(scope, "<b class=\"k\">exclude</b>: [Glob], <b class=\"k\">drift</b>: Str }"));
+  fs.writeFileSync(path, html.replace(scope, scope + "<b class=\"k\">drift</b>"));
 ' "$reference"
 if npm --prefix "$work" run --silent check:reference > /dev/null; then
   echo "check:reference accepted a production key that is not in zod" >&2

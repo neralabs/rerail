@@ -70,11 +70,11 @@ pub fn read(image: &[u8], src: &[u8]) -> Result<Vec<Tok>, String> {
             bol = true;
             continue;
         }
-        let start = v.start(i) as u32;
+        let start = v.start(i);
         // A byte order mark is no white space.
         let space = start > end && !line_break_before(src, start as usize) && !(start == 3 && src.starts_with(b"\xef\xbb\xbf"));
-        out.push(Tok { kind, start, end: v.end(i) as u32, flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
-        (bol, end) = (false, v.end(i) as u32);
+        out.push(Tok { kind, start, end: v.end(i), flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
+        (bol, end) = (false, v.end(i));
     }
     Ok(out)
 }
@@ -92,28 +92,10 @@ pub fn tokens(src: &[u8], cpp: bool) -> Option<Vec<Tok>> {
 
 /// `src`'s tokens by the lean lexer, in the file's bytes (its phase-2 text mapped back).
 pub fn lean(src: &[u8], cpp: bool) -> Vec<Tok> {
-    use rerail_c_lean::pp::{DIGRAPH, Options, P, Phase2, PpLexer};
+    use rerail_c_lean::pp::Options;
     let opts = if cpp { Options::cpp(26, true) } else { Options::c(23, true) };
-    let p2 = Phase2::of(src, opts.trigraphs);
-    let mut lx = PpLexer::new(&p2.text, opts);
-    let mut out = Vec::new();
-    loop {
-        let t = lx.next_token();
-        let kind = match t.kind {
-            P::Eof => break,
-            P::Ident => "identifier",
-            P::Number => "number",
-            P::Char | P::Str | P::RawStr => "literal",
-            P::Hash => "hash",
-            P::HashHash => "hashhash",
-            P::Punct if t.flags & DIGRAPH != 0 => "digraph",
-            P::Punct => "punct",
-            P::Header | P::Other => "other",
-        };
-        let (s, e) = (t.start as usize, t.end as usize);
-        out.push(Tok { kind, start: p2.orig(s) as u32, end: if e > s { p2.orig(e - 1) as u32 + 1 } else { p2.orig(s) as u32 }, flags: t.flags & (BOL | SPACE) });
-    }
-    out
+    let kinds = rerail_c_pp::tape::KINDS;
+    rerail_c_pp::tape::tokens(src, opts).into_iter().map(|t| Tok { kind: kinds[t.kind as usize], start: t.start, end: t.end, flags: t.flags & (BOL | SPACE) }).collect()
 }
 
 #[cfg(test)]
@@ -129,11 +111,16 @@ mod tests {
         if interp != image {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
-        #[cfg(target_os = "macos")]
-        if let Ok(m) = c.metal_images(&[src]) {
-            if m[0] != image {
-                return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
-            }
+        // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
+        // never skipped). A Linux host's GPU lane (decision 0440 step E) may have no device, and is then skipped.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(m) = match c.metal_images(&[src]) {
+            Ok(m) => Some(m),
+            Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
+            Err(_) => None,
+        } && m[0] != image
+        {
+            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
         }
         let Some(image) = image else { return Ok(false) };
         let (got, want) = (read(&image, src)?, lean(src, cpp));
@@ -163,10 +150,11 @@ mod tests {
             "a \\ b\\n c\\ \\\n d \\",
             "",
             "a",
+            // Digit separators (C23, C++14) and `u8'…'` (C23, C++17).
+            "n = 1'000'000 + 0'7 + 0x'1 + 1'a'b + 1.5'e+3 + .5'0 + x.5'1; c = u8'a' + x1'b' + 1' ' + '1''2';\n",
         ];
         for cpp in [false, true] {
             for src in cases {
-                let src = src.replace('\u{feff}', "\u{feff}");
                 assert_eq!(check(src.as_bytes(), cpp), Ok(true), "{src:?} (C++ {cpp})");
             }
         }
@@ -180,7 +168,7 @@ mod tests {
 
     #[test]
     fn what_the_grammar_does_not_read_is_refused() {
-        for src in ["a = \\u00e9;\n", "a = é;\n", "a+\\\n+b;\n", "x<::y> z;\n", "??=define X\n", "s = R\"x(a)x\";\n", "int n = 1'000;\n", "a\rb\n"] {
+        for src in ["a = \\u00e9;\n", "a = é;\n", "a+\\\n+b;\n", "x<::y> z;\n", "??=define X\n", "s = R\"x(a)x\";\n", "a\rb\n", "c = '.5'a + 1;\n"] {
             assert_eq!(check(src.as_bytes(), true), Ok(false), "{src:?}");
         }
     }

@@ -1,4 +1,4 @@
-//! `core.rr`'s base relations (decision 0046), as `docs/rule-syntax/lib/core.rr` states them, read off the same
+//! `core.rerail`'s base relations (decision 0046), as `docs/rule-syntax/lib/core.rerail` states them, read off the same
 //! core facts as T's (`super`): what a node's own text and children say, per language.
 //!
 //! - **Lines** (`Lines`): a document's line starts, by the terminators the tools count: `\n`, `\r\n` and a lone
@@ -16,10 +16,10 @@
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
 
-/// What a family reads of its own documents' core.rr facts, registered at load by the crate that knows it: the
+/// What a family reads of its own documents' core.rerail facts, registered at load by the crate that knows it: the
 /// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
 pub trait DialectFacts: Send + Sync {
-    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rr`'s);
+    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rerail`'s);
     /// `None`: the common reading.
     fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
         let _ = (kind, text);
@@ -79,7 +79,7 @@ pub enum Family {
     Ecma,
     Php,
     Rust,
-    /// `.rr` rule files (decision 0061).
+    /// `.rerail` rule files (decision 0061).
     Rr,
     /// Python's format strings (decision 0176): `percent-format` and `brace-format` guests.
     Format,
@@ -217,7 +217,7 @@ impl Lines {
         let b = src.as_bytes();
         let mut start = 0;
         let mut one = |i: usize, next: usize| {
-            let text_end = if !python && i > 0 && b[i - 1] == b'\r' && i - 1 >= start { i - 1 } else { i };
+            let text_end = if !python && i > 0 && b[i - 1] == b'\r' && i > start { i - 1 } else { i };
             each(text_end, next);
             start = next;
         };
@@ -373,7 +373,7 @@ fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> b
     }
 }
 
-/// Tape node `id`'s string literal's content (`str(n, s)` in `core.rr`'s shape), as `CoreRows::node` reads it: none
+/// Tape node `id`'s string literal's content (`str(n, s)` in `core.rerail`'s shape), as `CoreRows::node` reads it: none
 /// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
 pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
     let kind = dialect.name(f, id);
@@ -621,8 +621,11 @@ pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
-    // A family's own verdict: Python's CPython's, a `.rr` file's the one running it gives.
-    if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
+    // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives. A program no file of
+    // its language is (a rule's pattern, decision 0495 §3) has its tape's.
+    if !f.tape_verdict
+        && let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f))
+    {
         return own;
     }
     Ok(first_error(f, &Lines::apart(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
@@ -644,7 +647,7 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
     })
 }
 
-/// `core.rr`'s relations of a batch, as rows with string indexes (`Batch::build`'s `string`) until the batch's
+/// `core.rerail`'s relations of a batch, as rows with string indexes (`Batch::build`'s `string`) until the batch's
 /// strings are interned.
 #[derive(Default)]
 pub(super) struct CoreRows {
@@ -825,7 +828,7 @@ impl CoreRows {
                 self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
             }
             for (k, &c) in children.iter().enumerate() {
-                let local_c = p.local_of_node(c as u32);
+                let local_c = p.local_of_node(c);
                 if local_c == crate::code_rule_dsl::facts::core::NONE {
                     continue;
                 }
@@ -900,7 +903,7 @@ impl CoreRows {
                     if wants_part_starts {
                         // `at` is a node id: its low bits are a preorder index only under preorder ids.
                         let Some(at_local) = p.local_of(at as u32) else { continue };
-                        let absolute = f.start(p.node(at_local as u32)) + offset as u32;
+                        let absolute = f.start(p.node(at_local)) + offset as u32;
                         let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
                         self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
                     }
@@ -922,7 +925,7 @@ impl CoreRows {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
-        let x = p.extra.as_ref().expect("core.rr's spans");
+        let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
         if x.ends > 0 {
             let from = p.len() + x.ends_from();
@@ -1045,7 +1048,7 @@ impl CoreRows {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
                     .iter()
-                    .map(|name| m.get_env().get_match(name).and_then(|c| node_of(c)).map(|c| (string(name) as i64, c)))
+                    .map(|name| m.get_env().get_match(name).and_then(node_of).map(|c| (string(name) as i64, c)))
                     .collect();
                 let Some(captures) = captures else { continue };
                 self.ast_match.push([pat, n, empty, n]);

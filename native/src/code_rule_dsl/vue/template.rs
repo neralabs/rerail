@@ -1,9 +1,12 @@
 //! Vue template expressions and regions, matching compiler-dom 3.5.43.
 
+use crate::code_rule_dsl::embed::{
+    self,
+    host::{Host, HostNode},
+};
 use crate::code_rule_dsl::language::GrammarDialect;
-use std::ops::Range;
-use crate::code_rule_dsl::embed::{self, host::{Host, HostNode}};
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
+use std::ops::Range;
 
 #[derive(Clone)]
 pub enum Arg {
@@ -259,14 +262,17 @@ pub(crate) fn handler(text: &str, dialect: GrammarDialect, budget: &dyn Fn() -> 
         // The lean parser refuses every syntax error.
         Some(embed::Parse::Tape(tape)) => tape,
         Some(embed::Parse::Tree(tree)) if !tree.root_node().has_error() => {
-            match TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &budget) {
+            match TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &budget)
+            {
                 Ok(tape) => tape,
                 Err(_) => return Parse::Statements,
             }
         }
         _ => return Parse::Statements,
     };
-    Host::new(&tape, &grammar).root().map_or(Parse::Statements, |root| classified(root, &wrapped))
+    Host::new(&tape, &grammar)
+        .root()
+        .map_or(Parse::Statements, |root| classified(root, &wrapped))
 }
 
 /// `handler`'s classes, read off the tape of `({text}\n)` whose root is `root`.
@@ -294,7 +300,9 @@ fn classified(root: HostNode<'_>, wrapped: &str) -> Parse {
 
 /// The expression a parenthesized expression or a TypeScript wrapper (`unwrapTSNode`) holds.
 fn unwrapped(node: HostNode<'_>) -> Option<HostNode<'_>> {
-    let mut operands = node.named_children().filter(|child| child.kind() != "comment");
+    let mut operands = node
+        .named_children()
+        .filter(|child| child.kind() != "comment");
     match node.kind() {
         "parenthesized_expression"
         | "as_expression"
@@ -443,13 +451,24 @@ pub mod tests {
             let grammar = Grammar::embedded(dialect).expect("grammar");
             let tree = embed::Parse::tree_sitter(dialect, &wrapped).expect("a tree");
             let read = embed::Parse::read(dialect, &wrapped, &|| false).expect("read");
-            assert_eq!(read.is_lean(), !tree.root_node().has_error(), "the lean parser reads {text:?}");
+            assert_eq!(
+                read.is_lean(),
+                !tree.root_node().has_error(),
+                "the lean parser reads {text:?}"
+            );
             if tree.root_node().has_error() {
                 continue;
             }
-            let tape = TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &|| false).expect("a tape");
-            let from_tree = classified(Host::new(&tape, &grammar).root().expect("a root"), &wrapped);
-            assert_eq!(std::mem::discriminant(&from_tree), std::mem::discriminant(&parse), "{text}");
+            let tape =
+                TapeImage::encode_tree_image(tree.root_node(), &grammar, &wrapped, None, &|| false)
+                    .expect("a tape");
+            let from_tree =
+                classified(Host::new(&tape, &grammar).root().expect("a root"), &wrapped);
+            assert_eq!(
+                std::mem::discriminant(&from_tree),
+                std::mem::discriminant(&parse),
+                "{text}"
+            );
         }
     }
 }

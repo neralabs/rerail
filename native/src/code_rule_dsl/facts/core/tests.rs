@@ -32,7 +32,7 @@ fn atom(language: &str, kind: &str) -> u32 {
 #[test]
 fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
     let f = facts("a.py", "python", "value = left + right\nprint(value)\n");
-    assert_eq!(f.parent_or_none(0 as u32), NONE);
+    assert_eq!(f.parent_or_none(0_u32), NONE);
     for id in 1..f.len() as u32 {
         let parent = f.parent(id).unwrap();
         assert!(parent < id, "a parent precedes its children in preorder");

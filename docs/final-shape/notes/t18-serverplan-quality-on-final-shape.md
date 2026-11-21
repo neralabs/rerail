@@ -3,7 +3,7 @@
 ## Intro
 
 serverplan_quality is the data layer's largest lint: 123 clauses over the server-plan code. Its
-PIAT port (`gate/data-layer/final-shape/data-layer-serverplan-quality.json`) has:
+PIAT port (`packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json`) has:
 - 113 forbid clauses with an `ast` matcher;
 - 9 relational clauses: SQL over the rows of `ast` inputs;
 - 1 regex forbid (file length).

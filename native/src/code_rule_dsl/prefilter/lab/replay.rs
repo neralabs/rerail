@@ -23,7 +23,7 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
     let database = capture.parent().unwrap().join(data["database"].as_str().unwrap());
     let copy = temp();
     std::fs::copy(&database, &copy).unwrap();
-    // The blocks and segments its rows name, beside the copy as beside the capture.
+    // The capture's atoms blocks and segments, beside the copy as beside the capture.
     crate::content_store::copy_beside(&database, &copy).unwrap();
     let store = open(&copy);
     let parameters: Vec<_> = data["parameters"]

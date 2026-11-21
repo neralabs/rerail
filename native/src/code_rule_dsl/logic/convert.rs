@@ -17,12 +17,13 @@
 //!
 //! # The authored overlay
 //!
-//! What the converter cannot say is written by hand, one `.rr` file per rule (decision 0043), and merged over the
+//! What the converter cannot say is written by hand, one `.rerail` file per rule (decision 0043), and merged over the
 //! converted program (`overlay`):
-//! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
-//!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
-//! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0141:
-//!   `rr::read_file` refuses a file that declares or derives one): core.rr's declarations are its prelude
+//! - the file is `candidates/datalog/authored/<rule-id>.rerail` in the data-layer pack's test data
+//!   (`packs/data-layer/upstream/lint/authored/packs/data-layer/`, which `npm run fixtures:pull` fetches), the rule id
+//!   as in the policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
+//! - it declares every relation it reads or defines but core.rerail's, which are the engine's (decision 0141:
+//!   `rr::read_file` refuses a file that declares or derives one): core.rerail's declarations are its prelude
 //!   (`rr::lower::core`), in the column types of the converter's (`BASE`): `doc(d, path, module)`,
 //!   `node(d, n, kind, start, end)`, `child(p, c, i)` (named children), `field(p, f, c)`, `text(n, s)`,
 //!   `name(n, s)`, `str(n, v)`, `strprefix(n, p)`, `intval(n, v)`, `op(n, s)`, `line(n, l)`, and those the README
@@ -30,11 +31,11 @@
 //!   W's values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; Ruff's string
 //!   annotations and their trees, `string_annotation(s)` and `parsed(s, grammar, root)`, each tree a document of its
 //!   own; W's pythonAst `literal_json(n, v)`, `dump_sha256(n, h)`, `body_sha256(f, h)` and `signature_sha256(f, h)`).
-//!   Not core.rr's: core.rr's `@py_unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
-//!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rr's `syntax_error(d, l,
+//!   Not core.rerail's: core.rerail's `@py_unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
+//!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rerail's `syntax_error(d, l,
 //!   msg)`, as `cpython_syntax_error(d: number, l: number, msg: symbol)`, and the tape's (tree-sitter's ERROR and
 //!   MISSING nodes, the converter's `syntax_error(d: number)`) as `tape_syntax_error(d: number)`, given (below).
-//!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`):
+//!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rerail`):
 //!   their `.output`s are theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's
 //!   (the policy's, or the replay's per event): read, never derived. So is the tape's verdict, `tape_syntax_error`
 //!   (decision 0141). So is the report gate, `report_when_gt(k: number)`: one row
@@ -46,7 +47,7 @@
 //!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
 //!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
 //!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
-//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rr's; strings
+//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rerail's; strings
 //!   as they are, others as JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object
 //!   option, as text;
 //!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
@@ -69,7 +70,11 @@
 //!   reach, is printed with `rr::print`.
 
 #[cfg(test)]
-use super::front::{self, Literal, Program, Term};
+use super::front;
+#[cfg(test)]
+use super::program_image::{RuleRef, Version};
+#[cfg(test)]
+use std::sync::Arc;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::matcher::{AstMatcher, Axis, Semantic, StopBy};
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -814,8 +819,8 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
-/// Python reference graph (`logic::plan::corpus::references`).
+/// them (core.rerail's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not. (W's Python
+/// reference graph is `python/references.rerail`'s, which an authored file includes: decision 0483.)
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -861,8 +866,6 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl dump_sha256(n: node, h: sym)
 .decl body_sha256(f: node, h: sym)
 .decl signature_sha256(f: node, h: sym)
-.decl reference_edge(src: node, dst: node, via: sym)
-.decl reference_open(n: node)
 ";
 
 const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
@@ -877,33 +880,46 @@ const KEYWORDS: [&str; 35] = [
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
-/// `prog` less what its outputs do not reach: the rules (`front::prune`), then the declarations, inputs, facts and
-/// kind sets no rule left reads or derives.
+/// `v` less what its outputs do not reach: the rules (`preparation::Prune`), then the declarations, inputs, facts,
+/// lattices and kind sets no rule left reads or derives.
 #[cfg(test)]
-pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
-    let mut prog = front::prune(prog);
-    let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
+pub(in crate::code_rule_dsl) fn reachable(v: &Arc<Version>) -> Result<Arc<Version>, String> {
+    use super::program_facts::Field;
+    use super::program_image::{Builder, fields::ProgramFields, manager::Pipeline};
+    let mut p = Pipeline::new("reachable", v.clone());
+    p.program(&mut super::plan::corpus::preparation::Prune::default());
+    let pruned = p.finish()?.0;
+    let mut used: BTreeSet<String> = pruned.output_names().into_iter().collect();
     let mut sets = BTreeSet::new();
-    for r in &prog.rules {
-        used.insert(r.head.rel.to_string());
-        for l in &r.body {
-            if let Some(a) = l.atom() {
-                used.insert(a.rel.to_string());
-                if let Some((set, _)) = front::axis(&a.rel) {
-                    sets.insert(set.to_owned());
-                }
+    for r in pruned.rules() {
+        used.insert(pruned.rel_name(r.head().rel()).to_owned());
+        for a in r.reads() {
+            let rel = pruned.rel_name(a.rel());
+            used.insert(rel.to_owned());
+            if let Some((set, _)) = front::axis(rel) {
+                sets.insert(set.to_owned());
             }
-            if let Literal::Nearest { kindset, .. } = l {
-                sets.insert(kindset.clone());
+        }
+        for l in r.body() {
+            if let super::program_image::Lit::Nearest { kindset, .. } = l.view() {
+                sets.insert(pruned.text(kindset).to_owned());
             }
         }
     }
-    prog.decls.retain(|r, _| used.contains(r.as_str()));
-    prog.inputs.retain(|r| used.contains(r));
-    prog.facts.retain(|r, _| used.contains(r));
-    prog.lattice.retain(|r, _| used.contains(r));
-    prog.kindsets.retain(|k, _| sets.contains(k));
-    prog
+    let mut b = Builder::on(&pruned);
+    for rel in pruned.declared_names().iter().filter(|r| !used.contains(*r)) {
+        b.fields().undeclare(rel);
+    }
+    let inputs: Vec<String> = pruned.input_names().into_iter().filter(|r| used.contains(r)).collect();
+    b.fields().set_inputs(&inputs);
+    for rel in pruned.fact_names().iter().filter(|r| !used.contains(*r)) {
+        b.fields().drop_facts(rel);
+    }
+    let lattice: BTreeMap<String, front::LatticeDecl> = ProgramFields::lattice(&*pruned).into_iter().filter(|(r, _)| used.contains(r)).collect();
+    b.fields().set_field(Field::Lattice(&lattice));
+    let kindsets: BTreeMap<String, Vec<String>> = ProgramFields::kindsets(&*pruned).into_iter().filter(|(k, _)| sets.contains(k)).collect();
+    b.fields().set_field(Field::Kindsets(&kindsets));
+    Ok(b.finish()?.0)
 }
 
 /// Where a clause's rules come from.
@@ -962,7 +978,7 @@ fn types<S: AsRef<str>>(columns: &[(S, S)]) -> Vec<&str> {
     columns.iter().map(|(_, t)| t.as_ref()).collect()
 }
 
-/// Column types in `.rr` spellings, for the errors.
+/// Column types in `.rerail` spellings, for the errors.
 #[cfg(test)]
 fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
     let spell = |t: &'a str| match t {
@@ -975,9 +991,14 @@ fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
 
 /// The rule and clause a `violation` rule derives, where both are constants.
 #[cfg(test)]
-fn violation_of(r: &front::Rule) -> Option<(&str, &str)> {
-    match r.head.args.as_slice() {
-        [Term::Str(rule), Term::Str(clause), ..] if r.head.rel == "violation" => Some((rule, clause)),
+pub(in crate::code_rule_dsl) fn violation_of<'v>(v: &'v Version, r: RuleRef<'v>) -> Option<(&'v str, &'v str)> {
+    use super::program_image::TermRef;
+    if v.rel_name(r.head().rel()) != "violation" {
+        return None;
+    }
+    let mut args = r.head().args();
+    match (args.next(), args.next()) {
+        (Some(TermRef::Str(rule)), Some(TermRef::Str(clause))) => Some((v.text(rule), v.text(clause))),
         _ => None,
     }
 }
@@ -995,28 +1016,35 @@ fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 /// clause ids; `keep`: the clauses this run keeps (the replay's, per event). The merged program, with only what
 /// `violation` reaches, and the clauses the authored program derives (kept or not).
 #[cfg(test)]
-pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
+pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc<Version>, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Arc<Version>, BTreeSet<String>), String> {
+    use super::program_facts::Field;
+    use super::program_image::{Builder, fields::ProgramFields, manager::Pipeline};
     let err = |m: String| Err(format!("authored {rule}: {m}"));
     // Both as their authors wrote them: the node attributes answered on request (decision 0174) are the merged
     // program's, made once over all its readers below.
-    super::rr::lower::undo_on_request(&mut converted);
-    super::rr::lower::undo_on_request(&mut authored);
-    // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
-    super::rr::drop_unread_core(&mut authored);
+    let converted = super::rr::lower::undone_on_request(converted)?;
+    let authored = super::rr::lower::undone_on_request(authored)?;
+    // The prelude's declarations the file does not use are core.rerail's, not the file's (`rr::drop_unread_core`).
+    let a = super::rr::drop_unread_core(&authored)?;
     // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
     // directive of its own: it goes with the merged program.
-    let (library, settings): (Vec<_>, Vec<_>) = std::mem::take(&mut authored.settings).into_iter().partition(|(key, _)| key == front::GLOBAL);
-    if !authored.policies.is_empty() || !settings.is_empty() {
+    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL);
+    if !ProgramFields::policies(&*a).is_empty() || !settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }
-    converted.settings.extend(library);
-    if let Some(o) = authored.outputs.iter().find(|o| *o != "violation") {
+    let outputs = a.output_names();
+    if let Some(o) = outputs.iter().find(|o| *o != "violation") {
         return err(format!(".output {o}: the only output is violation"));
     }
-    let axis = |rel: &str| front::axis(rel).is_some_and(|(set, _)| authored.kindsets.contains_key(set));
+    let a_kindsets = ProgramFields::kindsets(&*a);
+    let axis = |rel: &str| front::axis(rel).is_some_and(|(set, _)| a_kindsets.contains_key(set));
     // Declarations: the base relations, `violation` and the scope as the converter declares them, and no name the
     // converter makes.
-    for (name, columns) in &authored.decls {
+    let decls: BTreeMap<String, Vec<(String, String)>> = a.declared_names().into_iter().map(|r| {
+        let cols = a.columns_of(&r).unwrap_or_default();
+        (r, cols)
+    }).collect();
+    for (name, columns) in &decls {
         if axis(name) {
             continue;
         }
@@ -1037,37 +1065,45 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             _ => {}
         }
     }
-    if let Some(set) = authored.kindsets.keys().find(|k| converter_name(k) || base_types(k).is_some()) {
+    if let Some(set) = a_kindsets.keys().find(|k| converter_name(k) || base_types(k).is_some()) {
         return err(format!("kind set {set} has a name the converter makes: name it after its clause"));
     }
     // What it derives: never a base relation or the scope; each relation declared, each one read given by
     // something; each `violation` at a constant clause of this rule.
-    let derived: BTreeSet<&str> = authored.rules.iter().map(|r| r.head.rel.as_str()).chain(authored.facts.keys().map(String::as_str)).collect();
+    let a_facts = a.fact_names();
+    let derived: BTreeSet<&str> = a.rules().map(|r| a.rel_name(r.head().rel())).chain(a_facts.iter().map(String::as_str)).collect();
     if let Some(rel) = derived.iter().find(|r| base_types(r).is_some() || GIVEN.contains(*r)) {
         return err(format!("{rel} is derived here, but the corpus or the converter gives it: read it only"));
     }
-    if let Some(rel) = derived.iter().find(|r| !authored.decls.contains_key(**r)) {
+    if let Some(rel) = derived.iter().find(|r| !decls.contains_key(**r)) {
         return err(format!("{rel} is derived and not declared"));
     }
+    let a_inputs = a.input_names();
     let mut authored_clauses = BTreeSet::new();
-    for r in &authored.rules {
+    for r in a.rules() {
         // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
-        // relations of (`strings::as_relations`).
-        for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
-            let rel = a.rel.as_str();
-            if !authored.decls.contains_key(rel) {
+        // relations of (`preparation::text::TextRelations`). The import components (`rr_cx_*`, which python/points-to
+        // reads) are `components.rerail`'s, which the runner adds to a program that reads them (decision 0076), as
+        // `front` takes them.
+        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group") && !rel.starts_with("rr_cx_")) {
+            if !decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
-            // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
-            // the library reads (`python/names.rr`).
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
-                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
+            // An earlier phase's export (`<phase>__<export>`, which python/points-to reads) is the runner's to give; so
+            // are decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none),
+            // which the library reads (`python/names.rerail`), the run's settings (`env`, core.rerail's) and the file system's
+            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read; and the `.references`
+            // setting's (decision 0483), which `python/references.rerail` reads.
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || a_inputs.iter().any(|i| i == rel)
+                || super::plan::corpus::phases::is_phased(rel)
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY || rel == "env"
+                || crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(answer, _)| *answer == rel)
+                || crate::code_rule_dsl::logic::rr::lower::findings::REFERENCE_SETTING.contains(&rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }
-        if r.head.rel == "violation" {
-            let Some((of, clause)) = violation_of(r) else { return err(format!("a violation whose rule and clause are not constants: {r}")) };
+        if a.rel_name(r.head().rel()) == "violation" {
+            let Some((of, clause)) = violation_of(&a, r) else { return err(format!("a violation whose rule and clause are not constants: {}", a.show_rule(r))) };
             if of != rule {
                 return err(format!("a violation of rule {of:?}"));
             }
@@ -1078,57 +1114,74 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
         }
     }
     // The converter's rules for the authored clauses give way; nothing else may be derived by both.
-    converted.rules.retain(|r| violation_of(r).is_none_or(|(_, c)| !authored_clauses.contains(c)));
-    let both = {
-        let defined: BTreeSet<&str> = converted.rules.iter().map(|r| r.head.rel.as_str()).chain(converted.facts.keys().map(String::as_str)).collect();
-        derived.iter().find(|r| **r != "violation" && defined.contains(**r)).map(|r| (*r).to_owned())
-    };
-    if let Some(rel) = both {
+    let kept = |r: RuleRef<'_>| violation_of(&converted, r).is_none_or(|(_, c)| !authored_clauses.contains(c));
+    let c_facts = converted.fact_names();
+    let defined: BTreeSet<&str> = converted.rules().filter(|r| kept(*r)).map(|r| converted.rel_name(r.head().rel())).chain(c_facts.iter().map(String::as_str)).collect();
+    if let Some(rel) = derived.iter().find(|r| **r != "violation" && defined.contains(**r)) {
         return err(format!("{rel} is derived by both the converter and the overlay"));
     }
+    let mut b = Builder::derive(&converted);
+    for r in converted.rules().filter(|r| kept(*r)) {
+        b.copy(&converted, r);
+    }
     // The base relations it reads are inputs, declared `.input` or not.
-    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| base_types(r).is_some()).collect();
-    let Program { decls, lattice, facts, rules, inputs, outputs, kindsets, demand, .. } = authored;
-    for (name, columns) in decls {
-        match converted.decls.get(&name) {
-            Some(c) if types(c) != types(&columns) => {
-                return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(&columns)), spelled(types(c))));
+    let reads_base: Vec<String> = a.rules().flat_map(|r| r.reads()).map(|x| a.rel_name(x.rel()).to_owned()).filter(|r| base_types(r).is_some()).collect();
+    for (name, columns) in &decls {
+        match converted.columns_of(name) {
+            Some(c) if types(&c) != types(columns) => {
+                return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(columns)), spelled(types(&c))));
             }
             Some(_) => {}
-            None => {
-                converted.decls.insert(name, columns);
-            }
+            None => b.fields().declare(name, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>()),
         }
     }
-    for (name, kinds) in kindsets {
-        match converted.kindsets.get(&name) {
+    let mut kindsets = ProgramFields::kindsets(&*converted);
+    for (name, kinds) in a_kindsets.clone() {
+        match kindsets.get(&name) {
             Some(k) if *k != kinds => return err(format!("kind set {name} has other kinds than the converter's")),
             Some(_) => {}
             None => {
-                converted.kindsets.insert(name, kinds);
+                kindsets.insert(name, kinds);
             }
         }
     }
-    for (name, l) in lattice {
-        match converted.lattice.get(&name) {
+    b.fields().set_field(Field::Kindsets(&kindsets));
+    let mut lattice = ProgramFields::lattice(&*converted);
+    for (name, l) in ProgramFields::lattice(&*a) {
+        match lattice.get(&name) {
             Some(c) if *c != l => return err(format!("{name}'s lattice differs from the converter's")),
             _ => {
-                converted.lattice.insert(name, l);
+                lattice.insert(name, l);
             }
         }
     }
-    for (rel, rows) in facts {
-        converted.facts.entry(rel).or_default().extend(rows);
+    b.fields().set_field(Field::Lattice(&lattice));
+    for rel in &a_facts {
+        b.fields().add_facts(rel, &ProgramFields::fact_rows(&*a, rel));
     }
-    // core.rr's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
-    push_new(&mut converted.inputs, inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
-    push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
-    push_new(&mut converted.demand, demand);
-    converted.rules.extend(rules.into_iter().filter(|r| violation_of(r).is_none_or(|(_, c)| keep(c))));
+    // core.rerail's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
+    let mut inputs = converted.input_names();
+    push_new(&mut inputs, a_inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
+    b.fields().set_inputs(&inputs);
+    let mut outs = converted.output_names();
+    push_new(&mut outs, outputs.into_iter().chain(["violation".to_owned()]));
+    b.fields().set_outputs(&outs);
+    let mut demand = ProgramFields::demand(&*converted);
+    push_new(&mut demand, ProgramFields::demand(&*a));
+    b.fields().set_field(Field::Demand(&demand));
+    let mut all = ProgramFields::settings(&*converted);
+    all.extend(library);
+    b.fields().set_field(Field::Settings(&all));
+    for r in a.rules().filter(|r| violation_of(&a, *r).is_none_or(|(_, c)| keep(c))) {
+        b.copy(&a, r);
+    }
+    let merged = b.finish()?.0;
+    let mut p = Pipeline::new("overlay", merged);
     for round in super::rr::lower::ON_REQUEST {
-        super::rr::lower::sources_on_request(&mut converted, round);
+        p.program(&mut super::plan::corpus::preparation::on_request::SourcesOnRequest { round });
     }
-    Ok((reachable(converted), authored_clauses))
+    let merged = p.finish()?.0;
+    Ok((reachable(&merged)?, authored_clauses))
 }
 
 fn quote(s: &str) -> String {
@@ -1246,7 +1299,7 @@ fn replace_var(literal: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// `a` strictly below `b` in the tree: the language's `within` (`core.rr`), which the engine reads off the tree
+/// `a` strictly below `b` in the tree: the language's `within` (`core.rerail`), which the engine reads off the tree
 /// (decision 0050).
 fn within_strict(a: &str, b: &str) -> String {
     format!("within({a}, {b})")
@@ -1703,7 +1756,7 @@ impl Globber {
                     break;
                 }
             }
-            if comp.len() <= 4 && comp.iter().all(|(_, b)| b.is_ascii()) && !(self.text == Text::Path && !comp.iter().any(|&(a, b)| a <= '/' && '/' <= b)) {
+            if comp.len() <= 4 && comp.iter().all(|(_, b)| b.is_ascii()) && (self.text != Text::Path || comp.iter().any(|&(a, b)| a <= '/' && '/' <= b)) {
                 return render(&comp).map(|s| ClassIs::Other(format!("[!{s}]")));
             }
         }

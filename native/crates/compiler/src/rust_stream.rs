@@ -2258,20 +2258,23 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }
     }
 
-    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
-    /// starts, settled: the nodes closed next keep them.
+    /// `SETTLE`: the pending extras, from the first, while their codes have no bit `k` (the
+    /// marks of an extra's own gap: a line end before it, `Records::own`), settled: the nodes
+    /// closed next keep them. They are the records before the token's (`token`).
     #[inline(always)]
-    fn settle_before(&mut self, o: usize) {
-        let first = self.nodes - self.pending;
-        let mut i = first;
-        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+    fn settle_before(&mut self, k: u32, token: usize) {
+        let from = token - self.pending as usize;
+        let mut i = 0;
+        while i < self.pending as usize && unsafe { *self.codes.add((from + i) * self.rs) } >> (16 + k) & 1 == 0 {
             i += 1;
         }
-        if i > first {
-            self.keep = unsafe { (*self.row(i - 1)).end };
-            self.pending = self.nodes - i;
+        if i > 0 {
+            let first = self.nodes - self.pending;
+            self.keep = unsafe { (*self.row(first + i as u32 - 1)).end };
+            self.pending -= i as u32;
         }
     }
+
 
     /// `CLOSE`: its end, size and tail; the pending extras after it are its parent's. A node
     /// closed at the top level: the nodes before it are final, their codes committed. `end`: its own (`THIS`), else
@@ -3679,7 +3682,11 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             format!("s.leaf::<{deferred}, {extra}>({k}, t.start, {end}, t.last_end);\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
-        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
+        Op::SettleBefore { mark } => {
+            // The token's record: the pending extras are the records just before it (4784e6db9c, 0451 item 4).
+            let token = if x.sentinel { "t.next as usize - 1".to_owned() } else { format!("t.next as usize - usize::from(!{})", x.at_end("t", "s")) };
+            format!("s.settle_before({mark}, {token});\n{}", jump(0)?)
+        }
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             let here = if (k as usize) < x.in_code {

@@ -26,8 +26,10 @@ use timing::{Started, Timing};
 pub mod clock;
 pub use clock::thread_cpu_ns;
 
-static DIRECTORY: LazyLock<Option<PathBuf>> =
-    LazyLock::new(|| std::env::var_os("RERAIL_SQL_PROFILE_DIR").map(PathBuf::from));
+/// `RERAIL_SQL_PROFILE_DIR`, read once a run.
+fn directory() -> Option<PathBuf> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SQL_PROFILE_DIR").map(PathBuf::from))
+}
 static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
     (
         Instant::now(),
@@ -37,13 +39,11 @@ static ORIGIN: LazyLock<(Instant, u128)> = LazyLock::new(|| {
             .as_micros(),
     )
 });
-/// D's: restricts SQL capture to one scope (`RERAIL_SQL_PROFILE_SCOPE`).
-static CONTEXT_FILTER: LazyLock<Option<String>> =
-    LazyLock::new(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok());
+/// D's: restricts SQL capture to one scope (`RERAIL_SQL_PROFILE_SCOPE`, read once a run).
 #[allow(dead_code)]
 pub fn captures_scope(scope: &str) -> bool {
-    DIRECTORY.is_some()
-        && CONTEXT_FILTER
+    directory().is_some()
+        && rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_SQL_PROFILE_SCOPE").ok())
             .as_deref()
             .is_none_or(|wanted| wanted == scope)
 }
@@ -244,7 +244,7 @@ impl Profiler {
     pub unsafe fn configured(
         connection: &Connection,
     ) -> rusqlite::Result<Option<Box<Self>>> {
-        let directory = DIRECTORY.clone().or_else(|| {
+        let directory = directory().or_else(|| {
             crate::code_rule_dsl::logic::profile::on()
                 .then(crate::code_rule_dsl::logic::profile::directory).flatten()
                 .map(|p| p.join("sql"))
@@ -590,7 +590,8 @@ unsafe extern "C" fn trace(
                     }
                 };
                 let sql = String::from_utf8_lossy(canonical);
-                if let Some(observer)=&profiler.observer {observer.start(pointer);}
+                // SAFETY: the live statement SQLite gave this trace callback, for its length.
+                if let Some(observer)=&profiler.observer {unsafe { observer.start(pointer) };}
                 let query = state.query(&sql, "sql");
                 state.sql_started += 1;
                 state.origin_started[origin] += 1;
@@ -621,7 +622,8 @@ unsafe extern "C" fn trace(
                 }
             }
             ffi::SQLITE_TRACE_PROFILE => {
-                if let Some(observer)=&profiler.observer {observer.end(pointer);}
+                // SAFETY: as at its start: the live statement SQLite gave this trace callback.
+                if let Some(observer)=&profiler.observer {unsafe { observer.end(pointer) };}
                 let Some(running) = state.running.remove(&key) else {
                     return;
                 };

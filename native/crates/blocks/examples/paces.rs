@@ -25,7 +25,10 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-use rerail_blocks::block::{Block, kind};
+// The device's joins and residency (macOS and Linux, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use rerail_blocks::block::Block;
+use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};
 use rerail_blocks::facts::{Facts, FrozenFacts, RelDef, Schema};
 use rerail_blocks::journal::{self, Journal};
@@ -410,8 +413,8 @@ struct Kept {
 
 struct Ctx<'a> {
     sc: &'a Schemas,
-    #[cfg(target_os = "macos")]
-    gpu: Option<&'a rerail_blocks::gpu::Gpu>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    gpu: Option<&'a Gpu>,
     m: Mutex<Meter>,
     checks: Mutex<Vec<String>>,
 }
@@ -434,10 +437,135 @@ impl Ctx<'_> {
     }
 }
 
-/// The GPU's edge join over `imp` and `def` (each a view in `base`/`top`), into a relation of `out`.
-#[cfg(target_os = "macos")]
-fn join_gpu(cx: &Ctx, base: Option<&Block>, top: &Block, imp: View, def: View, out_f: &Facts, out_r: usize, short: bool) -> Option<rerail_blocks::gpu::JoinRun> {
+/// The join kernels (`rerail_blocks::gpu`) on the process's device, whatever its backend (decision 0440 step C).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct Gpu {
+    shared: &'static rerail_gpu::shared::Shared,
+    count: &'static rerail_gpu::device::ComputeFunction,
+    write: &'static rerail_gpu::device::ComputeFunction,
+}
+
+/// What one join did on the device: how often its write pass ran again at the exact size.
+#[derive(Debug, Default, Clone, Copy)]
+struct JoinRun {
+    reruns: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Gpu {
+    /// The kernels on the process's device. A kernel that does not compile is fatal (decision 0382).
+    fn new() -> Result<Gpu, String> {
+        let shared = rerail_gpu::shared::get().ok_or("no device")?;
+        let program = rerail_gpu::kernels::program("join.uglykl", Box::leak(rerail_blocks::gpu::source().into_boxed_str()))
+            .unwrap_or_else(|e| panic!("the join kernels do not compile (decision 0382: fatal): {e}"));
+        Ok(Gpu { shared, count: program.function("join_count")?, write: program.function("join_write")? })
+    }
+
+    /// The block's device buffer: kept by the block, so a dispatch never pays a fresh buffer's mapping. It covers
+    /// what the block has used (rounded to 1 MiB), not its whole reservation: a command buffer's cost grows with the
+    /// length of the buffers it makes resident (measured: 2 GiB wrapped cost 120 ms a join, 256 MiB 17 ms).
+    fn wrap(&self, b: &Block) -> rerail_device::device::Buffer {
+        b.device_buffer(&self.shared.device).expect("a block's device buffer")
+    }
+
+    /// A fresh no-copy wrap of `len` bytes of the block, not kept: for measuring what keeping saves.
+    fn wrap_len(&self, b: &Block, len: usize) -> rerail_device::device::Buffer {
+        let len = (len.div_ceil(1 << 20).max(1) << 20).min(b.reserved());
+        // SAFETY: the block's pages outlive the wrap, which the caller drops before the block.
+        unsafe { rerail_device::device::wrap_host_memory(&self.shared.device, b.base_ptr(), len) }.expect("a wrap of the block")
+    }
+
+    fn dispatch(&self, f: &rerail_gpu::device::ComputeFunction, args: &JoinArgsPod, b: [&rerail_device::device::Buffer; 3], counts: &rerail_device::device::Buffer, write: bool) {
+        let mut q = rerail_gpu::device::ComputeQueue::new(&self.shared.queue);
+        let l = rerail_gpu::kernels::launch(&q, f).value("a", args).buffer("b1", b[0]).buffer("b2", b[1]).buffer("counts", counts);
+        let l = if write { l.buffer("b3", b[2]) } else { l };
+        l.run(&[u64::from(args.0.n.max(1)).div_ceil(256)], &[256]).unwrap_or_else(|e| panic!("{e}"));
+        q.flush().await_().unwrap();
+    }
+
+    /// Runs the join: `left` and `right` read from `base` (if they have one) and `top`, and the rows are written
+    /// into `out`, an open relation of `out_block`. `short` reserves nothing for them, to take the overflow path:
+    /// the write pass is then run again at the exact size.
+    fn join(&self, base: Option<&Block>, top: &Block, out_block: &Block, out: &rerail_blocks::relation::Relation, args: &rerail_blocks::gpu::JoinArgs, short: bool) -> JoinRun {
+        use std::sync::atomic::Ordering::*;
+        let args = &JoinArgsPod::of(args);
+        let bt = self.wrap(top);
+        let bb = base.map(|b| self.wrap(b));
+        let b1 = bb.as_ref().unwrap_or(&bt);
+        let counts = rerail_gpu::kernels::alloc::<u32>(args.0.n as usize).unwrap();
+        self.dispatch(self.count, args, [b1, &bt, &bt], &counts, false);
+        let c: Vec<u32> = rerail_gpu::kernels::read(&counts, args.0.n as usize);
+        let total: u64 = c.iter().map(|&x| x as u64).sum();
+        let len0 = out.rows.len();
+        out.rows.reserve(out_block, len0 as u64 + if short { 0 } else { total });
+        let mut run = JoinRun::default();
+        loop {
+            // The out block is wrapped after its chunks are reserved: its used extent covers them.
+            let bo = self.wrap(out_block);
+            let bt = if std::ptr::eq(out_block.base_ptr(), top.base_ptr()) { self.wrap(out_block) } else { bt.clone() };
+            self.dispatch(self.write, args, [b1, &bt, &bo], &counts, true);
+            let needed = out.rows.needed.load(Acquire);
+            if needed == 0 {
+                break;
+            }
+            // Overflow: nothing past `reserved` was written. Reset the claims, reserve the exact size, rerun.
+            out.rows.needed.store(0, Release);
+            out.rows.len.store(len0, Release);
+            out.rows.reserve(out_block, len0 as u64 + total);
+            run.reruns += 1;
+        }
+        run
+    }
+}
+
+/// A join's arguments as the launch passes them: their bytes (`JoinArgs` is a block's structure, never `Copy`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct JoinArgsPod(JoinArgsBytes);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct JoinArgsBytes {
+    lbase: u64,
+    ltop: u64,
+    rbase: u64,
+    rtop: u64,
+    out: u64,
+    n: u32,
+    idx: u32,
+    lkey: u32,
+    lout: u32,
+    rkey: u32,
+    rout: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+// SAFETY: `#[repr(C)]` u64s and u32s, no padding (as `JoinArgs`, whose `structure!` checks it).
+unsafe impl rerail_gpu::Pod for JoinArgsPod {}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl JoinArgsPod {
+    fn of(a: &rerail_blocks::gpu::JoinArgs) -> JoinArgsPod {
+        const _: () = assert!(size_of::<JoinArgsBytes>() == size_of::<rerail_blocks::gpu::JoinArgs>());
+        JoinArgsPod(JoinArgsBytes { lbase: a.lbase, ltop: a.ltop, rbase: a.rbase, rtop: a.rtop, out: a.out, n: a.n, idx: a.idx, lkey: a.lkey, lout: a.lout, rkey: a.rkey, rout: a.rout })
+    }
+}
+
+/// The blocks a view's relations lie in: the base below (none on a first run) and the top.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Clone, Copy)]
+struct Stack<'a> {
+    base: Option<&'a Block>,
+    top: &'a Block,
+}
+
+/// The GPU's edge join over `imp` and `def` (each a view in `stack`), into a relation of `out`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn join_gpu(cx: &Ctx, stack: Stack<'_>, imp: View, def: View, out_f: &Facts, out_r: usize, short: bool) -> Option<JoinRun> {
     use rerail_blocks::gpu::{JoinArgs, NONE};
+    let Stack { base, top } = stack;
     let gpu = cx.gpu?;
     let off = |b: Option<&Block>, r: Option<&rerail_blocks::relation::Relation>| match (b, r) {
         (Some(b), Some(r)) => b.offset_of(r) as u64,
@@ -466,6 +594,7 @@ fn join_gpu(cx: &Ctx, base: Option<&Block>, top: &Block, imp: View, def: View, o
 }
 
 /// A cold run: every chunk evaluated (or hit), every block written full.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>, gpu_edge: bool) -> Kept {
     let sc = cx.sc;
     let refs: Vec<&Src> = srcs.iter().collect();
@@ -497,11 +626,12 @@ fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>
 
     p1.begin(1);
     p1.create(P_EDGE);
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut on_gpu = false;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if gpu_edge && cx.gpu.is_some() {
         let run = cx.time("p1.s1 edge join (gpu, count + reserve + claim + write)", || {
-            join_gpu(cx, None, &p1.block, p1.view(P_IMP), p1.view(P_DEF), &p1, P_EDGE, false)
+            join_gpu(cx, Stack { base: None, top: &p1.block }, p1.view(P_IMP), p1.view(P_DEF), &p1, P_EDGE, false)
         });
         on_gpu = run.is_some();
     }
@@ -653,7 +783,7 @@ fn maintained(cx: &Ctx, kept: &Kept, srcs: &[Src], changed: &[usize], journal: &
         }
     });
     cx.time("freeze p1.s1", || p1.freeze_rel(P_EDGE));
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if cx.gpu.is_some() {
         // The GPU joins the merged views (base block + this delta block) whole, into a scratch block; with half
         // the room it needs, to take the overflow path. Its set must be the maintained edge.
@@ -662,7 +792,7 @@ fn maintained(cx: &Ctx, kept: &Kept, srcs: &[Src], changed: &[usize], journal: &
         chk.create(0);
         let base = p1.base.as_ref().unwrap();
         let run = cx.time("gpu edge over base + delta (check)", || {
-            join_gpu(cx, Some(&base.block), &p1.block, p1.view(P_IMP), p1.view(P_DEF), &chk, 0, true)
+            join_gpu(cx, Stack { base: Some(&base.block), top: &p1.block }, p1.view(P_IMP), p1.view(P_DEF), &chk, 0, true)
         });
         chk.freeze_rel(0);
         chk.end(0);
@@ -879,13 +1009,10 @@ fn main() {
     std::fs::create_dir_all(&dir).unwrap();
     let sc = schemas();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { {
-        // A benchmark of its own process: it makes the device and queue the engine's owner would hand it.
-        metal::Device::system_default().ok_or_else(|| "no Metal device".to_string()).and_then(|d| {
-            let q = d.new_command_queue();
-            rerail_blocks::gpu::Gpu::on(d, q)
-        })
+        // The process's device (`RERAIL_GPU` chooses its backend).
+        Gpu::new()
     } } {
         Ok(g) => Some(g),
         Err(e) => {
@@ -895,7 +1022,7 @@ fn main() {
     };
     let cx = Ctx {
         sc: &sc,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         gpu: gpu.as_ref(),
         m: Mutex::new(Meter::default()),
         checks: Mutex::new(Vec::new()),
@@ -967,7 +1094,7 @@ fn main() {
 
     program_paces(&cx);
     journal_paces(&cx, &dir);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     residency(&cx);
 
     let m = cx.m.lock().unwrap();
@@ -1033,7 +1160,7 @@ fn journal_paces(cx: &Ctx, dir: &Path) {
     cx.check(e.key == 1 && e.digest == 2, "a reopened journal's entry index reads back".into());
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn residency(cx: &Ctx) {
     let Some(gpu) = cx.gpu else { return };
     let before = footprint();
@@ -1046,5 +1173,5 @@ fn residency(cx: &Ctx) {
     let buf = gpu.wrap(&fb);
     cx.check(buf.length() == (fb.used().div_ceil(1 << 20) << 20) as u64, "a frozen (read-only) block wraps for the GPU, its used extent only".into());
     let again = gpu.wrap(&fb);
-    cx.check(again.gpu_address() == buf.gpu_address(), "a block's device buffer is kept: the second wrap is the first".into());
+    cx.check(again.device_address() == buf.device_address(), "a block's device buffer is kept: the second wrap is the first".into());
 }

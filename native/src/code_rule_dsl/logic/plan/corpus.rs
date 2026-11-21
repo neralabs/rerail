@@ -22,6 +22,7 @@ use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
+use crate::code_rule_dsl::logic::program_image::fields::{Edit, ProgramFields};
 use crate::code_rule_dsl::logic::rr::WORLD;
 pub mod added;
 pub mod guests;
@@ -32,47 +33,32 @@ pub mod scoping;
 #[cfg(test)]
 pub mod cache_architecture;
 // Its tests run in the engine's test binary (its facade of this module mounts `corpus/cache_tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 pub use hiding::qualified;
 pub mod memo;
+/// A chunk's size from measures alone (decision 0435 §4).
+pub mod sizing;
 pub mod kept_strata;
 pub mod maintained;
 pub mod cone_rounds;
-// cratify: `references` is rerail-engine's (it mounts it)
-
-/// The reference graph's base relations (`reference_edge`, `reference_open`), and their columns
-/// (`sql::select::input_columns`).
-pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
-
-/// Base relations a program reads that are built across a run's files (the reference graph's,
-/// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
-pub trait CrossFileRelations: Send + Sync {
-    /// Adds the file with key `key` at `path`, with its source, facts and tape (the run's own, read in place: the file
-    /// is not parsed again).
-    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Result<()>;
-    /// The relations the run's files give, with their columns and rows.
-    fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
-}
-
-/// What makes a program's cross-file relations over the files at `paths` of the dialect `label`, where it reads them.
-pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String]) -> Result<Option<Box<dyn CrossFileRelations>>>;
-
-static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
-
-/// Registers what makes a program's cross-file relations (once, at load).
-pub fn install_cross_file(make: MakeCrossFile) {
-    let _ = CROSS_FILE.set(make);
-}
 pub mod prepared;
 pub mod maintain;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
-pub mod bridge;
 pub mod phases;
 pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
+mod git;
+mod git_content;
+mod analysis_history;
+pub mod source_languages;
+
+pub fn install_git_inventory() {
+    crate::git_workspace::snapshot::install_inventory_reader(git::inventory);
+    crate::git_workspace::snapshot::install_source_checker(git::check_source_digests);
+}
 pub mod world;
 pub mod texts;
 mod link;
@@ -81,22 +67,28 @@ mod shape;
 pub mod connections;
 pub mod reuse;
 
-/// The switches that change the combined program (`combine_read`, with the `.rr` lowering its `rr::parse` runs): its
+/// The switches that change the combined program (`combine_tail`, with the `.rerail` lowering its `rr::parse` runs): its
 /// key (`texts_digest`, in memory and in the store) holds their values, so a combined program kept or stored under
 /// one value is not another's. Every prepared key holds the combined program's.
 pub const COMBINING: &[&str] = &[
-    // `combine_read`: the copies to compare (`=copied`) and decision 0091's measurement (`scoping::guard`).
+    // `combine_tail`: the copies to compare (`=copied`) and decision 0091's measurement (`FactSpaces`).
     "RERAIL_LIBRARIES",
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
-    // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
-    // (`front::finish`'s `order_nodes`).
+    // The combine's tail kept or run whole (`=whole`), or checked against the whole (`=check`, decision 0393).
+    "RERAIL_COMBINE_TAIL",
+    // The `.rerail` lowering: source attributes answered eagerly (`on_request::SourcesOnRequest`), node ids compared raw
+    // (`lowering_tail::OrderNodes`).
     "RERAIL_NODE_SOURCES",
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
     "RERAIL_NODE_IDS",
-    // Identical relations merged (`same_relations`, in combining and again in preparing).
+    // Identical relations merged (`combining::same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
+    // The `.rerail` lowering's rewrites, `=off` to leave the rules as written: a min or max bounded by its probe
+    // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
+    "RERAIL_ASOF",
+    "RERAIL_FIRST",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
@@ -108,32 +100,36 @@ pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
-    "RERAIL_NODE_ANCHORS",
     "RERAIL_NEAREST_BUFFERS",
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
-    "RERAIL_CROSS_MEMO",
     "RERAIL_REACH_INDEX",
     // `simplify`.
     "RERAIL_EXISTENCE_COUNTS",
     "RERAIL_INLINE_FILTERS",
     "RERAIL_JOIN_KEYS",
     "RERAIL_PROJECT_COLUMNS",
-    // `run_observed`'s preparation.
+    // `run_observed`'s preparation, and its passes (`preparation`): by parts (decision 0345) or whole.
+    "RERAIL_PREPARE",
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
+    "RERAIL_DEFERRED_JOINS",
+    "RERAIL_JOIN_CACHE_ROWS",
+    "RERAIL_PUSH_EQUAL_COLUMNS",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
-    // Guests' copies kept unfolded (`hiding::fold_own`).
+    // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",
 ];
 
 pub mod phase0;
-pub mod cross_memo;
+pub mod import_closure;
 pub mod switches;
+pub mod owner;
 pub mod matchers;
 pub mod preparation;
+pub(super) mod product_demand;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;
@@ -145,7 +141,7 @@ use crate::content_store::ContentStore;
 use rusqlite::Connection;
 use rusqlite::types::Value as SqlValue;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn text(v: &SqlValue) -> String {
@@ -279,8 +275,6 @@ pub struct Report {
     pub typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
     pub text: (usize, usize, f64),
-    /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
-    pub typing_runs: bridge::Runs,
     /// The earlier phases this run read (decision 0083 §1), each its own run.
     pub phase_runs: Vec<phases::PhaseRun>,
     /// The plans this run and the runs nested in it used (its memo plan, its prepared programs, its phases', its
@@ -299,8 +293,6 @@ pub struct Report {
     /// The statistics keeper's end (decision 0096 §3): the files it counted in and out this run, or why it gave them
     /// up (the next run counts every file in again). `None`: no keeper ran.
     pub stats_kept: Option<std::result::Result<(usize, usize), String>>,
-    /// The cross-file memo (decision 0076): import components found and components derived.
-    pub cross: (usize, usize),
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
     pub prepared: &'static str,
@@ -316,6 +308,14 @@ pub struct Report {
     pub file_tapes: (usize, usize),
     /// The guests chunks of partial hits did not make, their cones unable to see them (`guests::guests_seen`).
     pub guests_unseen: usize,
+    /// The guest texts parsed (decision 0431 R6): a text a run parsed before is not parsed again.
+    pub guest_parses: usize,
+    /// Decision 0431 R11 (step 6): the files' programs the batches read off a file's record (made at its parse, or read
+    /// with its stored tape), and those an embedder made in a batch, the file's record not known.
+    pub programs: (usize, usize),
+    /// Decision 0431 §8, R10: the tape values the chunks' batches admitted at a lookup, each once a chunk (`@parse`'s
+    /// and `@splice`'s too, Q325: a chunk's batch is built once, and grows only by what its fixpoint asks).
+    pub values_admitted: usize,
     /// The rounds the cone ran from the last run's final round (decision 0145); 0 when it ran the gated fixpoint.
     pub cone_rounds: usize,
     /// The requests a language's answer answered this run (`language::Answerer`), each with its key's first column (a
@@ -325,6 +325,8 @@ pub struct Report {
     pub cross_maintained: (usize, usize, usize),
     /// Of those, the strata passed on as quiet, and the relations they held with no column measured (`Outcome::quiet`).
     pub cross_quiet: (usize, usize),
+    /// A session's maintained run: the strata it skipped, no read of them changed (0364 R9; `Outcome::walked`).
+    pub cross_skipped: usize,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
@@ -348,6 +350,9 @@ pub struct Report {
     pub(crate) not_per_document: Option<String>,
     /// What phase 0's observer did during the run: stats, answers reused, files hashed, directories listed.
     pub files_observed: crate::content_store::observe::Counts,
+    /// The run's own record (decision 0441: what it met of its limits, the trees it decoded), where it was the
+    /// outermost run.
+    pub run: Option<crate::code_rule_dsl::logic::run::Record>,
 }
 
 /// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
@@ -355,7 +360,7 @@ pub struct Report {
 /// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
 /// earlier phases, an explicit batch) is never judged unchanged.
 /// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
+pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
     Ok(changes_of(programs, graphs, read, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
 }
 
@@ -364,53 +369,58 @@ pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Op
 /// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's
 /// record keeps it beside the run's (decision 0275), so its check does not combine the program again to read them.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Summary(front::Program);
+pub(crate) struct Summary {
+    declared_ret: bool,
+    env: Vec<front::List<front::Value>>,
+    settings: Vec<(String, String)>,
+    policies: Vec<serde_json::Value>,
+    doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
+    text_globs: Vec<String>,
+    /// Whether, over a Git revision, the outputs read Git metadata alone (`git::metadata_only`): no source listed.
+    git_metadata_only: bool,
+}
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
-    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
-        Ok(Self::from_program(&combined_with_settings(programs, graphs, read, root, options)?))
+    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
+        Ok(Self::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?))
     }
 
-    fn from_program(prog: &front::Program) -> Summary {
-        Summary(front::Program {
-            decls: prog.decls.iter().filter(|(k, _)| k.as_str() == "declared_ret").map(|(k, v)| (k.clone(), v.clone())).collect(),
-            facts: prog.facts.iter().filter(|(k, _)| k.as_str() == "env").map(|(k, v)| (k.clone(), v.clone())).collect(),
-            settings: prog.settings.clone(),
-            policies: prog.policies.clone(),
-            doc_scopes: prog.doc_scopes.clone(),
-            text_globs: prog.text_globs.clone(),
-            ..front::Program::default()
-        })
+    fn from_fields(p: &crate::code_rule_dsl::logic::program_image::Version) -> Summary {
+        Summary {
+            declared_ret: p.declares("declared_ret"),
+            env: ProgramFields::fact_rows(p, "env"),
+            settings: ProgramFields::settings(p),
+            policies: ProgramFields::policies(p),
+            doc_scopes: ProgramFields::doc_scopes(p),
+            text_globs: ProgramFields::text_globs(p),
+            git_metadata_only: git::metadata_only(p),
+        }
     }
 
     /// Its bytes: the parts as JSON.
     pub(crate) fn encode(&self) -> Option<Vec<u8>> {
-        let p = &self.0;
-        let env: Vec<Vec<serde_json::Value>> = p.facts.get("env").into_iter().flatten().map(|row| row.iter().map(|v| match v {
+        let env: Vec<Vec<serde_json::Value>> = self.env.iter().map(|row| row.iter().map(|v| match v {
             front::Value::Int(i) => serde_json::json!({ "i": i }),
             // An atom's value at run time is its integer (decision 0270); the settings' rows hold none.
             front::Value::Branded(b) => serde_json::json!({ "i": b.value() }),
             front::Value::Str(s) => serde_json::json!({ "s": s.as_str() }),
         }).collect()).collect();
         let parts = serde_json::json!({
-            "declared_ret": p.decls.contains_key("declared_ret"),
+            "declared_ret": self.declared_ret,
+            "git_metadata_only": self.git_metadata_only,
             "env": env,
-            "settings": p.settings,
-            "policies": p.policies,
-            "doc_scopes": p.doc_scopes,
-            "text_globs": p.text_globs,
+            "settings": self.settings,
+            "policies": self.policies,
+            "doc_scopes": self.doc_scopes,
+            "text_globs": self.text_globs,
         });
         serde_json::to_vec(&parts).ok()
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Summary> {
         let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        let mut p = front::Program::default();
-        if v["declared_ret"].as_bool()? {
-            p.decls.insert(front::Name::new("declared_ret"), Default::default());
-        }
-        let mut rows = Vec::new();
+        let mut env = Vec::new();
         for row in v["env"].as_array()? {
             let mut out = front::List::default();
             for c in row.as_array()? {
@@ -420,41 +430,85 @@ impl Summary {
                     _ => return None,
                 });
             }
-            rows.push(out);
+            env.push(out);
         }
-        if !rows.is_empty() {
-            p.facts.insert("env".to_owned(), rows);
-        }
-        p.settings = serde_json::from_value(v["settings"].clone()).ok()?;
-        p.policies = serde_json::from_value(v["policies"].clone()).ok()?;
-        p.doc_scopes = serde_json::from_value(v["doc_scopes"].clone()).ok()?;
-        p.text_globs = serde_json::from_value(v["text_globs"].clone()).ok()?;
-        Some(Summary(p))
+        Some(Summary {
+            declared_ret: v["declared_ret"].as_bool()?,
+            env,
+            settings: serde_json::from_value(v["settings"].clone()).ok()?,
+            policies: serde_json::from_value(v["policies"].clone()).ok()?,
+            doc_scopes: serde_json::from_value(v["doc_scopes"].clone()).ok()?,
+            text_globs: serde_json::from_value(v["text_globs"].clone()).ok()?,
+            git_metadata_only: v["git_metadata_only"].as_bool()?,
+        })
+    }
+}
+
+/// The summary's fields as a program's, for the readers `changes` shares with the run (`scoped`, `World`, `inputs`).
+impl ProgramFields for Summary {
+    fn input_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn output_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn declares(&self, rel: &str) -> bool {
+        rel == "declared_ret" && self.declared_ret
+    }
+    fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        self.declares(rel).then(Vec::new)
+    }
+    fn declared_names(&self) -> Vec<String> {
+        if self.declared_ret { vec!["declared_ret".to_owned()] } else { Vec::new() }
+    }
+    fn fact_names(&self) -> Vec<String> {
+        if self.env.is_empty() { Vec::new() } else { vec!["env".to_owned()] }
+    }
+    fn states_facts(&self, rel: &str) -> bool {
+        rel == "env" && !self.env.is_empty()
+    }
+    fn fact_rows(&self, rel: &str) -> Vec<front::List<front::Value>> {
+        if rel == "env" { self.env.clone() } else { Vec::new() }
+    }
+    fn about(&self, _: &[&str]) -> crate::code_rule_dsl::logic::program_facts::Facts {
+        Default::default()
+    }
+    fn settings(&self) -> Vec<(String, String)> {
+        self.settings.clone()
+    }
+    fn policies(&self) -> Vec<serde_json::Value> {
+        self.policies.clone()
+    }
+    fn text_globs(&self) -> Vec<String> {
+        self.text_globs.clone()
+    }
+    fn doc_scopes(&self) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+        self.doc_scopes.clone()
     }
 }
 
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
-fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, options: &serde_json::Value) -> Result<front::Program> {
+fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    Ok(combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?.0)
+    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read). `read`: the
 /// program the run was handed (`run_read`), whose `programs` are its key, not a text to read.
-pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
     changes_of(programs, graphs, read, root, typing, options, consulted, None)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
 /// the program combined again.
 #[allow(clippy::too_many_arguments)]
-fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<Option<Vec<String>>> {
+fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
@@ -465,19 +519,24 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
         return Ok(None);
     }
     let prog = match summary {
-        Some(Summary(prog)) => prog,
-        None => Summary::from_program(&combined_with_settings(programs, graphs, read, root, options)?).0,
+        Some(summary) => summary,
+        None => Summary::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?),
     };
+    let metadata_only = prog.git_metadata_only;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
-    if prog.decls.contains_key("declared_ret") {
+    if prog.declared_ret {
         trace("not comparable: declared_ret".to_owned());
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
-    let found = scoped(corpus_files(root)?, &prog, options);
-    let label = corpus_language(language.as_deref(), typing, &found);
-    let files = if none_named { Default::default() } else { found.of(label) };
+    let files = if none_named || metadata_only && crate::git_workspace::snapshot::contains(root) {
+        Vec::new()
+    } else {
+        let found = scoped(corpus_files(root)?, &prog, options);
+        let label = corpus_language(language.as_deref(), typing, &found);
+        found.of(label)
+    };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
     // The workspace's documents are listed by their path from the root; a library document a phase loaded is named
     // by its absolute path, and is checked by its digest below, as every document is (O-cutoff-phases).
@@ -488,7 +547,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
+    const READERS: [&str; 12] = ["git_object_predicate", "package_marker", "input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_tracking_index", "git_revision_rows", "git_root_repo", analysis_history::INPUT];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     let mut world = world::World::new(root, &prog);
     let moved = world.changed(&requests);
@@ -580,23 +639,23 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
 
 pub mod session;
 
-/// Runs `program` (`.rr` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
+/// Runs `program` (`.rerail` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
 ///
-/// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
+/// The program is split at its file-local relations (`typing::file_local::programs_of`, list step 29). Documents are
 /// taken in chunks of about `chunk_nodes` nodes, each built on a worker thread while the previous one runs (list
 /// step 24): its file-local part is run, the exported relations are appended to `cross.sqlite` in `out` (schema `x`),
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
 /// Repository readers publish typed rows once, before file-local partitioning.
-fn external_inputs(prog: &mut front::Program, shape: &shape::Shape, root: &Path) -> Result<()> {
+fn external_inputs(prog: &mut Edit<'_>, shape: &shape::Shape, root: &Path) -> Result<()> {
     inputs::populate(prog, shape, root)?;
-    // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
+    // `core.rerail` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
-        if prog.inputs.iter().any(|i| i == rel) {
+        if prog.input_names().iter().any(|i| i == rel) {
             crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
-            prog.inputs.retain(|i| i != rel);
+            prog.b.fields().retain_inputs(|i| i != rel);
         }
     }
     Ok(())
@@ -620,119 +679,10 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     format!("{types}/{size}")
 }
 
-/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
+/// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
 /// `string_annotation` is made (`facts::vtab::syntax::annotation`, Ruff's table) and `parsed` is a guest (0055).
 const NOT_MADE: [(&str, &str); 0] = [];
 
-/// The key of a chunk's guest rounds' kept rows (`retain::Retained`): held for the chunk's rounds alone, never stored
-/// (decision 0331).
-const GUEST_ROUNDS_KEY: [u8; 32] = *b"rerail.guest-rounds/v1\0\0\0\0\0\0\0\0\0\0";
-
-/// The embed slice of a lowered program (decisions 0055, 0058): the rules its requests need (`embed`, `embed_value`
-/// and the demands), with those as its outputs; `None` when no rule makes a request. It is cut from the whole
-/// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
-/// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
-/// in the chunk.
-fn inputs_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Vec<&str> {
-    v.inputs().map(|a| v.text(a)).collect()
-}
-
-fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
-    use crate::code_rule_dsl::logic::program_image::RuleId;
-    let derives = |r: &str| v.rel(r).is_some_and(|id| v.heads(id).next().is_some());
-    let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|r| derives(r)).collect();
-    if wanted.is_empty() {
-        return Ok(None);
-    }
-    // A request rule (an attribute's, `Program::asked_by`, decision 0174) is taken only once one of the relations
-    // whose readers it serves is in the slice, as `front::prune` keeps it. A request relation is one for the whole
-    // program (`rr_value_req`: every reader's request, never inlined since 0291), so the slice, following reads,
-    // took every reader's request and what its body reads: 584 rules where 488 were (decision 0331).
-    let asked = v.asked();
-    // Each rule's gate, by its place among its relation's rules; a relation whose rules do not match the record
-    // keeps them ungated (as `prune`'s does).
-    let mut by_head: BTreeMap<&str, Vec<RuleId>> = BTreeMap::new();
-    for r in v.rules() {
-        by_head.entry(v.rel_name(r.head().rel())).or_default().push(r.id());
-    }
-    let mut gate: HashMap<RuleId, &BTreeSet<String>> = HashMap::new();
-    for (req, readers) in asked.iter().filter(|(req, _)| !wanted.contains(&req.as_str())) {
-        if let Some(ids) = by_head.get(req.as_str()).filter(|ids| ids.len() == readers.len()) {
-            gate.extend(ids.iter().copied().zip(readers));
-        }
-    }
-    let rule_of: HashMap<RuleId, crate::code_rule_dsl::logic::program_image::RuleRef<'_>> = v.rules().map(|r| (r.id(), r)).collect();
-    let inputs = inputs_of(v);
-    let about = crate::code_rule_dsl::logic::program_image::About::of(v);
-    let has = |rel: &str| by_head.contains_key(rel) || inputs.contains(&rel) || v.rel(rel).is_some_and(|id| about.native(id).is_some());
-    // `RERAIL_DUMP_SLICE=<file>`: each relation of the slice, the relation whose rule read it first, and the slice's
-    // rules (`<file>.rules`), to compare one program's slice with another's (a debugging aid).
-    let dump = std::env::var_os("RERAIL_DUMP_SLICE");
-    let mut by: BTreeMap<String, String> = BTreeMap::new();
-    let mut need: BTreeSet<String> = BTreeSet::new();
-    let mut kept: BTreeSet<RuleId> = BTreeSet::new();
-    let mut todo: Vec<String> = wanted.iter().map(|r| (*r).to_owned()).collect();
-    loop {
-        let take = |id: RuleId, kept: &mut BTreeSet<RuleId>, todo: &mut Vec<String>, by: &mut BTreeMap<String, String>| {
-            kept.insert(id);
-            let r = rule_of[&id];
-            let head = v.rel_name(r.head().rel());
-            for a in r.reads() {
-                let rel = v.rel_name(a.rel());
-                if dump.is_some() {
-                    by.entry(rel.to_owned()).or_insert_with(|| head.to_owned());
-                }
-                todo.push(rel.to_owned());
-            }
-        };
-        while let Some(rel) = todo.pop() {
-            if !need.insert(rel.clone()) {
-                continue;
-            }
-            for &id in by_head.get(rel.as_str()).into_iter().flatten() {
-                if !gate.contains_key(&id) {
-                    take(id, &mut kept, &mut todo, &mut by);
-                }
-            }
-        }
-        // The request rules of a needed relation one of whose readers is needed: their bodies are read, which may
-        // need more readers.
-        // A reader the version no longer has (merged, renamed or inlined since the requests were made) keeps them,
-        // as `prune` does.
-        let open: Vec<RuleId> = gate.iter().filter(|(id, readers)| !kept.contains(*id) && need.contains(v.rel_name(rule_of[*id].head().rel())) && readers.iter().any(|b| need.contains(b) || !has(b))).map(|(id, _)| *id).collect();
-        for id in open {
-            take(id, &mut kept, &mut todo, &mut by);
-        }
-        if todo.is_empty() {
-            break;
-        }
-    }
-    if let Some(path) = dump {
-        let rules = |rel: &str| by_head.get(rel).map_or(0, |ids| ids.iter().filter(|id| kept.contains(id)).count());
-        let text: String = need.iter().map(|rel| format!("{rel}\t{}\t{}\n", rules(rel), by.get(rel).map_or("(a root)", String::as_str))).collect();
-        let _ = std::fs::write(&path, text);
-        // Each request relation's record against its rules: gated only where they match.
-        let gates: String = asked.iter().map(|(req, readers)| format!("{req}\trecord {}\trules {}\tgated {}\n", readers.len(), by_head.get(req.as_str()).map_or(0, Vec::len), by_head.get(req.as_str()).is_some_and(|ids| ids.iter().any(|id| gate.contains_key(id))))).collect();
-        let mut at = path.clone();
-        at.push(".gates");
-        let _ = std::fs::write(at, gates);
-        // Each reader the record names: whether the version still has it (a gone one keeps its requests) and whether
-        // the slice needs it.
-        let readers: BTreeSet<&String> = asked.values().flatten().flatten().collect();
-        let text: String = readers.iter().map(|b| format!("{b}\thas {}\tneeded {}\n", has(b.as_str()), need.contains(b.as_str()))).collect();
-        let mut at = path.clone();
-        at.push(".readers");
-        let _ = std::fs::write(at, text);
-        let mut rules: Vec<String> = kept.iter().map(|id| format!("{}.\n", v.show_rule(rule_of[id]))).collect();
-        rules.sort();
-        let mut at = path.clone();
-        at.push(".rules");
-        let _ = std::fs::write(at, rules.concat());
-    }
-    // A part of the program's version (decision 0244, 0298's selection): the rules taken, the wanted relations its
-    // outputs, every other field the program's.
-    v.part_rules(|id| kept.contains(&id), &inputs, &wanted).map(Some).map_err(Error::Plan)
-}
 
 pub fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
@@ -744,15 +694,15 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
     run_typed(programs, root, None, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
-/// The programs `programs` (`.rr` text) as one program. One program is parsed as it is.
+/// The programs `programs` (`.rerail` text) as one program. One program is parsed as it is.
 /// Of several, each one's own relations (the ones it derives or declares beyond its inputs) take a prefix, `p<i>_`,
 /// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
-pub fn combine(programs: &[&str]) -> Result<front::Program> {
+pub fn combine(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
     let masked = masked(programs);
-    combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None, &front::Lists::default()).map(|(program, _)| program)
+    combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -762,13 +712,14 @@ pub struct Texts<'a> {
     pub programs: &'a [&'a str],
     /// Each text's include graph's digest (`phase0::Graph::digest`), `None` for a text that includes nothing.
     pub graphs: Vec<Option<[u8; 32]>>,
-    /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rr` for all of them.
+    /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rerail` for all of them.
     pub derived: Vec<Arc<phase0::Graph>>,
     /// The program the run was handed, already read (`run_read`): the run holds it, and `programs` is its key.
-    pub read: Option<&'a front::Program>,
+    pub read: Option<&'a Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
     /// builder borrows.
     pub sources: Option<&'a texts::Sources>,
+    phase: FactPhase<'a>,
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
@@ -776,10 +727,10 @@ pub struct Texts<'a> {
 impl<'a> Texts<'a> {
     /// A program already read, keyed by `key` (`read_key`): it includes nothing to derive a graph of, and its names
     /// are its own (`rr::TextNames::of_program`), as a print of it had them.
-    pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
+    pub fn of_read(key: &'a [&'a str], read: &'a Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         let names = std::cell::OnceCell::new();
-        let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reads: std::cell::RefCell::new(Vec::new()), names }
+        let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(&**read)]);
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
@@ -789,7 +740,7 @@ impl<'a> Texts<'a> {
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -803,94 +754,75 @@ impl<'a> Texts<'a> {
     }
 }
 
-/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), each program given the rows `extra` adds
-/// (`added::Added`), with the digest of its texts, messages masked (`masked`, decision 0225 §3), and those rows
-/// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
-/// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
-    let key = texts_digest(masked, graphs, extra);
-    if let Some(program) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.tree.clone()) {
-        crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
-        return Ok((program, key));
-    }
-    // The one text a run was handed the program of: its hidden program kept under the texts' digest too, as a pack's
-    // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves. The rows the
-    // run adds (decision 0249) are in the key.
-    let one = read.filter(|_| programs.len() == 1);
-    let program = combine_stored(programs, extra, &key, lists, one)?;
-    keep_combined(key, |k| k.tree = Some(program.clone()));
-    Ok((program, key))
-}
-
-/// A combined program kept for the process (`COMBINED`): its tree (`combine_keyed`'s), its version
-/// (`combine_version`'s), or both.
+/// A combined program kept for the process (`COMBINED`): its version (`combine_version`'s).
 #[derive(Default)]
 struct Combined {
-    tree: Option<front::Program>,
     version: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
-/// The combined programs kept for the process by their texts' digest: a function of the texts alone (`rr::parse`
-/// reads no file), so a session or a test that runs one program over many roots parses and hides it once.
-fn combined_kept() -> &'static std::sync::Mutex<HashMap<[u8; 32], Combined>> {
-    static COMBINED: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], Combined>>> = std::sync::OnceLock::new();
-    COMBINED.get_or_init(Default::default)
+/// The combined programs kept by their texts' digest, the caller's (decision 0442: the shared object's): a function
+/// of the texts alone (`rr::parse` reads no file), so a session or a test that runs one program over many roots
+/// parses and hides it once.
+#[derive(Default)]
+struct CombinedPrograms(std::sync::Mutex<HashMap<[u8; 32], Combined>>);
+
+fn combined_kept() -> std::sync::Arc<CombinedPrograms> {
+    crate::code_rule_dsl::logic::profile::shared::<CombinedPrograms>()
 }
 
 /// `edit` of the program `key` kept for the process (`combined_kept`). A few programs at a time are kept.
 fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
     const KEPT: usize = 32;
-    let mut kept = combined_kept().lock().expect("the combined programs");
+    let held = combined_kept();
+    let mut kept = held.0.lock().expect("the combined programs");
     if kept.len() >= KEPT && !kept.contains_key(&key) {
         kept.clear();
     }
     edit(kept.entry(key).or_default());
 }
 
-/// One program handed to its run (`run_read`), combined as `combine_keyed` combines it, past the process's own kept
+/// One program handed to its run (`run_read`), combined as `combine_version` combines it, past the process's own kept
 /// programs: what the store gave or a miss made, what hiding it makes, and what the store then keeps under its texts'
 /// digest. For the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn combine_handed(read: &front::Program) -> Result<(front::Program, front::Program, Option<front::Program>)> {
-    let text = crate::code_rule_dsl::logic::rr::print(read)?;
+pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> {
+    let text = crate::code_rule_dsl::logic::rr::print_version(read)?;
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
-    let made = combine_stored(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
-    let hidden = combine_read(&[text.as_str()], &none, Some(read), None)?;
+    let made = combine_stored_version(&[text.as_str()], &none, &key, Some(read))?;
+    let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?.0;
     let kept = phases::reading_store().and_then(|store| {
         store.settle(&combined::queued(&key));
-        combined::lookup(&store, &key, &front::Lists::default()).ok().flatten()
+        combined::lookup_version(&store, &key).ok().flatten()
     });
     Ok((made, hidden, kept))
 }
 
-/// `combine_keyed`'s program as a version (decision 0281's path, step 7a): the image made once per combined program
-/// and kept for the process beside the tree (`COMBINED`), so a run that finds its program combined reads no tree.
-fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
+/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), each program given the rows `extra` adds
+/// (`added::Added`), with the digest of its texts, messages masked (`masked`, decision 0225 §3), and those rows
+/// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
+/// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again. The image is made
+/// once per combined program and kept for the process (`COMBINED`).
+fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
-    if let Some(v) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
+    if let Some(v) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((v, key));
     }
-    // The one text handed is kept under its texts' digest as `combine_keyed` keeps it (decision 0275).
+    // The one text a run was handed the program of: its hidden program kept under the texts' digest too, as a pack's
+    // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves. The rows the
+    // run adds (decision 0249) are in the key.
     let one = read.filter(|_| programs.len() == 1);
-    let v = combine_stored_version(programs, extra, &key, lists, one)?;
+    let v = combine_stored_version(programs, extra, &key, one)?;
     keep_combined(key, |k| k.version = Some(Arc::clone(&v)));
     Ok((v, key))
 }
 
-/// The combined program as a tree, beside its version in a debug build (`run_typed`): each edit is made on both, and
-/// the two checked to agree before preparing.
-#[cfg(debug_assertions)]
-type Beside = front::Program;
-#[cfg(not(debug_assertions))]
-type Beside = ();
-
-/// `combine_linked`'s program as a version, and `combine_read`'s tail run on it (`tail_version`), with the kept tail
-/// run it was made over or kept, if any (`tail_kept`). A debug build runs the tree's tail beside it and checks the two
-/// agree.
-fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
-    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
+/// The programs linked into one (`combine_linked_as`), and the combine's tail run on it (`tail_version`), with the kept
+/// tail run it was made over or kept, if any (`tail_kept`).
+fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+    let mut images_used = images_used;
+    let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used.as_deref_mut())?;
     // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
     if combine_link_mode() == "check" {
         let (whole, whole_tail) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked_spliced::<link::Versioned>(programs, extra, read, None, false))?;
@@ -899,17 +831,10 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || "checked: the splice is the whole link (RERAIL_COMBINE_LINK=check)".into());
     }
     // The parts linked as trees beside (decision 0281's path, step 7a-2): the same program.
-    #[cfg(debug_assertions)]
-    let tree = {
-        let (tree, _) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked(programs, extra, read, None))?;
-        let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
-        tree
-    };
     let (v, run) = match &tail {
         Tail::Many { kept: Some(kept), .. } if combine_tail_mode() != "whole" => {
             let kept = *kept;
-            let (spliced, run) = tail_kept(v.clone(), &tail, kept)?;
+            let (spliced, run) = tail_kept(v.clone(), &tail, kept, images_used)?;
             // `RERAIL_COMBINE_TAIL=check`: the tail kept (decision 0393) against the tail run whole.
             if combine_tail_mode() == "check" {
                 let whole = crate::code_rule_dsl::logic::profile::quiet(|| tail_version(v, &tail))?;
@@ -920,18 +845,14 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         }
         _ => (tail_version(v, &tail)?, None),
     };
-    #[cfg(debug_assertions)]
-    {
-        let tree = crate::code_rule_dsl::logic::profile::quiet(|| tail_tree(tree, &tail))?;
-        let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the combine's tail on the version is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
-    }
     Ok((v, run))
 }
 
-/// `combine_stored` of the version: the store's entry opened as a version (`combined::lookup_version`), or the
-/// combine's tail run on the version (`combine_tail`) and its image kept as the entry (`combined::record_version`).
-fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&front::Program>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+/// The combine kept in the persistent store across processes for a pack of programs (`combined`, decision 0094 §6):
+/// keyed by the texts and checked against the library files the combine read. The store's entry opened as a version
+/// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
+/// entry (`combined::record_version`).
+fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
@@ -942,7 +863,7 @@ fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32
     let found = {
         let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
         store.settle(&combined::queued(key));
-        combined::lookup_version(&store, key, lists).map_err(|e| Error::Plan(e.to_string()))?
+        combined::lookup_version(&store, key).map_err(|e| Error::Plan(e.to_string()))?
     };
     if let Some(v) = found {
         crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
@@ -956,55 +877,22 @@ fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32
         let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
         // Its image, as data, written by the store's writer (decisions 0102, 0306), naming the tail run it was made
         // over or kept: a run that reads the entry names that run as the one that made it did (Q101).
-        combined::record_version(&store, "the combined program", key, &read, &v, &images, run);
+        combined::record_version_ran(&store, "the combined program", key, &read, &v, &images, run);
     }
     crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || format!("combined; kept in the store behind the run, with the {} library files it read", read.len()));
     Ok(v)
 }
 
-/// The program's header (`Version::header`) edited by `edit`, and the version given the edit (`Builder::set_header`).
-fn edit_header(v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, head: &mut front::Program, edit: impl FnOnce(&mut front::Program) -> Result<()>) -> Result<()> {
-    let was = head.clone();
-    edit(head)?;
-    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
-    b.set_header(&was, head);
-    *v = b.finish().map(|(v, _)| v).map_err(Error::Plan)?;
+/// The version given `edit`'s edit of its fields (`fields::Edit`, decision 0276 §3): what the edit states, the rest
+/// the version's. An edit that states nothing leaves the version as it is.
+fn edit_fields(v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, edit: impl FnOnce(&mut Edit<'_>) -> Result<()>) -> Result<()> {
+    let next = {
+        let mut e = Edit::on(v);
+        edit(&mut e)?;
+        e.finish().map_err(Error::Plan)?
+    };
+    *v = next;
     Ok(())
-}
-
-/// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
-/// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&front::Program>) -> Result<front::Program> {
-    let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
-        phases::reading_store()
-    } else {
-        None
-    };
-    let Some(store) = store else { return combine_read(programs, extra, read, None) };
-    // The run's one hold on collection (O108) is taken later; this read and write hold it themselves.
-    let _reading = store.hold_collection().map_err(|e| Error::Plan(e.to_string()))?;
-    let found = {
-        let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
-        store.settle(&combined::queued(key));
-        combined::lookup(&store, key, lists).map_err(|e| Error::Plan(e.to_string()))?
-    };
-    if let Some(program) = found {
-        crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
-        crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
-        return Ok(program);
-    }
-    // What a miss combines: the program handed (`combine_read`), or the texts.
-    let mut images = Vec::new();
-    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_read(programs, extra, read, Some(&mut images)));
-    let program = program?;
-    {
-        let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
-        // Made into facts here, written by the store's writer (decisions 0102, 0306); one that does not read back as
-        // written is not kept.
-        combined::record(&store, "the combined program", key, &read, &program, &images);
-    }
-    crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || format!("combined; kept in the store behind the run, with the {} library files it read", read.len()));
-    Ok(program)
 }
 
 /// The digest of `combine`'s texts and the rows it adds: what a combined program is a function of. `graphs`: each
@@ -1015,7 +903,7 @@ fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists
 fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
-    // Under another value of a switch `combine_read` reads, the same texts combine to another program (`COMBINING`).
+    // Under another value of a switch `combine_tail` reads, the same texts combine to another program (`COMBINING`).
     // Only those set: an unset switch keeps the key every run has had.
     for switch in COMBINING {
         if let Some(v) = std::env::var_os(switch) {
@@ -1048,17 +936,14 @@ pub struct Prepared {
     /// The program before lowering, as the run's readers read it (decision 0281's path, step R): the image of the
     /// tree the preparation passes before lowering made, the last tree the run holds.
     pub source: Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    /// `source`'s fields besides its rules (`Version::header`): its settings, declarations, facts, inputs and outputs,
-    /// which the run reads.
-    pub head: front::Program,
     pub vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     pub lowered: lower::Lowered,
     pub sets: Vec<(String, Vec<i64>)>,
-    /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
+    /// The `ast` atoms' matchers, by relation (`preparation::text::MatcherRelations`, decision 0106).
     pub matchers: Vec<(String, String, Vec<String>)>,
     pub demanded: Vec<String>,
     pub pushed: Vec<String>,
-    /// The exports handed on as parts (decision 0099, `file_local::factorize_exports`), a line each.
+    /// The exports handed on as parts (decision 0099, `file_local::FactorizeExports`), a line each.
     pub factorized: Vec<String>,
     pub located: std::result::Result<Vec<String>, Vec<String>>,
     pub merged: (usize, usize),
@@ -1111,29 +996,6 @@ pub(in crate::code_rule_dsl) struct Cone {
     rest: Arc<crate::code_rule_dsl::logic::program_image::Version>,
 }
 
-/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
-/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
-/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
-/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
-/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
-/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager.
-fn answers_where_documents_are(prog: &mut front::Program) {
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
-    loop {
-        let local = crate::code_rule_dsl::typing::file_local::split(prog);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
-            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
-        }) else {
-            return;
-        };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        let mut rules = std::mem::take(&mut prog.rules);
-        undo_round(prog, &mut rules, round);
-        prog.rules = rules;
-    }
-}
-
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
 /// other files, one line each: `relation  own  inherited  output|-  rule`. A rule's own class is the first that holds:
 /// `recursive` (its stratum reads itself), `total` (an aggregate with no group variable), `grouped` (an aggregate by
@@ -1147,12 +1009,14 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     let rules = |v: &Version| v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>();
     // One set of files a program: a batch (`run-policies`) splits several, each to the next free number.
     let stem = path.file_stem().map_or_else(|| "split".into(), |s| s.to_string_lossy().into_owned());
-    let n = (0..).find(|n| !path.with_file_name(format!("{stem}-{n}.cross.rr")).exists()).unwrap_or(0);
+    let n = (0..).find(|n| !path.with_file_name(format!("{stem}-{n}.cross.rerail")).exists()).unwrap_or(0);
     let numbered = path.with_file_name(format!("{stem}-{n}.txt"));
     let path = numbered.as_path();
-    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
-    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
+    let _ = std::fs::write(path.with_extension("local.rerail"), rules(&split.versions.local));
+    let _ = std::fs::write(path.with_extension("cross.rerail"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
+    // Why each cross-file relation is: the first rule the split found not to stay on one document.
+    let _ = std::fs::write(path.with_extension("causes.txt"), split.causes.iter().map(|(r, c)| format!("{r}\t{c}\n")).collect::<String>());
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.versions.cross;
@@ -1185,9 +1049,10 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 term_vars(l, &mut out);
                 term_vars(r, &mut out);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 out.insert(var);
                 out.extend(over);
+                out.extend(op.bound());
                 atom.args().for_each(|t| term_vars(t, &mut out));
             }
             Lit::Nearest { n, a, .. } => out.extend([n, a]),
@@ -1282,7 +1147,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
         };
         let mut worst = if n == Some(0) { "config" } else if one { "same-unit" } else if union { "union" } else { "lookup" };
         let bump = |c: &'static str, worst: &mut &'static str| {
-            if rank(c) > rank(*worst) {
+            if rank(c) > rank(worst) {
                 *worst = c;
             }
         };
@@ -1355,8 +1220,9 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
 pub fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Arc<Prepared>>>) -> R) -> R {
     #[cfg(not(any(test, feature = "test-hooks")))]
     {
-        static PREPARED: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>> = std::sync::LazyLock::new(Default::default);
-        f(&mut PREPARED.lock().expect("the prepared programs"))
+        #[derive(Default)]
+        struct PreparedCorpora(std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>);
+        f(&mut crate::code_rule_dsl::logic::profile::shared::<PreparedCorpora>().0.lock().expect("the prepared programs"))
     }
     #[cfg(any(test, feature = "test-hooks"))]
     {
@@ -1387,24 +1253,16 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 
 /// `combine` of one program already read (`rr::read_file`): the program itself, as a run holds it, never printed and
 /// read again (decision 0249).
-pub fn combine_read_program(read: &front::Program) -> Result<front::Program> {
-    combine_read(&[""], &added::Added::default(), Some(read), None)
+pub fn combine_read_program(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    combine_tail(&[""], &added::Added::default(), Some(read), None).map(|(v, _)| v)
 }
 
-pub fn combine_texts(programs: &[&str]) -> Result<front::Program> {
-    combine_read(programs, &added::Added::default(), None, None)
+/// The programs `programs` (`.rerail` text) combined, past the process's and the store's kept programs.
+pub fn combine_texts(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    combine_tail(programs, &added::Added::default(), None, None).map(|(v, _)| v)
 }
 
-/// `combine_texts`, the one text's program given already lowered (`read`): it is that program, not the text lowered
-/// again.
-/// `images`: where the aliases of the module and program images the combine read or kept are added (decision 0246
-/// §6), for the combined program's entry to name.
-fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<front::Program> {
-    let (linked, tail) = combine_linked(programs, extra, read, images_used)?;
-    tail_tree(linked, &tail)
-}
-
-/// What `combine_read` does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
+/// What the combine does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
 /// relations that are one merged; several programs' projected inputs, helpers retyped, attributes on request, the
 /// bound once where the libraries are held once, the fact spaces, and the relations that are one merged.
 #[derive(Debug)]
@@ -1435,46 +1293,7 @@ impl std::fmt::Debug for TailKept {
     }
 }
 
-/// `combine_read`'s tail on the tree (the tools', and a debug build's check of `tail_version`).
-fn tail_tree(mut all: front::Program, tail: &Tail) -> Result<front::Program> {
-    let Tail::Many { hide, policies, .. } = tail else {
-        requests_file_local(&mut all);
-        answers_where_documents_are(&mut all);
-        same_relations(&mut all);
-        return Ok(all);
-    };
-    // core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
-    // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
-    // program. Both would give `kind` two domains.
-    let projected: BTreeSet<&str> = all.rules.iter().filter(|r| r.body.len() == 1 && r.body[0].atom().is_some_and(|a| a.rel == "node")).map(|r| r.head.rel.as_str()).filter(|rel| matches!(*rel, "kind" | "docof")).collect();
-    let projected: BTreeSet<String> = projected.into_iter().map(str::to_owned).collect();
-    all.inputs.retain(|rel| !projected.contains(rel));
-    // The helpers' columns, typed by the library's declarations, which each program was lowered without.
-    crate::code_rule_dsl::logic::rr::retype_helpers(&mut all);
-    // The attributes on request over the combined program's readers (decision 0174; undone in each part above).
-    for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
-        crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
-    }
-    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers,
-    // decision 0286); an answer still cross-file after that is made eager (0174 §8b).
-    requests_file_local(&mut all);
-    answers_where_documents_are(&mut all);
-    // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
-    // the same for every program, so one analysis gives what each program's would.
-    if let Some(bound) = *hide {
-        let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({} rules; decision 0058)", all.rules.len()));
-        hiding::hide(&mut all, bound);
-    }
-    // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0091).
-    let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
-    let report = scoping::guard(&mut all, policies).map_err(Error::Plan)?;
-    drop(spacing);
-    fact_spaces_decision(&report);
-    same_relations(&mut all);
-    Ok(all)
-}
-
-/// The fact spaces' decision (decision 0091), of the tree's guard or the version's.
+/// The fact spaces' decision (decision 0091).
 fn fact_spaces_decision(report: &scoping::Report) {
     crate::code_rule_dsl::logic::profile::decision("fact spaces", || {
         let guarded: Vec<String> = report.guarded.iter().map(|(p, n)| format!("{p}: {n}")).collect();
@@ -1490,7 +1309,9 @@ fn fact_spaces_decision(report: &scoping::Report) {
     });
 }
 
-/// `combine_read`'s tail on the version: the same passes, each on the manager.
+/// What the combine does to the linked program, on the version. Of one program, the requests asked where the
+/// documents are, and the relations that are one merged. Of several, first `kind` and `docof` no inputs where a part
+/// projects them, then each step below.
 fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let p = tail_passes(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v), tail)?;
     Ok(p.finish().map_err(Error::Plan)?.0)
@@ -1500,7 +1321,9 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 /// store, and where the link is an edit of its input (`manager::rebase`), the passes run again over the edit
 /// (`Pipeline::again`): each step's analyses carried across it, and a pass that can (`ProgramPass::again`) writing
 /// the edit onto its last output. The run is kept again, behind the run.
-fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+/// `used`: where the pointer to the tail's run (`keep_facts`) is named, read or kept, for the combined program's entry
+/// to name it (`combined::image_sources`): a run that reads the entry keeps it as the run that combined did.
+fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept, used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
     use crate::code_rule_dsl::logic::program_image::manager::{Delta, Pipeline, Runs as _, rebase};
     let Some(store) = crate::code_rule_dsl::logic::rr::image_store() else { return Ok((tail_version(v, tail)?, None)) };
     let key = {
@@ -1522,7 +1345,10 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
     };
     let last = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0393)".into());
-        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|f| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
+        if let Some(used) = used {
+            used.push(preparation::parts::kept_facts_hash(&key));
+        }
+        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|(f, _)| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
             Some(front::Value::Str(h)) => preparation::parts::unhex(h),
             _ => None,
         }));
@@ -1582,22 +1408,37 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
 /// (decision 0385): below it, each edit runs again from the kept run, and keeping costs nothing.
 const TAIL_REKEPT: usize = 64;
 
+/// Whether `rules` (each rule's head and the relations it reads) read a guest relation (`guests::READS`).
+fn reads_guests(rules: Vec<(String, Vec<String>)>) -> bool {
+    rules.iter().any(|(_, reads)| reads.iter().any(|r| guests::READS.contains(&r.as_str())))
+}
+
 /// The tail's passes on `p` (`tail_version`), their decisions stated.
 fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>, tail: &Tail) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use preparation::{combining, hide, on_request, whole};
     let mut spaces_report = None;
     if let Tail::Many { hide: bound, policies, .. } = tail {
+        // core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
+        // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the
+        // combined program. Both would give `kind` two domains.
         p.program(&mut whole::Projected);
+        // The helpers' columns, typed by the library's declarations, which each program was lowered without.
         p.program(&mut whole::RetypeHelpers);
+        // The attributes on request over the combined program's readers (decision 0174; undone in each part).
         for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
             p.program(&mut on_request::SourcesOnRequest { round });
         }
+        // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers,
+        // decision 0286); an answer still cross-file after that is made eager (0174 §8b).
         p = requests_where_documents_are(p)?;
+        // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules
+        // are the same for every program, so one analysis gives what each program's would.
         if let Some(bound) = *bound {
             let rules = p.current().map_err(Error::Plan)?.size();
             let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({rules} rules; decision 0058)"));
             p.program(&mut hide::Hide::new(bound));
         }
+        // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0091).
         let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
         let mut spaces = combining::FactSpaces::new(policies);
         p.program(&mut spaces);
@@ -1619,16 +1460,16 @@ fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::P
 }
 
 /// A text's version with the library's cone it asks for (decision 0089 §3), as `rr::Text::lowered_in` makes it on
-/// the tree (decision 0281's path, step 7b): its answers on request undone (`link::undone_on_request`), the cone
+/// the tree (decision 0281's path, step 7b): its answers on request undone (`rr::lower::undone_on_request`), the cone
 /// copied from the library's version (`rr::with_cone_version`), and the attributes on request made again over both
 /// (`on_request::SourcesOnRequest`, decision 0174), its cone's readers asking too. No tree is decoded.
-pub(crate) fn cone_on_version(
+pub fn cone_on_version(
     own: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     library: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     asked: &BTreeSet<String>,
     declared: &BTreeSet<String>,
 ) -> std::result::Result<Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
-    let undone = link::undone_on_request(own).map_err(|e| e.to_string())?;
+    let undone = crate::code_rule_dsl::logic::rr::lower::undone_on_request(own)?;
     let coned = crate::code_rule_dsl::logic::rr::with_cone_version(&undone, library, asked, declared)?;
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("a text's cone", coned);
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
@@ -1641,9 +1482,11 @@ pub(crate) fn cone_on_version(
     Ok(p.finish()?.0)
 }
 
-/// `requests_file_local` and `answers_where_documents_are` of the version `p` holds, each a pass of `p` (a kept
-/// tail keeps them and the steps after them, decision 0393). One that answers no attribute on request is left as it
-/// is.
+/// The requests `on_request::SourcesOnRequest` made, narrowed where the split finds them cross-file to the asked node's own
+/// document (`file_local::RequestsFileLocal`): a node's attribute is its document's, answered in its chunk while the
+/// chunk's batch holds the text (O-cross-file-answers). Then the answers still cross-file made eager
+/// (`answers_where_documents_are_version`). A program that answers no attribute on request is left as it is. Each a pass of `p`: a kept tail keeps them and the steps
+/// after them (decision 0393).
 fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
     let v = std::sync::Arc::clone(p.current().map_err(Error::Plan)?);
@@ -1651,22 +1494,11 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
     if !asks {
         return Ok(p);
     }
-    #[cfg(debug_assertions)]
-    let before = std::sync::Arc::clone(&v);
     if !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         let requests: Vec<&'static str> = ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| v.rel(r).is_some()).collect();
         let mut pass = crate::code_rule_dsl::typing::file_local::RequestsFileLocal { requests, narrowed: Vec::new() };
         p.program(&mut pass);
         p.current().map_err(Error::Plan)?;
-    }
-    // The tree's narrowing beside it: the two agree.
-    #[cfg(debug_assertions)]
-    {
-        let v = p.current().map_err(Error::Plan)?;
-        let mut tree = before.program(&front::Lists::default()).map_err(Error::Plan)?;
-        requests_file_local(&mut tree);
-        let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert!(crate::code_rule_dsl::logic::program_image::same_program(&t, &v), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
     }
     // In the same pipeline (decision 0393): a kept tail keeps the steps after this one too.
     p.program(&mut AnswersWhereDocumentsAre);
@@ -1713,39 +1545,39 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
         if Arc::ptr_eq(&out, &v) {
             return Ok(());
         }
-        let (was, head) = (v.header(&front::Lists::default())?, out.header(&front::Lists::default())?);
         let b = w.on()?;
-        b.set_header(&was, &head);
+        b.fields().state_fields_as(&v, &out);
         b.retain(|r| out.contains(r.id()));
         Ok(())
     }
 }
 
-/// `answers_where_documents_are` on the version (decision 0281's path, step 7b): each round whose function's answer
-/// a cross-file reader asks for undone (`link::undone_with` over `undo_round`), by the version's file-local split
-/// (`FileLocal`), to a fixpoint.
+/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
+/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
+/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
+/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
+/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
+/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
+/// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
+/// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
+/// (decision 0281's path, step 7b).
 fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
     loop {
         let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).map_err(Error::Plan)?;
-        let head = v.header(&front::Lists::default()).map_err(Error::Plan)?;
-        let declared = |rel: &str| head.decls.contains_key(rel);
+        let declared = |rel: &str| v.declares(rel);
         let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))) else {
             return Ok(v);
         };
         crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        v = link::undone_with(&v, |head, rules| undo_round(head, rules, round))?;
+        v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| undo_round(head, rules, round)).map_err(Error::Plan)?;
     }
 }
 
-/// `combine_read` up to the programs linked into one, and what its tail does to that (`Tail`).
-fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(front::Program, Tail)> {
-    combine_linked_as::<front::Program>(programs, extra, read, images_used)
-}
-
-/// `combine_linked` over parts of either form (`link::Part`): trees, or versions (`link::Versioned`, the run's,
-/// decision 0281's path, step 7a-2).
-fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
+/// The programs `programs` linked into one (`link::Part`: versions, `link::Versioned`, decision 0281's path, step
+/// 7a-2), and what the combine's tail does to that (`Tail`). `images_used`: where the aliases of the module and
+/// program images the combine read or kept are added (decision 0246 §6), for the combined program's entry to name.
+fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
     combine_linked_spliced::<P>(programs, extra, read, images_used, combine_link_mode() != "whole")
 }
 
@@ -1762,16 +1594,18 @@ fn combine_tail_mode() -> String {
 }
 
 /// `combine_linked_as`, splicing into the last link where `splice` (decision 0373).
-fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>, splice: bool) -> Result<(P::Linked, Tail)> {
-    use front::Program;
-    // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it.
-    let given = |mut prog: Program| -> Result<Program> {
-        extra.add_to(&mut prog);
-        // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
-        front::declared(&prog)?;
-        Ok(prog)
+fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>, splice: bool) -> Result<(P::Linked, Tail)> {
+    // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it, stated on
+    // its version. A program reads only relations it declares: an error here, not the planner's panic later
+    // (`front::declared_on`).
+    let given_version = |v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
+        extra.add_to(&mut b.fields());
+        let v = if b.is_empty() { v } else { b.finish().map_err(Error::Plan)?.0 };
+        front::declared_on(&v)?;
+        Ok(v)
     };
-    let parse = |text: &str| -> Result<P> { P::of_tree(given(crate::code_rule_dsl::logic::rr::parse(text)?)?) };
+    let parse = |text: &str| -> Result<P> { P::of_version(given_version(crate::code_rule_dsl::logic::rr::parse_version(text)?)?) };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
@@ -1785,13 +1619,15 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 {
         use crate::code_rule_dsl::logic::rr::{read_parsed, read_seed};
-        let parsed: Vec<_> = programs
-            .par_iter()
-            .map(|text| {
-                let _in = carry.enter();
-                read_seed(text)
-            })
-            .collect();
+        let parsed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            programs
+                .par_iter()
+                .map(|text| {
+                    let _in = carry.enter();
+                    read_seed(text)
+                })
+                .collect()
+        });
         // Every program's include graph by one run of phase 0, here, before the reads: each read on the pool then
         // finds its graph kept. Derived there, each was a nested run of its own on the run's store, beside the others
         // (`content store writer is busy`; a memo made under another atom table than its writer's).
@@ -1800,14 +1636,16 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             // An error is left to the read that meets it, which reports it in its program's place.
             let _ = crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds);
         }
-        let each: Vec<_> = programs
-            .par_iter()
-            .zip(parsed)
-            .map(|(text, parsed)| {
-                let _in = carry.enter();
-                recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
-            })
-            .collect();
+        let each: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            programs
+                .par_iter()
+                .zip(parsed)
+                .map(|(text, parsed)| {
+                    let _in = carry.enter();
+                    recorded_on_worker(|| parsed.and_then(|r| read_parsed(r.statements)).map(Some).map_err(|e| in_policy(text, e)))
+                })
+                .collect()
+        });
         each.into_iter().map(|(got, read)| {
             replay(read);
             got
@@ -1904,45 +1742,50 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     }
     // Each program's kept image, read for all of them at once (a few statements, not three each from the pool's
     // threads), its lease renewed in one more.
-    let mut prefetched: Vec<Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>> = (0..programs.len()).map(|_| None).collect();
+    let mut prefetched: Vec<Option<Option<crate::code_rule_dsl::logic::rr::images::ImageFound>>> = (0..programs.len()).map(|_| None).collect();
     if let Some(store) = images.as_deref().filter(|_| in_scope.is_some() && !(read.is_some() && programs.len() == 1)) {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the programs' images, from the store".to_owned());
-        let asked: Vec<(usize, crate::content_store::HashKey)> = programs.iter().zip(&scope_of).zip(&texts).enumerate().filter_map(|(i, ((text, k), t))| Some((i, scoped[(*k)?].program_image(text))).filter(|_| t.is_some())).collect();
-        let found = crate::code_rule_dsl::logic::rr::images::read_all(Some(store), &asked.iter().map(|(_, k)| *k).collect::<Vec<_>>());
+        let asked: Vec<(usize, crate::content_store::HashKey)> = programs.iter().zip(&scope_of).zip(&texts).enumerate().filter_map(|(i, ((text, k), t))| {
+            let image = scoped[(*k)?].program_image(text);
+            t.is_some().then_some((i, image))
+        }).collect();
+        let found = crate::code_rule_dsl::logic::rr::images::read_images(Some(store), &asked.iter().map(|(_, k)| *k).collect::<Vec<_>>());
         let ids: Vec<crate::content_store::SourceId> = found.iter().flatten().filter_map(|(_, id)| *id).collect();
         crate::code_rule_dsl::logic::rr::renew_images(store, &ids);
         for ((i, _), f) in asked.into_iter().zip(found) {
             prefetched[i] = Some(f);
         }
     }
-    let each: Vec<_> = programs
-        .par_iter()
-        .zip(&own_only)
-        .zip(texts.par_iter_mut())
-        .zip(&scope_of)
-        .zip(prefetched.into_par_iter())
-        .map(|((((text, &own_only), slot), scope_of), found)| {
-            let _in = carry.enter();
-            recorded_on_worker(|| -> Result<P> {
-            if let Some(read) = read.filter(|_| programs.len() == 1) {
-                return P::of_tree(given(read.clone())?);
-            }
-            if let Some(read) = slot.take() {
-                if let Some(library) = in_scope && let Some(k) = *scope_of {
-                    let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
-                    // Its library's relations are the library's, declared there, not in the program: it is handed the
-                    // run's rows (0249) but not checked for its own declarations (`front::declared`).
-                    return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
+    let each: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        programs
+            .par_iter()
+            .zip(&own_only)
+            .zip(texts.par_iter_mut())
+            .zip(&scope_of)
+            .zip(prefetched.into_par_iter())
+            .map(|((((text, &own_only), slot), scope_of), found)| {
+                let _in = carry.enter();
+                recorded_on_worker(|| -> Result<P> {
+                if let Some(read) = read.filter(|_| programs.len() == 1) {
+                    return P::of_version(given_version(Arc::clone(read))?);
                 }
-                return P::of_tree(given(read.lower(!own_only)?)?);
-            }
-            if !own_only {
-                return parse(text);
-            }
-            P::of_tree(given(crate::code_rule_dsl::logic::rr::parse_own(text)?)?)
+                if let Some(read) = slot.take() {
+                    if let Some(library) = in_scope && let Some(k) = *scope_of {
+                        let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
+                        // Its library's relations are the library's, declared there, not in the program: it is handed the
+                        // run's rows (0249) but not checked for its own declarations (`lowering_tail::Declared`).
+                        return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
+                    }
+                    return P::of_version(given_version(read.lower_version(!own_only)?)?);
+                }
+                if !own_only {
+                    return parse(text);
+                }
+                P::of_version(given_version(crate::code_rule_dsl::logic::rr::parse_own_version(text)?)?)
+                })
             })
-        })
-        .collect();
+            .collect()
+    });
     let mut parsed = each
         .into_iter()
         .map(|(got, read)| {
@@ -1968,13 +1811,15 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let _ = std::fs::write(path, lines);
     }
     drop(parsing);
-    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r))).collect();
+    // A program makes guests where it asks for one, or reads a guest relation: a file's programs are its grammar's
+    // (decision 0431 §4), made whatever a rule asks. And under `.embedded on`: it reads other languages' files, whose
+    // trees are guests of theirs it is not shown (decision 0512).
+    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)) || reads_guests(p.rules()) || embedded_on(p.head())).collect();
     let makes_guests = guests_of.iter().any(|&g| g);
-    let bounds: Vec<u32> = parsed.iter().map(|p| hiding::bound(p.head())).collect();
-    // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
-    // bound of the documents they show, so the library's relations are the same for each.
+    // The libraries once (decision 0089): two or more programs name theirs as modules. Every program is read under one
+    // bound of the documents it shows (decision 0523), so the library's relations are the same for each.
     // `RERAIL_LIBRARIES=copied` copies them into each program, as before, to compare.
-    let shared = !copied && modular.iter().flatten().count() > 1 && bounds.windows(2).all(|w| w[0] == w[1]);
+    let shared = !copied && modular.iter().flatten().count() > 1;
     // Not held once after all: a program read without its libraries' rules is read whole.
     if !shared {
         for ((prog, text), &own_only) in parsed.iter_mut().zip(programs).zip(&own_only) {
@@ -1988,8 +1833,6 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             format!("held once: {} of {} programs name their libraries as modules", modular.iter().flatten().count(), programs.len())
         } else if copied {
             "copied into each program (RERAIL_LIBRARIES=copied)".to_owned()
-        } else if modular.iter().flatten().count() > 1 {
-            "copied into each program: the programs show different documents (`.guests`)".to_owned()
         } else {
             "copied into each program: fewer than two programs name their libraries as modules".to_owned()
         }
@@ -2019,7 +1862,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let mut asking = 0;
         for (i, (prog, modules)) in parsed.iter_mut().zip(&modular).enumerate() {
             let Some(modules) = modules else { continue };
-            let (dropped, cone) = own_part(prog, modules, core);
+            let (dropped, cone) = own_part(prog, modules, core)?;
             kept += dropped;
             cones += cone.len();
             if cone.is_empty() {
@@ -2038,7 +1881,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             }
             if k != n {
                 // Another program asked the same: read its copy.
-                drop_relations(prog, &unit);
+                drop_relations(prog, &unit)?;
             }
             requests[i] = Some((k, unit));
         }
@@ -2062,7 +1905,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // the data-layer pack).
     if parsed.len() > 1 {
         for p in parsed.iter_mut() {
-            p.undo_on_request();
+            p.undo_on_request()?;
         }
     }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
@@ -2073,8 +1916,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         });
         for (i, p) in parsed.iter_mut().enumerate() {
             let _one = crate::code_rule_dsl::logic::profile::span(|| format!("program #{i} ({} rules)", p.rule_count()));
-            let bound = hiding::bound(p.head());
-            p.hide(bound)?;
+            p.hide(hiding::BOUND)?;
         }
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
@@ -2082,33 +1924,34 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let one = parsed.pop().expect("one program");
         return Ok((one.alone()?, Tail::One));
     }
-    let mut all = Program::default();
+    let mut all = link::Merged::new(P::fields());
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    // The library part's names for its kind sets, as the merge renamed them.
+    let mut library_sets: BTreeMap<String, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
-    // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
-    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)));
+    // A library's rule may ask for guests or read them too: read once, it is no program's.
+    let makes_guests = makes_guests || library.as_ref().is_some_and(|l| guests::REQUESTS.iter().any(|r| l.has_head(r)) || reads_guests(l.rules()));
     // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
     // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
     // which library relations read an attribute, so its requests read them as they are, not through their widened
     // copies, and a request was recursive with its attribute (PYI062 with PYI059: `literal_down` negates
     // `typing_subscript`, which reads `value` through `exports`, and `rr_value_req` read `literal_leaf`).
     if let Some(l) = library.as_mut() {
-        l.undo_on_request();
+        l.undo_on_request()?;
     }
     // Each part's own requests were undone before hiding (above).
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     let mut rules: Vec<P::Rules> = Vec::new();
-    let mut interfaces: Vec<[u8; 32]> = Vec::new();
-    for (unit, mut part) in units {
+    let mut interfaces: Vec<kept_link::Interface> = Vec::new();
+    for (unit, part) in units {
         let i = unit.unwrap_or(usize::MAX);
-        let prog = part.head_mut();
-        let scope = prog.doc_scopes.clone();
-        let (named, library) = front::globals(&prog.settings);
-        prog.settings.retain(|(k, _)| k != front::GLOBAL);
+        let prog = part.head();
+        let scope = prog.doc_scopes();
+        let (named, library) = front::globals(&prog.settings());
         // The documents read: those some policy's scope selects; every one when a policy has none.
-        all.doc_scopes = match (i, all.doc_scopes.take(), prog.doc_scopes.take()) {
+        all.doc_scopes = match (i, all.doc_scopes.take(), scope.clone()) {
             (0, _, mine) => mine,
             (_, Some(mut a), Some(b)) => {
                 a.extend(b);
@@ -2116,20 +1959,25 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             }
             _ => None,
         };
-        let globs = std::mem::take(&mut prog.text_globs);
+        let globs = prog.text_globs();
         for g in &globs {
             if !all.text_globs.contains(g) {
                 all.text_globs.push(g.clone());
             }
         }
-        // Kind sets by their kinds: this program's name for each, and the shared one.
-        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
-        let kinds_of = std::mem::take(&mut prog.kindsets);
+        // Kind sets by their kinds: this program's name for each, and the shared one. A set the program reads but
+        // does not hold (a library rule its request copied, `rr::with_cone_version`) is the library's: named as the
+        // library part names it, not left on a name the merge renamed (PR #508's afeb076e5, t47).
+        let mut set_of: BTreeMap<String, String> = if unit.is_some() { library_sets.clone() } else { BTreeMap::new() };
+        let kinds_of = prog.kindsets();
         for (name, kinds) in kinds_of.clone() {
             let n = sets.len();
             let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
+        }
+        if unit.is_none() {
+            library_sets = set_of.clone();
         }
         // The library's relations keep their names (decision 0089 §2). Named repository readers belong to their
         // policy (`own_names`): equal relation names alone do not mean equal input files or selectors.
@@ -2143,25 +1991,25 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
         if keeping.is_some() && let Some(u) = unit {
-            interfaces.push(kept_link::interface(&[&u, &bounds[u], &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]));
+            interfaces.push(kept_link::interface(&[&u, &hiding::BOUND, &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]));
         }
         rules.push(renamed);
-        link::link_header(&mut all, header, &names);
+        all.merge(P::header_fields(&header), &names);
     }
-    let (all, counts) = P::link_counted(all, rules, core)?;
-    let hide = (shared && makes_guests).then_some(bounds[0]);
+    let (all, counts) = P::link_counted(all.finish(), rules, core)?;
+    let hide = (shared && makes_guests).then_some(hiding::BOUND);
     // The link kept for the next run's splice (decision 0373), where the libraries are held once.
     let mut kept = None;
     if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
-        let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: *f }).collect();
-        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: bounds[0], hide, policies: policies.clone() });
+        let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: f.clone() }).collect();
+        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, library_sets, bound: hiding::BOUND, hide, policies: policies.clone() });
         kept = Some(TailKept(*family));
     }
     Ok((all, Tail::Many { hide, policies, kept }))
 }
 
 /// `combine_linked_as` as a splice into the combine's last link (decision 0373): the programs whose image changed
-/// lowered and read as the merge reads each (`own_part`, the request, `undo_on_request`, the header's kind sets,
+/// lowered and read as the merge reads each (`own_part`, the request, `undone_on_request`, the header's kind sets,
 /// globals and policy), and where each one's interface is its slot's, its rules written in its slot's place and every
 /// other program's copied from the last link (`Part::spliced`). `None` where nothing is kept for the run's shape, or a
 /// program's interface changed: the programs are then linked whole, and the link kept again.
@@ -2193,37 +2041,35 @@ fn combine_spliced<P: link::Part>(
     for &i in &changed {
         let (Some(read), Some(k), Some(modules)) = (texts[i].take(), scope_of[i], modular[i].as_ref()) else { return Ok(None) };
         let mut part = P::lowered_in(read, programs[i], library, &scoped[k], Some(store), None, extra)?;
-        let bound = hiding::bound(part.head());
-        if bound != rec.bound {
+        if hiding::BOUND != rec.bound {
             return Ok(None);
         }
-        let guests = guests::REQUESTS.iter().any(|r| part.has_head(r));
+        let guests = guests::REQUESTS.iter().any(|r| part.has_head(r)) || reads_guests(part.rules());
         for name in &modules.declared {
             if let Some(file) = modules.files.iter().find(|(_, _, names)| names.contains(name) && !core.contains(name)) {
                 return Err(Error::Plan(format!("program #{i} declares {name}, which {} it includes declares", file.0.display())));
             }
         }
-        let (_, cone) = own_part(&mut part, modules, core);
+        let (_, cone) = own_part(&mut part, modules, core)?;
         let (mut request, mut asked) = (None, None);
         if !cone.is_empty() {
             let (unit, key) = request_unit(&part, &cone, core, i, per_program);
             // A request no earlier program asks first would be numbered, and copied, otherwise.
             let Some(&(k, first)) = rec.requests.get(&key).filter(|(_, first)| *first <= i) else { return Ok(None) };
             if first != i {
-                drop_relations(&mut part, &unit);
+                drop_relations(&mut part, &unit)?;
             }
             asked = Some((key, k, first == i));
             request = Some((k, unit));
         }
-        part.undo_on_request();
-        let prog = part.head_mut();
-        let scope = prog.doc_scopes.clone();
-        let (named, library_names) = front::globals(&prog.settings);
-        prog.settings.retain(|(k, _)| k != front::GLOBAL);
-        prog.doc_scopes = None;
-        let globs = std::mem::take(&mut prog.text_globs);
-        let kinds_of = std::mem::take(&mut prog.kindsets);
-        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        part.undo_on_request()?;
+        let prog = part.head();
+        let scope = prog.doc_scopes();
+        let (named, library_names) = front::globals(&prog.settings());
+        let globs = prog.text_globs();
+        let kinds_of = prog.kindsets();
+        // From the library's sets, as the link names them (`combine_linked_as`).
+        let mut set_of: BTreeMap<String, String> = rec.library_sets.clone();
         for (name, kinds) in &kinds_of {
             let Some(shared) = rec.sets.get(kinds) else { return Ok(None) };
             set_of.insert(name.clone(), shared.clone());
@@ -2233,9 +2079,9 @@ fn combine_spliced<P: link::Part>(
         let core_rules = part.shown(core);
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
-        let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]);
+        let interface = kept_link::interface(&[&i, &hiding::BOUND, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]);
         if interface != rec.slots[i].interface {
-            crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed"));
+            crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed ({})", interface.changed(&rec.slots[i].interface).join(", ")));
             return Ok(None);
         }
         rec.slots[i].key = keys[i];
@@ -2252,158 +2098,29 @@ fn combine_spliced<P: link::Part>(
     Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies, kept: Some(TailKept(*family)) })))
 }
 
-/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
-/// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
-/// the chunk's batch holds the text (O-cross-file-answers). The tree's form, which a debug build checks the version's
-/// (`file_local::RequestsFileLocal`) against, and `tail_tree`'s.
-fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
-    if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
-        return;
-    }
-    let requests: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| prog.decls.contains_key(*r)).collect();
-    if requests.is_empty() {
-        return;
-    }
-    crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests);
-}
-
-/// The relations that are one relation under two names made one, after the transforms that run after `simplify`
-/// (guest hiding's copies, the programs combined, their fact spaces): `simplify`'s congruence again
-/// (`merge_identical`). Hiding copied `rr_ctx…` helpers and copies of copies (`rr_in_annotation_0_annotation_2_wrap`)
-/// whose rules are another's. `RERAIL_SAME=off` keeps them apart.
-fn same_relations(prog: &mut front::Program) {
-    if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-        return;
-    }
-    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("merge the relations that are one ({} rules)", prog.rules.len()));
-    let rules = prog.rules.len();
-    let (merged, shared, repeated) = merge_and_drop_repeats(prog);
-    if merged > 0 || repeated > 0 {
-        crate::code_rule_dsl::logic::profile::decision("merged after hiding and combining", || {
-            format!("{merged} relations merged into an identical one ({shared} classes shared across programs), {repeated} rules that repeat another dropped; {} rules of {rules} left", prog.rules.len())
-        });
-    }
-}
-
-/// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across
-/// programs, the rules dropped.
-pub fn merge_and_drop_repeats(prog: &mut front::Program) -> (usize, usize, usize) {
-    // One merge finds every class at once: its congruence is the greatest, and it compares a relation's rules as a
-    // set, so a repeated rule does not keep a relation from its twin. The merge's renaming can make rules repeat;
-    // they are dropped after it, and make nothing more mergeable. (A loop of merges until no rule repeated was 2-3
-    // congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
-    let mut repeated = drop_repeated_rules(prog);
-    let (merged, shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-    repeated += drop_repeated_rules(prog);
-    (merged, shared, repeated)
-}
-
-/// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
-/// was planned and run as a rule of its own. Hiding's clones made them (at O125 step 07, 407 of the cross part's
-/// 1,483 rules, `rr_in_annotation_0_bv`'s most). Returns how many it dropped.
-pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
-    use std::hash::{Hash, Hasher};
-    let before = prog.rules.len();
-    let mut seen: HashMap<u64, Vec<usize>> = HashMap::new();
-    // Each rule kept with the rules it stands for: itself and its repeats, whose readers it serves (the request
-    // record, `Program::set_rules_from`).
-    let mut kept: Vec<(usize, Vec<usize>)> = Vec::with_capacity(before);
-    for (i, r) in prog.rules.iter().enumerate() {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        r.hash(&mut h);
-        let at = seen.entry(h.finish()).or_default();
-        match at.iter().find(|&&k| prog.rules[kept[k].0] == *r) {
-            Some(&k) => kept[k].1.push(i),
-            None => {
-                at.push(kept.len());
-                kept.push((i, vec![i]));
-            }
-        }
-    }
-    if kept.len() == before {
-        return 0;
-    }
-    let rules: Vec<(front::Rule, Vec<usize>)> = kept.into_iter().map(|(i, from)| (prog.rules[i].clone(), from)).collect();
-    prog.set_rules_from(rules);
-    before - prog.rules.len()
-}
-
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
-/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
-/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
-const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
-
-/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
-/// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
-/// cpython_ast_dump(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
-/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
-/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
-fn cpython_functors(prog: &mut front::Program) -> Result<()> {
-    fn lift(t: &mut front::Term, bound: &mut Vec<(&'static str, front::Term, String)>) {
-        let front::Term::Call(f, args) = t else { return };
-        args.iter_mut().for_each(|a| lift(a, bound));
-        let (Some(&(_, rel)), [arg]) = (CPYTHON_FUNCTORS.iter().find(|(g, _)| g == f), args.as_slice()) else { return };
-        let var = match bound.iter().find(|(r, a, _)| *r == rel && a == arg) {
-            Some((_, _, v)) => v.clone(),
-            None => {
-                let v = format!("{rel}_{}", bound.len());
-                bound.push((rel, arg.clone(), v.clone()));
-                v
-            }
-        };
-        *t = front::Term::Var(var.into());
-    }
-    fn calls(t: &front::Term) -> bool {
-        matches!(t, front::Term::Call(f, args) if CPYTHON_FUNCTORS.iter().any(|(g, _)| g == f) || args.iter().any(calls))
-    }
-    let mut used = BTreeSet::new();
-    for rule in &mut prog.rules {
-        let mut bound = Vec::new();
-        for l in &mut rule.body {
-            match l {
-                front::Literal::Atom(a) => a.args.iter_mut().for_each(|t| lift(t, &mut bound)),
-                front::Literal::Cmp { l, r, .. } => {
-                    lift(l, &mut bound);
-                    lift(r, &mut bound);
-                }
-                front::Literal::Agg { atom, .. } if atom.args.iter().any(calls) => {
-                    return Err(Error::Plan(format!("@py_unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", atom.rel)));
-                }
-                _ => {}
-            }
-        }
-        rule.head.args.iter_mut().for_each(|t| lift(t, &mut bound));
-        for (rel, arg, var) in bound {
-            used.insert(rel);
-            rule.body.push(front::Literal::Atom(front::Atom { rel: rel.to_owned().into(), args: [arg, front::Term::Var(var.into())].into(), neg: false, gated: false }));
-        }
-    }
-    for rel in used {
-        let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
-        prog.decls.entry(rel.to_owned().into()).or_insert_with(|| [(cols[0].to_owned().into(), "node".into()), (cols[1].to_owned().into(), "sym".into())].into());
-    }
-    Ok(())
-}
-
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
-/// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
+/// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rerail's `syntax_error` is the engine's, decision
 /// 0141). Here so the runner, which is not test-only, can tell them from unbound core relations.
 pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json", "tape_syntax_error"];
 
-/// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
+/// Fails, naming it, where `prog` reads one of core.rerail's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …): the planner would otherwise fail on its missing statistics (`no statistics for
 /// value.c0`). A program's own inputs are its business (facts it is given later), so are the facts the converter
-/// gives (`GIVEN`: core.rr's `option_item` among them, empty for an option of no items), and the relations not made
+/// gives (`GIVEN`: core.rerail's `option_item` among them, empty for an option of no items), and the relations not made
 /// yet are empty (`NOT_MADE`, O76).
 fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result::Result<(), String> {
     let derived = |rel: &str| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()) || v.find(rel).and_then(|a| v.facts(a)).is_some_and(|f| !f.about());
-    let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
-    // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
-    // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
+    let cpython = "CPython (core.rerail: the isolated `ast.parse` worker), which the corpus runner does not run";
+    // `env` is the run's settings (`tools::with_settings`), and `tool_call` and `tool_input` the tool calls it is given
+    // (`corpus::added`, `rr::lower::TOOL_CALLS`): facts when there are any, else empty. The world's relations
+    // (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
-    // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
-    // relations itself (T's shape, `syntax::Projection::of`: not every relation core.rr declares is declared) has none.
+    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel) || analysis_history::is_input(rel)
+        || matches!(rel, "env" | "source_grammar_suffix" | "source_grammar_registry" | "source_tape_version")
+        || crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.contains(&rel)
+        || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    // core.rerail's literal parts are made in core.rerail's shape only (`syntax::core_rr`): a program that declares its base
+    // relations itself (T's shape, `text_demand::projection_of`: not every relation core.rerail declares is declared) has none.
     let core = crate::code_rule_dsl::facts::core::core_names();
     let t_shape = core.is_empty() || !core.iter().all(|r| v.decl_of(r.as_str()).is_some());
     let parts = |rel: &str| t_shape && rel.starts_with("str_part");
@@ -2414,7 +2131,7 @@ fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result
                 continue;
             }
             let why = match rel {
-                _ if parts(rel) => format!("core.rr's shape makes it (a program that includes core.rr); without it, it needs {cpython}"),
+                _ if parts(rel) => format!("core.rerail's shape makes it (a program that includes core.rerail); without it, it needs {cpython}"),
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };
@@ -2429,17 +2146,20 @@ fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result
 /// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
 /// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
-fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
+fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> Result<(usize, BTreeSet<String>)> {
     let rules = of.rules();
     let prog = of.head();
+    let inputs = prog.input_names();
+    let natives = prog.natives();
+    let declared = prog.declared_names();
     // An input the program reads (`within`, which lowering keeps where a rule reads it) is a base relation, the run's:
     // its declaration stays with the program.
     let library: BTreeSet<&str> =
-        modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !prog.inputs.iter().any(|i| i == r)).collect();
+        modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !inputs.iter().any(|i| i == r)).collect();
     let edges: Vec<(String, Vec<String>)> = rules
         .iter()
         .cloned()
-        .chain(prog.natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
+        .chain(natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
         .collect();
     let mut cone: BTreeSet<String> = modules.heads.iter().filter(|h| library.contains(h.as_str())).cloned().collect();
     loop {
@@ -2460,12 +2180,11 @@ fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr
         }
     }
     let mut part: BTreeSet<String> = library.iter().filter(|r| !cone.contains(**r)).map(|r| (*r).to_owned()).collect();
-    let candidates: BTreeSet<String> = prog
-        .decls
-        .keys()
-        .map(|r| r.as_str())
+    let candidates: BTreeSet<String> = declared
+        .iter()
+        .map(String::as_str)
         .chain(rules.iter().map(|(head, _)| head.as_str()))
-        .chain(prog.natives.keys().map(String::as_str))
+        .chain(natives.keys().map(String::as_str))
         .filter(|r| !library.contains(*r) && !core.contains(*r) && !cone.contains(*r))
         .map(str::to_owned)
         .collect();
@@ -2480,45 +2199,69 @@ fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr
             break;
         }
     }
-    let taken = part.iter().filter(|r| prog.decls.contains_key(r.as_str()) || rules.iter().any(|(head, _)| head == *r)).count();
+    let taken = part.iter().filter(|r| declared.contains(*r) || rules.iter().any(|(head, _)| head == *r)).count();
     let cones = cone.into_iter().filter(|r| library.contains(r.as_str())).collect();
-    drop_relations(of, &part);
-    (taken, cones)
+    drop_relations(of, &part)?;
+    Ok((taken, cones))
 }
 
 /// `relations` taken out of `part`: their rules, declarations, rows, natives, lattices and nullary marks.
-fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) {
+fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) -> Result<()> {
+    use crate::code_rule_dsl::logic::program_facts::Field;
     part.drop_heads(&|head| relations.contains(head));
-    let prog = part.head_mut();
-    prog.decls.retain(|r, _| !relations.contains(r.as_str()));
-    prog.facts.retain(|r, _| !relations.contains(r));
-    prog.natives.retain(|r, _| !relations.contains(r));
-    prog.lattice.retain(|r, _| !relations.contains(r));
-    prog.nullary.retain(|r| !relations.contains(r));
+    part.edit_head(&mut |prog| {
+        for r in prog.declared_names() {
+            if relations.contains(&r) {
+                prog.undeclare(&r);
+            }
+        }
+        for r in prog.fact_names() {
+            if relations.contains(&r) {
+                prog.drop_facts(&r);
+            }
+        }
+        let natives = prog.natives();
+        if natives.keys().any(|r| relations.contains(r)) {
+            let kept: BTreeMap<_, _> = natives.into_iter().filter(|(r, _)| !relations.contains(r)).collect();
+            prog.set_field(Field::Natives(&kept));
+        }
+        let lattice = prog.lattice();
+        if lattice.keys().any(|r| relations.contains(r)) {
+            let kept: BTreeMap<_, _> = lattice.into_iter().filter(|(r, _)| !relations.contains(r)).collect();
+            prog.set_field(Field::Lattice(&kept));
+        }
+        let nullary = prog.nullary();
+        if nullary.iter().any(|r| relations.contains(r)) {
+            let kept: BTreeSet<String> = nullary.into_iter().filter(|r| !relations.contains(r)).collect();
+            prog.set_field(Field::Nullary(&kept));
+        }
+    })
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
-/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0141), the bridged and the
-/// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
+/// or derives, other than the base inputs, the shared outputs, `core.rerail`'s (decision 0141), the earlier phases'
+/// exports and the guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
 fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
-    let shared_outputs = |r: &str| r == "violation" || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
+    let shared_outputs = |r: &str| r == "violation" || r == crate::code_rule_dsl::logic::rr::UNPLACED || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
     let file_inputs = file_inputs(prog);
-    prog.decls
-        .keys()
-        .map(|r| r.as_str())
-        .chain(prog.facts.keys().map(String::as_str))
+    let inputs = prog.input_names();
+    let (declared, facts) = (prog.declared_names(), prog.fact_names());
+    declared
+        .iter()
+        .map(String::as_str)
+        .chain(facts.iter().map(String::as_str))
         .chain(heads.iter().map(String::as_str))
-        .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
+        .filter(|r| (!inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
         .map(str::to_owned)
         .collect()
 }
 
 /// The relations a policy reads from repository files (`.input r(IO=…)`): each is the policy's own.
-fn file_inputs(prog: &front::Program) -> BTreeSet<String> {
-    prog.settings.iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
+fn file_inputs(prog: &dyn crate::code_rule_dsl::logic::program_image::fields::ProgramFields) -> BTreeSet<String> {
+    prog.settings().iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
 }
 
 /// A program's request (decision 0089 §3): the library relations of its cone (`cone`) and every relation of its own
@@ -2532,12 +2275,13 @@ fn request_unit<P: link::Part>(part: &P, cone: &BTreeSet<String>, core: &BTreeSe
     let prog = part.head();
     let rules = part.rules();
     let files = file_inputs(prog);
+    let (natives, lattice, nullary) = (prog.natives(), prog.lattice(), prog.nullary());
     let mut unit: BTreeSet<String> = cone.iter().filter(|r| own.contains(*r)).cloned().collect();
     let mut work: Vec<String> = unit.iter().cloned().collect();
     let mut outside = false;
     while let Some(rel) = work.pop() {
         let mut reads: Vec<String> = rules.iter().filter(|(head, _)| *head == rel).flat_map(|(_, reads)| reads.iter().cloned()).collect();
-        if let Some(native) = prog.natives.get(&rel) {
+        if let Some(native) = natives.get(&rel) {
             reads.extend(native.reads().into_iter().map(str::to_owned));
         }
         for r in reads {
@@ -2562,11 +2306,11 @@ fn request_unit<P: link::Part>(part: &P, cone: &BTreeSet<String>, core: &BTreeSe
     for rel in &unit {
         hash.update(format!(
             "{rel} {:?} {:?} {:?} {:?} {}\n",
-            prog.decls.get(rel.as_str()),
-            prog.facts.get(rel),
-            prog.natives.get(rel),
-            prog.lattice.get(rel),
-            prog.nullary.contains(rel)
+            prog.columns_of(rel),
+            prog.states_facts(rel).then(|| prog.fact_rows(rel)),
+            natives.get(rel),
+            lattice.get(rel),
+            nullary.contains(rel)
         ));
     }
     (unit, hash.finalize().into())
@@ -2612,11 +2356,27 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
     };
     {
         let v = local.version.clone();
-        debug_assert!(local.maint.is_none(), "a split's file-local part is not maintained");
+        // A produced relation reads its request (decision 0065 §2a, as `front::strata` counts it): a cone that reads
+        // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
+        let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
+        let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
+        // A rule whose bound `FoldOwn` widened reads the annotations' documents, which their requests make (`DEMAND`,
+        // answered in the fixpoint): it reads the request too. Without it, `ids(m, x) :- idents(m, x)` over the
+        // widened `idents` had no annotation in a cone of its own, where a full run's `names` asked for them.
+        let demand = v.rel(guests::DEMAND).map(|_| guests::DEMAND.to_owned());
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
-                .flat_map(|r| r.body().filter_map(|l| match l.view() { Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()), _ => None }).collect::<Vec<_>>())
+                .flat_map(|r| {
+                    r.body()
+                        .filter_map(|l| match l.view() {
+                            Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
+                            Lit::Cmp { l, r, .. } if guests::widened(l) || guests::widened(r) => demand.clone(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .chain(requests.iter().filter(|(by, _)| cone.contains(by)).map(|(_, req)| req.clone()))
                 .collect()
         });
         let inside = |rel: &str| cone.contains(rel);
@@ -2631,7 +2391,7 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
                 return Some(p);
             }
             let mut b = Builder::on(&p);
-            b.set_answers(&kept);
+            b.fields().set_answers(&kept);
             b.finish_overlay().ok()
         });
         let made = made.expect("a part of a version by its relations is made");
@@ -2649,7 +2409,12 @@ const TAPE_RUNS: usize = 4;
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let owner = ThreadStore::owner(root);
+    let scope = owner.as_ref().map(|owner| owner.scope.clone())
+        .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
+        .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
+    let root = crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| root.canonicalize().ok()).unwrap_or_else(|| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
@@ -2668,7 +2433,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // The frames a keep decision leaves unreachable are a utility upkeep job's (decision 0227): one a process for the
     // store, finished at the outermost run's end (`upkeep::finish_soon`) if the scheduler has not run it.
     if collect {
-        crate::content_store::upkeep::Frames::register_once(store.database_path());
+        crate::content_store::upkeep::MemoSweep::register_once(store.database_path());
     }
     // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
     let mut policy = crate::content_store::CorpusPolicy::default();
@@ -2679,9 +2444,12 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // takes them as the writer applies it (`take_named_sources`), with these, named on the run's side.
     let mut sources = sources;
     sources.extend(late.lock().expect("the late sources").iter().copied());
-    let key = manifest_key(&root, &plan);
+    let publisher = owner.as_ref().map(|owner| owner.membership()).or(scope.as_deref()).unwrap_or_default();
+    let key = manifest_key(&root, &plan, publisher);
     let manifest = Manifest {
         root,
+        scope,
+        owner,
         sources,
         grammar_version: crate::code_rule_dsl::build_ids::grammar_version(),
         tape_format: i64::from(crate::code_rule_dsl::tape::formats::stored_version()),
@@ -2726,17 +2494,17 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
             let store = ContentStore::open(&path)?;
             let (mut idle, mut kept, mut plan_rows, mut tapes, mut sources) = (0, None, 0, 0, 0);
+            let mut observer = None;
             while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
                 let pass = store.collect_corpus_pass(&policy, now)?;
                 passes += 1;
                 idle = if pass.did_work() { 0 } else { idle + 1 };
                 kept = pass.kept.or(kept);
+                observer = pass.observer.or(observer);
                 (plan_rows, tapes, sources) = (plan_rows + pass.plan_rows, tapes + pass.collection.tapes, sources + pass.collection.sources);
             }
-            // The observer's store, with what the passes left live (`observe::collect`).
-            let live = store.live_plans()?;
-            let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
-            let swept = format!("; the observer's store: {} cursors, {} answers, {} records, {} output directories and {} rows of its own journal dropped", swept.cursors, swept.answers, swept.records, swept.outputs, swept.changes);
+            // The observer's store, swept by the pass under the store's lease with what it left live (`observe::collect`).
+            let swept = observer.map(|s| format!("; the observer's store: {} cursors, {} answers, {} records, {} output directories and {} rows of its own journal dropped", s.cursors, s.answers, s.records, s.outputs, s.changes)).unwrap_or_default();
             Ok(match kept {
                 Some(k) => format!(
                     "{} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB; {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted{}",
@@ -2758,14 +2526,18 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
 }
 
 /// The key a run's manifest's item is queued under: its root's and plan's.
-fn manifest_key(root: &str, plan: &[u8; 32]) -> crate::content_store::write_back::Key {
-    crate::content_store::write_back::Key::of(&[b"the run's manifest", root.as_bytes(), plan])
+fn manifest_key(root: &str, plan: &[u8; 32], scope: &str) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"the run's manifest", root.as_bytes(), plan, scope.as_bytes()])
 }
 
 /// A run's manifest, as its record holds it (decision 0306).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Manifest {
     root: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    owner: Option<crate::content_store::analysis_scope::AnalysisOwner>,
     sources: Vec<crate::content_store::SourceId>,
     grammar_version: i64,
     tape_format: i64,
@@ -2782,7 +2554,7 @@ struct Manifest {
 fn apply_manifest(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
     let mut m: Manifest = crate::content_store::record::codec::from_body("the run's manifest", body)?;
     m.sources.extend(cx.store.take_named_sources());
-    let new = cx.store.record_corpus_run_policy(&m.root, &m.sources, m.grammar_version, m.tape_format, m.plan, &m.also, m.lane, m.set, m.now)?;
+    let new = cx.store.record_corpus_run_retaining(&m.root, &m.sources, m.grammar_version, m.tape_format, m.plan, &m.also, m.lane, m.set, m.now, m.scope.as_deref(), m.owner.as_ref())?;
     // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never record a new one.
     if new {
         crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{}, {} sources", m.root, m.sources.len()));
@@ -2804,9 +2576,16 @@ thread_local! {
 
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
-/// directory; `RERAIL_TAPE_CACHE=off` keeps none.
+/// directory; `RERAIL_TAPE_CACHE=off` keeps none. A named store another process kept past this one's wait is an error
+/// that names that process (`owner::named`).
 pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
-    tape_cache_path().map(|path| ContentStore::open(&path)).transpose()
+    match tape_cache_path() {
+        Some(path) => ContentStore::open(&path).map(Some),
+        None => match std::env::var_os("RERAIL_TAPE_CACHE").filter(|v| v != "off").and_then(|v| owner::refusal(std::path::Path::new(&v))) {
+            Some(why) => Err(crate::content_store::StoreError::Invalid(why)),
+            None => Ok(None),
+        },
+    }
 }
 
 /// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
@@ -2869,20 +2648,23 @@ impl Drop for ObservedBatch {
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock. Until
 /// it is done the file stays open: a run that replaces its files waits for it first (`closes_done`).
 fn close_beside(db: Connection) {
-    *CLOSING.0.lock().expect("the closes beside") += 1;
-    rerail_accel::exec::drop_beside(Closing(Some(db)));
+    let closing = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
+    *closing.0.0.lock().expect("the closes beside") += 1;
+    rerail_accel::exec::drop_beside(Closing(Some(db), closing));
 }
 
-/// The connections closing beside runs (`close_beside`), and their end.
-static CLOSING: (std::sync::Mutex<usize>, std::sync::Condvar) = (std::sync::Mutex::new(0), std::sync::Condvar::new());
+/// The connections closing beside the machine's runs (`close_beside`), and their end (decision 0442: the machine's,
+/// as the files they hold open are).
+#[derive(Default)]
+struct ClosingBeside((std::sync::Mutex<usize>, std::sync::Condvar));
 
-/// A connection closing beside the run: counted until its close is done.
-struct Closing(Option<Connection>);
+/// A connection closing beside the run: counted until its close is done, in the count it was added to.
+struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>);
 
 impl Drop for Closing {
     fn drop(&mut self) {
         drop(self.0.take());
-        let (n, done) = &CLOSING;
+        let (n, done) = &self.1.0;
         *n.lock().expect("the closes beside") -= 1;
         done.notify_all();
     }
@@ -2892,7 +2674,8 @@ impl Drop for Closing {
 /// replaced under a connection still closing would be its, and the connection's close deletes its write-ahead log by
 /// name: the new store's. On a thread of the pool it runs the pool's jobs meanwhile (a close may be one of them).
 pub fn closes_done() {
-    let (n, done) = &CLOSING;
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
+    let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
     while *left > 0 {
         if rayon::current_thread_index().is_some() {
@@ -2907,46 +2690,110 @@ pub fn closes_done() {
     }
 }
 
-/// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
-/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes.
-static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
+/// The store this caller's runs use instead of the machine's while one is bound (`use_store`): testing mode's
+/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes. In the run's
+/// context (decision 0442), so its runs' jobs use it too.
+#[derive(Clone, Default)]
+struct UseStore(Option<std::path::PathBuf>);
 
-/// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
-pub fn use_store(path: std::path::PathBuf) -> UsedStore {
-    let was = STORE.write().expect("the process's store").replace(path);
-    UsedStore(was)
+#[derive(Clone)]
+struct StoreSelection {
+    path: Option<PathBuf>,
+    ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>,
+    git_reads: Arc<crate::git_workspace::snapshot::InventoryReads>,
 }
 
-/// `use_store`'s guard: the store before it comes back when it drops.
-pub struct UsedStore(Option<std::path::PathBuf>);
+/// The store the caller selected for its runs (`ThreadStore::select`), in the run's context (decision 0442): its
+/// runs' jobs read it too.
+#[derive(Clone, Default)]
+struct SelectedStore(Option<StoreSelection>);
 
-impl Drop for UsedStore {
-    fn drop(&mut self) {
-        *STORE.write().expect("the process's store") = self.0.take();
+struct ThreadStore {
+    _bound: crate::code_rule_dsl::logic::profile::Bound,
+}
+
+impl ThreadStore {
+    fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
+        let path = (path != Path::new(":memory:")).then(|| path.to_owned());
+        Self { _bound: crate::code_rule_dsl::logic::profile::bind(SelectedStore(Some(StoreSelection { path, ownership, git_reads: Arc::default() }))) }
+    }
+
+    fn with<R>(f: impl FnOnce(Option<&StoreSelection>) -> R) -> R {
+        crate::code_rule_dsl::logic::profile::with_bound(|s: &SelectedStore| f(s.0.as_ref()))
+    }
+
+    fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
+        Self::with(|store| {
+            let (expected, owner) = store?.ownership.as_ref()?;
+            (expected == root).then(|| owner.clone())
+        })
+    }
+
+    fn ephemeral() -> bool {
+        Self::with(|store| store.is_some_and(|store| store.path.is_none()))
+    }
+
+    fn git_reads() -> Option<Arc<crate::git_workspace::snapshot::InventoryReads>> {
+        Self::with(|store| store.map(|selected| Arc::clone(&selected.git_reads)))
     }
 }
 
-/// Whether the process names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
+/// Run with an explicitly selected cache on this thread.
+pub fn with_tape_cache_path<T>(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>, run: impl FnOnce() -> T) -> T {
+    let _store = ThreadStore::select(path, ownership);
+    run()
+}
+
+/// An enclosing evaluation owns the publication decision for this root.
+pub fn has_analysis_owner(root: &Path) -> bool {
+    ThreadStore::owner(root).is_some()
+}
+
+/// Reads requested by this batch alone, even when later batches reuse its source view.
+pub fn git_source_reads_complete() -> bool {
+    ThreadStore::git_reads().is_none_or(|reads| reads.complete())
+}
+
+/// While the guard lives, every run of this thread (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
+pub fn use_store(path: std::path::PathBuf) -> UsedStore {
+    UsedStore { _store: crate::code_rule_dsl::logic::profile::bind(UseStore(Some(path))) }
+}
+
+/// `use_store`'s guard: the store before it comes back when it drops.
+pub struct UsedStore {
+    _store: crate::code_rule_dsl::logic::profile::Bound,
+}
+
+/// Whether the caller names the store its runs use (`RERAIL_TAPE_CACHE`, `use_store`), so a test's runs use that
 /// one and not their own copy (`test_store::carried`).
 #[cfg(any(test, feature = "test-hooks"))]
 fn names_its_store() -> bool {
-    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || STORE.read().expect("the process's store").is_some()
+    std::env::var_os("RERAIL_TAPE_CACHE").is_some() || crate::code_rule_dsl::logic::profile::bound::<UseStore>().0.is_some()
 }
 
-/// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
+/// The path `tape_cache` opens. `None`: `RERAIL_TAPE_CACHE=off`, or the store it names belongs to another process past
+/// this one's wait (`owner::refusal`, said once as it was refused), and the process runs without a store; `tape_cache`,
+/// the run's opener, fails with that error.
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
+    if let Some(path) = ThreadStore::with(|store| store.map(|store| store.path.clone())) {
+        return path;
+    }
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
-        && let Some(path) = STORE.read().expect("the process's store").clone()
+        && let Some(path) = crate::code_rule_dsl::logic::profile::bound::<UseStore>().0
     {
         return Some(path);
     }
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
-        Ok(v) => Some(std::path::PathBuf::from(v)),
+        // The user's store, this process's once no other owns it (`owner::named`): none while another keeps it.
+        Ok(v) => {
+            let path = std::path::PathBuf::from(v);
+            owner::named(&path).is_ok().then_some(path)
+        }
         // A test's own store, a copy of the template (`test_store`); the process's only off a test's thread.
         #[cfg(any(test, feature = "test-hooks"))]
         Err(_) => Some(test_store::own().unwrap_or_else(|| test_tape_cache().clone())),
@@ -2957,33 +2804,36 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
 
 /// The store a run uses when none is named: the project's for this build (`build_store`), the project being the
 /// working directory. Every stored key carries the engine's build, so another build's entries are of no use to a run;
-/// and another project's runs would leave their atoms and plans in it, and hold its writer.
+/// and another project's runs would leave their atoms and plans in it, and hold its writer. Of that store's slots, the
+/// first no other process owns (`owner::slot`): runs at once from one directory each have their own.
 #[cfg(not(any(test, feature = "test-hooks")))]
 fn default_store() -> &'static std::path::PathBuf {
     static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
-        let cwd = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok()).unwrap_or_default();
-        build_store("rerail-stores", Some(&cwd.to_string_lossy()))
+        let cwd = std::env::current_dir().ok().and_then(|d| dunce::canonicalize(&d).ok()).unwrap_or_default();
+        owner::slot(&build_store("rerail-stores", Some(&cwd.to_string_lossy())))
     });
     &PATH
 }
 
 /// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
 /// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
-/// lock files, which start with the same name).
+/// lock files, which start with the same name), unless a live process owns their store (`owner::remove_unowned`).
 pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let dir = std::env::temp_dir().join(dir);
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::content_store::prepare_cache_directory(&dir);
     let build = crate::code_rule_dsl::build_ids::engine();
     let build = &build[..build.len().min(16)];
     let day = std::time::Duration::from_secs(24 * 3600);
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
-        if !name.starts_with(build) && old {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    let old: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with(build))
+        .collect();
+    owner::remove_unowned(&dir, &old);
     match key {
         // The hasher's keys are fixed: within a build, a project's name is the same in every process.
         Some(key) => {
@@ -3007,8 +2857,7 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(pid) = name.strip_prefix(PREFIX).and_then(|rest| rest.split('.').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
-            // SAFETY: signal 0 checks that the process exists and sends nothing.
-            if pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            if crate::content_store::process_gone(pid) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -3020,8 +2869,12 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
                 }
             }
         }
+        // The C runtime's, on every platform (libc's crate has it on Unix only).
+        unsafe extern "C" {
+            fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
+        }
         // SAFETY: `remove` is a plain function that runs once, at exit.
-        unsafe { libc::atexit(remove) };
+        unsafe { atexit(remove) };
         dir.join(format!("{PREFIX}{}.sqlite", std::process::id()))
     });
     &PATH
@@ -3038,21 +2891,10 @@ pub fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &P
 /// they run on the lazy DFA, whose states are built as its strings reach them.
 const DENSE_TEXT_DOCS: usize = 64;
 
-/// The first chunk's nodes, at most: what it adds per node sizes the rest.
-const PROBE_NODES: usize = 65_536;
-/// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
-const CHUNK_MB: f64 = 384.0;
-/// The run's whole footprint budget (`RERAIL_RUN_MB`): a chunk adds at most three quarters of what is left of it
-/// above the footprint the chunk starts at (the program, its plans, the cross part's rows), so the run stays within
-/// it however large the program is.
-const RUN_MB: f64 = 1024.0;
-/// The fewest nodes a chunk is sized to: a smaller one costs more in each chunk's fixed work than it saves.
-const MIN_CHUNK_NODES: usize = 8_192;
-/// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
-/// smaller ones, below it (Q74).
-const CHUNK_FLOOR_MB: f64 = 64.0;
-/// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
-const CHUNK_CREDIBLE_MB: usize = 16;
+/// The first chunk's nodes (`sizing::FIRST_NODES`), or `RERAIL_PROBE_NODES` (a measurement switch, 0419).
+fn probe_nodes() -> usize {
+    std::env::var("RERAIL_PROBE_NODES").ok().and_then(|v| v.parse().ok()).unwrap_or(sizing::FIRST_NODES)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
@@ -3066,14 +2908,16 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+    // The run's options as it is first given them: a `toolCalls` option not of its shape is an error here (`added`).
+    added::check_tool_calls(options).map_err(Error::Plan)?;
+    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
 /// program, and is keyed by its digest (`read_key`), never by a print of it (decision 0249).
 #[allow(clippy::too_many_arguments)]
 pub fn run_read(
-    read: &front::Program,
+    read: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     root: &Path,
     out: &Path,
     modes: &str,
@@ -3082,13 +2926,35 @@ pub fn run_read(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options)
+    run_read_handing(read, None, root, out, modes, binding, chunk_nodes, typing, options, None)
+}
+
+/// Run a policy with in-memory evaluation tables and return its complete output image.
+pub fn run_policy_image(program: &Arc<crate::code_rule_dsl::logic::program_image::Version>, root: &Path, binding: Binding, options: &serde_json::Value) -> Result<(Report, Vec<u8>)> {
+    let mut image = Vec::new();
+    let report = run_read_handing(program, None, root, Path::new(""), "program", binding, 1 << 18,
+        &Typing::default(), options, Some(&mut image))?;
+    Ok((report, image))
+}
+
+/// Decision 0431 R9: a finding placed at a node no file holds (a tape value's: a string a rule parsed) has no place,
+/// so the run is refused, naming the clauses (`rr_unplaced`, the findings' lowering), not dropped.
+fn refuse_unplaced(out: &Path) -> Result<()> {
+    let Ok(rows) = output::shown(out, crate::code_rule_dsl::logic::rr::UNPLACED) else { return Ok(()) };
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let clauses: Vec<&str> = rows.iter().filter_map(|r| r.first().map(String::as_str)).collect();
+    Err(Error::Plan(format!(
+        "findings of {} are placed at a tape value's node, which no file holds (decision 0431): place them through the string (`guest_place`, or at the string)",
+        clauses.join(", ")
+    )))
 }
 
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_read_handing(
-    read: &front::Program,
+    read: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     sources: Option<&texts::Sources>,
     root: &Path,
     out: &Path,
@@ -3097,22 +2963,43 @@ pub(super) fn run_read_handing(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    image: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
+    added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, image, Default::default())
+}
+
+/// Inputs specific to an embedded fact phase. Its own manifest retains the compiled program,
+/// including when another evaluation calls this phase before it publishes its own manifest.
+#[derive(Clone, Copy, Default)]
+struct FactPhase<'a> {
+    program_entry: Option<[u8; 32]>,
+    _run: std::marker::PhantomData<&'a ()>,
+}
+
+fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
+    let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
+    let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
+    let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
+    let key = read_key(&program)?;
+    let mut image = Vec::new();
+    run_handed(&[key.as_str()], Some(&program), None, root, None, Path::new(""), "program",
+        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), FactPhase { program_entry, _run: std::marker::PhantomData })?;
+    Ok(image)
 }
 
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
 /// that it reads as no program. Every key a run makes of its texts is made of this.
-fn read_key(read: &front::Program) -> Result<String> {
-    let version = super::body::Placed::of_program(read)?;
+fn read_key(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<String> {
+    let version = super::body::Placed::whole(Arc::clone(read));
     Ok(format!("rerail.read-program {}", crate::content_store::observe::hex(&super::choices::key(&version))))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_handed(
     programs: &[&str],
-    read: Option<&front::Program>,
+    read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     sources: Option<&texts::Sources>,
     root: &Path,
     t_facts: Option<&Path>,
@@ -3122,9 +3009,17 @@ fn run_handed(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    mut image: Option<&mut Vec<u8>>,
+    phase: FactPhase<'_>,
 ) -> Result<Report> {
+    // The corpus root by one name, its canonical one, as each part keyed by it names it (the observer's roots, a
+    // `World`'s, the run's reuse and constants keys): a root named by an alias (`/tmp`, `/var` on macOS) was read
+    // by the alias and watched by both names, and the run after a cold one wrote the alias's first cursor
+    // (`RERAIL_WARM`), the cold run having watched the directory above it, the store's own.
+    let root = &std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
+    let git_batch = crate::git_workspace::snapshot::StorageBatch::begin(root).map_err(|error| Error::Plan(error.to_string()))?;
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
     // statistics, stop at their next check, their work left due, until the run ends.
     let store_file = tape_cache_path();
@@ -3134,19 +3029,11 @@ fn run_handed(
     let mut under_way = Some(rerail_accel::upkeep::run_begins(&files));
     drop(stopping);
     let lifecycle_start = usage();
-    // Library and test callers do not pass through the CLI/Node pool setup.
-    // Initialize before phase 0 or a parallel read can create rayon's default pool.
-    crate::threads::configure(false);
+    // Library and test callers do not pass through the CLI's or Node's setup: the one block policy, before the run's
+    // first block.
+    crate::threads::configure();
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
-    struct Device(super::placement::Binding);
-    impl Drop for Device {
-        fn drop(&mut self) {
-            super::placement::set_binding(self.0);
-        }
-    }
-    let was = super::placement::binding();
-    super::placement::set_device(binding == Binding::Metal);
-    let _device = Device(was);
+    let _device = super::placement::set_device(binding == Binding::Metal);
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
@@ -3163,9 +3050,9 @@ fn run_handed(
     });
     drop(watching);
     let lifecycle_observed = usage();
-    // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
+    // Phase 0 first: each text's include graph, from `bootstrap.rerail`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
-    // Resolve `components.rr` only when the program or one of its modules can use
+    // Resolve `components.rerail` only when the program or one of its modules can use
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
     // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
@@ -3175,6 +3062,7 @@ fn run_handed(
     };
     let texts = Texts {
         sources,
+        phase,
         ..texts
     };
     let mut component_seeded = false;
@@ -3183,35 +3071,36 @@ fn run_handed(
         // Includes alone do not imply component demand. Inspect each observed
         // module once; comments can conservatively request preparation. Missing
         // or malformed modules remain the parser's error, not a proof of no demand.
-        let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
+        let uses_components = |text: &str| text.contains("rr_cx_");
         let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
         // A handed program, by its own settings and relations: its key is no text to search.
-        let read_uses = |p: &front::Program| {
-            p.settings.iter().any(|(k, v)| k == "pragma" && v.contains("cross-memo"))
-                || p.decls.keys().any(|r| r.starts_with("rr_cx_"))
-                || p.rules.iter().any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| a.rel.starts_with("rr_cx_")))
+        let read_uses = |v: &Arc<crate::code_rule_dsl::logic::program_image::Version>| {
+            v.declared_names().iter().any(|r| r.starts_with("rr_cx_"))
+                || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()).starts_with("rr_cx_")))
         };
         component_seeded = read.map_or_else(|| programs.iter().any(|t| uses_components(t)), read_uses) || modules.into_iter().any(|path| {
             observe(|o| o.read(path)).is_none_or(|(bytes, _)| {
                 std::str::from_utf8(&bytes).map_or(true, uses_components)
             })
         });
-        if component_seeded {
-            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
+        if component_seeded
+            && let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rerail").canonicalize() {
                 phase0::graph(&phase0::Seed::File(components))?;
             }
-        }
     }
     drop(seeding);
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
-    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options) } else { Ok(None) };
+    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options, image.as_deref_mut()) } else { Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
-        Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 => {
+        Ok(Some(report)) if crate::code_rule_dsl::logic::profile::on() && !phase0::active() && runs_under_way() == 0 => {
+            // A long-lived process may still have observations from its last evaluation.
+            // A cutoff performs no join work on this snapshot.
+            let _sources = crate::code_rule_dsl::logic::profile::author_joins::Sources::enter(Default::default());
             match crate::code_rule_dsl::logic::profile::directory() {
-                Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\n")
+                Some(dir) => crate::code_rule_dsl::logic::profile::report::write(&dir, "Profile of a corpus run the whole-run cutoff answered: every read as the last run left it, its outputs written again\nThe engine reused the findings without evaluating joins. This run has no new join measurements.\n")
                     .map_err(|e| Error::Plan(format!("profile: {e}")))
                     .map(|()| report),
                 None => Ok(report),
@@ -3219,9 +3108,10 @@ fn run_handed(
         }
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image.as_deref_mut()).and_then(|report| {
+            refuse_unplaced(out)?;
             if reuse {
-                reuse::record(&texts, root, out, modes, typing, options, &report)?;
+                reuse::record(&texts, root, out, modes, typing, options, &report, image.as_deref().map(Vec::as_slice))?;
             }
             Ok(report)
         }),
@@ -3240,7 +3130,7 @@ fn run_handed(
         // The outermost run's last writes, its whole-run record (`reuse::record`) and this flush, are queued after
         // `run_observed` waited for the observer: wait for them too, or the process ends with them queued, and the
         // next run finds no record (every warm run evaluated again).
-        if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 {
+        if !phase0::active() && runs_under_way() == 0 {
             crate::content_store::observe::written();
         }
         did
@@ -3256,15 +3146,18 @@ fn run_handed(
             "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
             "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
     });
+    if report.is_ok() && let Some(batch) = &git_batch && !batch.is_current() {
+        return Err(Error::Plan("Git pack storage changed during rule evaluation".into()));
+    }
     // The run is over: upkeep may go on. What the outermost run left due as utility work (the frames its keep
     // decision left unreachable, decision 0227) is done before it returns, unless another run has begun.
     drop(under_way.take());
-    if !phase0::active() && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && store_file.is_some() {
+    if !phase0::active() && runs_under_way() == 0 && store_file.is_some() {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the run's utility upkeep (decision 0227)".into());
         crate::code_rule_dsl::logic::profile::behind(rerail_accel::upkeep::finish_soon);
     }
     if report.is_ok() && crate::code_rule_dsl::logic::profile::on() && !phase0::active()
-        && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0
+        && runs_under_way() == 0
         && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
     {
         use std::io::Write as _;
@@ -3286,50 +3179,25 @@ fn run_handed(
     })
 }
 
-thread_local! {
-    /// Runs under way on this thread: a run started inside another (a phase, the constants, phase 0) is nested.
-    static RUNS_UNDER_WAY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// The outermost run under way on this thread, by its token (`run_token`).
-    static RUN_TOKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+/// Runs under way here, in the run's context: a run started inside another (a phase, the constants, phase 0) is
+/// nested, and so is a run in a job of one (decision 0442: the context goes with the job).
+#[derive(Clone, Copy, Default)]
+struct RunsUnderWay(usize);
+
+/// Counts a run under way here until dropped.
+struct UnderWay {
+    _count: crate::code_rule_dsl::logic::profile::Bound,
 }
-
-/// Carries the run's nesting to a job on another thread (`run_state`): a run there is nested in this one, and is of
-/// the same outermost run. Read there unset (`0`), a wave's every lookup counted a run of its frames' space, so one
-/// run of 116 windows counted 120, and aged out (`MEMO_RUNS`) the entries its own first windows had used: the next
-/// run found none, parsed every file and wrote them all again (decision 0170).
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.copy(&["RUNS_UNDER_WAY"], &RUNS_UNDER_WAY);
-    c.copy(&["RUN_TOKEN"], &RUN_TOKEN);
-}
-
-/// The outermost runs of the process, numbered from 1.
-static RUNS_STARTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-/// The token of the outermost run under way on this thread, which its nested runs share: the frames' spaces count a
-/// run once, however many of its programs keep frames in them (`content_store::frames`). `0` outside a run.
-pub(in crate::code_rule_dsl) fn run_token() -> u64 {
-    RUN_TOKEN.with(std::cell::Cell::get)
-}
-
-/// Counts a run under way on this thread until dropped.
-struct UnderWay;
 impl UnderWay {
     fn enter() -> UnderWay {
-        RUNS_UNDER_WAY.with(|n| {
-            if n.get() == 0 {
-                RUN_TOKEN.with(|t| t.set(RUNS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1));
-            }
-            n.set(n.get() + 1)
-        });
-        UnderWay
-    }
-}
-impl Drop for UnderWay {
-    fn drop(&mut self) {
-        RUNS_UNDER_WAY.with(|n| n.set(n.get() - 1));
+        UnderWay { _count: crate::code_rule_dsl::logic::profile::bind(RunsUnderWay(runs_under_way() + 1)) }
     }
 }
 
+/// Runs under way here (`RunsUnderWay`).
+fn runs_under_way() -> usize {
+    crate::code_rule_dsl::logic::profile::bound::<RunsUnderWay>().0
+}
 
 /// `programs` with their messages masked (`rr::message_masked`), as the keys read them.
 fn masked<'a>(programs: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
@@ -3379,6 +3247,10 @@ fn compose_messages(part: &output::Rows, holes: usize, templates: &HashMap<(Stri
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The file name whose chunk's projection fails, in a build for tests: a test of a run whose chunk fails (Q224).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const FAILS_ITS_CHUNK: &str = "rerail_test_fails_its_chunk.pyi";
+
 fn run_observed(
     given: &Texts<'_>,
     root: &Path,
@@ -3389,14 +3261,49 @@ fn run_observed(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    mut captured: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
+    // The run's own state (decision 0441): the caller's run's if one is under way here, else this run's own, returned
+    // in its report.
+    let own = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    // A program whose deferred joins put a document-backed answer in the cross-file part is prepared again with the
+    // next deferral (`preparation::Deferral::after_placement`): each try changes one, so the tries are few.
+    let replans = preparation::Replans(Some(Default::default()));
+    let _replans = crate::code_rule_dsl::logic::profile::bind(replans.clone());
+    let mut report = loop {
+        let before = replans.0.as_ref().map(|r| r.lock().clone());
+        match run_observed_within(given, root, t_facts, out, modes, binding, chunk_nodes, typing, options, captured.as_deref_mut()) {
+            Err(Error::Plan(e)) if e.starts_with(REPLAN) && replans.0.as_ref().map(|r| r.lock().clone()) != before => continue,
+            r => break r?,
+        }
+    };
+    report.run = own.finish();
+    Ok(report)
+}
+
+/// The start of the error a preparation returns to be prepared again (`Replans`).
+const REPLAN: &str = "prepare again: ";
+
+/// `run_observed`, within the run's own state (`run::scope`).
+#[allow(clippy::too_many_arguments)]
+fn run_observed_within(
+    given: &Texts<'_>,
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+    captured: Option<&mut Vec<u8>>,
+) -> Result<Report> {
+    let capturing = captured.is_some();
+    let in_memory = capturing || ThreadStore::ephemeral();
     // The run's writes are waves of its own (decision 0259): each sealed at a boundary of the run (`end_wave`), the
     // last as the run ends, and the store takes each in one transaction.
     let _waves = crate::content_store::write_back::run_waves();
     let programs = given.programs;
-    // The run's distinct lists (decision 0172): every program it reads from a stored text takes its lists from here,
-    // so the lists its programs have in common are made once. It goes with the run.
-    let lists = Arc::new(front::Lists::default());
     let process_cpu = || { let u = usage(); u.0 + u.1 };
     let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
@@ -3407,14 +3314,24 @@ fn run_observed(
     // command line's `--env`).
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    // The settings are `env` rows, given to each program that declares `env` once it is read (decision 0249): the
-    // program read stays the program, and the texts are the files' own.
-    let mut added = added::Added::of(&settings, options);
     let read = given.read;
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);
     let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
+    let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
+        true
+    } else if crate::git_workspace::snapshot::contains(root) {
+        // The program without the root's settings: whether its outputs read Git metadata alone, and no setting.
+        let (probe, _) = combine_version(programs, masked, &given.graphs, &added::Added::of(&[], options), read)?;
+        use crate::code_rule_dsl::logic::program_image::{About, analyses};
+        let need = analyses::needed(&probe, &About::of(&probe), probe.output_names().iter().filter_map(|o| probe.rel(o)));
+        git::metadata_only(&probe) && !probe.rel("env").is_some_and(|env| need[env.index()])
+    } else { false };
+    if !metadata_without_env {
+        git::prime_root(root)?;
+    }
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
+    let mut added = added::Added::of(&settings, options);
     drop(setting);
     // What the run is of, whichever build runs it: its manifest's lane (`record_corpus_run_lane`).
     let lane: [u8; 32] = {
@@ -3433,10 +3350,13 @@ fn run_observed(
     // under the same options, supersedes the set's older lanes over the root, whoever runs it (the command line, a
     // session, a batch). Programs that name no policy name no set: the run's lane is its own (`record_run`).
     let policy: Option<[u8; 32]> = {
-        let names: std::collections::BTreeSet<&str> = programs
-            .iter()
-            .flat_map(|t| t.lines().filter_map(|l| l.trim_start().strip_prefix(".policy")?.trim_start().strip_prefix('"')?.split('"').next()))
-            .collect();
+        let header = read.map(|read| crate::code_rule_dsl::logic::rr::metadata(&**read)).transpose()?;
+        let names: BTreeSet<&str> = match &header {
+            Some(header) => header["policies"].as_array().into_iter().flatten().filter_map(|policy| policy["id"].as_str()).collect(),
+            None => programs.iter()
+                .flat_map(|t| t.lines().filter_map(|l| l.trim_start().strip_prefix(".policy")?.trim_start().strip_prefix('"')?.split('"').next()))
+                .collect(),
+        };
         (!names.is_empty()).then(|| {
             use sha2::Digest as _;
             let mut h = sha2::Sha256::new();
@@ -3471,7 +3391,7 @@ fn run_observed(
     let mut phase_clock: Vec<(&'static str, crate::code_rule_dsl::logic::profile::PhaseClock)> = Vec::new();
     let mut clock_last = crate::code_rule_dsl::logic::profile::snapshot();
     // The command's time before its run (reading its rules and settings), taken by the command's first run.
-    if RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0 && !phase0::active() && let Some(start) = crate::code_rule_dsl::logic::profile::take_command_start() {
+    if runs_under_way() == 0 && !phase0::active() && let Some(start) = crate::code_rule_dsl::logic::profile::take_command_start() {
         phase_clock.push(("before", crate::code_rule_dsl::logic::profile::PhaseClock::between(&start, &clock_last)));
     }
     let tracking = std::cell::Cell::new(false);
@@ -3513,26 +3433,16 @@ fn run_observed(
         }
         last = now;
     };
-    // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
-    // profiling on may have turned it off meanwhile.
-    // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
-    // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
-    // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
-    // holds the profile and waits for it).
-    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
+    // A profiled corpus run holds its run's profile (`profile::hold_records`; decision 0442: the records are the run's).
+    // A corpus run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and
+    // phase 0's own run hold it only when no corpus run of the run does: nested, the profile is the outer one's, and
+    // such a run neither resets nor writes it. So does a run behind the run on another thread (`profile::behind`:
+    // the test store's template).
+    let nested = runs_under_way() > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
-    // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
-    let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
-    let _profile = if !crate::code_rule_dsl::logic::profile::on() {
-        None
-    } else if phase0::active() || nested {
-        crate::code_rule_dsl::logic::profile::one_run_if_free()
-    } else {
-        Some(crate::code_rule_dsl::logic::profile::one_run())
-    };
-    let profiling = _profile.is_some() && crate::code_rule_dsl::logic::profile::on();
+    let _profile = if crate::code_rule_dsl::logic::profile::on() { crate::code_rule_dsl::logic::profile::hold_records() } else { None };
+    let profiling = _profile.is_some();
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
@@ -3547,57 +3457,49 @@ fn run_observed(
         tracking.set(true);
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    // The combined program as a version (decision 0281's path, step 7a), and its header: what the readers before
-    // preparation read besides the rules (`shape::Shape`), edited as the header and given to the version.
-    let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
-    let mut prog = v.header(&lists).map_err(Error::Plan)?;
-    // A debug build makes each edit on the tree beside it, and checks the two agree before preparing.
-    #[cfg(debug_assertions)]
-    let mut tree: Beside = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?.0;
-    #[cfg(not(debug_assertions))]
-    let mut tree: Beside = ();
+    // The combined program as a version (decision 0281's path, step 7a): the readers before preparation read its
+    // fields where they are (`fields`), and its rules' shape (`shape::Shape`); an edit of them is a version's edit.
+    let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read)?;
     let mut shape = shape::Shape::of(&v);
+    let git_metadata_only = crate::git_workspace::snapshot::contains(root) && git::metadata_only(&v);
     drop(combining);
-    // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
-    // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
-    // its own directory, and the job runs in this run's context (`run_state`), so its runs are nested in this one.
-    let bridged_slot = parking_lot::Mutex::new(None);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
-    // Phase 1 (`sources.rr`, decision 0104) runs first: it loads the source files and the libraries their imports
+    // Phase 1 (`sources.rerail`, decision 0104) runs first: it loads the source files and the libraries their imports
     // reach, to the imports' fixed point. Its documents are this run's, and every later phase's run inside it: a phase's
     // own run, phase 0's (another tree) and the constants' (no documents) list none of theirs from it. A run given its
     // files (`inputFiles`, T's facts) has no phase 1.
-    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    let language = v.setting_values("language").into_iter().next().map(|value| value.trim_matches('"').to_owned());
     let mut listing: Option<(Vec<String>, &'static str)> = None;
     let mut phase_one_run = None;
+    let mut source_checks = Vec::new();
+    let mut package_markers = HashMap::new();
     // The source texts the digests read (decision 0300): this run's builder takes them, and phase 1's, handed them,
     // borrows them.
     let own_sources = texts::Sources::default();
     let source_texts = texts::Given { own: &own_sources, handed: given.sources };
-    let phase_one = crate::threads::scope(|jobs| {
-        let prog = &prog;
-        let v = &v;
-        let bridged_slot = &bridged_slot;
-        let pruned = move || preparation::pruned(Arc::clone(v)).map(|p| shape::Shape::of(&p)).map_err(Error::Plan);
-        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, &pruned, root, out, modes, binding, chunk_nodes, typing)));
+    let phase_one = (|| {
+        let prog: &crate::code_rule_dsl::logic::program_image::Version = &v;
         Ok::<_, Error>(if t_facts.is_none()
+            && !git_metadata_only
             && options.get("inputFiles").is_none()
-            && phases::declared(&prog).is_none()
+            && phases::declared(prog).is_none()
             && !phases::in_phase()
             && !phase0::active()
             && options.get(constants::OWN).is_none()
             && std::env::var("RERAIL_SOURCES_PHASE").map_or(true, |v| v != "off")
         {
-            let found = scoped(corpus_files(root)?, &prog, options);
+            let found = scoped(corpus_files(root)?, prog, options);
             let label = corpus_language(language.as_deref(), typing, &found);
-            let files = found.of(label);
+            let mut of_label = found.by_label.get(label).cloned().unwrap_or_default();
+            let mut files = found.of(label);
+            git::verify_sources(root, &mut files, &mut source_checks)?;
+            of_label.retain(|path| files.binary_search(path).is_ok());
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
-            let renamed = package_root_modules(root, &files);
-            let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
+            let (renamed, _) = package_root_modules(root, &files, &mut package_markers);
             // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
             let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
@@ -3605,8 +3507,8 @@ fn run_observed(
                 .zip(digests)
                 .filter(|(_, c)| !c.is_empty())
                 .map(|(p, c)| {
-                    let module = renamed.get(p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(p));
-                    (p.clone(), module, label.to_owned(), c)
+                    let module = renamed.get(&p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(&p));
+                    (p, module, label.to_owned(), c)
                 })
                 .collect();
             listing = Some((files, label));
@@ -3614,9 +3516,9 @@ fn run_observed(
                 None
             } else {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
-                let (one, run) = phases::sources(&stated, &own_sources, label, root, out, modes, binding, chunk_nodes, typing, options)?;
+                let (one, run) = phases::sources(&stated, &own_sources, label, root, modes, binding, chunk_nodes, typing, options)?;
                 let (made, libraries) = (one.documents.len(), one.libraries.len());
-                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
+                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || {
                     format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
                 });
                 phase_one_run = Some(run);
@@ -3625,67 +3527,56 @@ fn run_observed(
         } else {
             None
         })
-    });
-    let (bridged, typing_runs) = bridged_slot.into_inner().expect("the typing programs' job ran")?;
+    })();
     let _phase_one = phase_one?;
-    let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
+    let (mut phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
-        phases::facts(&prog, &shape, root, out, modes, binding, chunk_nodes, typing, options)?
+        phases::facts(&*v, &shape, root, modes, binding, chunk_nodes, typing, options)?
     };
+    phased.extend(git::inputs(&*v, root, options, &mut source_checks));
+    if let Some(history) = analysis_history::Read::needed(&v) {
+        let (rows, digest) = history.records()?;
+        phased.extend(rows);
+        source_checks.push((analysis_history::INPUT.to_owned(), history.key().to_owned(), digest));
+    }
+    phased.extend(source_languages::inputs(&*v, root, options));
     phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
     // The split takes them as constants of the run (`file_local::run_constant`).
-    let add_bridged = |prog: &mut front::Program| {
-        for (rel, rows) in &bridged {
-            prog.facts.entry(rel.clone()).or_default().extend(rows.iter().map(crate::code_rule_dsl::logic::front::List::from));
-        }
+    let add_phased = |prog: &mut Edit<'_>| {
         for rel in phased.keys() {
-            if !prog.inputs.contains(rel) {
-                prog.inputs.push(rel.clone());
-            }
+            prog.b.fields().add_input(rel);
         }
     };
-    edit_header(&mut v, &mut prog, |p| Ok(add_bridged(p)))?;
-    #[cfg(debug_assertions)]
-    add_bridged(&mut tree);
+    edit_fields(&mut v, |p| {
+        add_phased(p);
+        Ok(())
+    })?;
     // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
-    // A debug build gives the tree the same edit: the constants' outputs, or the folded relations' rows as facts.
-    let fold_constants = |v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, prog: &mut front::Program, tree: &mut Beside, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
+    let fold_constants = |v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
                 let wanted: Vec<String> = wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-                *v = constants::as_outputs_of(v, prog, &wanted)?;
-                #[cfg(debug_assertions)]
-                constants::as_outputs(tree, &wanted);
-                let _ = tree;
+                *v = constants::as_outputs_of(v, &wanted)?;
                 Ok(Default::default())
             }
             None => {
-                let (consulted, plans, folded) = constants::fold(v, prog, programs, read, added, root, out, modes, binding, chunk_nodes, typing, options)?;
-                #[cfg(debug_assertions)]
-                {
-                    assert_eq!(folded, constants::foldable(tree), "the version's constants are the tree's");
-                    for rel in &folded {
-                        tree.facts.insert(rel.clone(), prog.facts[rel].clone());
-                    }
-                    tree.rules.retain(|r| !folded.contains(r.head.rel.as_str()));
-                }
-                let _ = (folded, tree);
+                let (consulted, plans, _) = constants::fold(v, programs, read, added, root, modes, binding, chunk_nodes, typing, options)?;
                 Ok((consulted, plans))
             }
         }
     };
     phase("combine", 0);
-    let (mut folded, mut constants_plans) = fold_constants(&mut v, &mut prog, &mut tree, &added)?;
+    let (mut folded, mut constants_plans) = fold_constants(&mut v, &added)?;
     shape = shape::Shape::of(&v);
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
-    // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
+    // The program's `.language` (above) picks the corpus's files: `.rerail` files only when it names `rr` (decision 0061).
     // The library documents phase 1's imports reached, for a program that reads them (`sources__library`): each a
     // loaded document of this run, `(canonical path, module)`.
     let mut libraries: Vec<(String, String)> = Vec::new();
@@ -3697,7 +3588,10 @@ fn run_observed(
             (docs, first, label)
         }
         None => {
-            let (files, label) = if let Some(supplied) = options.get("inputFiles") {
+            let already_checked = listing.is_some();
+            let (files, label) = if git_metadata_only {
+                (Vec::new(), language.as_deref().and_then(crate::code_rule_dsl::language::label_named).unwrap_or("python"))
+            } else if let Some(supplied) = options.get("inputFiles") {
                 let supplied = supplied.as_array().ok_or_else(|| Error::Plan("inputFiles must be a list of relative document paths".to_owned()))?;
                 let files = supplied.iter().map(|value| {
                     let path = value.as_str().ok_or_else(|| Error::Plan("inputFiles must contain strings".to_owned()))?;
@@ -3717,7 +3611,7 @@ fn run_observed(
                 let (files, label) = match listing.take() {
                     Some(listed) => listed,
                     None => {
-                        let found = scoped(corpus_files(root)?, &prog, options);
+                        let found = scoped(corpus_files(root)?, &*v, options);
                         let label = corpus_language(language.as_deref(), typing, &found);
                         (found.of(label), label)
                     }
@@ -3732,7 +3626,7 @@ fn run_observed(
                         let mut listed: Vec<String> = one.documents.iter().map(|(p, _, _)| p.clone()).collect();
                         listed.extend(files.iter().filter(|p| !made.contains(p.as_str())).cloned());
                         listed.sort();
-                        if prog.decls.contains_key("sources__library") {
+                        if v.declares("sources__library") {
                             libraries = one.libraries.iter().map(|(p, m, _, _)| (p.clone(), m.clone())).collect();
                         }
                         listed
@@ -3744,15 +3638,23 @@ fn run_observed(
             // The libraries come after the tree's files: a document's key is a function of its path (decision 0052),
             // so a memoised row's node ids stay valid.
             let mut files = files;
+            if !already_checked {
+                git::verify_sources(root, &mut files, &mut source_checks)?;
+            }
             files.extend(libraries.iter().map(|(p, _)| p.clone()));
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), label)
         }
     };
-    // A library document is of the grammar phase 1 loaded it in, the run's (`sources.rr`'s `library`): a C run's
+    // A library document is of the grammar phase 1 loaded it in, the run's (`sources.rerail`'s `library`): a C run's
     // header (`.h`, C++'s by its suffix) is parsed as C, not read as text.
     let library_paths: std::collections::HashSet<&str> = libraries.iter().map(|(p, _)| p.as_str()).collect();
-    let text_document = |path: &str, label: &str| text_document(path, label) && !library_paths.contains(path);
+    let text_document = |root: &Path, path: &str, label: &str| text_document(root, path, label) && !library_paths.contains(path);
+    // A file the run reads for the programs it holds (`.embedded on`, decision 0470 step 2): parsed in its own grammar,
+    // its tree a guest of its text's document (decision 0512), so the run's rules see the file and its programs in
+    // their language and none of its own nodes.
+    let embedded = embedded_on(&*v);
+    let host = |path: &str| embedded && embeds_label(path, label);
     // Taken once the files are listed: phase 1, run while they are, is a run of its own, with its session and plans.
     // Plans are kept across this run's chunks (decision 0038), and a session's across its runs (decision 0090 step 5).
     let across = session::generation();
@@ -3769,6 +3671,7 @@ fn run_observed(
             let digests = world::bytes_digests(&docs.iter().map(|(_, p)| root.join(p)).collect::<Vec<_>>());
             docs.iter().zip(digests).map(|((_, p), d)| ("doc".to_owned(), p.clone(), d)).collect()
         } else { Vec::new() };
+    consulted.extend(source_checks);
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
     let mut loaded_keys: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -3778,30 +3681,30 @@ fn run_observed(
     // And the tree's Python files named by their package roots, not their paths (`package_root_modules`): `doc` and
     // `pkg` then agree with the imports that name them. A file's memoised rows hold its `doc` row, so the memo is
     // keyed by these names too (below).
-    let renamed_modules: BTreeMap<String, String> = if t.is_none() {
+    // The Python files no regular package holds (core.rerail's `unpackaged`), which memoised `doc` rows key on too.
+    let (renamed_modules, unpackaged): (BTreeMap<String, String>, BTreeSet<String>) = if t.is_none() {
         let tree: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !given_modules.contains_key(p)).collect();
-        package_root_modules(root, &tree)
+        package_root_modules(root, &tree, &mut package_markers)
     } else {
-        BTreeMap::new()
+        (BTreeMap::new(), BTreeSet::new())
     };
+    // The memo keys fold the folders in for a program that reads them only (`memo::with_unpackaged`).
+    let reads_unpackaged = v.declares("unpackaged");
     given_modules.extend(renamed_modules.iter().map(|(p, m)| (p.clone(), Arc::from(m.as_str()))));
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
-    if prog.decls.contains_key("declared_ret") {
-        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect();
+    if v.declares("declared_ret") {
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
-            (v, texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
-            prog = v.header(&lists).map_err(Error::Plan)?;
-            edit_header(&mut v, &mut prog, |p| Ok(add_bridged(p)))?;
-            #[cfg(debug_assertions)]
-            {
-                tree = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?.0;
-                add_bridged(&mut tree);
-            }
-            (folded, constants_plans) = fold_constants(&mut v, &mut prog, &mut tree, &added)?;
+            (v, texts) = combine_version(programs, masked, &given.graphs, &added, read)?;
+            edit_fields(&mut v, |p| {
+                add_phased(p);
+                Ok(())
+            })?;
+            (folded, constants_plans) = fold_constants(&mut v, &added)?;
             shape = shape::Shape::of(&v);
         }
         declared = d;
@@ -3818,18 +3721,11 @@ fn run_observed(
         p
     };
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
-    edit_header(&mut v, &mut prog, |p| external_inputs(p, &shape, root))?;
-    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`). Taken
-    // before the debug build's tree edit below: taken after it, the version's reads were dropped with the tree's, so a
-    // debug build's cutoff never saw an `.input` file's edit.
+    edit_fields(&mut v, |p| external_inputs(p, &shape, root))?;
+    // Withholding rules (`inputs::withhold`) changes what they make.
+    shape = shape::Shape::of(&v);
+    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
     let read = inputs::take_consulted();
-    #[cfg(debug_assertions)]
-    {
-        // The tree's own edit, its consulted inputs dropped: the version's are the run's.
-        let of_tree = shape::Shape::of_tree(&tree);
-        external_inputs(&mut tree, &of_tree, root)?;
-        let _ = inputs::take_consulted();
-    }
     if t.is_none() {
         consulted.extend(read);
     }
@@ -3838,44 +3734,37 @@ fn run_observed(
     let world_requests: Vec<&str> = WORLD.iter().map(|(_, req)| *req).chain([world::LOAD]).collect();
     // Only when a rule the outputs need reads a guest: a library's `parsed(…)` in rules nothing reads asks for no
     // parse (lazy-architecture's included name rules asked for every string annotation of the corpus).
-    let roots: Vec<crate::code_rule_dsl::logic::program_image::RelId> = prog.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).filter_map(|o| v.rel(o)).collect();
+    let roots: Vec<crate::code_rule_dsl::logic::program_image::RelId> = v.output_names().iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).filter_map(|o| v.rel(o)).collect();
     let need = crate::code_rule_dsl::logic::program_image::analyses::needed(&v, &crate::code_rule_dsl::logic::program_image::About::of(&v), roots);
     let reads_guests = v.rules().any(|r| need[r.head().rel().index()] && r.reads().any(|a| guests::READS.contains(&v.rel_name(a.rel()))));
-    #[cfg(debug_assertions)]
-    {
-        let roots: Vec<String> = tree.outputs.iter().filter(|o| !guests::REQUESTS.contains(&o.as_str())).cloned().collect();
-        let tree_reads = front::needed(&tree, roots).iter().any(|rel| {
-            tree.rules.iter().filter(|r| &r.head.rel == rel).any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| guests::READS.contains(&a.rel.as_str())))
-        });
-        assert_eq!(reads_guests, tree_reads, "the version's rules read guests as the tree's");
-    }
     crate::code_rule_dsl::logic::profile::decision("guest requests", || {
         if reads_guests { "made: a rule the outputs need reads guests".into() } else { "none: no rule the outputs need reads a guest".into() }
     });
-    let requests: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|_| reads_guests).chain(world_requests).collect();
-    let made_outputs = |prog: &mut front::Program, shape: &shape::Shape| {
-        for &rel in &requests {
-            if shape.made.contains(rel) && !prog.outputs.iter().any(|o| o == rel) {
-                prog.outputs.push(rel.to_owned());
-            }
+    let requests: Vec<&str> = guests::DEMANDS.into_iter().filter(|_| reads_guests).chain(world_requests).collect();
+    edit_fields(&mut v, |p| {
+        for &rel in requests.iter().filter(|rel| shape.made.contains(**rel)) {
+            p.b.fields().add_output(rel);
         }
-    };
-    edit_header(&mut v, &mut prog, |p| Ok(made_outputs(p, &shape)))?;
-    #[cfg(debug_assertions)]
-    {
-        let of_tree = shape::Shape::of_tree(&tree);
-        made_outputs(&mut tree, &of_tree);
-    }
+        Ok(())
+    })?;
     let dialect = crate::code_rule_dsl::language::dialect_by_label(label).ok_or_else(|| Error::Plan(format!("no dialect {label}")))?;
     if !dialect.built() {
         return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
     }
-    std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
+    if !capturing {
+        std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
+    }
     // The outputs are rerail's own: outside the file observer, for this process and the next (decision 0284).
-    observe(|o| o.own_output(out));
+    if !capturing {
+        observe(|o| o.own_output(out));
+    }
     // A long-lived process (the browser's engine, `session`) keeps its store, its last program compiled and each
-    // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part.
-    let session = held.as_mut().filter(|_| t.is_none() && !prog.decls.contains_key("declared_ret"));
+    // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part. A run
+    // whose outputs are captured (a phase's) is the session's too, as it was when a phase ran into a directory: its
+    // kept parts stay in the session, not bound from the store at each edit (R8). A thread's ephemeral store has none.
+    let session = held.as_mut().filter(|_| !ThreadStore::ephemeral() && t.is_none() && !v.declares("declared_ret"));
+    // The run's databases are in memory where it has no session's store and no directory of its own.
+    let in_memory = in_memory && session.is_none();
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
     // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
     // fails leaves its session new ones to open.)
@@ -3884,6 +3773,9 @@ fn run_observed(
         connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
     };
     let (path, cross_path) = match &session {
+        None if in_memory => (":memory:".into(), ":memory:".into()),
+        // A captured run has no directory: its cross scratch is in memory, as a run of no session's is.
+        Some(s) if capturing => (s.path.clone(), ":memory:".into()),
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
     };
@@ -3892,7 +3784,7 @@ fn run_observed(
     let scratch = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path);
     // An earlier run's connections may be closing still (`close_beside`): not on the files replaced here.
     closes_done();
-    for p in scratch.flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
+    for p in scratch.filter(|p| !in_memory && p.as_os_str() != ":memory:").flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
@@ -3905,20 +3797,26 @@ fn run_observed(
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
     let tapes = if cfg!(feature = "tape-cache") {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open tape store".into());
-        handed.tapes().map_err(|e| Error::Plan(e.to_string()))?
+        handed.tapes()?
     } else { &None };
     // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
     // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
     // that dies releases it with its process.
-    let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose().map_err(|e| Error::Plan(e.to_string()))?;
+    let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose()?;
     let own_store;
     let store: &ContentStore = match (&session, &tapes) {
         (Some(s), _) => &s.store,
         (None, Some(cache)) if t.is_none() => {
             // The file first: the arena is found by the database's canonical path, which a missing file has not.
-            std::fs::File::create(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
-            cache.share_atoms_with(&path);
+            if !in_memory {
+                std::fs::File::create(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
+                cache.share_atoms_with(&path);
+            }
             cache
+        }
+        _ if in_memory => {
+            own_store = ContentStore::open_ephemeral().map_err(|e| Error::Plan(e.to_string()))?;
+            &own_store
         }
         _ => {
             own_store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
@@ -3931,52 +3829,38 @@ fn run_observed(
         Some(cache) => cache.guest_keys().map_err(|e| Error::Plan(e.to_string()))?,
         None => crate::content_store::guest_keys::GuestKeys::in_memory(),
     };
+    // A file the run reads for its programs keeps its own key, as every file: it is its text's document, shown, and
+    // its tree a guest of it under a hidden key (`guests::file_and_tree`, decision 0512).
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open run connection".into());
-        handed.run(&path)?
+        handed.run(&path, in_memory.then(|| store.atoms_handle()))?
     };
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
     // when SQL first runs on it (`vtab::setup_now`).
-    crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
-    super::ready_native(&db)?;
+    crate::code_rule_dsl::facts::vtab::defer_setup(db, "PRAGMA synchronous=OFF;");
+    super::ready_native(db)?;
     // The cost statistics kept and written; read when the run first has work to price (decision 0104, 0285).
     crate::code_rule_dsl::logic::costs::start();
-    let statements = Statements::on(&db);
+    let statements = Statements::on(db);
     // The program's preparation (kept or read, split, its parts' plans), until the files are parsed.
     statements.enter("prepare");
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
-    // Cross-file rows memoised per import component (decision 0076): the program asks, and its documents' language
-    // has import rules in `components.rr`. Not for a discovery round of `world`, which runs part of the program; the
-    // final round's world facts are program facts, so they are in the plan's digest.
-    let cross_mode = cross_memo::mode();
-    // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
-    // component rules' only reads, are in before the components are (decision 0065 §2a).
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
-    // 0058, `fold_own`): a function of the combined program and the run's language, which the prepared key names, so a
+    // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
-    let loading_run = world::wanted(&prog, &shape);
-    let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
-    // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
-    // without the memo.
+    let loading_run = world::wanted(&*v, &shape);
+    // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
+    // (`import_closure`, `components.rerail`).
     let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
     if reads_components && label != "python" {
         return Err(Error::Plan(format!("the import components' relations (`rr_cx_*`) are Python's; this run's documents are {label}")));
     }
-    if cross_declared.is_some() || reads_components {
-        v = cross_memo::add_to(&v, &mut prog)?;
-        #[cfg(debug_assertions)]
-        cross_memo::add(&mut tree)?;
-        // The constants' own run outputs the constants alone (`constants::as_outputs`): it runs over no documents, so
-        // it makes no components, and its prune drops their rules.
-        if options.get(constants::OWN).is_some() {
-            edit_header(&mut v, &mut prog, |p| Ok(p.outputs.retain(|o| o != cross_memo::COMPONENT)))?;
-            #[cfg(debug_assertions)]
-            tree.outputs.retain(|o| o != cross_memo::COMPONENT);
-        }
+    if reads_components {
+        v = import_closure::add_to(&v)?;
     }
     // A run that reads the file system answers a load with the loaded documents' rows of each export its cone of
     // requests reads, found by the export's location column (decision 0065 §2a). Factorizing changes which relations
@@ -3989,8 +3873,13 @@ fn run_observed(
     let prepared_key: [u8; 32] = {
         use sha2::Digest as _;
         let mut hash = sha2::Sha256::new();
-        hash.update(texts);
-        hash.update(format!("{label}\0{:?}\0{:?}\0{:?}\0{}", prog.facts, prog.inputs, prog.outputs, cross_declared.is_some()).as_bytes());
+        hash.update(b"rerail.prepared/v2\0");
+        hash.update(b"deferred-binary-joins-v1\0");
+        // The linked program as the run prepares it (0276 §2): its version's identity, which holds its rules (in
+        // order), declarations, facts, inputs and outputs. Its messages are not in it (the combine is kept under the
+        // masked texts, decision 0225 §3), so an edit of a message's words finds it prepared.
+        hash.update(crate::code_rule_dsl::logic::program_image::manager::identity(&v));
+        hash.update(label.as_bytes());
         // Whether exports are handed on factorized (decision 0099): another choice is another prepared program, and
         // another file-local part, so another per-file memo key.
         if !factorizing {
@@ -4008,7 +3897,7 @@ fn run_observed(
     let holds = |p: &Prepared| {
         p.interned.iter().all(|(strings, atoms)| {
             let strings: Vec<&str> = strings.iter().map(String::as_str).collect();
-            store.intern_atoms(&strings).is_ok_and(|got| got.iter().map(|a| u32::from(*a)).eq(atoms.iter().copied()))
+            store.intern_atoms(&strings).is_ok_and(|got| got.iter().copied().eq(atoms.iter().copied()))
         })
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the prepared program, kept or stored".into()));
@@ -4041,7 +3930,7 @@ fn run_observed(
     let mut program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
     // And the keys its maintained parts keep their frames under (the strata's and the cone's, `prepared_key`; the
     // cross part's and the rounds', `part_keys`, as they are made): a part's frames are kept while a kept manifest
-    // names its key (decision 0227, `collect_unreachable_frames`), not by the runs that used them.
+    // names its key (decision 0227, `collect_unreachable_memo`), not by the runs that used them.
     if durable.is_some() {
         program_plans.push(prepared_key);
     }
@@ -4062,11 +3951,14 @@ fn run_observed(
     };
     // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
-    // The pins the combine made (`combined::record`), released once the run's manifest names the entry.
+    // The pins the combine made (`combined::record_version`), released once the run's manifest names the entry.
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
     // one (phase 0's) did not read them.
-    let rule_files = if durable.is_some() && !nested { combined::take_read_before() } else { Vec::new() };
+    let mut rule_files = if durable.is_some() && !nested && !phase0::active() { combined::take_read_before() } else { Vec::new() };
+    if durable.is_some() {
+        rule_files.extend(given.phase.program_entry);
+    }
     let _rule_file_pins: Vec<combined::Pins> = rule_files.iter().map(|k| combined::Pins::new(store, k)).collect();
     if durable.is_some() {
         for key in std::iter::once(&texts).chain(&rule_files) {
@@ -4081,7 +3973,7 @@ fn run_observed(
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources), Arc::clone(&lists)));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, None, &late_sources);
@@ -4124,7 +4016,7 @@ fn run_observed(
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the prepared program, from the store (decision 0073)".into());
             // One this process queued is read once written (`settle`; it is kept in memory, so this is rare).
             store.settle(&prepared::queued(&prepared_key));
-            let found = prepared::lookup(store, source, dialect, &prepared_key, &lists).map_err(|e| Error::Plan(e.to_string()))?;
+            let found = prepared::lookup(store, source, dialect, &prepared_key).map_err(|e| Error::Plan(e.to_string()))?;
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: {}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), match &found { None => "not in the store", Some((p, ..)) if !holds(p) => "in the store, its atoms not the store's", Some((_, _, prepared::Found::Moved)) => "read, its atoms moved to the store's", Some(_) => "read" });
             }
@@ -4149,7 +4041,7 @@ fn run_observed(
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
             // The combined program is the prepared one's source only: the run reads the prepared forms from here on,
             // so it is not held through the run (a prepared run moves it into its `Prepared`).
-            drop((v, prog, tree));
+            drop(v);
             if from == "store" {
                 keep_prepared(prepared_key, Arc::clone(&p));
             }
@@ -4173,23 +4065,14 @@ fn run_observed(
             // What preparing decides is the prepared program's, kept with it (decision 0269).
             let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
-            // The copies hiding made for guests in the run's own language, now that it is known (decision 0058): on the
-            // version, a debug build folding the tree beside it.
-            if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
+            // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
+            if v.declared_names().iter().any(|r| r.starts_with("rr_in_")) {
                 let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
                 v = preparation::combining::fold_own_guests(v, label).map_err(Error::Plan)?;
                 #[cfg(debug_assertions)]
                 {
-                    crate::code_rule_dsl::logic::profile::quiet(|| {
-                        let bound = hiding::bound(&tree);
-                        if hiding::fold_own(&mut tree, label, bound) > 0 {
-                            merge_and_drop_repeats(&mut tree);
-                        }
-                    });
                     // What the run read of the program before the fold, the same after it.
-                    let folded = v.header(&lists).map_err(Error::Plan)?;
-                    assert_eq!(world::wanted(&folded, &shape::Shape::of(&v)), loading_run, "folding changed whether the run loads");
-                    assert!(cross_declared.is_none() || cross_memo::declared(&folded).is_some(), "folding dropped the cross memo's pragma");
+                    assert_eq!(world::wanted(&*v, &shape::Shape::of(&v)), loading_run, "folding changed whether the run loads");
                 }
             }
             // The prepared program's one image (decision 0281's path, step 6): made here, from the program as the rule
@@ -4200,97 +4083,6 @@ fn run_observed(
             // read, the rule order), and the run's readers read the version (`Lowered::placed`), the split's parts views
             // of it. A program the image cannot hold is an error, not a run read from the tree.
             let version = v;
-            drop(prog);
-            // A debug build checks the tree's edits made the version.
-            #[cfg(debug_assertions)]
-            let mut prog = {
-                let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &version), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
-                tree
-            };
-            #[cfg(not(debug_assertions))]
-            let _ = tree;
-            // A debug build runs the tree's passes beside them, stage by stage, and checks each stage's version against
-            // the tree's (their decisions are the version's passes' alone).
-            #[cfg(debug_assertions)]
-            let (mut tree_reaches, mut tree_demanded, mut tree_demand, mut tree_undone, mut tree_text) = (None, None, None, None, None);
-            #[cfg(debug_assertions)]
-            let mut check = |stage: &'static str, v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {
-                crate::code_rule_dsl::logic::profile::quiet(|| {
-                    let p = std::mem::take(&mut prog);
-                    prog = match stage {
-                        "inputs" => {
-                            let mut p = p;
-                            cpython_functors(&mut p).expect("the tree's functors, as the version's");
-                            base_inputs(&mut p);
-                            p
-                        }
-                        "prune" | "prune again" => front::prune(p),
-                        "simplify" => {
-                            let mut p = p;
-                            crate::code_rule_dsl::logic::simplify::simplify(&mut p);
-                            p
-                        }
-                        "reach" => {
-                            let mut p = p;
-                            tree_reaches = Some(crate::code_rule_dsl::logic::reach_form::find(&mut p).expect("the tree's reach form, as the version's"));
-                            p
-                        }
-                        "negated demand" => {
-                            let (p, d) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
-                            tree_demanded = Some(d);
-                            p
-                        }
-                        "demand" if !p.demand.is_empty() && std::env::var("RERAIL_DEMAND").map_or(true, |v| v != "off") => {
-                            let tree = crate::code_rule_dsl::logic::magic::demand_bound_columns(p.clone(), &Default::default());
-                            match tree {
-                                Ok(d) => {
-                                    tree_demand = Some(d.magic_report.clone().map(|t| (t.adornments, t.full_for_negation, t.magic_rules, t.full)));
-                                    front::prune(d)
-                                }
-                                Err(_) => {
-                                    tree_demand = Some(None);
-                                    p
-                                }
-                            }
-                        }
-                        "demand" => p,
-                        "undo" => {
-                            let mut p = p;
-                            tree_undone = Some(crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).expect("the tree's undo, as the version's"));
-                            p
-                        }
-                        "rank" => {
-                            let mut p = p;
-                            if crate::code_rule_dsl::logic::rank_form::find(&mut p) > 0 {
-                                p = front::prune(p);
-                            }
-                            p
-                        }
-                        "text" => {
-                            let mut p = p;
-                            // A Python program's tree-shaped parts become matchers first (decision 0106 §4).
-                            if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-                                let capture = !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off");
-                                matchers::absorb(&mut p, capture);
-                            }
-                            let rewritten_matchers = matchers::lower(&mut p);
-                            if p.decls.contains_key("text") {
-                                crate::code_rule_dsl::logic::strings::node_subject_tests(&mut p);
-                                syntax::long_text_twins(&mut p, &rewritten_matchers);
-                            }
-                            let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut p).expect("the tree's text tests, as the version's");
-                            tree_text = Some((rewritten_matchers, vocabulary));
-                            p
-                        }
-                        other => unreachable!("a stage of `preparation::front`: {other}"),
-                    };
-                });
-                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).expect("the tree's image");
-                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &v), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
-            };
-            #[cfg(not(debug_assertions))]
-            let mut check = |_: &'static str, _: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {};
             // The functors only CPython gives, the base relations as inputs, the prunes and `simplify` (decision 0038);
             // transitive closures held as each start's bitmap, not as rows (decision 0119); tests a rule negates of the
             // nodes it has bound computed for those nodes only (magic sets); the program's own demand (`.pragma
@@ -4300,13 +4092,15 @@ fn run_observed(
             let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, reach, demand, text".into());
             // By parts (decision 0345, `RERAIL_PREPARE=parts`): each part prepared alone against its interface, kept
             // under its own key, and the parts linked; no pipeline run is kept (0333's P is the other answer to Q18).
+            // How the deferred joins pass runs for this program: the run's earlier tries may have changed it (`Replans`).
+            let deferral = preparation::Deferral::of(loading_run, &prepared_key);
             let by_parts = preparation::parts::on();
-            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = if by_parts {
-                let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some(), &lists).map_err(Error::Plan)?;
+            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary, cached }, front_run) = if by_parts {
+                let (v, f, kept) = preparation::parts::front(version, dialect, store, durable.is_some()).map_err(Error::Plan)?;
                 program_sources.extend(kept);
                 (v, f, None)
             } else {
-                let (v, f, run) = preparation::front(version, dialect, last_run(preparation::FRONT), &mut check).map_err(Error::Plan)?;
+                let (v, f, run) = preparation::front(version, dialect, &deferral, last_run(preparation::FRONT)).map_err(Error::Plan)?;
                 (v, f, Some(run))
             };
             drop(preparing);
@@ -4321,33 +4115,15 @@ fn run_observed(
                     l.sort();
                     l.join(" ")
                 };
-                if let Ok(h) = version.header(&lists) {
-                    let mut decls: Vec<String> = h.decls.iter().map(|(r, d)| format!("{r} {d:?}")).collect();
-                    decls.sort();
-                    rules.push(format!("~inputs {}\n~outputs {}\n~decls {}\n", sorted(&h.inputs), sorted(&h.outputs), decls.join(" | ")));
-                }
+                let mut decls: Vec<String> = version.declared_names().into_iter().map(|r| format!("{r} {:?}", version.columns_of(&r).unwrap_or_default())).collect();
+                decls.sort();
+                rules.push(format!("~inputs {}\n~outputs {}\n~decls {}\n", sorted(&version.input_names()), sorted(&version.output_names()), decls.join(" | ")));
                 let mut matched: Vec<String> = matchers.iter().map(|m| format!("{m:?}")).collect();
                 matched.sort();
                 let demand_shown = demand.as_ref().map(|(l, o)| (sorted(l), o.as_ref().map(|t| (t.magic_rules, sorted(&t.full), t.adornments.len()))));
                 rules.push(format!("~reaches {reaches} {throughs}\n~demanded {}\n~undone {}\n~matchers {}\n~demand {demand_shown:?}\n", sorted(&demanded), sorted(&undone), matched.join(" | ")));
                 let _ = std::fs::create_dir_all(&dir);
                 let _ = std::fs::write(std::path::Path::new(&dir).join(name), rules.concat());
-            }
-            #[cfg_attr(not(debug_assertions), allow(dropping_copy_types))]
-            drop(check);
-            // A debug build checks what follows against the tree of the parts' linked program: the whole program's tree
-            // passes are not the parts'.
-            #[cfg(debug_assertions)]
-            if by_parts {
-                prog = version.program(&lists).map_err(Error::Plan)?;
-                tree_reaches = Some((reaches, throughs));
-                tree_demanded = Some(demanded.clone());
-                tree_demand = Some(demand.as_ref().and_then(|(_, o)| o.as_ref().ok().map(|t| (t.adornments.clone(), t.full_for_negation.clone(), t.magic_rules, t.full.clone()))));
-                if demand.is_none() {
-                    tree_demand = None;
-                }
-                tree_undone = Some(undone.clone());
-                tree_text = Some((matchers.clone(), vocabulary.again()));
             }
             if reaches + throughs > 0 {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{reaches} closures and {throughs} relations through them held as bitmaps"));
@@ -4362,58 +4138,24 @@ fn run_observed(
             if !undone.is_empty() {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{} made rows again after demand, in cycles: {}", undone.len(), undone.join(", ")));
             }
-            #[cfg(debug_assertions)]
-            {
-                assert_eq!(tree_reaches, Some((reaches, throughs)), "the version's reaches are the tree's");
-                assert_eq!(tree_demanded.as_ref(), Some(&demanded), "the version's negated demand is the tree's");
-                match (&tree_demand, demand.as_ref().map(|d| &d.1)) {
-                    (Some(Some(t)), Some(Ok(r))) => assert_eq!((&t.0, &t.1, t.2, &t.3), (&r.adornments, &r.full_for_negation, r.magic_rules, &r.full), "the version's demand is the tree's"),
-                    (Some(None), Some(Err(_))) | (None, None) => {}
-                    (t, v) => panic!("the version's demand ({:?}) is not the tree's ({:?})", v.map(|v| v.as_ref().err()), t),
-                }
-                assert_eq!(tree_undone.as_ref(), Some(&undone), "the version's reaches made rows are the tree's");
-                let (tree_matchers, tree_vocabulary) = tree_text.expect("the tree's text passes");
-                assert_eq!(tree_matchers, matchers, "the version's matchers are the tree's");
-                assert_eq!((&tree_vocabulary.specs, &tree_vocabulary.markers), (&vocabulary.specs, &vocabulary.markers), "the version's text tests are the tree's");
-                assert_eq!(tree_vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), "the version's test relations are the tree's");
-                assert_eq!(tree_vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), vocabulary.matches.iter().map(|m| m.as_str()).collect::<Vec<_>>(), "the version's regexes are the tree's");
-            }
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
             // One base, the run's and the store's: the text passes leave an overlay.
             let source = if version.base_bytes().is_some() { version.clone() } else { version.fold().map_err(Error::Plan)? };
-            let (version, domains, ops) = lower::lower_version(version, dialect, &mut |s| {
-                let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect();
+            let (version, _, ops) = lower::lower_version(version, dialect, &mut |s| {
+                let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect();
                 interned.push((s.iter().map(|x| (*x).to_owned()).collect(), atoms.clone()));
                 Ok(atoms)
             })?;
             drop(lowering);
-            let mut lowered = lower::Given { program: front::Program::default(), domains, ops, dialect };
-            // A debug build checks the version's passes against the tree's: the lowered tree here, the rest below.
-            #[cfg(debug_assertions)]
-            let (mut program, tree_sets) = {
-                let mut given = lower::lower_tree(&prog, dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect()))?;
-                assert_eq!(given.domains, lowered.domains, "the version's domains before lowering are the tree's");
-                assert_eq!(given.ops, lowered.ops, "the version's operator atoms are the tree's");
-                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&given.program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version is lowered as the tree is: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
-                let sets = given.transduce_nearest();
-                // Every pass so far stated its rules' sources: the request record is one entry a rule (decision 0331),
-                // which the image's pipelines carry from here.
-                assert!(
-                    given.program.asked_by.iter().all(|(r, by)| given.program.rules.iter().filter(|x| x.head.rel == r.as_str()).count() == by.len()),
-                    "the request record holds an entry for each request rule"
-                );
-                (std::mem::take(&mut given.program), sets)
-            };
             // Every pass since lowering carries the request record (`Program::set_rules_from`): a relation whose rules
-            // no longer match it is ungated in `prune` and the embed slice, which then take every reader's request.
+            // no longer match it is ungated in `prune`, which then takes every reader's request.
             for (req, readers, rules) in version.asked_against_rules().into_iter().filter(|(_, r, n)| r != n) {
                 crate::code_rule_dsl::logic::profile::decision("the request record (decision 0331)", || format!("{req}: {readers} rules recorded, {rules} rules: ungated"));
             }
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
             // By parts (decision 0345 stage 2): the rewriting passes per part against its interface, kept per part.
             let (version, found, prepared_run) = if by_parts {
-                let (v, f, kept) = preparation::parts::run(version, factorizing, dialect, store, durable.is_some(), &lists, bound).map_err(Error::Plan)?;
+                let (v, f, kept) = preparation::parts::run(version, factorizing, dialect, store, durable.is_some(), bound).map_err(Error::Plan)?;
                 program_sources.extend(kept);
                 (v, f, None)
             } else {
@@ -4431,8 +4173,6 @@ fn run_observed(
                 crate::code_rule_dsl::logic::program_text::record_runs(store, &[(preparation::run_key(preparation::FRONT, &named), &front_run), (preparation::run_key(preparation::PREPARATION, &named), &prepared_run)]);
             }
             let sets = found.sets.clone();
-            #[cfg(debug_assertions)]
-            assert_eq!(tree_sets, sets, "the version's nearest sets are the tree's");
             let factorized = found.factorized.clone();
             let pushed = found.pushed.clone();
             let merged = (found.merged, found.shared);
@@ -4442,44 +4182,11 @@ fn run_observed(
             // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
             // (`fl256_P`). Every part takes them from here: the split's, the frames' and the memo's symbol columns
             // (`lower::atom_columns`, decision 0170).
-            lowered.domains = lower::domains_of(&version)?;
+            let domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
-            // While passes before the image edit the tree, a debug build checks the version's split and domains are
-            // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
-            // By parts, the rewriting passes are the parts' (decision 0345 stage 2), not the tree's.
-            #[cfg(debug_assertions)]
-            if std::env::var_os("RERAIL_RULE_ORDER").is_none() && !by_parts {
-                // As sets: a rule pass's written rules follow the rules it kept (an overlay's order), so the version's
-                // rules, and what is found per rule, may come in another order than the tree's.
-                let sorted = |mut v: Vec<String>| {
-                    v.sort();
-                    v
-                };
-                assert_eq!(sorted(crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program)), sorted(pushed.clone()), "the version's joins are pushed as the tree's");
-                let tree_factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
-                assert_eq!(sorted(tree_factorized), sorted(factorized.clone()), "the version's exports are factorized as the tree's");
-                assert_eq!(sorted(crate::code_rule_dsl::typing::file_local::demand_exports(&mut program)), sorted(found.demand.clone()), "the version's exports are cut as the tree's");
-                assert_eq!(crate::code_rule_dsl::typing::file_local::locate(&mut program).map(sorted).map_err(sorted), located.clone().map(sorted).map_err(sorted), "the version's rows are located as the tree's");
-                let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-                    crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
-                } else {
-                    let (m, s, _) = merge_and_drop_repeats(&mut program);
-                    (m, s)
-                };
-                assert_eq!(tree_merged, merged, "the version's merges are the tree's");
-                let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
-                let outputs = program.outputs.clone();
-                program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
-                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version's program is the tree's after the merges: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
-                assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
-                crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
-            }
-            #[cfg(debug_assertions)]
-            drop(program);
             // The run's program: the image alone; no tree is kept.
-            let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), lowered.domains, lowered.ops, lowered.dialect);
+            let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), domains, ops, dialect);
             drop(_step);
             // An attribute's answer by a function of the node's document runs where the documents are (decision 0174
             // §6, `answers_where_documents_are`): in the cross-file part it answers nothing, without an error.
@@ -4488,6 +4195,15 @@ fn run_observed(
                 let v = &lowered.version;
                 let answered = |rel: &str| v.rules().any(|r| v.rel_name(r.head().rel()) == rel);
                 if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && answered(a.rel) && !split.file_local.contains(a.rel)) {
+                    // The deferred joins can draw it there (a pair cache's guard, a factor read across files): the run
+                    // prepares the program again with the next deferral (`run_observed`), once per change.
+                    if let Some(next) = deferral.after_placement(a.rel, &cached)
+                        && let Some(replans) = crate::code_rule_dsl::logic::profile::bound::<preparation::Replans>().0
+                    {
+                        super::joins::log(|| format!("replan: `{}` drawn into the cross-file part by the deferred joins; pair caches {cached:?}; from {deferral:?} to {next:?}", a.rel));
+                        replans.lock().insert(prepared_key, next);
+                        return Err(Error::Plan(format!("{REPLAN}`{}` drawn into the cross-file part by the deferred joins", a.rel)));
+                    }
                     return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
                 }
             }
@@ -4507,17 +4223,8 @@ fn run_observed(
             }
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
-            let head = source.header(&lists).map_err(Error::Plan)?;
-            #[cfg(debug_assertions)]
-            {
-                let digest = |p: &front::Program| crate::code_rule_dsl::logic::program_image::Builder::of_program(p).and_then(|b| b.finish()).map(|(v, _)| v.digest());
-                let ruleless = front::Program { rules: Vec::new(), ..prog.clone() };
-                assert_eq!(digest(&head), digest(&ruleless), "the source's header is the tree's fields");
-            }
-            #[cfg(debug_assertions)]
-            drop(prog);
             let decided = deciding.close();
-            let prepared = Arc::new(Prepared { source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
+            let prepared = Arc::new(Prepared { source, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -4533,10 +4240,18 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { source, head, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata } = &*prepared;
+    let Prepared { source, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
+    // The prepared program's fields besides its rules, read from its source's version (decision 0276 §3).
+    let head: &crate::code_rule_dsl::logic::program_image::Version = source;
+    let head_outputs = head.output_names();
+    let head_inputs = head.input_names();
+    let head_settings = ProgramFields::settings(head);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
-    let split = shared_split.clone();
+    let mut split = shared_split.clone();
+    // Native request answers are inputs of the cone and cross-file part. No document
+    // batch binds them, even when the program declares them as inputs in core.rerail.
+    split.base.retain(|rel| !WORLD.iter().any(|(answer, _)| answer == rel));
     // The prepared program's fields, read from its version (decision 0281's path, step 4): no reader below reads its
     // tree's declarations.
     let prepared_placed = lowered.placed()?;
@@ -4553,7 +4268,7 @@ fn run_observed(
         let _ = std::fs::write(path, text);
     }
     // A program none of whose rules reads a document runs over none: its file-local rules make only constants (which
-    // both parts derive: `file_local::constant_relations`), and the cross-file part reads no base relation but the
+    // both parts derive: `file_local::FileLocal::constants`), and the cross-file part reads no base relation but the
     // run's constants (an earlier phase's exports, the options). A later phase reading only an earlier one's exports
     // is such a program: an edit costs it what the exports' delta does, not a pass over every file.
     // The parts' versions (decision 0244), each dropped where the run edits its tree (the cross memo's split, the cone
@@ -4561,16 +4276,19 @@ fn run_observed(
     let (local_version, mut cross_version) = (split.versions.local.clone(), split.versions.cross.clone());
     // The parts as the split made them, which the memo's and the components' keys are digests of (decision 0173 §7).
     let local_v = Arc::clone(&local_version);
-    let cross_v = Arc::clone(&cross_version);
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
+    // The base relations' layouts (core.rerail's, decision 0361 item 5): the columns they answer are not counted when a
+    // chunk's base relations are measured (`sampled_statistics_unanswered`), but for a relation whose facts the run's
+    // rows broke (step 6, `Shapes::for_run` at each measure).
+    let base_shapes = super::shapes::Shapes::of_version(&local_v);
     let constants_only = {
         // The split's (`Programs::constants`): empty where no document is read, and then so is the file-local part.
         let constant = &split.constants;
         local_v.rules().all(|r| constant.contains(local_v.rel_name(r.head().rel())))
     };
-    if t.is_none() && constants_only && split.base.iter().all(|r| crate::code_rule_dsl::typing::file_local::run_constant(&head, r)) && !docs.is_empty() {
+    if t.is_none() && constants_only && split.base.iter().all(|r| crate::code_rule_dsl::typing::file_local::run_constant(head, r)) && !docs.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("documents", || format!("none read: no rule reads a document, so the run is over none of the {} files", docs.len()));
         docs.clear();
     }
@@ -4648,11 +4366,11 @@ fn run_observed(
     };
     // Each relation a file's entry holds, by its identity (decision 0225 §2): a rule's edit misses only the relations
     // derived from it, in every file; the others are read from the entry.
-    // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
+    // The tree's projection: `core.rerail`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
     // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
     let read: BTreeSet<String> = prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect();
-    let projection = super::text_demand::projection(source, head, read.clone(), &matchers);
+    let projection = super::text_demand::projection(source, read.clone(), matchers);
     let base_rows = projection.rows_digest();
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
@@ -4675,30 +4393,6 @@ fn run_observed(
         strata.identities(options, &phased, &base_rows)
     };
     let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
-    // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
-    // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
-    // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
-    // that changed.
-    let cross_digest = {
-        let reads: BTreeSet<&str> = cross_v.rules().flat_map(|r| r.reads()).map(|a| cross_v.rel_name(a.rel())).collect();
-        under_phased(memo_program, &reads)
-    };
-    let cross_plan = match &cross_declared {
-        Some(declared) => {
-            let (plan, version) = cross_memo::split(&cross_version, &lowered.domains, declared, &cross_digest, &split.same_doc)?;
-            if !Arc::ptr_eq(&version, &cross_version) {
-                cross_version = version;
-            }
-            plan
-        }
-        None => None,
-    };
-    crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
-        (None, _) if cross_memo::declared(&head).is_none() => "off: the program declares no `.pragma \"cross-memo\"`".to_owned(),
-        (None, _) => format!("off ({})", if cross_mode == cross_memo::Mode::Off { "RERAIL_CROSS_MEMO=off" } else { "no import rules for the run's language" }),
-        (Some(_), None) => "off: the component rules did not reach the cross-file part".to_owned(),
-        (Some(_), Some(plan)) => format!("{} relations memoised per import component ({}){}", plan.memo.len(), plan.memo.keys().cloned().collect::<Vec<_>>().join(", "), if cross_mode == cross_memo::Mode::Verify { "; verifying: derived afresh and compared" } else { "" }),
-    });
     // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
     let local_outputs: Vec<String> = local_f.outputs().map(str::to_owned).collect();
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
@@ -4719,9 +4413,12 @@ fn run_observed(
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
         _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
     });
-    // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
-    // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, &head, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
+    // A revision's module names read its package markers (`package_root_modules`): each consulted one is an input.
+    if crate::git_workspace::snapshot::contains(root) {
+        consulted.extend(package_markers.iter().map(|(directory, present)| {
+            ("package_marker".to_owned(), directory.clone(), present.to_string())
+        }));
+    }
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -4741,8 +4438,6 @@ fn run_observed(
         roots.truncate(60);
         format!("{total} relations cross-file of their own ({} by reading them): {}", causes.len() - total, roots.join("; "))
     });
-    // Preparation's splits are done: the kept ones (`file_local::split_memo`) go.
-    crate::code_rule_dsl::typing::file_local::forget_splits();
     crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
         format!("{} sets, each made per looked-up node, or for the batch by the transducer's file-local FIX (bound {binding:?}) where the planner expects more lookups than that costs (decision 0143): {}", sets.len(), names.join(", "))
@@ -4752,15 +4447,11 @@ fn run_observed(
     // made by the chunk path as any file's are; the rest of the cross-file part reads the cone's rows as inputs.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
     let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>)> = if loading_run {
-        // The prepared split's cone, made once; a run whose cross memo split the cross-file part (above) makes its own.
-        // Each of the cross-file part's version.
-        let cone = match cross_declared.is_none() {
-            true => shared_cone
-                .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, &head).map(Arc::new).map_err(|e| e.to_string()))
-                .clone()
-                .map_err(Error::Plan)?,
-            false => Arc::new(cone_of(&super::body::Placed::whole(cross_version.clone()), &split.exports, &split.base, &head)?),
-        };
+        // The prepared split's cone, made once, of the cross-file part's version.
+        let cone = shared_cone
+            .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head).map(Arc::new).map_err(|e| e.to_string()))
+            .clone()
+            .map_err(Error::Plan)?;
         cross_version = cone.rest.clone();
         Some((cone.load.clone(), cone.reads.clone()))
     } else {
@@ -4782,17 +4473,28 @@ fn run_observed(
         }
     };
     let cross_outputs: BTreeSet<&str> = cross_now.outputs().map(|a| cross_now.text(a)).collect();
-    let not_per_document = head
-        .outputs
+    let not_per_document = head_outputs
         .iter()
         .filter(|o| cross_outputs.contains(o.as_str()) && !load_heads.contains(o.as_str()))
         .find(|o| cross_now.rel(o).is_some_and(|id| !cross_now.heads(id).all(&union_of_exports)))
         .cloned();
+    // Decision 0431 §8: a string a rule parses is answered inside the file-local part's fixpoint, `parsed` the answer
+    // of its request (`rr_embed_req`, decision 0065 §2a), the chunk's run admitting each tape value as it is asked;
+    // `@parse`'s and `@splice`'s values too, `parse_of` and `splice_of` the answers of theirs (Q325: no rounds before
+    // the fixpoint). The memo's keys are the split's, made before.
+    let answering = guests::answering(&local_version);
+    let parsing = !answering.is_empty();
+    let local_version = if parsing {
+        let answers: BTreeMap<String, Vec<String>> = answering.iter().map(|(r, (produced, _))| (r.clone(), produced.clone())).collect();
+        crate::code_rule_dsl::logic::answers::gate(&super::body::Placed::whole(local_version), &answers).map_err(Error::Plan)?
+    } else {
+        local_version
+    };
     let (mut local, mut cross) = (part_of(local_version), part_of(cross_version));
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
     // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine
     // over the bound exports, and bound beside them (`run_constants`). The split derives a constant in both parts
-    // (`file_local::constant_relations`), which for one of the program's facts costs little; for one of a phase's
+    // (`file_local::FileLocal::constants`), which for one of the program's facts costs little; for one of a phase's
     // exports, every chunk read them all again: over the workspace, 116.6 M rows of `struct__member` for 36 k
     // answers, 183 s of a 966 s run. The memo's key is made before (`memo_program`): it holds the rules as written.
     // The split's (`Programs::constants`): empty only where no document is read, and then the file-local part has no
@@ -4807,7 +4509,7 @@ fn run_observed(
             let more: BTreeSet<String> = local_v
                 .rules()
                 .map(|r| (local_v.rel_name(r.head().rel()), r))
-                .filter(|(h, _)| constant.contains(*h) && !once.contains(*h) && !head.outputs.iter().any(|x| x == h))
+                .filter(|(h, _)| constant.contains(*h) && !once.contains(*h) && !head_outputs.iter().any(|x| x == h))
                 .filter(|(_, r)| r.reads().any(|a| of_phase(local_v.rel_name(a.rel())) || once.contains(local_v.rel_name(a.rel()))))
                 .map(|(h, _)| h.to_owned())
                 .collect();
@@ -4818,10 +4520,8 @@ fn run_observed(
         }
     }
     // The parts less the constants are the prepared split's, made once for each set of constants (`Prepared::parts`):
-    // a later run shares them, and the trees their readers decode. A run whose cross memo split the cross-file part
-    // makes its own.
-    let parts_kept = cross_declared.is_none();
-    let kept_parts = parts_kept.then(|| shared_parts.get().filter(|(of, _)| *of == once).map(|(_, p)| p.clone())).flatten();
+    // a later run shares them, and the trees their readers decode.
+    let kept_parts = shared_parts.get().filter(|(of, _)| *of == once).map(|(_, p)| p.clone());
     let once_made = once.clone();
     let run_constants: Option<(lower::Lowered, Vec<String>)> = if let Some((l, c, constants)) = kept_parts {
         (local, cross) = (l, c);
@@ -4849,7 +4549,7 @@ fn run_observed(
             let outputs: Vec<String> = once.iter().cloned().collect();
             let v = &local_v;
             let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
-            let made = v.part(&in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).map_err(Error::Plan)?;
+            let made = v.part(in_cone, &inputs, &outputs, PartFields { natives: &all, lattice: &in_cone, gates: &in_cone }).map_err(Error::Plan)?;
             for part in [&mut local, &mut cross] {
                 let v = part.version.clone();
                 let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
@@ -4859,7 +4559,7 @@ fn run_observed(
                     }
                 }
                 let outputs: Vec<String> = v.outputs().map(|a| v.text(a).to_owned()).collect();
-                let kept = v.part(&not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
+                let kept = v.part(not_once, &inputs, &outputs, PartFields { natives: &all, lattice: &all, gates: &all }).map_err(Error::Plan)?;
                 part.version = kept;
             }
             crate::code_rule_dsl::logic::profile::decision("constants of the phases' exports", || {
@@ -4868,35 +4568,15 @@ fn run_observed(
             Ok((part_of(made), once.into_iter().collect()))
         }).transpose()?
     };
-    if parts_kept && shared_parts.get().is_none() {
+    if shared_parts.get().is_none() {
         let _ = shared_parts.set((once_made, (local.clone(), cross.clone(), run_constants.clone())));
     }
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.local", &shared_split.versions.local, &local.version);
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.cross", &shared_split.versions.cross, &cross.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.versions.local, &local.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.cross", &shared_split.versions.cross, &cross.version);
     }
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
-    let slice = embed_slice(&prepared_placed.v)?.map(part_of);
-    // The embed slice's requests' identities (decision 0225 §2), apart from the file-local part's: an entry holds a
-    // file's requests under them (`memo::GUESTS`).
-    let slice_ids: BTreeMap<String, [u8; 32]> = match &slice {
-        Some(s) => {
-            let rels: BTreeSet<String> = guests::LIBRARY.iter().chain(&guests::DEMANDS).map(|r| (*r).to_owned()).collect();
-            memo::identities(&s.placed()?, &rels, options, &phased, &base_rows).map_err(Error::Plan)?.into_iter().map(|(r, id)| {
-                use sha2::{Digest as _, Sha256};
-                let mut h = Sha256::new();
-                h.update(b"rerail.embed-slice-identity/v1\0");
-                h.update(id);
-                (r, h.finalize().into())
-            }).collect()
-        }
-        None => BTreeMap::new(),
-    };
-    let slice_reads: BTreeSet<String> = slice.iter().map(|s| &s.version).flat_map(|v| v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect::<Vec<_>>()).collect();
-    crate::code_rule_dsl::logic::profile::decision("guests", || match &slice {
-        Some(s) => format!("an embed slice of {} rules runs per chunk, up to {} rounds, before the file-local part (decision 0055)", s.version.size(), guests::DEPTH),
-        None => "no rule asks for a guest".into(),
-    });
+    crate::code_rule_dsl::logic::profile::decision("guests", || if parsing { "asked inside the file-local part's fixpoint (decision 0431 §8)".into() } else { "no rule asks for a guest".into() });
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
     // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
@@ -4909,15 +4589,15 @@ fn run_observed(
         let p = head;
         let not_of_documents = |rel: &str| pf.derives(rel) || pf.facts(rel).is_some() || pf.native(rel).is_some() || phased.contains_key(rel);
         let needed = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::analyses::Needed>(&prepared_placed.v).map_err(Error::Plan)?;
-        // The outputs by name too, as `front::needed` has its roots (one no relation names is still read).
+        // The outputs by name too, as `analyses::needed` has its roots (one no relation names is still read).
         let needs: BTreeSet<&str> = needed.0.iter().map(|r| prepared_placed.v.rel_name(r)).chain(pf.outputs()).collect();
         let why: Option<String> = if t.is_some() {
             Some("T's facts".into())
         } else if loading.is_some() {
             Some("requests' loads".into())
-        } else if slice.is_some() || reads_guests {
+        } else if parsing || reads_guests {
             Some("guests".into())
-        } else if !p.rx_spans.is_empty() || !p.ast_patterns.is_empty() {
+        } else if !p.rx_spans().map_err(Error::Plan)?.is_empty() || !p.ast_patterns().map_err(Error::Plan)?.is_empty() {
             Some("text or AST patterns".into())
         } else {
             needs.iter().find(|rel| !not_of_documents(rel)).map(|rel| format!("{rel} is read"))
@@ -4941,12 +4621,12 @@ fn run_observed(
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "statistics read or measured".into()));
     let t_stats = match &t {
         Some(t) => {
-            atomized_statistics(t, &db, &store, &first, dialect)?;
-            super::Stats::of_schema(&db, &prepared_placed, "s")?
+            atomized_statistics(t, db, store, &first, dialect)?;
+            super::Stats::of_schema(db, &prepared_placed, "s")?
         }
         None => {
             // A document's nodes are `d << 32 | index`: the SQL strata's range reads compute its interval (no table).
-            super::docs_by_shift(&db);
+            super::docs_by_shift(db);
             super::Stats::empty_of(&pf)
         }
     };
@@ -4964,9 +4644,7 @@ fn run_observed(
     // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
-    // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
-    let guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
-    let measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
+    let measured_once: HashMap<(String, String), Once<Vec<(String, i64, i64, i64, i64)>>> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
@@ -4975,12 +4653,12 @@ fn run_observed(
     #[cfg(target_family = "wasm")]
     let attach_x = "ATTACH ':memory:' AS x;".to_owned();
     #[cfg(not(target_family = "wasm"))]
-    let attach_x = format!("ATTACH {} AS x;", format!("'{}'", cross_path.to_string_lossy().replace('\'', "''")));
+    let attach_x = format!("ATTACH '{}' AS x;", cross_path.to_string_lossy().replace('\'', "''"));
     // `x` is this run's: tables an earlier run over the same store read (`table_source`, cached by the store's path
     // and the table's name) are another run's rows. Without this a second run read the first's cross-file tables:
     // a cone's loaded documents, there at the first run's end, counted as the workspace's.
-    crate::code_rule_dsl::logic::native::forget_inputs(&db);
-    crate::code_rule_dsl::facts::vtab::defer_setup_undone(&db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"), "DETACH x;");
+    crate::code_rule_dsl::logic::native::forget_inputs(db);
+    crate::code_rule_dsl::facts::vtab::defer_setup_undone(db, &format!("{attach_x} PRAGMA x.journal_mode = OFF; PRAGMA x.synchronous = OFF; PRAGMA temp_store = MEMORY;"), "DETACH x;");
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
     // read back, 0.75 s on Python.)
@@ -4990,34 +4668,13 @@ fn run_observed(
     let run_placed = super::body::Placed::whole(Arc::clone(&cross_run));
     let run_f = run_placed.fields()?;
     let decodes = cross_run.outputs().any(|o| cross_run.text(o) == "finding");
-    // The text tests (`strtest_<k>(s)`) every cross-file rule reads joined: each positive read's string is bound by
-    // another positive atom of its body, so a test row of a string no file of the run holds derives nothing. A memoised
-    // chunk may then keep a test row it cannot trace to a file's text with every file of the chunk (`memo`).
-    let joined_tests: BTreeSet<String> = {
-        use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
-        use crate::code_rule_dsl::logic::strings::RELATION;
-        let v = &cross_run;
-        let mut tests: BTreeSet<String> = v.rules().flat_map(|r| r.reads()).map(|a| v.rel_name(a.rel())).filter(|r| r.starts_with(RELATION)).map(str::to_owned).collect();
-        for rule in v.rules() {
-            for (i, l) in rule.body().enumerate() {
-                let Some(a) = l.atom().filter(|a| !a.neg() && v.rel_name(a.rel()).starts_with(RELATION)) else { continue };
-                let Some(TermRef::Var(s)) = a.args().next() else { continue };
-                let joined = rule.body().enumerate().any(|(j, m)| {
-                    j != i && matches!(m.view(), Lit::Atom(b) if !b.neg() && !v.rel_name(b.rel()).starts_with(RELATION) && b.args().any(|t| t.var() == Some(s)))
-                });
-                if !joined {
-                    tests.remove(v.rel_name(a.rel()));
-                }
-            }
-        }
-        tests
-    };
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
     // The repository inputs (`facts::repository`) the program reads: made once, bound once beside every chunk's.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the repository's relations".into()));
     let repository: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(String, i64, i64, i64, i64)>)> = {
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
-        let reads = |r: &str| read.contains(r) && head.inputs.iter().any(|i| i == r);
-        crate::code_rule_dsl::facts::repository::relations(&store, root, &files, &crate::code_rule_dsl::facts::repository::with_declared(&head.settings, options), &reads)
+        let reads = |r: &str| read.contains(r) && head_inputs.iter().any(|i| i == r);
+        crate::code_rule_dsl::facts::repository::relations(store, root, &files, &crate::code_rule_dsl::facts::repository::with_declared(&head_settings, options), &reads)
             .map_err(|e| Error::Plan(e.to_string()))?
             .into_iter()
             .filter(|(name, _)| reads(name))
@@ -5028,16 +4685,17 @@ fn run_observed(
             })
             .collect()
     };
-    // The phases' exports the program reads, as relations of atoms (`add_bridged`).
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the phases' exports".into()));
+    // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
         let mut repository = repository;
         let phased_read: BTreeSet<&String> = phased.keys().filter(|rel| read.contains(*rel)).collect();
         for rel in phased_read {
-            let width = head.decls[rel.as_str()].len();
+            let width = head.columns_of(rel).expect("a phase's export the program declares").len();
             // Read as `syntax::measured` reads it: its statistics counted from its rows.
             let flat = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<i64> { (0..s.len()).flat_map(|r| (0..width).map(move |c| (r, c))).map(|(r, c)| s.value(r, c)).collect() };
             let rows = &phased[rel];
-            let source = atoms_source(&store, width, rows.iter())?;
+            let source = atoms_source(store, width, rows.iter())?;
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
@@ -5045,7 +4703,8 @@ fn run_observed(
         }
         repository
     };
-    for rel in split.base.iter().filter(|rel| !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)) {
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the base relations' columns".into()));
+    for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n"],
@@ -5070,8 +4729,47 @@ fn run_observed(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
+    // The measures' keys (decision 0364 §5, R6): a proved recursive component of the cross part ordered by a node's
+    // depth or document order reads `ast_depth` or `node_order` of its candidates' nodes, and the cross part holds no
+    // tree (its tree steps were pushed into the chunks, decision 0051). The chunks hand that relation on as an input,
+    // as they hand on a base relation a cross-file rule looks a node up in (`semijoin`, below): the rows of the nodes
+    // the cross part holds, its exports' and its held base relations' (`held_nodes`). A candidate's node is one of
+    // those (no rule makes a node), so its key is there, and each candidate is rechecked once, in order.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the measures' keys".into()));
+    let measure_keys: BTreeSet<String> = {
+        use crate::code_rule_dsl::logic::plan::wellfounded::Order;
+        let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
+        let derived_here = |r: &str| cross_run.rel(r).is_some_and(|id| cross_run.heads(id).next().is_some());
+        let mut keys = BTreeSet::new();
+        if let Some(proofs) = proofs {
+            for (comp, verdict) in proofs.comps() {
+                let Ok(m) = verdict else { continue };
+                let key = match m.order {
+                    Order::Down | Order::Up => "ast_depth",
+                    Order::Back => "node_order",
+                    Order::Climbs | Order::Falls | Order::Same => continue,
+                };
+                if comp.iter().all(|r| derived_here(r)) {
+                    keys.insert(key.to_owned());
+                }
+            }
+        }
+        // A cross-file rule that reads the relation itself has it stored already, with the columns it names.
+        keys.retain(|k| !split.base.contains(k));
+        // A key the batch's shape has no view of is not bound: its measure is unkeyed (`Measured::keyed`), each
+        // candidate checked again as a row it may read goes. (Both shapes bind `ast_depth` and `node_order`.)
+        keys.retain(|k| syntax::has_view(projection.shape, k));
+        keys
+    };
+    for key in &measure_keys {
+        stored.push((key.clone(), vec!["n".into(), "k".into()]));
+    }
+    if !measure_keys.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("the measures' keys (decision 0364 R6)", || format!("{measure_keys:?}: an input of the cross part, the rows of the nodes the exports hold"));
+    }
     // Decide after projection planning: the split's base list can still contain unused inputs.
     // This changes the local frame's identity, not the cross-file program's semantic identity.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and digests".into()));
     let memo_tree_stats = !stored.is_empty() || cross_run.rules().flat_map(|r| r.body())
         .any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. }));
     let memo_rules = memo_program;
@@ -5080,10 +4778,15 @@ fn run_observed(
     // (`plan_digest`: the engine build, the grammar, the node ids' scheme), as what it keeps counts those entries:
     // another build's keeper counted entries this build's plan does not hold, so it could not count a file out
     // (Q71), and its counts are of rows this build may make otherwise.
-    let memo_whole = memo::plan_digest(&memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules));
+    let unpackaged_folders: BTreeSet<&str> = if reads_unpackaged {
+        unpackaged.iter().map(|p| p.rsplit_once('/').map_or("", |(dir, _)| dir)).collect()
+    } else {
+        BTreeSet::new()
+    };
+    let memo_whole = memo::plan_digest(&memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_program, memo_tree_stats), &renamed_modules), &unpackaged_folders));
     // The frames' space: the plan without the program (decision 0225 §2), so an entry made before a rule's edit is
     // read for the relations the edit did not reach (`memo_ids`).
-    let memo_program = memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules);
+    let memo_program = memo::with_unpackaged(memo::with_modules(memo::with_tree_demand(memo_space, memo_tree_stats), &renamed_modules), &unpackaged_folders);
     // The memo plan's parts: a plan that differs between two runs of the same tree misses every entry.
     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
         let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -5097,15 +4800,14 @@ fn run_observed(
     let memo_plan = memo::Program::new(memo_program, &lowered.domains);
     // No hold on the run's plans or the sources it reads (decision 0306 step 4): its collection lease (`reading`) keeps
     // every collector off the store until its record, with the manifest naming them, is applied.
-    // A run that reads the reference graph is not memoised: the graph needs every file's facts
-    // (`references::Files::add`), which a memo hit does not build.
-    let memoised = memoised && references.is_none();
     // The base relations a chunk keeps only for the nodes its exports hold (`file_local::semijoin_bases`): read by
     // the cross part only as lookups of those nodes.
+    drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the semijoin bases".into()));
     let semijoin: BTreeSet<String> = crate::code_rule_dsl::typing::file_local::semijoin_bases(&cross_run, &split.base)
         .unwrap_or_default()
         .into_iter()
         .filter(|r| stored.iter().any(|(s, _)| s == r))
+        .chain(measure_keys.iter().cloned())
         .collect();
     if !stored.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("semi-join of the held base relations", || {
@@ -5115,11 +4817,6 @@ fn run_observed(
                 format!("{:?}: each chunk keeps the rows of the nodes its exports hold, not every node's", semijoin)
             }
         });
-    }
-    // A cross-file part that reads base relations takes their rows from the chunks: a memoised file's entry holds its
-    // rows of them too (`memo::base_key`), every column, so it hands on what an evaluated file would.
-    if !stored.is_empty() && memoised {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo holds base rows", || format!("the cross-file part reads base relations {:?}: each file's entry holds its rows of them", stored.iter().map(|(r, _)| r).collect::<Vec<_>>()));
     }
     // The exports the chunks hand on, each row once, held in memory for the cross-file part to read in place
     // (`exports`). Was: a table of `x` per export, filled by SQL and read back.
@@ -5131,7 +4828,7 @@ fn run_observed(
     // Every input the cross-file part reads, as bound: a session keeps their digests (decision 0077).
     let mut cross_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
     for (rel, source, _) in &repository {
-        modules.bind(&db, rel, Arc::clone(source))?;
+        modules.bind(db, rel, Arc::clone(source))?;
         cross_inputs.push((rel.clone(), Arc::clone(source)));
     }
     // The run's constants of the phases' exports (`run_constants`): derived over the bound exports, copied out of the
@@ -5157,20 +4854,20 @@ fn run_observed(
         for (rel, _, measured) in &repository {
             stats.measured(rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), []);
         }
-        let got = texts_run(consts, &db, stats, rels.iter().cloned().collect(), modes, &vocabulary)?;
+        let got = texts_run(consts, db, stats, rels.iter().cloned().collect(), modes, &vocabulary)?;
         for rel in rels {
             let width = pf.width(rel);
             let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
             // Kept in the engine, or written to its table (a stratum the native engine declined): `held_rows`.
-            let rows = held_rows(&db, &got, rel, width)?;
+            let rows = held_rows(db, &got, rel, width)?;
             let values: Vec<Option<Vec<i64>>> = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
             let source = crate::code_rule_dsl::logic::native::component::columns_source(names, values);
             let measured = syntax::statistics(source.as_ref());
-            modules.bind(&db, rel, Arc::clone(&source))?;
+            modules.bind(db, rel, Arc::clone(&source))?;
             cross_inputs.push((rel.clone(), Arc::clone(&source)));
             repository.push((rel.clone(), source, measured));
         }
-        crate::code_rule_dsl::logic::native::component::release(&db, rels);
+        crate::code_rule_dsl::logic::native::component::release(db, rels);
     }
     let repository = repository;
     let repository_stats = |stats: &mut super::Stats| {
@@ -5179,16 +4876,18 @@ fn run_observed(
         }
     };
     let mut base_rows: BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)> = BTreeMap::new();
+    // Decision 0458: the documents the cross part reads its base relations off, where it reads any: the evaluated
+    // chunks' (`Evaluated::documents`, their guests' with them), and the memo hits', each made from its stored tape
+    // once the chunks are done (`CorpusHit`).
+    let mut corpus_docs: Vec<syntax::Document> = Vec::new();
+    let mut corpus_hits: Vec<CorpusHit> = Vec::new();
     // The base rows as sources, once made (`columns_source`): measured and bound as one, so they keep their statistics.
     let mut base_sources: BTreeMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = BTreeMap::new();
-    // Each one's columns by name, `None` for one not held (it reads as 0): its rows in a memo entry read as these
-    // (`input_delta`).
-    let mut base_held: HashMap<String, Vec<Option<String>>> = HashMap::new();
     // Their digests, when a session's run took them (`retain::kept_source`).
     let mut input_digests: HashMap<String, u64> = HashMap::new();
     // A semi-join's base relations' statistics (`semijoin`): no keeper counts them (it counts every row, the relation
     // holds those its exports name), so each run measured them, sorting every column (8 sorts of 430k-460k rows on
-    // an edit of ep2). Measured once at their rows, they are kept beside the input's frame (`write_input_frames`)
+    // an edit of ep2). Measured once at their rows, they are kept beside the input's frame (`write_input_kept`)
     // and read with it on the kept route (`kept_inputs`): by relation, the rows' digest and the statistics.
     let mut kept_input_stats: HashMap<String, (u64, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     let mut semijoin_stats: HashMap<String, Vec<(String, i64, i64, i64, i64)>> = HashMap::new();
@@ -5220,7 +4919,7 @@ fn run_observed(
     // measured on their threads and reported as `parse` and `batch`; the main thread's own as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Chunk = (usize, (Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Option<syntax::Grower>), Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>, Vec<(String, memo::Entry, Option<memo::Content>, Option<Arc<str>>)>, Vec<syntax::Document>);
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -5230,8 +4929,8 @@ fn run_observed(
     let recording = matches!(memo, Some(memo::Memo::Stored(_)));
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
-    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
-    let stat_index = if recording {
+    let canonical_root = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
+    let stat_index = if recording && !crate::git_workspace::snapshot::contains(root) {
         // An earlier run of this process may have queued the root's stats: read once they are written, before the
         // first wave (decision 0104).
         store.settle(&stats_key(&canonical_root));
@@ -5240,11 +4939,8 @@ fn run_observed(
         crate::content_store::StatIndex::default()
     };
     let stat_index = &stat_index;
-    // The chunks' size: the caller's, at most, but sized to what a chunk's run holds (`CHUNK_MB`): the first chunk is
-    // `PROBE_NODES` nodes, and each run measures the footprint it adds per node. 64 data-layer rules hold about
-    // 5 KB a node at their peak, so the caller's 262,144 nodes took 1.3 GB; the converted rules hold much less.
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(PROBE_NODES)));
-    let worker_target = Arc::clone(&chunk_target);
+    // The heap's part of the run's count (decision 0435 §3), which the profile reports and the chunks' room starts from.
+    rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
     // builder ends without waiting (as it must without threads).
@@ -5294,11 +4990,10 @@ fn run_observed(
             let mut k = last.and_then(|w| store.stat_blob(w).ok().flatten()).and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
             // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
             let atoms = store.atoms_handle();
-            if atoms.holds_by_reading() {
-                if k.map_symbols(&|key, names| memo_plan.syms.columns_named(key, names), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
+            if atoms.holds_by_reading()
+                && k.map_symbols(&|key, names| memo_plan.syms.columns(key, names.len()), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
                     k = keptstats::Keeper::default();
                 }
-            }
             // The contents its last run had not stored yet, by their sources now.
             k.resolve(|digests| store.sources_by_hashes(&digests.iter().map(|d| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).unwrap_or_else(|_| vec![None; digests.len()]));
             Some(k)
@@ -5306,31 +5001,16 @@ fn run_observed(
         _ => None,
     };
     if let Some(k) = keeper.as_mut() {
-        // By the key their rows have in a memo entry: a base relation's (`base_key`), and an export's own name.
-        // A base relation's statistics are read at the columns its rules read (`names`, held): counted at those only.
-        let rels: Vec<(String, Vec<String>, Option<Vec<usize>>)> = stored
-            .iter()
-            .map(|(rel, names)| {
-                let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
-                let (from, columns): (Vec<usize>, Vec<String>) = all.iter().enumerate().filter(|(_, c)| names.iter().any(|n| n == *c)).map(|(i, c)| (i, (*c).to_owned())).unzip();
-                (memo::base_key(rel), columns, Some(from))
-            })
-            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..pf.width(rel)).map(|c| format!("c{c}")).collect(), None)))
-            .collect();
+        // By the key their rows have in a memo entry: an export's own name. (A base relation's statistics are kept by
+        // its documents' digest, decision 0458: no entry holds its rows.)
+        let rels: Vec<(String, Vec<String>)> = split.exports.iter().map(|rel| (rel.clone(), (0..pf.width(rel)).map(|c| format!("c{c}")).collect())).collect();
         // An export's rows' document: its first node column's, as the chunks' totals read it (`Totals::add_rows`).
         let doc_at = split.exports.iter().map(|rel| (rel.clone(), pf.types(rel).iter().position(|t| *t == "node"))).collect();
         // A session's exports counted by file too (0096 step 3). `RERAIL_COUNT_EXPORTS=off` holds every hit's rows
         // again.
-        // With them each base relation's held columns, and the files' tree counts.
+        // With them the files' tree counts.
         let keep = (session.is_some() && std::env::var("RERAIL_COUNT_EXPORTS").map_or(true, |v| v != "off")).then(|| keptstats::Keep {
-            exports: split.exports.iter().cloned().collect(),
-            base: stored
-                .iter()
-                .map(|(rel, names)| {
-                    let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
-                    (rel.clone(), memo::base_key(rel), names.iter().filter_map(|n| all.iter().position(|c| c == n)).collect())
-                })
-                .collect(),
+            exports: split.exports.to_vec(),
         });
         k.begin(&rels, &memo_ids, doc_at, keep);
     }
@@ -5363,7 +5043,8 @@ fn run_observed(
         let maintained = maintained_cross_of(shared_maintained, &cross)?;
         let (ckey, binds) = retain::keys(&prepared_key, maintained.digest()?);
         part_keys.lock().expect("the parts' keys").push(ckey);
-        let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
+        // The exports alone: the base relations are read off the corpus batch (decision 0458).
+        let rels: Vec<String> = split.exports.clone();
         let found = retain::kept_inputs_stored(store, kept_strata::space(root), binds, &maintained.placed()?, &rels)?;
         early_maintained = Some(maintained);
         match found {
@@ -5458,6 +5139,24 @@ fn run_observed(
     // The same tapes by their text's hash (Q22), for a file the run knows by its digest alone (no memo, or one named
     // by digest in a wave).
     let mut by_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    // The tapes of the files a run reads for their programs (`.embedded on`, decision 0470 step 2), by their text: each
+    // in its own language, found by its own tag, with its programs (decision 0431 step 6).
+    let mut host_text: HashMap<crate::content_store::HashKey, (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    /// A memo hit the corpus batch makes a document of (decision 0458): its key, path and module. A string its rules
+    /// parse is a tape value, no document (decision 0431 §8).
+    struct CorpusHit {
+        key: i64,
+        path: String,
+        module: Option<Arc<str>>,
+        /// The requests its entry kept that its chunk's fixpoint answered with tape values (`memo::VALUES`).
+        values: Option<output::Rows>,
+    }
+    // The memo hits' tapes, by path, where the cross part reads base relations (decision 0458): read with the misses'
+    // (before the first wave, or from those read then), and its document made from it once the chunks are done.
+    let hit_tapes: parking_lot::Mutex<HashMap<String, crate::content_store::TapeFrame>> = parking_lot::Mutex::new(HashMap::new());
+    // Decision 0431 R6: the tapes of the texts the rules parse in a grammar other than the run's, by text and tag.
+    let mut value_frames: HashMap<(crate::content_store::HashKey, i64), (crate::content_store::SourceId, crate::content_store::TapeFrame)> = HashMap::new();
+    let run_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).map(i64::from);
     // The files built with a tape read before the first wave, and those parsed (`Report::file_tapes`).
     let file_tapes = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
@@ -5470,18 +5169,36 @@ fn run_observed(
         // Inside the waves (a load's files), the store is not read (decision 0104): each file is new to the run, its
         // source and tape handed to the writer as it is parsed.
         let reading = !crate::code_rule_dsl::logic::profile::inside_waves();
+        // The run on each item's thread (`run_state::Carry`, decision 0442): a stolen item's span and work counts are
+        // its run's. Without it a pool thread that took one read the profile outside any run and aborted.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
         let stat = |path: &String| -> Option<crate::content_store::FileStat> {
             if !looking {
                 return None;
             }
+            let _in = carry.enter();
             let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
-            std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
+            crate::git_workspace::snapshot::file_stat(root.join(path))
         };
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
-        let stats: Vec<Option<crate::content_store::FileStat>> = window.par_iter().map(|(_, path, _)| stat(path)).collect();
-        let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+        let stats: Vec<Option<crate::content_store::FileStat>> = crate::code_rule_dsl::logic::profile::on_cores(|| window.par_iter().map(|(_, path, _)| stat(path)).collect());
+        let mut known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+        // An immutable Git source is identified by its blob, without statting or reading a checkout file.
+        // A previously seen blob's SHA-256 lets the existing content memo answer before its bytes are fetched.
+        if let (true, true, Some(memo)) = (memoised, reading, memo) {
+            let aliases: Vec<(usize, [u8; 32])> = observe(|o| window.iter().enumerate().filter_map(|(i, (_, path, _))| {
+                let blob = crate::git_workspace::snapshot::blob(&root.join(path))?;
+                o.alias(&blob.key_bytes()).map(|digest| (i, digest))
+            }).collect());
+            if !aliases.is_empty() {
+                let digests: Vec<_> = aliases.iter().map(|(_, digest)| *digest).collect();
+                for ((i, _), content) in aliases.into_iter().zip(memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?) {
+                    known[i] = content.and_then(|c| c.stored());
+                }
+            }
+        }
         let mut content: Vec<Option<memo::Content>> = known.iter().map(|k| k.map(memo::Content::Stored)).collect();
         let mut found: Vec<Option<memo::Found>> = (0..window.len()).map(|_| None).collect();
         let mut digest: Vec<Option<[u8; 32]>> = vec![None; window.len()];
@@ -5523,30 +5240,35 @@ fn run_observed(
         }
         // The others are read and hashed, whatever the index said: a file may have changed since its stat.
         let rest: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none()).collect();
-        let read: Vec<Option<String>> = rest
-            .par_iter()
-            .map(|i| {
-                let path = &window[*i].1;
-                let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-                // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
-                if let Some(source) = source_texts.text(&root.join(path), keep) {
-                    return Ok(Some(source));
-                }
-                let source = match std::fs::read_to_string(root.join(path)) {
-                    Ok(source) => source,
-                    // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
-                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
-                    Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
-                };
-                crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
-                Ok(Some(source))
-            })
-            .collect::<Result<_>>()?;
+        // The run on each job's thread (`run_state::Carry`, decision 0442): a job's span and work are the run's.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let read: Vec<Option<String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            rest
+                .par_iter()
+                .map(|i| {
+                    let _in = carry.enter();
+                    let path = &window[*i].1;
+                    let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
+                    // Held from the run's digests (decision 0300): taken here only where this window's texts are kept.
+                    if let Some(source) = source_texts.text(&root.join(path), keep) {
+                        return Ok(Some(source));
+                    }
+                    let source = match crate::git_workspace::snapshot::read_to_string(root.join(path)) {
+                        Ok(source) => source,
+                        // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
+                        Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
+                        Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
+                    };
+                    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
+                    Ok(Some(source))
+                })
+                .collect::<Result<_>>()
+        })?;
         let (rest, texts): (Vec<usize>, Vec<String>) = rest.into_iter().zip(read).filter_map(|(i, t)| t.map(|t| (i, t))).unzip();
         if let (true, Some(memo)) = (looking, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, texts.iter().map(|t| t.len() as u64).sum());
-            let digests: Vec<[u8; 32]> = texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect();
+            let digests: Vec<[u8; 32]> = crate::code_rule_dsl::logic::profile::on_cores(|| texts.par_iter().map(|t| Sha256::digest(t.as_bytes()).into()).collect());
             // A content the store does not hold is new: its source is written with its tape, behind the run.
             // A session's memo is in memory: asked in the waves too.
             let contents: Vec<Option<memo::Content>> = if reading || matches!(memo, memo::Memo::Held(_)) {
@@ -5611,25 +5333,40 @@ fn run_observed(
                 }
             }
         }
-        // The tapes of the files the memo has no entry for, of those whose sources the store holds: one read.
+        // A file memo can be partial for the current rules. Fetch tapes by content before the waves,
+        // so completing a memo entry does not reparse the source.
         let mut tape: Vec<Option<crate::content_store::TapeFrame>> = vec![None; window.len()];
         if let (true, Some(cache), Some(lang)) = (reading, tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label)) {
-            let asked: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none() && matches!(content[*i], Some(memo::Content::Stored(_)))).collect();
+            // A hit's too, where the cross part reads base relations off every file's tape (decision 0458).
+            let asked: Vec<usize> = (0..window.len()).filter(|i| (found[*i].is_none() || !stored.is_empty()) && matches!(content[*i], Some(memo::Content::Stored(_)))).collect();
             if let (false, Some(tag)) = (asked.is_empty(), crate::code_rule_dsl::language::tape_tag(lang)) {
-                let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
                 let ids: Vec<crate::content_store::SourceId> = asked.iter().map(|i| content[*i].and_then(memo::Content::stored).expect("stored")).collect();
+                let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
                 let frames = cache
                     .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?;
                 for (i, f) in asked.into_iter().zip(frames) {
-                    tape[i] = f;
+                    match (found[i].is_some(), f) {
+                        (true, Some(f)) => {
+                            hit_tapes.lock().insert(window[i].1.clone(), f);
+                        }
+                        (true, None) => {}
+                        (false, f) => tape[i] = f,
+                    }
                 }
             }
         } else if let Some(held) = wave_tapes.get().filter(|_| !reading) {
             // In a wave, from those read before the first: a file that misses the memo (a new plan's run over an
-            // older store) is decompressed, not parsed again.
-            for i in (0..window.len()).filter(|i| found[*i].is_none()) {
-                tape[i] = content[i].and_then(memo::Content::stored).and_then(|id| held.get(&id)).cloned();
+            // older store) is decompressed, not parsed again; a hit's, for the corpus batch (decision 0458).
+            for i in (0..window.len()).filter(|i| found[*i].is_none() || !stored.is_empty()) {
+                let frame = content[i].and_then(memo::Content::stored).and_then(|id| held.get(&id)).cloned();
+                match (found[i].is_some(), frame) {
+                    (true, Some(f)) => {
+                        hit_tapes.lock().insert(window[i].1.clone(), f);
+                    }
+                    (true, None) => {}
+                    (false, f) => tape[i] = f,
+                }
             }
         }
         let mut texts: HashMap<usize, String> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
@@ -5684,6 +5421,184 @@ fn run_observed(
         }
         _ => HashMap::new(),
     };
+    // Decision 0458: the files the kept part's base relations were read off, as the run that kept it had them (its
+    // documents' table), and for each one changed or gone since, its old source, tape and entry (its guests' requests):
+    // all read here, before the first wave (decision 0104). The changed files' old and new documents are then a base
+    // relation's two versions (below). `None` where a run cannot say what changed: no table (the cross part's first
+    // run, or the first after a rule edit), a file's content not looked up, or an old source the store no longer
+    // holds; what reads a base relation then runs again from its reads.
+    struct OldBase {
+        key: i64,
+        bytes: Arc<crate::content_store::CachedBytes>,
+        frame: Option<crate::content_store::TapeFrame>,
+        /// Its old entry, for the tape values it kept (`memo::VALUES`), where the fixpoint parses strings.
+        entry: Option<memo::Entry>,
+    }
+    let base_binds: Option<[u8; 32]> = if session.is_none() && durable.is_some() && memoised && !stored.is_empty() {
+        let maintained = maintained_cross_of(shared_maintained, &cross)?;
+        Some(retain::keys(&prepared_key, maintained.digest()?).1)
+    } else {
+        None
+    };
+    type OldBases = Option<(BTreeSet<String>, HashMap<String, OldBase>)>;
+    // The memo plan the documents' table was written under, once one was read (`retain::memo_plan_tag`; `None`
+    // inside for a table that names none): only under this run's plan is a document of the same content and key
+    // taken to hold the rows it held (`same_docs`, below), and a table of another plan is written again.
+    let base_table_plan: std::cell::Cell<Option<Option<u64>>> = std::cell::Cell::new(None);
+    // The base relations' statistics kept beside the table, each with the digest of the rows it counts, and the
+    // table's own digest (the documents it names): decision 0458.
+    type BaseStatsKept = (Option<u64>, HashMap<String, (u64, super::statkeep::RelStats)>);
+    // The compare, given each file's document key and content now (`now_of`): before the first wave where the run
+    // knows its files then, else (a run that lists its files as it goes, and reads its memo in the waves) once the
+    // chunks are done, from the contents they found (`run_docs`).
+    // The documents' table and the statistics kept beside it, read before the first wave in every run that keeps
+    // them (decision 0104), a run inside another's waves too: they name no file of this run.
+    // With them, the corpus batch's documents' views' counts (decision 0494).
+    let (base_table, mut base_stats_kept, base_counts): (Option<Vec<retain::PlacedDocument>>, BaseStatsKept, retain::BaseCounts) = match (base_binds, memo, looking) {
+        (Some(binds), Some(memo::Memo::Stored(_)), true) => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' table and statistics (decision 0458)".into());
+            let counted: Vec<String> = stored.iter().map(|(r, _)| r.clone()).filter(|r| !semijoin.contains(r)).collect();
+            let stats = retain::base_stats(store, kept_strata::space(root), binds, &counted)?;
+            let table = retain::base_documents(store, kept_strata::space(root), binds)?;
+            // Its memo plan, for `same_docs` and the table's write (below).
+            if let Some(t) = &table {
+                base_table_plan.set(Some(t.plan));
+            }
+            let counts = retain::base_counts(store, kept_strata::space(root), binds)?;
+            let digest = table.as_ref().map(|t| t.digest);
+            (table.map(|t| t.docs), (digest, stats), counts)
+        }
+        _ => (None, (None, HashMap::new()), HashMap::new()),
+    };
+    let base_compare = |now_of: HashMap<String, (i64, Option<memo::Content>)>| -> Result<OldBases> {
+        let (Some(_), Some(memo @ memo::Memo::Stored(_)), true) = (base_binds, memo, looking) else { return Ok(None) };
+        let found = (|| -> Result<std::result::Result<(BTreeSet<String>, HashMap<String, OldBase>), String>> {
+            let _before = crate::code_rule_dsl::logic::profile::span(|| "the base relations' documents (decision 0458)".into());
+            let Some(mut table) = base_table.clone() else { return Ok(Err("no documents' table kept".into())) };
+            // Inside another run's waves (a load's run, phase 1's) the store is not read (decision 0104): the table's
+            // places are (decision 0494 step 4 part 2). Before the first wave a document without them is read
+            // through the store.
+            let in_waves = crate::code_rule_dsl::logic::profile::inside_waves();
+            let mut now_of = now_of;
+            // A content written after the table was is found by its digest, as the keeper's are (`Keeper::resolve`);
+            // so is a file read in this run (its stat changed, or is too recent to trust), whose source, where the
+            // store holds it, is what the table names. Inside the waves the digests are compared instead (`same`).
+            let unstored: Vec<(Option<usize>, Option<String>, [u8; 32])> = if in_waves {
+                Vec::new()
+            } else {
+                table.iter().enumerate().filter_map(|(i, ((_, _, c), _))| match c { memo::Content::Unstored(d) => Some((Some(i), None, *d)), _ => None })
+                    .chain(now_of.iter().filter_map(|(p, (_, c))| match c { Some(memo::Content::Unstored(d)) => Some((None, Some(p.clone()), *d)), _ => None }))
+                    .collect()
+            };
+            if !unstored.is_empty() {
+                let ids = store.sources_by_hashes(&unstored.iter().map(|(_, _, d)| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).map_err(|e| Error::Plan(e.to_string()))?;
+                for ((at, path, _), id) in unstored.into_iter().zip(ids) {
+                    match (at, path, id) {
+                        (Some(i), _, Some(id)) => table[i].0.2 = memo::Content::Stored(id),
+                        (Some(_), _, None) => return Ok(Err("a content of the table is no longer stored".into())),
+                        (None, Some(p), Some(id)) => {
+                            if let Some(now) = now_of.get_mut(&p) {
+                                now.1 = Some(memo::Content::Stored(id));
+                            }
+                        }
+                        (None, _, _) => {}
+                    }
+                }
+            }
+            // As the table has it: the same content (as the store names it, or by the sha256 the table keeps of it,
+            // against a file's digest now) under the same key.
+            let same = |path: &str, key: i64, was: memo::Content, places: Option<&crate::content_store::DocumentPlaces>| match now_of.get(path) {
+                Some(&(d, Some(c))) => {
+                    keptstats::same((was, key), (c, d))
+                        || (d == key && matches!((c, places), (memo::Content::Unstored(x) | memo::Content::Held(x), Some(pl)) if x == pl.sha256))
+                }
+                _ => false,
+            };
+            let olds: Vec<(String, i64, memo::Content, Option<crate::content_store::DocumentPlaces>)> =
+                table.iter().filter(|((p, k, c), pl)| !same(p, *k, *c, pl.as_ref())).map(|((p, k, c), pl)| (p.clone(), *k, *c, *pl)).collect();
+            let in_table: std::collections::HashSet<&str> = table.iter().map(|((p, _, _), _)| p.as_str()).collect();
+            let changed: BTreeSet<String> = olds.iter().map(|(p, _, _, _)| p.clone()).chain(now_of.keys().filter(|p| !in_table.contains(p.as_str())).cloned()).collect();
+            // Each old source and tape where the table's places name them, checked by the hashes kept; else, before
+            // the first wave, read through the store.
+            let tape_tag = crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag).filter(|_| tapes.is_some() && cfg!(feature = "tape-cache"));
+            let placed: Vec<(Option<Arc<crate::content_store::CachedBytes>>, Option<crate::content_store::TapeFrame>)> = olds
+                .iter()
+                .map(|(_, _, _, pl)| match pl {
+                    Some(pl) => (store.placed_source(pl), tape_tag.and_then(|_| store.placed_tape(pl))),
+                    None => (None, None),
+                })
+                .collect();
+            let through: Vec<(usize, crate::content_store::SourceId)> =
+                if in_waves { Vec::new() } else { olds.iter().zip(&placed).enumerate().filter(|(_, (_, (b, _)))| b.is_none()).filter_map(|(i, ((_, _, c, _), _))| c.stored().map(|id| (i, id))).collect() };
+            let ids: Vec<crate::content_store::SourceId> = through.iter().map(|(_, id)| *id).collect();
+            let texts = if ids.is_empty() { HashMap::new() } else { store.get_sources_bulk(&ids).map_err(|e| Error::Plan(e.to_string()))? };
+            let frames = match (tapes.as_ref().filter(|_| cfg!(feature = "tape-cache") && !ids.is_empty()), tape_tag) {
+                (Some(cache), Some(tag)) => cache
+                    .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
+                    .map_err(|e| Error::Plan(e.to_string()))?,
+                _ => vec![None; ids.len()],
+            };
+            let mut read: HashMap<usize, (Arc<crate::content_store::CachedBytes>, Option<crate::content_store::TapeFrame>)> = HashMap::new();
+            for ((i, id), frame) in through.iter().zip(frames) {
+                if let Some(bytes) = texts.get(id) {
+                    read.insert(*i, (Arc::clone(bytes), frame));
+                }
+            }
+            // Each old entry, for the tape values it kept (`memo::VALUES`, a program whose fixpoint parses strings
+            // only): by its content's id, or inside
+            // the waves by the sha256 kept, in the snapshot (each path's newest entry under the plan: the old one).
+            let keys: Vec<(memo::Content, &str)> = olds
+                .iter()
+                .map(|(p, _, c, pl)| (match (in_waves, pl) { (true, Some(pl)) => memo::Content::Unstored(pl.sha256), _ => *c }, world::store_path(p)))
+                .collect();
+            let found: Vec<Option<memo::Found>> = match parsing {
+                false => keys.iter().map(|_| None).collect(),
+                true if in_waves && !store.memo_admitted(&crate::content_store::local_space(&memo::plan_digest(&memo_program))) => {
+                    return Ok(Err("the old entries are not held: the plan's entries were not read before the waves".into()));
+                }
+                true => memo.found_all(&memo_plan, &keys).map_err(|e| Error::Plan(e.to_string()))?,
+            };
+            let mut out = HashMap::new();
+            for (i, (((path, key, _, _), (source, tape)), found)) in olds.into_iter().zip(placed).zip(found).enumerate() {
+                let (bytes, frame) = match (source, read.remove(&i)) {
+                    (Some(bytes), _) => (bytes, tape),
+                    (None, Some((bytes, frame))) => (bytes, frame),
+                    (None, None) if in_waves => return Ok(Err(format!("{path}: its old source's place is not kept, or holds other bytes, and the store is not read inside the waves (decision 0104)"))),
+                    (None, None) => return Ok(Err(format!("{path}: its old source is no longer stored"))),
+                };
+                let entry = match (parsing, found) {
+                    (false, _) => None,
+                    (true, Some(found)) => match found.entry(key).map_err(|e| Error::Plan(e.to_string()))? {
+                        Some(entry) => Some(entry),
+                        None => return Ok(Err(format!("{path}: its old entry is another document's"))),
+                    },
+                    (true, None) => return Ok(Err(format!("{path}: its old entry is not in the memo"))),
+                };
+                out.insert(path, OldBase { key, bytes, frame, entry });
+            }
+            Ok(Ok((changed, out)))
+        })()?;
+        Ok(match found {
+            Ok(old) => Some(old),
+            Err(why) => {
+                crate::code_rule_dsl::logic::profile::decision("the base relations' old documents (decision 0458)", || format!("none ({why}): what reads a base relation runs again"));
+                if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                    eprintln!("rerail: the base relations' old documents: none ({why})");
+                }
+                None
+            }
+        })
+    };
+    // Before the first wave, where the run knows its files then (decision 0104).
+    let base_known = !docs.is_empty();
+    let mut old_base: OldBases = if base_known {
+        let now = before.lock();
+        let now_of: HashMap<String, (i64, Option<memo::Content>)> = docs.iter().map(|(d, p)| (p.clone(), (*d, now.get(p).and_then(|b| b.content)))).collect();
+        drop(now);
+        base_compare(now_of)?
+    } else {
+        None
+    };
     // The entry a file was counted under: as found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
@@ -5719,7 +5634,7 @@ fn run_observed(
                         let width = pf.width(rel);
                         exports.borrow_mut().install(rel, width, counted.source(rel, width));
                     }
-                    crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || format!("{skipped} memo hits neither held again nor counted: {} export rows, {} base rows counted", counted.rows(), k.as_ref().and_then(|k| k.counted_base()).map_or(0, |(b, _)| b.rows())));
+                    crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || format!("{skipped} memo hits neither held again nor counted: {} export rows counted", counted.rows()));
                     installed.set(true);
                     true
                 }
@@ -5737,44 +5652,30 @@ fn run_observed(
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
     // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
-    // first wave): what `Retained::from_frames` names its frames by.
+    // first wave): what `Retained::bind_kept` names its frames by.
     let mut cross_idents: Vec<(u64, retain::StrataIdents)> = Vec::new();
     // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
     // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
     {
         // The cone of requests' connection and store, opened before the first wave (decision 0104).
         let (slot, _) = handed.cone();
-        connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()))?;
-        // And the kept frames (decision 0104): the waves read them from memory (`preload_frames_live`). The memo's
-        // entries are not frames (decision 0240 §4); of the cross part's, not every kept run's (Q19).
+        connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()), in_memory.then(|| store.atoms_handle()))?;
+        // And the kept blocks' rows (decision 0104): the waves bind the kept facts by them, from memory
+        // (`preload_kept_state`). The memo's entries are admitted below (decision 0240 §4).
         let preload_at = std::time::Instant::now();
-        // Of the cross part's space, the frames of the identities its programs can read (the cross program and the
-        // maintained one the kept route made): not every kept run's, each build's and each edit's (Q19).
-        // `RERAIL_CROSS_BY_IDENTITY=off`: the space read whole, to compare.
-        let by_identity = std::env::var("RERAIL_CROSS_BY_IDENTITY").map_or(true, |v| v != "off");
-        let cross_rels = match early_maintained.as_ref().filter(|_| by_identity) {
-            Some(maintained) => {
-                let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's frames, by identity".into());
-                let (_, binds) = retain::keys(&prepared_key, maintained.digest()?);
-                {
-                    // And what the run binds from an earlier phase, which `Retained::from_frames` reads as an input,
-                    // declared or not.
-                    let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
-                    let progs = [cross.placed()?, maintained.placed()?];
-                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
-                    cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
-                    Some(rels)
-                }
-            }
-            None => None,
-        };
-        // The root's cross space is read by the run whose own it is (a run of no phase), not with whichever run of the
-        // process came first (phase 0's, on a rule edit): the store's first read leaves every recorded root's out.
-        let main_cross = kept_strata::part_space(root, "cross");
-        let cross_space = crate::content_store::FramesCrossSpace { space: main_cross, own: kept_strata::space(root) == main_cross, rels: cross_rels.as_ref(), cross_of: kept_strata::cross_space };
-        let (frames, bytes) = {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept frames, before the first wave (decision 0104)".into());
-            store.preload_frames_live(Some(cross_space)).map_err(|e| Error::Plan(e.to_string()))?
+        // The cross program's strata identities and the maintained one's the kept route made, which the part's
+        // entries are named by (`Retained::bind_kept_named`), read as stored facts.
+        if let Some(maintained) = early_maintained.as_ref() {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's strata identities".into());
+            let progs = [cross.placed()?, maintained.placed()?];
+            let mut named = Vec::new();
+            let strata = retain::strata_kept(store, &[&progs[0], &progs[1]], &mut named)?;
+            late_sources.lock().expect("the late sources").extend(named);
+            cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
+        }
+        let spaces = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept blocks' rows, before the first wave (decision 0104)".into());
+            store.preload_kept_state().map_err(|e| Error::Plan(e.to_string()))?
         };
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
@@ -5787,22 +5688,26 @@ fn run_observed(
             }
             _ => (0, 0, None),
         };
-        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && frames + entries > 0 {
-            eprintln!("rerail: frames read before the first wave: {frames} frames, {:.1} MB encoded, {preload_secs:.2} s; {entries} memo entries its waves may look up, {:.1} MB", bytes as f64 / 1048576.0, entry_bytes as f64 / 1048576.0);
-        }
-        if frames > 0 {
-            crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
+        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && spaces + entries > 0 {
+            eprintln!("rerail: read before the first wave: {spaces} kept spaces' rows, {preload_secs:.2} s; {entries} memo entries its waves may look up, {:.1} MB", entry_bytes as f64 / 1048576.0);
         }
         // The tapes the root's last runs named (Q22), of any lane: a lane is the programs' texts, and a rule's edit
         // starts a new one with no run, where the files are as they were. The last few, for the phases' runs over the
         // root record between. One read, before the first wave (decision 0104), for the waves' builds (a load's files,
-        // a file the memo misses). A guest's tape is not stored (Q30).
+        // a file the memo misses), and the tapes of the texts the rules parsed (decision 0431 R6).
         if let (Some(cache), Some(tag)) = (
             tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
             crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
         ) {
             let _tapes = crate::code_rule_dsl::logic::profile::span(|| "the root's tapes, by their sources (Q22)".into());
-            let wanted = store.root_sources(&canonical_root, TAPE_RUNS).map_err(|e| Error::Plan(e.to_string()))?;
+            // And the sources a phase observed by digest (a Git revision's, `phases::observed_source_digests`), which
+            // no run of the root may have named yet; a revision's root is named by its fact root.
+            let fact_root = crate::git_workspace::snapshot::fact_root(root);
+            let named_root = fact_root.as_ref().map(|path| path.to_string_lossy()).unwrap_or_else(|| std::borrow::Cow::Borrowed(canonical_root.as_str()));
+            let mut wanted = store.root_sources(&named_root, TAPE_RUNS).map_err(|e| Error::Plan(e.to_string()))?;
+            wanted.extend(memo::found_sources(cache, &phases::observed_source_digests())?.into_iter().flatten());
+            let mut unique = std::collections::HashSet::new();
+            wanted.retain(|&source| unique.insert(source));
             let frames = cache
                 .tape_frames_with_hashes(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                 .map_err(|e| Error::Plan(e.to_string()))?;
@@ -5814,24 +5719,52 @@ fn run_observed(
             }
             let _ = wave_tapes.set(frames.iter().map(|(s, _, f)| (*s, f.clone())).collect());
             by_text = frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))).collect();
+            if embedded {
+                let hosts: BTreeSet<u8> = docs
+                    .iter()
+                    .filter(|(_, p)| host(p))
+                    .filter_map(|(_, p)| crate::code_rule_dsl::language::label_of_path(p).and_then(crate::code_rule_dsl::language::dialect_by_label).and_then(crate::code_rule_dsl::language::tape_tag))
+                    .collect();
+                for t in hosts {
+                    let frames = cache
+                        .tape_frames_with_hashes(&wanted, i64::from(t), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
+                        .map_err(|e| Error::Plan(e.to_string()))?;
+                    host_text.extend(frames.into_iter().map(|(source, hash, frame)| (hash, (source, frame))));
+                }
+            }
+            // The texts the rules parse in other grammars (decision 0431 R6): the tags the program's requests name, or
+            // every tag where a request's grammar is not a constant. The run's own are `by_text`'s.
+            let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+            // A program that parses inside its fixpoint (decision 0431 §8) names its grammars in its own requests.
+            let tags = if parsing { guests::grammar_tags(&prepared_placed.v) } else { Some(BTreeSet::new()) };
+            let found: Vec<(crate::content_store::SourceId, crate::content_store::HashKey, i64, crate::content_store::TapeFrame)> = match tags {
+                Some(tags) => {
+                    let mut all = Vec::new();
+                    for t in tags.into_iter().filter(|&t| t != i64::from(tag)) {
+                        all.extend(cache.tape_frames_with_hashes(&wanted, t, gv, fv).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(|(s, h, f)| (s, h, t, f)));
+                    }
+                    all
+                }
+                None => cache.tape_frames_any_grammar(&wanted, gv, fv).map_err(|e| Error::Plan(e.to_string()))?.into_iter().filter(|(_, _, t, _)| *t != i64::from(tag)).collect(),
+            };
+            value_frames = found.into_iter().map(|(source, hash, t, frame)| ((hash, t), (source, frame))).collect();
         }
     }
-    let guest_parses = guests::Parses::default();
+    let guest_parses = guests::Parses::new(tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")).map(|cache| guests::ValueStore { cache, run_tag, by_text: &by_text, others: value_frames, late: &late_sources }));
     // The roots its requests may read, watched before the first wave (`World::watch`): a `World` made inside the
     // fixpoint would otherwise read the observer's store there (decision 0104; Q150).
     if loading.is_some() {
-        world::World::watch(root, &head);
+        world::World::watch(root, head);
     }
     let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
-    // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
-    // without the base rows this run's cross-file part reads is a miss.
-    let memo_rows: BTreeSet<String> = split.exports.iter().cloned()
-        .chain(stored.iter().map(|(r, _)| memo::base_key(r))).collect();
+    // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry keeps
+    // no base rows: the cross part reads them off the corpus batch (decision 0458).
+    let memo_rows: BTreeSet<String> = split.exports.iter().cloned().collect();
     let memo_row_needed = |r: &str| r == OWN_DOCS || r == memo::COVERED || memo_rows.contains(r)
         || (memo_tree_stats && (r == OWN_KINDS || r == OWN_EDGES || r == OWN_FIELDS || r.starts_with(OWN_POSTINGS)));
     crate::code_rule_dsl::logic::profile::decision("memo consumer projection", || format!(
         "{} demanded relations; tree distributions {}", memo_rows.len(), if memo_tree_stats { "retained" } else { "omitted" }));
-    let has_base = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS) && stored.iter().all(|(rel, _)| e.rows.contains_key(&memo::base_key(rel)));
+    let has_counts = |e: &memo::Entry| e.rows.contains_key(OWN_DOCS);
     // The relations an entry does not hold under their identities now (decision 0225 §2): a rule's edit reached them.
     let missing_of = |e: &memo::Entry| -> BTreeSet<String> {
         let covered = memo::covered(e);
@@ -5884,13 +5817,11 @@ fn run_observed(
                 if let (true, false, Some(found)) = (memoised, b.outputs, b.found) {
                     let _decode = crate::code_rule_dsl::logic::profile::span(|| "memo decode".into());
                     let entry = found.projected(*d, &memo_row_needed).map_err(|e| Error::Plan(e.to_string()))?;
-                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && entry.as_ref().is_some_and(|e| !has_base(e)) {
-                        let e = entry.as_ref().expect("an entry");
-                        let missing: Vec<&str> = stored.iter().map(|(rel, _)| rel.as_str()).filter(|rel| !e.rows.contains_key(&memo::base_key(rel))).collect();
-                        eprintln!("rerail: memo entry of {path} unused: it holds no base rows of {missing:?}{}", if e.rows.contains_key(OWN_DOCS) { "" } else { ", nor its counts" });
+                    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && entry.as_ref().is_some_and(|e| !has_counts(e)) {
+                        eprintln!("rerail: memo entry of {path} unused: it holds no tree counts");
                     }
                     match entry {
-                        Some(entry) if has_base(&entry) && missing_of(&entry).is_empty() => return Ok(Some((b.content, Ok(entry)))),
+                        Some(entry) if has_counts(&entry) && missing_of(&entry).is_empty() => return Ok(Some((b.content, Ok(entry)))),
                         Some(entry) if missing_of(&entry).len() < memo_ids.len() => partial = Some(entry),
                         _ => {}
                     }
@@ -5901,15 +5832,15 @@ fn run_observed(
                         let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                         // Held from the run's digests (decision 0300), as of the stat it was read at.
                         let held = source_texts.text(&root.join(path), true);
-                        let text = match held.map_or_else(|| std::fs::read_to_string(root.join(path)), Ok) {
+                        let text = match held.map_or_else(|| crate::git_workspace::snapshot::read_to_string(root.join(path)), Ok) {
                             Ok(text) => text,
                             // A text file that is not UTF-8 (an image, an archive) is no document.
-                            Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
+                            Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
                             Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
                         };
                         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
-                        let now = if looking { std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m)) } else { None };
-                        if now.is_some() && now == b.stat {
+                        let now = if looking { crate::git_workspace::snapshot::file_stat(root.join(path)) } else { None };
+                        if crate::git_workspace::snapshot::contains(&root.join(path)) || (now.is_some() && now == b.stat) {
                             (text, b.content, b.digest, b.tape)
                         } else {
                             // Changed since it was found: a new content, by this text's digest.
@@ -5932,7 +5863,14 @@ fn run_observed(
     };
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
-    let chunk_matchers = matchers::compiled(&matchers, &head.policies).map_err(Error::Plan)?;
+    let demand = matchers::demanded_by_roots(source, matchers);
+    let narrowed = demand.iter().filter(|by| by.is_some()).count();
+    if narrowed > 0 {
+        crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0459)", || {
+            demand.iter().zip(matchers.iter()).filter_map(|(by, (rel, _, _))| Some(format!("{rel} by {}", by.as_ref()?.iter().map(|k| matchers[*k].0.as_str()).collect::<Vec<_>>().join("+")))).collect::<Vec<_>>().join(", ")
+        });
+    }
+    let chunk_matchers = matchers::compiled(matchers, &demand, &ProgramFields::policies(head)).map_err(Error::Plan)?;
     let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
@@ -5941,8 +5879,15 @@ fn run_observed(
     let partials: parking_lot::Mutex<HashMap<i64, memo::Entry>> = parking_lot::Mutex::new(HashMap::new());
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
     let guests_unseen = std::sync::atomic::AtomicUsize::new(0);
+    let programs_counted = (std::sync::atomic::AtomicUsize::new(0), std::sync::atomic::AtomicUsize::new(0));
+    let values_admitted = std::sync::atomic::AtomicUsize::new(0);
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
+    // A file's facts and tape, built once for the run's paths of one text and grammar (a host file's own grammar is
+    // its path's): the paths that share them take them. The durable store keys them by the full tape key.
+    type BuiltSource = (Arc<core::Facts>, Option<crate::code_rule_dsl::tape::TapeDoc>);
+    let built_sources = crate::content_store::working_set::WorkingSet::default();
+    let claims: [parking_lot::Mutex<()>; 64] = std::array::from_fn(|_| parking_lot::Mutex::new(()));
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
         let Unbuilt { text: source, content: source_id, digest, tape, partial } = unbuilt;
         // The content's digest, which names its memo entry: the writer is given it, not left to read it (decision 0104).
@@ -5964,65 +5909,75 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
         // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree, its lines W's
         // for a file of no language (`core::text`).
-        if text_document(path, label) {
+        if text_document(root, path, label) && !host(path) {
             let facts = Arc::new(core::text(Arc::new(source)));
             let digest = core::digest(&facts);
-            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
+            return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None, unpackaged: unpackaged.contains(path) }));
         }
-        let file = core::Source { language: label.to_owned(), source: Arc::new(source) };
-        // Tapes kept across runs where the run has the persistent store (`tape_cache`).
-        let built = match &tapes {
-            // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
-            // tape and source frames are not linked.
-            // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
-            // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
-            // it stores (`late_sources`).
-            Some(cache) if cfg!(feature = "tape-cache") => {
-                // Else by its text and grammar, among the root's last runs' tapes (Q22): a file whose content the run
-                // has no source id for (no memo, or one named by digest in a wave). Its source is named in the manifest.
-                let (digest, tape) = match tape {
-                    Some(t) => (digest, Some(t)),
-                    None => {
-                        use sha2::Digest as _;
-                        let d: [u8; 32] = digest.unwrap_or_else(|| sha2::Sha256::digest(file.source.as_bytes()).into());
-                        let held = by_text.get(&crate::content_store::HashKey::from_sha256_digest(d));
-                        if let Some((source, _)) = held {
-                            late_sources.lock().expect("the late sources").push(*source);
-                        }
-                        (Some(d), held.map(|(_, f)| f.clone()))
+        let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
+        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
+        let source_digest = digest.unwrap_or_else(|| {
+            use sha2::{Digest as _, Sha256};
+            Sha256::digest(file.source.as_bytes()).into()
+        });
+        // A claim spans the lookup and construction: another path of the same text and grammar takes the built facts,
+        // even before the wave's writer publishes the tape.
+        let shared: [u8; 32] = {
+            use sha2::{Digest as _, Sha256};
+            let mut key = Sha256::new();
+            key.update(source_digest);
+            key.update(own.as_bytes());
+            key.finalize().into()
+        };
+        let held = {
+            let _claim = claims[usize::from(shared[0]) % claims.len()].lock();
+            if let Some(held) = built_sources.tape(shared) {
+                held.downcast::<BuiltSource>().expect("the corpus's built source")
+            } else {
+                // Tapes kept across runs where the run has the persistent store (`tape_cache`).
+                let (built, tape) = match &tapes {
+                    // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
+                    // tape and source frames are not linked.
+                    // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or
+                    // the file is parsed and its source and tape are the writer's, behind the run; the manifest names the
+                    // sources it stores (`late_sources`).
+                    Some(cache) if cfg!(feature = "tape-cache") => {
+                        // Else by its text and grammar, among the root's last runs' tapes (Q22): a file whose content the
+                        // run has no source id for (no memo, or one named by digest in a wave). Its source is named in the
+                        // manifest.
+                        let tape = match tape {
+                            Some(t) => Some(t),
+                            None => {
+                                let held = if host(path) { &host_text } else { &by_text }.get(&crate::content_store::HashKey::from_sha256_digest(source_digest));
+                                if let Some((source, _)) = held {
+                                    late_sources.lock().expect("the late sources").push(*source);
+                                }
+                                held.map(|(_, f)| f.clone())
+                            }
+                        };
+                        if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        core::build_in_wave_with_tape(&file, cache, Some(source_digest), tape.as_ref(), true, keep_tapes)
                     }
-                };
-                if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes || references.is_some())
+                    Some(_) => unreachable!("no tape cache without `tape-cache`"),
+                    None => core::build_with_tape(&file, keep_tapes),
+                }
+                .map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+                let Built::Facts(facts) = built else { return Err(Error::Plan(format!("{path} did not parse"))) };
+                let bytes = facts.tape_bytes() + facts.source.len() + std::mem::size_of::<BuiltSource>();
+                let result = Arc::new((Arc::new(facts), tape));
+                built_sources.put_tape(shared, result.clone(), bytes);
+                result
             }
-            Some(_) => unreachable!("no tape cache without `tape-cache`"),
-            None => core::build_with_tape(&file, keep_tapes || references.is_some()),
         };
-        // The tape is kept beside the facts only where the program runs matchers over it (decision 0106).
-        let (built, tape) = match built {
-            Ok((built, tape)) => (Ok(built), tape),
-            Err(e) => (Err(e), None),
-        };
-        let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-            Built::Facts(f) => Arc::new(f),
-            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
-        };
-        if let Some(references) = &references {
-            // W's reference graph summarizes the file from its tape, read in place (Q51: it parsed every file again
-            // with tree-sitter, 39% of internal_dead_code's CPU).
-            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph".into());
-            let doc = tape.as_ref().ok_or_else(|| Error::Plan(format!("{path}: no tape for the reference graph")))?;
-            references.add(*d as u32, path, &file.source, &facts, doc)?;
-        }
-        // A tape kept only for the reference graph goes with it.
-        let tape = tape.filter(|_| keep_tapes);
+        let (facts, tape) = held.as_ref();
+        let tape = tape.as_ref();
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
-        let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+        let tape = tape.cloned().map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
-        let digest = core::digest(&facts);
+        let digest = core::digest(facts);
         drop(digest_span);
-        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }))
+        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts: Arc::clone(facts), guest: None, module, tape, unpackaged: unpackaged.contains(path) }))
     };
     // Files resolved a window at a time (`resolve`), so a window's sources are all the builder holds unparsed: one
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.
@@ -6031,9 +5986,10 @@ fn run_observed(
 
     // A document: a memo hit, or built from its source; `None` for a file that is no document.
     type Made = Result<Option<(Option<memo::Content>, std::result::Result<memo::Entry, (syntax::Document, Option<[u8; 32]>)>)>>;
-    type Sources = Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
+    // A chunk's sources, and where its fixpoint parses the grower its values are admitted with (decision 0431 §8).
+    type Sources = (Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Option<syntax::Grower>);
     // A chunk's documents, hits and kept documents while it is projected.
-    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>, Vec<(String, memo::Entry, Option<memo::Content>, Option<Arc<str>>)>, Vec<syntax::Document>);
     let build = |docs: &Docs, i: usize| -> Made {
         // A window that failed resolves none of its files: its first holds the error, which ends the builder.
         let resolved = docs.resolved.lock().remove(&i).ok_or_else(|| Error::Plan("a file of a window that failed".to_owned()))?;
@@ -6061,14 +6017,10 @@ fn run_observed(
         let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
         let v = &program.version;
         let mut reads: BTreeSet<String> = v.rules().flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned())).collect();
-        // Not the base relations the memo holds for the cross-file part (`stored`): a chunk of partial hits hands on
-        // its entries' rows of them, never the batch's (`Finish`), so they are not made for its files.
+        // Not the cross part's base relations (`stored`): it reads them off the corpus batch (decision 0458), so they
+        // are not made for the chunk's files. (Nor the text relations for a text test's rows: no entry keeps those.)
         reads.extend(constants.keys().map(|(r, _)| r.clone()));
         reads.extend(["node", "child", "doc"].map(str::to_owned));
-        // A text test's rows are attributed to the files whose text holds their strings (`text_sources`).
-        if reads.iter().any(|r| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
-            reads.extend(crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().map(|(r, _)| (*r).to_owned()));
-        }
         let mut narrowed = projection.clone();
         let derived = &narrowed.derived;
         narrowed.reads = Some(reads.into_iter().filter(|r| !derived.contains(r) && projection.reads.as_ref().is_none_or(|all| all.contains(r))).collect());
@@ -6076,8 +6028,24 @@ fn run_observed(
         cone_projections.lock().insert(wanted.clone(), Arc::clone(&narrowed));
         narrowed
     };
-    let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
+    // What the program sees of guests (`guests::guests_seen`), every part of it: a file's programs it cannot see are not
+    // made.
+    let local_seen = guests::guests_seen(&prepared_placed.v).max(guests::guests_seen(&local.version));
+    // A chunk keeps its documents where its rules read guests: its fixpoint's parses, or a guest relation
+    // its rules read (a file's programs are made with the batch, and the memo files their rows by their files).
+    // And where the cross part reads base relations: they are read off every file's document (decision 0458).
+    // Under `.embedded on` too: the files' programs in the run's language are what it reads (decision 0470 step 2).
+    let keep_docs = !stored.is_empty() || parsing || local_seen == guests::Seen::All || embedded;
+    // A chunk's projection, and the programs its files hold (made with it), for the documents it keeps.
+    let project = |mut docs: Vec<syntax::Document>| -> (Result<(Sources, Vec<syntax::Document>)>, (f64, f64)) {
         let from = thread_usage();
+        // A test's chunk that fails (Q224): one holding a document of this file name.
+        #[cfg(any(test, feature = "test-hooks"))]
+        if docs.iter().any(|d| d.path.ends_with(FAILS_ITS_CHUNK)) {
+            // Late, so that the cone posts the requests an earlier answer led to before this one's error is read.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            return (Err(Error::Plan(format!("{FAILS_ITS_CHUNK}: its chunk fails (a test's)"))), (0.0, 0.0));
+        }
         let built = {
             let _batch = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
             let coned = {
@@ -6085,8 +6053,47 @@ fn run_observed(
                 let keys: Vec<i64> = docs.iter().map(|d| i64::from(d.key)).collect();
                 (!keys.is_empty() && keys.iter().all(|k| held.contains_key(k))).then(|| keys.iter().flat_map(|k| missing_of(&held[k])).collect::<BTreeSet<String>>())
             };
+            // The programs each file's language declares it holds (decision 0431 §4, step 3), made from its tape at its
+            // load: the batch is built once with them, and no round asks for them. A chunk of partial hits makes those
+            // its cone can see.
+            let seen = match &coned {
+                Some(wanted) => guests::guests_seen(&Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted)))).version),
+                None => local_seen,
+            };
+            // A file read for its programs is its text's document and its tree, a guest of it (decision 0512).
+            if docs.iter().any(|d| guests::unsplit_host(d, &host)) {
+                docs = docs.into_iter().flat_map(|d| if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] }).collect();
+                docs.sort_by_key(|d| d.key);
+            }
+            let programs = if keep_docs {
+                let _programs = crate::code_rule_dsl::logic::profile::span(|| "the files' programs".into());
+                let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)).seeing(seen);
+                // Documents projected before (a chunk projected again) hold theirs already.
+                made.seed(&docs);
+                let programs = made.programs(&docs);
+                programs_counted.0.fetch_add(made.programs_read, std::sync::atomic::Ordering::Relaxed);
+                programs_counted.1.fetch_add(made.programs_made, std::sync::atomic::Ordering::Relaxed);
+                match programs {
+                    Ok(programs) => programs,
+                    Err(e) => return (Err(Error::Plan(e)), (0.0, 0.0)),
+                }
+            } else {
+                Vec::new()
+            };
+            if !programs.is_empty() {
+                // A batch's documents ascend by key (`Batch::doc` searches them so).
+                docs.extend(programs.iter().cloned());
+                docs.sort_by_key(|d| d.key);
+            }
             let narrowed = coned.map(|wanted| cone_projection(&wanted));
-            syntax::with_matchers(&store, docs, &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))
+            let projection = narrowed.as_deref().unwrap_or(&projection);
+            if parsing {
+                syntax::Grower::start(store, docs, sets, &chunk_matchers, &vocabulary, binding, projection, &HashMap::new()).map(|(s, g)| (s, Some(g)))
+            } else {
+                syntax::with_matchers(store, docs, sets, &chunk_matchers, &vocabulary, binding, projection, &HashMap::new()).map(|s| (s, None))
+            }
+            .map(|sources| (sources, programs))
+            .map_err(|e| Error::Plan(e.to_string()))
         };
         let now = thread_usage();
         (built, (now.0 - from.0, now.1 - from.1))
@@ -6103,7 +6110,7 @@ fn run_observed(
     }
     /// A chunk cut, on its way to the main thread: handed on in the order cut, once its projection is done.
     enum Out {
-        Ready(Result<Chunk>),
+        Ready(Box<Result<Chunk>>),
         Projecting(usize, Cutting),
     }
     /// The builder's own state: the batch it cuts, the next document it takes, what it has cut, and what waits for
@@ -6115,7 +6122,7 @@ fn run_observed(
         spawned: usize,
         pending: Vec<syntax::Document>,
         pending_docs: Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>,
-        hits: Vec<(String, memo::Entry, Option<memo::Content>)>,
+        hits: Vec<(String, memo::Entry, Option<memo::Content>, Option<Arc<str>>)>,
         pending_nodes: usize,
         out: std::collections::VecDeque<Out>,
         posted: usize,
@@ -6143,7 +6150,7 @@ fn run_observed(
         }
     }
     /// The chunk builder (decision 0100 §12): no thread of its own. Each window's files are resolved, each document
-    /// built, and each chunk projected, as a job on the one pool; whichever job ends, or the main thread when it asks
+    /// built, and each chunk projected, as a job on the machine's pool; whichever job ends, or the main thread when it asks
     /// for a chunk, advances the builder: the documents taken in order and cut into chunks, handed on as cut.
     struct Builder<'a, B, P, R> {
         cut: parking_lot::Mutex<Cut>,
@@ -6151,7 +6158,7 @@ fn run_observed(
         dirty: std::sync::atomic::AtomicBool,
         /// The main thread stopped (its error, or its end): nothing more is started.
         stopped: std::sync::atomic::AtomicBool,
-        projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<Sources>, (f64, f64))>>>,
+        projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<(Sources, Vec<syntax::Document>)>, (f64, f64))>>>,
         /// The documents' and windows' jobs' CPU: parse time.
         jobs_cpu: parking_lot::Mutex<(f64, f64)>,
         build_jobs: std::sync::atomic::AtomicUsize,
@@ -6167,17 +6174,17 @@ fn run_observed(
         build: &'a B,
         project: &'a P,
         run_docs: &'a std::sync::Mutex<input_delta::Docs>,
-        target: &'a std::sync::atomic::AtomicUsize,
+        /// The chunks' sizes, by their order (Q314): a cut waits for its size.
+        schedule: &'a parking_lot::Mutex<sizing::Schedule>,
         keep_docs: bool,
         doing: &'a crate::code_rule_dsl::logic::profile::Activity,
-        /// Rung when the builder may have handed on a chunk, and when a chunk's evaluation ends: the main thread, which
-        /// begins and files the chunks in order, waits on it running no job (`Bell`).
+        /// Signals progress to the outer sequencer, which begins and files the chunks in order.
         bell: rerail_accel::exec::Bell,
     }
     impl<'a, B, P, R> Builder<'a, B, P, R>
     where
         B: Fn(&Docs, usize) -> Made + Sync,
-        P: Fn(Vec<syntax::Document>) -> (Result<Sources>, (f64, f64)) + Sync,
+        P: Fn(Vec<syntax::Document>) -> (Result<(Sources, Vec<syntax::Document>)>, (f64, f64)) + Sync,
         R: FnMut(&[(i64, String, Option<Arc<str>>)]) -> Result<Vec<Option<Resolved>>> + Send,
     {
         /// Advances the builder as far as it goes now. A caller that finds another advancing leaves it to them: they
@@ -6210,10 +6217,10 @@ fn run_observed(
             }
         }
 
-        /// The main thread's wait for `poll`, under `site`: on the bell, running no job, while the pool has other
-        /// threads to take the jobs; with one thread, running them itself (none else would).
+        /// An outer sequencer leaves parser jobs to the pool. Nested sequencers can occupy every
+        /// worker simultaneously, so each helps the pool while waiting for its own chunk.
         fn main_wait<T>(&self, site: &'static str, poll: impl FnMut() -> Option<T>) -> T {
-            if crate::threads::max() >= 2 {
+            if crate::threads::max() >= 2 && runs_under_way() <= 1 {
                 self.bell.wait_as(site, poll)
             } else {
                 rerail_accel::exec::help_until_as(site, poll)
@@ -6221,13 +6228,18 @@ fn run_observed(
         }
 
         /// The main thread's next message: a chunk, a batch's end (`None`) or an error; `Err` once the builder has
-        /// ended. Meanwhile the main thread waits on the bell ([`Builder::main_wait`]): the documents' and chunks' jobs
-        /// are the pool's other threads'.
+        /// ended. [`Builder::main_wait`] lets nested callers advance queued document work.
         fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>) -> std::result::Result<Result<Option<Chunk>>, ()>
         where
             'a: 's,
         {
             self.main_wait("the main thread: its next chunk", || {
+                // A stopped builder (a chunk's error) steps no more, so nothing it holds will ever be handed on: it
+                // has ended. A load asked after a load's chunk failed waited here for ever, the pool idle (Q224: the
+                // cone posts its requests ahead of their answers, and the next was answered before the error was read).
+                if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Some(Err(()));
+                }
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
@@ -6261,7 +6273,7 @@ fn run_observed(
                     None => break,
                     Some(Out::Ready(_)) => {
                         let Some(Out::Ready(r)) = c.out.pop_front() else { unreachable!("the front is ready") };
-                        c.handed.push_back(r.map(Some));
+                        c.handed.push_back((*r).map(Some));
                     }
                     Some(Out::Projecting(id, _)) => {
                         let Some(done) = self.projected.lock().remove(id) else { break };
@@ -6270,7 +6282,14 @@ fn run_observed(
                             Ok((built, (user, sys))) => {
                                 c.batch.0 += user;
                                 c.batch.1 += sys;
-                                built.map(|sources| Some((n, sources, docs_of, hits_of, kept)))
+                                // The programs the projection made are the chunk's documents too.
+                                built.map(|(sources, programs)| {
+                                    let mut kept = kept;
+                                    if !kept.is_empty() {
+                                        kept.extend(programs);
+                                    }
+                                    Some((n, sources, docs_of, hits_of, kept))
+                                })
                             }
                             Err(_) => Err(Error::Plan("the chunk builder panicked".to_owned())),
                         });
@@ -6312,7 +6331,7 @@ fn run_observed(
                 jobs.spawn("a window of files resolved", move |jobs| {
                     let from = thread_usage();
                     let end = (to + WINDOW).min(docs.asked.len());
-                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (&mut *self.resolve.lock())(&docs.asked[to..end])));
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (*self.resolve.lock())(&docs.asked[to..end])));
                     Self::add(&mut self.jobs_cpu.lock(), from);
                     match r {
                         Ok(Ok(r)) => {
@@ -6382,6 +6401,11 @@ fn run_observed(
                 self.doing.set(if matches!(c.out.front(), Some(Out::Projecting(..))) && projecting > in_flight { "wait for a chunk's projection" } else { "hand on (a chunk)" });
                 return progress;
             }
+            // The next chunk's size is decided by the chunks filed before it (Q314): until it is, no document is taken.
+            if c.next < len && self.schedule.lock().next_size().is_none() {
+                self.doing.set("wait for the next chunk's size");
+                return progress;
+            }
             if c.next < len {
                 let Some(made) = docs.built.lock().remove(&c.next) else {
                     self.doing.set("parse");
@@ -6413,14 +6437,14 @@ fn run_observed(
             'a: 's,
         {
             let last = i + 1 == docs.asked.len();
-            let (d, path, _) = &docs.asked[i];
+            let (d, path, module) = &docs.asked[i];
             match made {
                 Ok(Some((source_id, Ok(entry)))) => {
                     c.read(source_id);
                     if let Some(content) = source_id {
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
-                    c.hits.push((path.clone(), entry, source_id));
+                    c.hits.push((path.clone(), entry, source_id, module.clone()));
                 }
                 Ok(Some((source_id, Err((doc, digest))))) => {
                     c.read(source_id);
@@ -6435,7 +6459,7 @@ fn run_observed(
                 Err(e) => {
                     // The error is the last message: what was cut and not yet handed on is dropped.
                     c.out.clear();
-                    c.out.push_back(Out::Ready(Err(e)));
+                    c.out.push_back(Out::Ready(Box::new(Err(e))));
                     c.failed = true;
                     return;
                 }
@@ -6444,11 +6468,11 @@ fn run_observed(
                 // Only hits so far: handed on in batches, and at the end.
                 if !c.hits.is_empty() && (c.hits.len() >= 1024 || last) {
                     c.sent = true;
-                    c.out.push_back(Out::Ready(Ok((0, Vec::new(), Vec::new(), std::mem::take(&mut c.hits), Vec::new()))));
+                    c.out.push_back(Out::Ready(Box::new(Ok((0, (Vec::new(), None), Vec::new(), std::mem::take(&mut c.hits), Vec::new())))));
                 }
                 return;
             }
-            if c.pending_nodes < self.target.load(std::sync::atomic::Ordering::Relaxed) && !last {
+            if c.pending_nodes < self.schedule.lock().next_size().unwrap_or(usize::MAX) && !last {
                 return;
             }
             self.cut_chunk(c, jobs);
@@ -6460,9 +6484,14 @@ fn run_observed(
             'a: 's,
         {
             c.sent = true;
-            // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055).
+            // A chunk whose rules ask for guests keeps its documents: the guests are made from them (decision 0055). So
+            // does a chunk whose documents the corpus batch reads (decision 0458).
             let kept_docs = if self.keep_docs { c.pending.clone() } else { Vec::new() };
             let n = std::mem::take(&mut c.pending_nodes);
+            // A chunk of documents is the schedule's next (its order is the filing's: the main thread files them so).
+            if n > 0 {
+                self.schedule.lock().cut();
+            }
             let (docs_of, hits_of) = (std::mem::take(&mut c.pending_docs), std::mem::take(&mut c.hits));
             let pending = std::mem::take(&mut c.pending);
             let id = c.posted;
@@ -6489,14 +6518,39 @@ fn run_observed(
     // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
     // files them), at most 8. One is the main thread alone, on its own connection, as before.
     let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
-    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q74); the main thread files them in order"));
-    // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
-    // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
-    // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
+    // Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
+    // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
+    let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    // The chunks' sizes (decision 0435 §4, Q314): the first `probe_nodes()`, each next decided from the chunks
+    // filed before it in their order, by what their blocks wrote, against the limit less the run's count now; the
+    // builder holds a cut until its size is decided, so every run cuts the same chunks. `RERAIL_RUN_MB` (a
+    // measurement aid: "the memory line lifted") replaces the limit; `RERAIL_CHUNK_NODES` (another) sizes every chunk
+    // after the first, whatever was measured (Q88).
+    let size_limit = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(rerail_accel::budget::limit, |mb| mb << 20);
+    let start = rerail_accel::budget::written();
+    crate::code_rule_dsl::logic::profile::decision("chunk size: the count at the chunks' start", || {
+        let h = crate::code_rule_dsl::facts::rows::held();
+        format!(
+            "{} MB: the heap {} MB, host blocks {} MB (rows' blocks: a run's {} MB, sources' {} MB, kept rows' {} MB used), the pool's leases {} MB and idle {} MB, the ledger {} MB",
+            start.total() >> 20, start.heap >> 20, start.host_blocks >> 20, h[0].1 >> 20, h[1].1 >> 20, h[2].1 >> 20, start.leased >> 20, start.idle >> 20, start.ledger >> 20
+        )
+    });
+    let schedule = parking_lot::Mutex::new(sizing::Schedule::new(
+        probe_nodes(),
+        chunk_nodes,
+        plan_window,
+        chunks_at_once,
+        size_limit,
+        start.total(),
+        std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map(|n| n.clamp(1, chunk_nodes)),
+    ));
+    // The chunks begun, numbered in the order they are filed.
+    let chunk_seq = std::cell::Cell::new(0usize);
+    crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the room holds at the size reached (Q74, decision 0435); the main thread files them in order"));
+    // How many may be in flight now (Q74): one while chunks grow, then as many as the room holds at the size reached
+    // (`sizing`, decision 0435 §4). The chunks in flight together stay within it: 8 chunks each sized to the whole
+    // headroom took a cold run at 300 files to 2.3 GB.
     let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
-    // The most a node was measured to add this run: a chunk whose growth the pages freed before it hid (22 bytes a
-    // node, beside 9 KB measured next) sizes no chunk.
-    let per_node_most = std::cell::Cell::new(0.0f64);
     let builders = crate::threads::max().max(2);
     let builder = Builder {
         cut: parking_lot::Mutex::new(Cut {
@@ -6533,8 +6587,8 @@ fn run_observed(
         build: &build,
         project: &project,
         run_docs,
-        target: &worker_target,
-        keep_docs: slice.is_some(),
+        schedule: &schedule,
+        keep_docs,
         doing: &worker_doing,
         bell: Default::default(),
     };
@@ -6548,13 +6602,18 @@ fn run_observed(
     struct Task {
         chunk_nodes_built: usize,
         sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
+        /// What its values are admitted with (decision 0431 §8), where its fixpoint parses.
+        grower: Option<syntax::Grower>,
         documents: Vec<syntax::Document>,
         stats: super::Stats,
         mix: String,
-        /// The relations a chunk of partial hits derives (decision 0225 §2), and its guests' requests by round when
-        /// its entries hold them (the slice not run).
+        /// The relations a chunk of partial hits derives (decision 0225 §2).
         cone: Option<BTreeSet<String>>,
-        replay: Option<Vec<BTreeMap<String, Arc<output::Rows>>>>,
+        /// The tape values its partial hits' files asked inside the fixpoint (`memo::VALUES`), in the order answered.
+        asked_before: Vec<memo::Answered>,
+        /// Its place in the order the chunks are filed, and its view of the run's plans (Q88).
+        seq: usize,
+        view: Option<Arc<crate::code_rule_dsl::logic::plan::ChunkView>>,
     }
     /// What the main thread files of a chunk once it is evaluated: its run's outcome, its guests' hosts and askers, its
     /// sources the memo attributes, the base totals it measured, and its exports' rows.
@@ -6562,210 +6621,78 @@ fn run_observed(
         got: Outcome,
         host_of: HashMap<i64, i64>,
         askers: HashMap<i64, Vec<i64>>,
-        text_sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
-        stored_bound: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
+        /// The requests the fixpoint answered with tape values (`memo::VALUES`), in the order answered.
+        answered: Vec<memo::Answered>,
         totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)>,
         export_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>,
-        mentioned: std::collections::HashSet<i64>,
-        /// The slice's request lines of each round, for the entries (`memo::GUESTS`).
-        slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>>,
+        /// Its documents, its guests' with them, for the corpus batch the cross part reads its base relations off
+        /// (decision 0458); none where the cross part reads none.
+        documents: Vec<syntax::Document>,
+        /// What the chunk's work held at its most (bytes, `rows::Chunk::held_most`, Q203 item 3): a report beside what
+        /// its blocks wrote (`written`), which sizes the next (decision 0469).
+        held: usize,
+        /// What its blocks wrote (`in_chunk_measured`): its next chunks' size (`sizing`).
+        written: crate::code_rule_dsl::logic::native::setfix::Written,
     }
     /// What the main thread keeps of a chunk between its `Begin` and its `Finish`.
     struct Ctx {
         chunk_nodes_built: usize,
         chunk_docs: Vec<(i64, String, Option<memo::Content>, u64, usize, Option<[u8; 32]>)>,
         chunk_own: Option<Own>,
-        start_mb: usize,
-        start_max_mb: usize,
-        /// Chunks evaluating when it began, itself included: the footprint it saw grow was theirs.
+        /// Chunks evaluating when it began, itself included: the count's growth it saw was theirs.
         at_once: usize,
         /// Its documents' entries, where every one is a partial hit, and the relations it derives (decision 0225 §2).
         chunk_partials: HashMap<i64, memo::Entry>,
         cone: Option<BTreeSet<String>>,
     }
     enum Step {
-        Begin(Chunk, usize),
+        Begin(Box<Chunk>, usize),
         /// An export handed off during an evaluation on the main thread (a run without the memo), and its rows.
         Hand(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>),
-        Finish(Ctx, Evaluated),
-    }
-    fn mention(mentioned: &mut std::collections::HashSet<i64>, rows: &dyn crate::code_rule_dsl::facts::vtab::Source) {
-        let width = rows.columns().len();
-        for r in 0..rows.len() {
-            mentioned.extend((0..width).map(|c| rows.value(r, c)));
-        }
+        Finish(Box<(Ctx, Evaluated)>),
     }
     type Hand<'h> = &'h mut dyn FnMut(&str, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> Result<()>;
-    let guest_postings_once = parking_lot::Mutex::new(guest_postings_once);
     let measured_once = parking_lot::Mutex::new(measured_once);
     let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        let Task { chunk_nodes_built, sources, documents, mut stats, mix, cone, replay } = task;
+        let Task { chunk_nodes_built: _, sources, mut grower, documents, mut stats, mix, cone, asked_before, seq, view: _ } = task;
+        // A measurement made once per mix (Q88): taken from a chunk filed before this one began (`plan_window` back),
+        // else made here, and kept for the chunks after as the earliest chunk's that made it.
+        let once_seen = |by: usize| by + plan_window <= seq;
         let chunk_docs_n = documents.len();
-        // The slice's request lines of each round, for the entries (`memo::GUESTS`).
-        let mut slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>> = Vec::new();
-        // Guests (decision 0055): the embed slice runs over the chunk, the guests it asks for are parsed, and the
-        // batch is built again with them, until a round asks for none new. The batch bound below holds them.
+        // Guests (decision 0055): a file's programs are made with the batch; a string a rule parses and a value a
+        // rule makes are asked inside the fixpoint (decision 0431 §8, Q325).
         let mut host_of: HashMap<i64, i64> = HashMap::new();
         // A value document's files: those whose rules asked for it (decision 0058 §4, O96).
         let mut askers: HashMap<i64, Vec<i64>> = HashMap::new();
-        let sources = match &slice {
-            Some(slice) if !documents.is_empty() => {
-                let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
-                let documents_len = documents.len();
-                let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
-                // A chunk of partial hits runs its cone alone: it makes only the guests the cone can see (a rule that
-                // names no guest sees no annotation or value, `guests::guests_seen`). Before, it made every guest
-                // its entries asked for (on an edit of ep2, 27,373 guests and a second batch, 1.6 s of 12 s).
-                if let (Some(_), Some(wanted)) = (&replay, &cone) {
-                    let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
-                    made = made.seeing(guests::guests_seen(&program.version));
-                }
-                let (mut docs, mut sources) = (documents, sources);
-                // The slice's planner statistics: what it reads, measured once and scaled to each round's rows, as the
-                // run's are (`measured_once`). A relation measured with no rows is measured again once it has some:
-                // a guest relation (`parsed`) is empty in the first round, and its rows are all a later round's.
-                // Priced at none, `parsed($s, "annotation", $r)` joined every row of a delta before the literal that
-                // binds `$s` (7.5 M rows to none, decision 0331).
-                let mut measured: BTreeMap<String, (usize, Vec<(String, i64, i64, i64, i64)>)> = BTreeMap::new();
-                // The rounds are one maintained program (decision 0331): what a round derived is kept for the next,
-                // which runs from its inputs' new rows (`retain::grown_delta`). The round before's requests stand for
-                // the outputs of the strata a round does not run; the tables the rounds bound are cleared after.
-                let mut slice_kept: Option<retain::Retained> = None;
-                let mut previous: BTreeMap<String, Arc<output::Rows>> = BTreeMap::new();
-                let mut rounds_bound: BTreeSet<String> = BTreeSet::new();
-                // The documents the last round made: a round's inputs gained their rows, and lost none (`owners_delta`).
-                let mut round_new: rustc_hash::FxHashSet<i64> = Default::default();
-                let slice_placed = slice.placed()?;
-                let slice_f = slice_placed.fields()?;
-                if replay.is_some() {
-                    crate::code_rule_dsl::logic::profile::decision("guests made from the entries (decision 0225 §2)", || format!("a chunk of {chunk_docs_n} partial hits: the slice not run"));
-                }
-                for round_at in 0..guests::DEPTH {
-                    // The round's requests: the entries' (`replay`), else the slice's run over the batch.
-                    let asked: BTreeMap<String, Arc<output::Rows>> = match &replay {
-                        Some(rounds) => rounds.get(round_at).cloned().unwrap_or_default(),
-                        None => {
-                            let mut round = stats.clone();
-                            // The slice's inputs, each digested by its length: within a chunk's rounds the batch only
-                            // gains documents, so a relation's rows changed exactly when there are more of them.
-                            let mut inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, u64, bool)> = Vec::new();
-                            for (rel, source) in &sources {
-                                if slice_reads.contains(rel) {
-                                    // Measured once per mix and relation (decision 0309), then scaled to each round's
-                                    // rows, as the main run's statistics are: measured in every chunk, it was 10.5 s of a
-                                    // cold PostHog run's CPU. A relation measured with no rows is measured again once it
-                                    // has some, and an empty measurement is never the mix's (decision 0331: `parsed`,
-                                    // empty in the first round, was priced at none in every later one).
-                                    let rows = source.estimated_len();
-                                    let m = match measured.get(rel) {
-                                        Some((first, m)) if *first > 0 => scaled_statistics(m, *first, rows),
-                                        Some((_, m)) if rows == 0 => m.clone(),
-                                        _ => {
-                                            let key = (format!("guest slice {mix}"), rel.clone());
-                                            let once = measured_once.lock().get(&key).cloned();
-                                            let (first, m) = match once {
-                                                Some((first, m)) if first > 0 => (first, m),
-                                                _ => {
-                                                    let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                                    let m = sampled_statistics(source.as_ref());
-                                                    if rows > 0 {
-                                                        measured_once.lock().insert(key, (rows, m.clone()));
-                                                    }
-                                                    (rows, m)
-                                                }
-                                            };
-                                            measured.insert(rel.clone(), (first, m.clone()));
-                                            if first > 0 { scaled_statistics(&m, first, rows) } else { m }
-                                        }
-                                    };
-                                    round.measured(rel, m.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
-                                    inputs.push((rel.clone(), Arc::clone(source), source.len() as u64, true));
-                                }
-                                modules.bind(db, rel, Arc::clone(source))?;
-                            }
-                            let _round = crate::code_rule_dsl::logic::profile::span(move || if round_at == 0 { "the slice's first round".into() } else { format!("a later round, maintained (round {})", round_at + 1) });
-                            let by_owner = |rel: &str, old: &dyn crate::code_rule_dsl::facts::vtab::Source, new: &dyn crate::code_rule_dsl::facts::vtab::Source| {
-                                let node = slice_f.columns(rel).and_then(|c| c.iter().position(|(_, t)| *t == "node"));
-                                node.and_then(|g| retain::owners_delta(rel, old, new, g, &|d| round_new.contains(&d))).or_else(|| retain::grown_delta(rel, old, new))
-                            };
-                            let ran = maintained::run_with(None, db, modules, slice, GUEST_ROUNDS_KEY, &inputs, slice_kept.take(), &mut round, &BTreeSet::new(), modes, &vocabulary, Some(&by_owner))?;
-                            rounds_bound.extend(ran.bound);
-                            slice_kept = Some(ran.next);
-                            let mut out = ran.outputs;
-                            for (rel, rows) in &previous {
-                                out.entry(rel.clone()).or_insert_with(|| Arc::clone(rows));
-                            }
-                            out
-                        }
-                    };
-                    previous = asked.clone();
-                    if memoised {
-                        slice_rounds.push(asked.iter().filter(|(r, _)| guests::LIBRARY.contains(&r.as_str()) || guests::DEMANDS.contains(&r.as_str())).map(|(r, l)| (r.clone(), Arc::clone(l))).collect());
-                    }
-                    let new = made.make(guests::requests(&asked), &docs, &guest_parses).map_err(Error::Plan)?;
-                    if new.is_empty() {
-                        break;
-                    }
-                    round_new = new.iter().map(|d| i64::from(d.key)).collect();
-                    docs.extend(new);
-                    // Made from the entries, the batch is built once, after the last round: no slice reads it between.
-                    if replay.is_none() {
-                        let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                        sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, &projection).map_err(|e| Error::Plan(e.to_string()))?;
-                    }
-                }
-                if replay.is_some() && docs.len() > documents_len {
-                    let _rebuild = crate::code_rule_dsl::logic::profile::span(|| "batch with guests".into());
-                    let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
-                    sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
-                }
-                if made.unseen > 0 {
-                    let unseen = made.unseen;
-                    crate::code_rule_dsl::logic::profile::decision("guests the cone cannot see, not made", || format!("{unseen} in a chunk of {chunk_docs_n} partial hits"));
-                }
-                guests_unseen.fetch_add(made.unseen, std::sync::atomic::Ordering::Relaxed);
-                // The rounds' relations are let go of: the file-local part derives its own, and the engine's are the
-                // chunk's to its end otherwise.
-                if slice_kept.take().is_some() {
-                    for name in &rounds_bound {
-                        if let Some(b) = modules.get(name) {
-                            b.clear();
-                        }
-                    }
-                    crate::code_rule_dsl::logic::native::component::forget_derived(db);
-                }
-                host_of = std::mem::take(&mut made.host_of);
-                askers = made.askers();
-                // The guest relations' constant postings, measured above before any guest was made (none then),
-                // again over the batch with them: priced at none, `parsed($s, "annotation", $r)` read after bindings
-                // looked like a filter, and each binding read every annotation guest (O143). Once per mix, scaled.
-                if own && docs.len() > documents_len {
-                    let once = guest_postings_once.lock().get(&mix).cloned();
-                    let postings = match once.as_ref() {
-                        Some((first, p)) if *first > 0 => p.iter().map(|(k, n)| (k.clone(), (*n as f64 * chunk_nodes_built as f64 / *first as f64).round() as i64)).collect(),
-                        _ => {
-                            let p = Own::postings(&sources, &constants, |r| guests::READS.contains(&r));
-                            guest_postings_once.lock().insert(mix.clone(), (chunk_nodes_built, p.clone()));
-                            p
-                        }
-                    };
-                    for ((rel, col, v), n) in postings {
-                        stats.measured(&rel, [], [(col, v, n)]);
-                    }
-                    stats.estimated.extend(constants.keys().filter(|(rel, _)| guests::READS.contains(&rel.as_str())).map(|(rel, _)| rel.clone()));
-                }
-                sources
+        // The chunk's guests and documents, kept where its fixpoint parses strings (decision 0431 §8): each tape value
+        // is admitted as it is asked (`answer` below).
+        let (kept_guests, documents) = if parsing && !documents.is_empty() {
+            let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+            // A chunk of partial hits admits only the values its cone can see (`guests::guests_seen`), those its
+            // rules ask and those its files asked before (`asked_before`).
+            if let Some(wanted) = &cone {
+                let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
+                made = made.seeing(guests::guests_seen(&program.version));
             }
-            _ => sources,
+            made.seed(&documents);
+            (Some((made, documents)), Vec::new())
+        } else {
+            host_of = guests::hosts_of(&documents);
+            (None, documents)
         };
-        let mut text_sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
-        let mut stored_bound: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
+        // Each source the chunk binds holds the tape values admitted inside its fixpoint, past the batch's rows
+        // (decision 0431 §8, `syntax::values`).
+        let values = kept_guests.as_ref().map(|_| Arc::new(syntax::values::Values::default()));
+        let sources: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = match &values {
+            Some(values) => sources.into_iter().map(|(rel, s)| {
+                let layered: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(syntax::values::Layered::new(&rel, s, Arc::clone(values)));
+                (rel, layered)
+            }).collect(),
+            None => sources,
+        };
         let mut totals_add: Vec<(String, usize, Vec<(String, i64, i64, i64, i64)>)> = Vec::new();
         let mut bound: BTreeSet<String> = BTreeSet::new();
         for (rel, source) in sources {
-            if memoised && crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().any(|(r, _)| *r == rel) {
-                text_sources.push((rel.clone(), Arc::clone(&source)));
-            }
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
             if !read.contains(&rel) {
@@ -6773,18 +6700,14 @@ fn run_observed(
                 bound.insert(rel);
                 continue;
             }
-            // Its base rows, for the cross part and the memo: filed by the main thread (`Finish`).
-            if stored.iter().any(|(r, _)| *r == rel) {
-                stored_bound.push((rel.clone(), Arc::clone(&source)));
-            }
             let key = (mix.clone(), rel.clone());
-            let once = measured_once.lock().get(&key).cloned();
+            let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
             let measured = match once {
                 Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
-                    let measured = sampled_statistics(source.as_ref());
-                    measured_once.lock().insert(key, (source.estimated_len(), measured.clone()));
+                    let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
+                    once_keep(&mut measured_once.lock(), key, Once(seq, source.estimated_len(), measured.clone()));
                     measured
                 }
             };
@@ -6807,9 +6730,6 @@ fn run_observed(
             modules.bind(db, &rel, source)?;
             bound.insert(rel);
         }
-        // A semi-join's relation is taken after the run, the rows of the nodes the exports hold (`semijoin`).
-        let deferring = stored_bound.iter().any(|(r, _)| semijoin.contains(r));
-        let mut mentioned: std::collections::HashSet<i64> = std::collections::HashSet::new();
         let coned: Option<Arc<lower::Lowered>> = cone.as_ref().map(|wanted| {
             Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))))
         });
@@ -6823,8 +6743,108 @@ fn run_observed(
         // Without the memo (which attributes each row to its file once the run ends), an export the engine holds is
         // handed to the main thread (`Hand`) as soon as no later stratum reads it, and dropped: the chunk's exports
         // are not all held to its end.
+        // `rr_embed_req`'s answer inside the fixpoint (decision 0431 §8, 0065 §2a): each string asked is made a tape
+        // value, or given a place more, and admitted (`Grower::admit`): its rows a part of each source the chunk binds,
+        // its `parsed` rows the answer. Its tape is found by its text's sha, or parsed once a run (`guests::Parses`).
+        let mut kept_guests = kept_guests;
+        let admit_projection = cone.as_ref().map(cone_projection);
+        let atoms = store.atoms_handle();
+        let asked_here = guests::answering(&local_v);
+        // Each request answered with a value, in order: the chunk's entries keep them (`memo::VALUES`).
+        let mut answered: Vec<memo::Answered> = Vec::new();
+        // The values a chunk of partial hits' files answered before (`memo::VALUES`), admitted before its run where its
+        // cone can see them (`made.admit` asks `seen`): a cone that reads a relation hiding widened to annotations
+        // (`FoldOwn`) and asks none itself reads their rows, as the full run's did. No entry keeps their rows (decision
+        // 0458 step 4): they are made again, each found by its text's sha or parsed once a run.
+        if let (false, Some((made, docs)), Some(values), Some(grower)) = (asked_before.is_empty(), kept_guests.as_mut(), values.as_ref(), grower.as_mut()) {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values asked before, admitted".into());
+            for asked in &asked_before {
+                // Its value and the keys of the nodes its rows hold, as `parse_answer` admits it.
+                let (key, owner) = match asked {
+                    memo::Answered::Embed { at, grammar } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
+                        guests::Got::New(d) => {
+                            values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            (d.key, Some((at >> 32) as u32))
+                        }
+                        guests::Got::Placed(key, _) => (key, Some((at >> 32) as u32)),
+                        guests::Got::Not => continue,
+                    },
+                    memo::Answered::Value(request) => {
+                        let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
+                        values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let owner = match request {
+                            guests::Request::Parse { .. } => None,
+                            guests::Request::Splice { node, .. } => Some((node >> 32) as u32),
+                        };
+                        (d.key, owner)
+                    }
+                };
+                answered.push(asked.clone());
+                let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
+                let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+            }
+        }
+        let mut parse_answer = |req: &str, rows: &[Vec<i64>]| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
+            let (Some((made, docs)), Some(values), Some(grower)) = (kept_guests.as_mut(), values.as_ref(), grower.as_mut()) else {
+                return Err(Error::Plan(format!("{req}: a request, and no one to answer it")));
+            };
+            let Some((_, given)) = asked_here.get(req) else {
+                return Err(Error::Plan(format!("{req}: a request the chunk does not answer")));
+            };
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values admitted".into());
+            let text = |a: i64| atoms.value(a as _).map_err(|e| Error::Plan(e.to_string()));
+            let mut given_rows: BTreeMap<String, Vec<Vec<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
+            for row in rows {
+                // The value asked, and the keys of the nodes its rows hold: its own, and its place's or its node's
+                // document's (`Values::add`).
+                let (key, owner) = match (req, &row[..]) {
+                    (guests::DEMAND, &[at, g]) => {
+                        let Some(grammar) = text(g)? else { continue };
+                        let key = match made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)? {
+                            guests::Got::New(d) => {
+                                values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                d.key
+                            }
+                            guests::Got::Placed(key, _) => key,
+                            guests::Got::Not => continue,
+                        };
+                        answered.push(memo::Answered::Embed { at, grammar });
+                        (key, Some((at >> 32) as u32))
+                    }
+                    (guests::PARSE, &[at, g, x]) => {
+                        let (Some(grammar), Some(text)) = (text(g)?, text(x)?) else { continue };
+                        let request = guests::Request::Parse { at, grammar, text };
+                        let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
+                        values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        answered.push(memo::Answered::Value(request));
+                        (d.key, None)
+                    }
+                    (guests::SPLICE, &[node, t2]) => {
+                        let Some(with) = text(t2)? else { continue };
+                        let request = guests::Request::Splice { node, with };
+                        let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
+                        values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        answered.push(memo::Answered::Value(request));
+                        (d.key, Some((node >> 32) as u32))
+                    }
+                    _ => continue,
+                };
+                let doc = docs.iter().find(|d| d.key == key).cloned().ok_or_else(|| Error::Plan(format!("tape value {key} is not the chunk's")))?;
+                let made_rows = grower.admit(store, doc, sets, &vocabulary, binding, admit_projection.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
+                // `parsed` is an input too (a program's rows, the batch's): its rows are bound as the value's part, as
+                // every relation's are, and given as the answer, which a stratum above the request leaves to the binding.
+                for (name, p) in made_rows.iter().filter(|(name, _)| given.contains(name)) {
+                    let width = p.columns().len();
+                    given_rows.entry(name.clone()).or_default().extend((0..p.len()).map(|r| (0..width).map(|c| p.value(r, c)).collect()));
+                }
+                values.add(&[Some(key), owner].into_iter().flatten().collect::<Vec<u32>>(), made_rows);
+            }
+            Ok(std::mem::take(&mut given_rows).into_iter().collect())
+        };
+        let answering = values.is_some();
         let got = match hand {
-            None => texts_run(local, db, stats, split.exports.iter().filter(|r| cone.as_ref().is_none_or(|c| c.contains(*r))).cloned().collect(), modes, &vocabulary)?,
+            None => super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().filter(|r| cone.as_ref().is_none_or(|c| c.contains(*r))).cloned().collect(), modes, super::Hooks { texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?,
             Some(file) => {
                 let mut hand = |rel: &str| -> Result<bool> {
                     if !split.exports.iter().any(|e| e == rel) {
@@ -6832,15 +6852,23 @@ fn run_observed(
                     }
                     let _span = crate::code_rule_dsl::logic::profile::span(|| "hand off an export (copy, statistics)".into());
                     let rows = crate::code_rule_dsl::logic::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
-                    if deferring {
-                        mention(&mut mentioned, rows.as_ref());
-                    }
                     file(rel, rows).map(|()| true)
                 };
-                super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), ..Default::default() })?
+                super::run_atoms_native_hooked(local, db, "main", stats, split.exports.iter().cloned().collect(), modes, super::Hooks { hand_off: Some(&mut hand), texts: Some(Arc::clone(&vocabulary)), answer: answering.then_some(&mut parse_answer as super::Answer<'_>), ..Default::default() })?
             }
         };
         drop(running);
+        drop(parse_answer);
+        // The tape values' files, for the memo: each value's askers, each program's host. Where the fixpoint parsed
+        // strings, the chunk's documents were held with them (`kept_guests`), the values admitted among them.
+        let mut documents = documents;
+        if let Some((mut made, docs)) = kept_guests.take() {
+            host_of.extend(std::mem::take(&mut made.host_of));
+            askers = made.askers();
+            documents = docs;
+        }
+        // Handed on to the corpus batch (decision 0458): the same documents, not their rows.
+        let documents = if stored.is_empty() { Vec::new() } else { documents };
         // The rows of its exports not handed off, read out before its relations are forgotten. A relation the engine
         // holds is read from it (an output is not written to a table to be read back); one a SQL stratum derived is in
         // its table.
@@ -6862,12 +6890,25 @@ fn run_observed(
             }
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
-        Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds })
+        let held = crate::code_rule_dsl::facts::rows::chunk_held_most().unwrap_or(0);
+        Ok(Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written: Default::default() })
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
-    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        crate::code_rule_dsl::logic::native::setfix::in_chunk(|| evaluate_in(task, db, modules, hand))
+    // Within its view of the run's plans (Q88): what it planned, learnt and observed comes back with it.
+    let evaluate = |mut task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> (Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans) {
+        let view = task.view.take();
+        let ((mut got, plans), written) = crate::code_rule_dsl::logic::native::setfix::in_chunk_measured(|| {
+            
+            match view {
+                Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
+                None => (evaluate_in(task, db, modules, hand), Default::default()),
+            }
+        });
+        if let Ok(ev) = &mut got {
+            ev.written = written;
+        }
+        (got, plans)
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.
@@ -6877,6 +6918,9 @@ fn run_observed(
     let open_worker = || -> Result<(Connection, Modules)> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open a chunk connection".into());
         let mut wdb = Connection::open(&path)?;
+        if in_memory {
+            crate::content_store::atoms::Atoms::share_memory(&wdb, store.atoms_handle())?;
+        }
         crate::content_store::atoms::Atoms::install(&mut wdb)?;
         crate::code_rule_dsl::facts::vtab::defer_setup(&wdb, "PRAGMA synchronous=OFF;");
         super::ready_native(&wdb)?;
@@ -6907,9 +6951,9 @@ fn run_observed(
                 totals.add_rows(&rel, inserted, rows.as_ref(), &types);
                 return Ok(None);
             }
-            Step::Finish(ctx, ev) => (ctx, ev),
+            Step::Finish(done) => *done,
             Step::Begin(built, at_once) => {
-                let (chunk_nodes_built, sources, chunk_docs, hits, documents) = built;
+                let (chunk_nodes_built, (sources, grower), chunk_docs, hits, documents) = *built;
                 main_doing.set("local run");
                 // The previous chunk's freed pages go back to the system: without this the footprint settles about 170 MB
                 // over the live heap on the full corpus (550 MB against 300 to 350 MB), and the peak is 80 MB higher.
@@ -6929,14 +6973,13 @@ fn run_observed(
                 }
                 phase("wait", statements.count());
                 statements.enter("local");
-                let (start_mb, start_max_mb) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
                 // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
                 if !hits.is_empty() {
                     let _replay = crate::code_rule_dsl::logic::profile::span(|| "memo replay".into());
                     memo_hits += hits.len();
                     // What an edit's run restores of the files it did not change (t31 step 0.3): every hit's rows, today.
                     crate::code_rule_dsl::logic::profile::decision("memo replay", || {
-                        let values: usize = hits.iter().map(|(_, e, _)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
+                        let values: usize = hits.iter().map(|(_, e, ..)| e.rows.values().map(|(_, v)| v.len()).sum::<usize>()).sum();
                         format!("{} entries replayed, {:.1} MB of values", hits.len(), values as f64 * 8.0 / 1e6)
                     });
                     // Each accepted frame contains its own statistics. Do not also add a scaled chunk estimate:
@@ -6949,7 +6992,7 @@ fn run_observed(
                     let exported: std::collections::HashSet<&str> = split.exports.iter().map(String::as_str).collect();
                     let mut batch: BTreeMap<String, (usize, Option<usize>, Vec<Vec<i64>>, Vec<Vec<i64>>)> = BTreeMap::new();
                     let mut own_docs: Vec<i64> = Vec::new();
-                    for (path, entry, content) in hits {
+                    for (path, mut entry, content, module) in hits {
                         // The statistics kept by file (decision 0096 §3): a content new to the keeper is counted in.
                         if let (Some(k), Some(memo)) = (keeper.borrow_mut().as_mut(), memo) {
                             let _ = memo;
@@ -6974,21 +7017,12 @@ fn run_observed(
                             own_totals.add_rows(&entry.rows);
                             if keeper.borrow().is_some() { own_seen.add_rows(&entry.rows); }
                         }
-                        // What each part holds at the peak, apart (the heap sampler charges a span's allocations to it).
-                        let base_span = crate::code_rule_dsl::logic::profile::span(|| "base rows held".into());
-                        for (rel, names) in stored.iter().filter(|_| !counted) {
-                            let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
-                            let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                            let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
-                            for name in names {
-                                let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                                let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                                held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
-                            }
-                            // Measured with the evaluated files' rows once the chunks are done ("measure the base rows
-                            // held"). They were also kept whole and measured again, so a memo hit's rows counted twice.
+                        // Its document, for the corpus batch (decision 0458): made from its tape once the chunks are done.
+                        // Its tape values' requests (`memo::VALUES`): not an output.
+                        let values = entry.outputs.remove(memo::VALUES).map(|(_, rows)| rows);
+                        if !stored.is_empty() {
+                            corpus_hits.push(CorpusHit { key: entry.key, path: path.clone(), module: module.clone(), values });
                         }
-                        drop(base_span);
                         // Gathered by relation across the batch's hits: one statement per relation below, not one per row.
                         let _gather = crate::code_rule_dsl::logic::profile::span(|| "export rows gathered".into());
                         own_docs.push(entry.key);
@@ -7005,7 +7039,7 @@ fn run_observed(
                                 }
                             }
                         }
-                        for (rel, (columns, rows)) in entry.outputs.into_iter().filter(|(r, _)| !r.starts_with(memo::GUESTS)) {
+                        for (rel, (columns, rows)) in entry.outputs.into_iter() {
                             outputs.entry(rel.clone()).or_default().push(Arc::new(rows));
                             node_columns.insert(rel, columns);
                         }
@@ -7034,6 +7068,13 @@ fn run_observed(
                 // run over them derives nothing a hit does not already hold (`RERAIL_WARM` found it planned and run, its tree
                 // counts measured and written, on every warm run).
                 if sources.is_empty() || chunk_docs.is_empty() {
+                    // A chunk of documents is filed in the schedule all the same (its order is the cuts', Q314).
+                    if chunk_nodes_built > 0 {
+                        let mut s = schedule.lock();
+                        let n = s.counts().1;
+                        let d = s.file(n, sizing::Measured { nodes: chunk_nodes_built, ..Default::default() });
+                        at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
+                    }
                     phase("local", statements.count());
                     statements.enter("wait");
                     // Its replayed hits' writes are the chunk's wave (decision 0259).
@@ -7080,38 +7121,22 @@ fn run_observed(
                 };
                 let cone: Option<BTreeSet<String>> = (!chunk_partials.is_empty() && chunk_partials.len() == chunk_docs.len())
                     .then(|| chunk_partials.values().flat_map(&missing_of).collect());
-                // Their guests' requests, by round, when every entry holds them under the slice's identities now: the
-                // guests are made from them, and the slice does not run (decision 0225 §2).
-                let replay: Option<Vec<BTreeMap<String, Arc<output::Rows>>>> = match (&cone, &slice) {
-                    (Some(_), Some(_)) if chunk_partials.values().all(|e| {
-                        let held = memo::covered(e);
-                        slice_ids.values().all(|id| held.contains(&memo::covered_words(id)))
-                    }) => {
-                        let mut rounds: Vec<BTreeMap<String, Arc<output::Rows>>> = Vec::new();
-                        for e in chunk_docs.iter().filter_map(|(d, ..)| chunk_partials.get(d)) {
-                            for (key, (_, rows)) in &e.outputs {
-                                let Some((r, rel)) = memo::guest_round(key) else { continue };
-                                if rounds.len() <= r {
-                                    rounds.resize_with(r + 1, Default::default);
-                                }
-                                let round = rounds[r].entry(rel.to_owned()).or_insert_with(|| Arc::new(output::Rows::new(rows.types().to_vec())));
-                                Arc::make_mut(round).append(rows);
-                            }
-                        }
-                        Some(rounds)
-                    }
-                    _ => None,
-                };
                 phase("local", statements.count());
                 statements.enter("wait");
-                let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay };
-                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone })));
+                // The tape values its partial hits' files asked inside the fixpoint (`memo::VALUES`), in file order.
+                let asked_before: Vec<memo::Answered> = match &cone {
+                    Some(_) => chunk_docs.iter().filter_map(|(d, ..)| chunk_partials.get(d)).filter_map(|e| e.outputs.get(memo::VALUES)).flat_map(|(_, rows)| memo::Answered::read(rows)).collect(),
+                    None => Vec::new(),
+                };
+                let task = Task { chunk_nodes_built, sources, grower, documents, stats, mix, cone: cone.clone(), asked_before, seq: 0, view: None };
+                return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, chunk_partials, cone })));
             }
         };
         phase("wait", statements.count());
         statements.enter("local");
-        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, mut chunk_partials, cone } = ctx;
-        let Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mut mentioned, slice_rounds } = ev;
+        let Ctx { chunk_nodes_built, chunk_docs, chunk_own, at_once, mut chunk_partials, cone } = ctx;
+        let Evaluated { got, host_of, askers, answered, totals_add, export_rows, documents, held, written } = ev;
+        corpus_docs.extend(documents);
         for (rel, rows, measured) in &totals_add {
             totals.add(rel, *rows, measured);
         }
@@ -7124,76 +7149,25 @@ fn run_observed(
                 None => vec![host_of.get(&d).copied().unwrap_or(d)],
             }
         };
-        // The base rows a memoised chunk hands on, per relation: the columns in `input_columns` order, and the rows.
-        let mut base_seen: Vec<(String, Vec<usize>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
-        let mut base_whole = true;
-        // Memoised, the chunk's base rows are its entries' (decision 0117 step 2): a row once per file whose entry
-        // holds it, as a memo hit's are. Its rows as the batch has them are kept for a chunk the memo cannot
-        // attribute (with a semi-join's rows to keep).
-        let mut raw_base: Vec<(String, Vec<(usize, usize)>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)> = Vec::new();
-        // The cross part's base columns' lengths before this chunk: its entries' rows are written to them as they are
-        // read (`'base`), and cut back to these when the batch's rows are taken instead (not attributable, a cone).
-        let mut base_marks: Option<Vec<(String, Vec<usize>)>> = None;
-        // The semi-join's relations, taken after the run (`semijoin`), and the values the chunk's exports hold.
-        let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(usize, usize)>)> = Vec::new();
-        for (rel, source) in stored_bound {
-            let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) else { continue };
-            let have = source.columns();
-            let held = base_rows.entry(rel.clone()).or_insert_with(|| (have.clone(), vec![None; have.len()]));
-            // A semi-join's relation is taken after the run, the rows of the nodes the exports hold (`semijoin`).
-            let mut pairs: Vec<(usize, usize)> = Vec::new();
-            for name in names {
-                let c = have.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                let col = held.1[to].get_or_insert_with(Vec::new);
-                if !semijoin.contains(&rel) && !memoised {
-                    col.extend((0..source.len()).map(|r| source.value(r, c)));
-                }
-                pairs.push((c, to));
-            }
-            if semijoin.contains(&rel) {
-                deferred.push((rel.clone(), Arc::clone(&source), pairs));
-            } else if memoised {
-                raw_base.push((rel.clone(), pairs, Arc::clone(&source), None));
-            }
-            // Memoised, each row goes to its document's entry whole, in `input_columns` order, as its first
-            // column names it (a node or a document key).
-            if memoised {
-                let all = super::super::sql::select::input_columns(&rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                let at: Option<Vec<usize>> = all.iter().map(|c| have.iter().position(|h| h == c)).collect();
-                match at {
-                    Some(at) => base_seen.push((rel.clone(), at, source.clone())),
-                    None => base_whole = false,
-                }
-            }
-        }
         if chunk_nodes_built > 0 {
-            // What this chunk added at its peak (the lifetime peak, when it rose here; else the footprint now).
-            let (now, max) = (crate::code_rule_dsl::prof::footprint_mb(), crate::code_rule_dsl::prof::max_footprint_mb());
-            let added = if max > start_max_mb { max } else { now }.saturating_sub(start_mb).max(1);
-            let measured = added as f64 * 1048576.0 / (chunk_nodes_built * at_once) as f64;
-            // Credible only above the noise of pages reused: until one is, one chunk at a time, of the probe's size.
-            let credible = added >= CHUNK_CREDIBLE_MB;
-            if credible {
-                per_node_most.set(per_node_most.get().max(measured));
-            }
-            let per_node = per_node_most.get();
-            let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
-            // Three quarters of what is left of the run's budget, shared by the chunks in flight together.
-            let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
-            let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
-            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
-            let budget = chunk.min(headroom / allowed as f64).round();
-            let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
-            chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
-            at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
-            // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
-            #[cfg(target_os = "macos")]
+            // What the chunk's blocks wrote and its scopes' heap at their most size a later chunk, in the chunks' order
+            // (decisions 0435 §4, 0469; Q314).
+            let d = {
+                let mut s = schedule.lock();
+                let n = s.counts().1;
+                s.file(n, sizing::Measured { nodes: chunk_nodes_built, bytes: written.measure(), held: written.held })
+            };
+            at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
+            // What the chunk's own work held at its most (`rows::Chunk::held_most`, Q203 item 3): a report beside what its
+            // blocks wrote, which sizes the chunks.
+            let held_mb = held.div_ceil(1 << 20);
+            // The device pool's share of what the chunk was sized under: its blocks leased and idle, the rows' blocks.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();
                 format!(
-                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); under a footprint of {start_mb} MB",
+                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); {} moved out of a full block ({} MB copied); the footprint {} MB",
                     live >> 20,
                     idle >> 20,
                     h[0].0, h[0].1 >> 20, h[0].2 >> 20,
@@ -7202,27 +7176,59 @@ fn run_observed(
                     crate::code_rule_dsl::facts::rows::given_back() >> 20,
                     crate::code_rule_dsl::facts::rows::merged().0,
                     crate::code_rule_dsl::facts::rows::merged().1 >> 20,
+                    crate::code_rule_dsl::facts::rows::moved().0,
+                    crate::code_rule_dsl::facts::rows::moved().1 >> 20,
+                    crate::code_rule_dsl::prof::footprint_mb(),
                 )
             });
-            crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
-            } else {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+            crate::code_rule_dsl::logic::profile::decision("probe paths", || {
+                let counts = crate::code_rule_dsl::logic::native::setfix::run_counts();
+                counts.index_paths.iter().map(|x| x.load(std::sync::atomic::Ordering::Relaxed).to_string()).collect::<Vec<_>>().join(" ")
             });
-            // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
-            // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
-            if headroom < chunk / 4.0 {
-                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("under a quarter of {chunk} MB left by RERAIL_RUN_MB ({} MB)", env("RERAIL_RUN_MB", RUN_MB)));
+            crate::code_rule_dsl::logic::profile::decision("frozen orders", || {
+                let counts = crate::code_rule_dsl::logic::native::setfix::run_counts();
+                let k = &counts.orders_kept;
+                let at = |i: usize| k[i].load(std::sync::atomic::Ordering::Relaxed);
+                let sk = &counts.sorted_kept;
+                format!(
+                    "{} in their relation's block directory, {} read in an older relation's, {} kept as they were (decision 0478 step 5b); known-sorted ranges of {} relations in their block, {} not (5c); dead rows of {} relations their block relation's, {} not (5d)",
+                    at(0), at(1), at(2), sk[0].load(std::sync::atomic::Ordering::Relaxed), sk[1].load(std::sync::atomic::Ordering::Relaxed),
+                    counts.dead_kept[0].load(std::sync::atomic::Ordering::Relaxed),
+                    counts.dead_kept[1].load(std::sync::atomic::Ordering::Relaxed)
+                )
+            });
+            crate::code_rule_dsl::logic::profile::decision("chunk size", || {
+                let by = match d.by {
+                    sizing::By::First => "the first's",
+                    sizing::By::Grown => "grown from this",
+                    sizing::By::Most => "the caller's most",
+                    sizing::By::Room => "what the room holds",
+                };
+                format!(
+                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks and its scopes' heap rose {} MB at their most ({:.0} bytes a node), {} MB of the blocks' held past it; its own work held {held_mb} MB at its most; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}), {} at once",
+                    written.bytes >> 20,
+                    written.heap >> 20,
+                    d.per_node,
+                    written.held >> 20,
+                    d.chunk,
+                    d.nodes,
+                    d.room >> 20,
+                    size_limit >> 20,
+                    d.fit,
+                    d.at_once
+                )
+            });
+            // The memory limit, not the caller's most, set it: every stratum and matcher launch runs per chunk, so a
+            // held chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
+            if d.by == sizing::By::Room {
+                crate::code_rule_dsl::logic::profile::decision("chunk cut by the run's memory line", || format!("chunk {} held to {} nodes by the {} MB of room {} MB leaves", d.chunk, d.nodes, d.room >> 20, size_limit >> 20));
             }
         }
-        let outputs_of = |rel: &str| head.outputs.iter().any(|o| o == rel);
+        let outputs_of = |rel: &str| head_outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
         // document's by its first location column.
         let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n, _, _)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
-        let mut attributable = memoised && base_whole && chunk_own.is_some();
-        if memoised && !base_whole {
-            memo_why.insert("a base relation the cross-file part reads has no stored columns".to_owned());
-        }
+        let mut attributable = memoised && chunk_own.is_some();
         if memoised && chunk_own.is_none() {
             memo_why.insert("no tree counts measured for the chunk".to_owned());
         }
@@ -7259,37 +7265,24 @@ fn run_observed(
                 }
             }
         }
-        // Each file's guests' requests, by the location each asks at (`memo::GUESTS`): the entry holds them under
-        // the slice's identities when every line names one of the chunk's files.
-        let mut guests_held = memoised && slice.is_some() && !slice_rounds.is_empty();
-        if guests_held {
-            // Each file's rows of each round's relation, typed as the slice handed them, each once.
-            let mut by_file: HashMap<i64, BTreeMap<String, (output::Rows, std::collections::HashSet<Vec<String>>)>> = HashMap::new();
-            'rounds: for (r, outputs) in slice_rounds.iter().enumerate() {
-                for (rel, rows) in outputs {
-                    for i in 0..rows.len() {
-                        let files = guests::asked_at(rel, rows, i).map(owners).unwrap_or_default();
-                        if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
-                            guests_held = false;
-                            break 'rounds;
-                        }
-                        let cells: Vec<output::Cell<'_>> = (0..rows.width()).map(|c| rows.cell(i, c)).collect();
-                        let shown: Vec<String> = (0..rows.width()).map(|c| match rows.cell(i, c) { output::Cell::Text(t) => t.to_owned(), output::Cell::Int(v) => v.to_string() }).collect();
-                        for d in files {
-                            let (held, seen) = by_file.entry(d).or_default().entry(memo::guest_key(r, rel)).or_insert_with(|| (output::Rows::new(rows.types().to_vec()), std::collections::HashSet::new()));
-                            if seen.insert(shown.clone()) {
-                                held.push(&cells);
-                            }
-                        }
-                    }
+        // The requests the fixpoint answered with tape values (decision 0431 §8), each kept by the files that own its
+        // string (a value's, by its askers), in the order answered: a chunk reading the entry makes the values from them.
+        if attributable && !answered.is_empty() {
+            let mut by_file: HashMap<i64, output::Rows> = HashMap::new();
+            for asked in &answered {
+                let files = owners(asked.at());
+                if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
+                    memo_why.insert(format!("a tape value: {}", if files.is_empty() { "asked at no document" } else { "asked at another chunk's document" }));
+                    attributable = false;
+                    break;
+                }
+                for d in files {
+                    asked.push(by_file.entry(d).or_insert_with(memo::Answered::rows));
                 }
             }
-            if guests_held {
-                for (d, keys) in by_file {
-                    let e = entries.get_mut(&d).expect("checked");
-                    for (key, (rows, _)) in keys {
-                        e.outputs.insert(key, (Vec::new(), rows));
-                    }
+            if attributable {
+                for (d, rows) in by_file {
+                    entries.get_mut(&d).expect("checked").outputs.insert(memo::VALUES.to_owned(), (Vec::new(), rows));
                 }
             }
         }
@@ -7339,9 +7332,6 @@ fn run_observed(
             let inserted = { let _s = crate::code_rule_dsl::logic::profile::span(|| "hold the export".into()); exports.borrow_mut().add(rel, types.len(), rows.as_ref()) };
             { let _s = crate::code_rule_dsl::logic::profile::span(|| "totals".into()); totals.add_rows(rel, inserted, rows.as_ref(), &types); }
             { let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into()); attribute(rel, rows.as_ref()); }
-            if !deferred.is_empty() {
-                mention(&mut mentioned, rows.as_ref());
-            }
         }
         // A partial hit's relations its chunk did not derive: its entry's rows and lines, handed on as an evaluated
         // file's are, and kept in its new entry (decision 0225 §2).
@@ -7357,8 +7347,8 @@ fn run_observed(
                 let width = types.len();
                 let at = split.locations.get(rel).and_then(|l| l.first().copied()).filter(|a| *a < width && unchecked);
                 let (mut own_cols, mut shared_cols): (Vec<Vec<i64>>, Vec<Vec<i64>>) = (vec![Vec::new(); width], vec![Vec::new(); width]);
-                // Moved out of the old entry into the new one: only the cone's relations and the base rows are read
-                // of the old entry after this (`standing`, the base rows below).
+                // Moved out of the old entry into the new one: only the cone's relations are read of the old entry
+                // after this (`standing`).
                 for d in &docs {
                     let Some((w, values)) = chunk_partials.get_mut(d).and_then(|e| e.rows.remove(rel)) else { continue };
                     let w = &w;
@@ -7376,12 +7366,6 @@ fn run_observed(
                     }
                 }
                 let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
-                if !deferred.is_empty() {
-                    for cols in [&own_cols, &shared_cols] {
-                        let rows = crate::code_rule_dsl::logic::native::component::columns_source(names.clone(), cols.iter().cloned().map(Some).collect());
-                        mention(&mut mentioned, rows.as_ref());
-                    }
-                }
                 if let Some(at) = at {
                     exports.borrow_mut().append_own(rel, width, at, own_cols, docs.iter().copied());
                 }
@@ -7400,7 +7384,7 @@ fn run_observed(
             // Their outputs' rows, as a hit's are (`memo replay`): into the run's outputs, and kept in the new entries.
             for d in &docs {
                 let Some(e) = chunk_partials.get_mut(d) else { continue };
-                let moved: Vec<String> = e.outputs.keys().filter(|r| !cone.contains(*r) && !r.starts_with(memo::GUESTS)).cloned().collect();
+                let moved: Vec<String> = e.outputs.keys().filter(|r| !cone.contains(*r) && r.as_str() != memo::VALUES).cloned().collect();
                 for rel in moved {
                     let (columns, rows) = e.outputs.remove(&rel).expect("listed");
                     let rows = Arc::new(rows);
@@ -7410,210 +7394,26 @@ fn run_observed(
                         entry.outputs.insert(rel, (columns, Arc::unwrap_or_clone(rows)));
                     }
                 }
-            }
-        }
-        // The semi-join: of each deferred base relation, the rows whose node an export row holds.
-        for (rel, source, pairs) in std::mem::take(&mut deferred) {
-            let have = source.columns();
-            let key = have.iter().position(|h| h == "n").ok_or_else(|| Error::Plan(format!("{rel} has no node column")))?;
-            let keep: Vec<usize> = (0..source.len()).filter(|&r| mentioned.contains(&source.value(r, key))).collect();
-            if memoised {
-                raw_base.push((rel, pairs, source, Some(keep)));
-                continue;
-            }
-            let held = base_rows.get_mut(&rel).expect("deferred relations are held");
-            for &(c, to) in &pairs {
-                held.1[to].get_or_insert_with(Vec::new).extend(keep.iter().map(|&r| source.value(r, c)));
-            }
-        }
-        // Each memoised file's base rows, once the exports name the nodes a semi-join keeps. Not for a chunk of
-        // partial hits: its documents' base rows are their entries' (below), so none is attributed again.
-        if attributable && cone.is_none() {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the memo".into()); 
-            for entry in entries.values_mut() {
-                for (rel, _) in &stored {
-                    let width = super::super::sql::select::input_columns(rel).map_or(0, <[_]>::len);
-                    entry.rows.insert(memo::base_key(rel), (width, Vec::new()));
-                }
-            }
-            // A text test's rows are strings (`strtest_<k>(s)`, decision 0037), no document's: each is the files' whose
-            // text holds it (`memo::owner`, as `value_type`'s values are). Found once, for the strings the chunk's
-            // string-keyed rows hold.
-            let wanted: std::collections::HashSet<i64> = base_seen
-                .iter()
-                .filter_map(|(rel, at, source)| match memo::owner(rel) {
-                    memo::Owner::Text(i) => at.get(i).map(|&c| (c, source)),
-                    memo::Owner::Node(_) => None,
-                })
-                .flat_map(|(c, source)| (0..source.len()).map(move |r| source.value(r, c)))
-                .collect();
-            let mut string_files: HashMap<i64, BTreeSet<i64>> = HashMap::new();
-            if !wanted.is_empty() {
-                for (rel, source) in &text_sources {
-                    let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
-                    let have = source.columns();
-                    let at = |name: &str| have.iter().position(|h| h == name);
-                    // Only a relation whose rows are a node's or a document's names the files holding a string: a
-                    // string-keyed one's owner column is a string (`value_type(v, t)`, a text test), which read as a
-                    // document made each value its own file, and a value no file's text holds was then dropped as
-                    // another chunk's, not kept as a made one (Q27; since 0174, `value` no longer names the file for a
-                    // value that is no literal string).
-                    let memo::Owner::Node(o) = memo::owner(rel) else { continue };
-                    let Some(owner) = columns.get(o).and_then(|c| at(c)) else { continue };
-                    let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
-                    for r in 0..source.len() {
-                        for &c in &texts {
-                            let v = source.value(r, c);
-                            if wanted.contains(&v) {
-                                string_files.entry(v).or_default().extend(owners(source.value(r, owner)));
+                // The values its file asked before (`memo::VALUES`) stay the entry's, those the cone did not see
+                // too, so the next edit's cone may see them: first, as answered then, and the cone's new ones after
+                // (a string inside a value waits for that value).
+                if let (Some((columns, old)), Some(entry)) = (e.outputs.remove(memo::VALUES), entries.get_mut(d)) {
+                    let request = |rows: &output::Rows, i: usize| match (rows.cell(i, 0), rows.cell(i, 1)) {
+                        (output::Cell::Int(at), output::Cell::Text(g)) => Some((at, g.to_owned())),
+                        _ => None,
+                    };
+                    let merged = match entry.outputs.remove(memo::VALUES) {
+                        None => old,
+                        Some((_, new)) => {
+                            let had: std::collections::HashSet<(i64, String)> = (0..old.len()).filter_map(|i| request(&old, i)).collect();
+                            let mut merged = old;
+                            for (at, g) in (0..new.len()).filter_map(|i| request(&new, i)).filter(|r| !had.contains(r)) {
+                                merged.push(&[output::Cell::Int(at), output::Cell::Text(&g)]);
                             }
-                        }
-                    }
-                }
-            }
-            base_marks = Some(base_rows.iter().map(|(r, (_, v))| (r.clone(), v.iter().map(|c| c.as_ref().map_or(0, Vec::len)).collect())).collect());
-            'base: for (rel, at, source) in &base_seen {
-                // The columns the cross part reads, as `at` orders a row (`input_columns`), and where it holds them:
-                // each row goes to them as it is read, once for each file that holds it, as its entries hold it.
-                let mut need: Vec<(usize, usize)> = Vec::new();
-                if let Some((_, names)) = stored.iter().find(|(r, _)| r == rel) {
-                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                    let held = base_rows.get(rel).expect("a stored relation's rows are held");
-                    for name in names {
-                        let from = all.iter().position(|c| c == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        need.push((from, to));
-                    }
-                }
-                let (strings, owner) = match memo::owner(rel) {
-                    memo::Owner::Text(i) => (true, i),
-                    memo::Owner::Node(i) => (false, i),
-                };
-                // A value no file's text holds (`value_type` of a constant a rule made): every file of the chunk
-                // keeps it, as a rule-made string a joined test reads is kept.
-                let made_value = !rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) && strings;
-                let key = memo::base_key(rel);
-                // A semi-join's relation: the rows of the nodes the chunk's exports hold, as the cross part keeps.
-                let node = semijoin.contains(rel).then(|| source.columns().iter().position(|h| h == "n")).flatten();
-                let Some(&first) = at.get(owner) else {
-                    memo_why.insert(format!("base {rel}: a row naming no document"));
-                    attributable = false;
-                    break 'base;
-                };
-                // The rows by file, handed to the entries once; a run of one document's rows finds its owners once.
-                let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
-                let mut run: Option<(i64, Vec<i64>)> = None;
-                let mut row = Vec::with_capacity(at.len());
-                // The cross part's columns for this relation, found once.
-                let mut cols: Vec<(usize, &mut Vec<i64>)> = match base_rows.get_mut(rel) {
-                    Some(held) if !need.is_empty() => {
-                        // Only the columns read are made held: an unread one stays `None` (its readers ask which).
-                        let mut by_to: Vec<Option<&mut Option<Vec<i64>>>> = held.1.iter_mut().map(Some).collect();
-                        need.iter().map(|&(from, to)| (from, by_to[to].take().expect("a column held once").get_or_insert_with(Vec::new))).collect()
-                    }
-                    _ => Vec::new(),
-                };
-                for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
-                    // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
-                    // rows are sets, so a row kept by several files restores as one.
-                    let v = source.value(r, first);
-                    let files: Vec<i64> = if strings {
-                        // A string of another chunk's file (a path `doc` gives every chunk) is that chunk's to keep.
-                        let files: Vec<i64> = string_files.get(&v).map_or_else(Vec::new, |f| f.iter().copied().filter(|f| entries.contains_key(f)).collect());
-                        if files.is_empty() && string_files.contains_key(&v) {
-                            continue;
-                        }
-                        // A string no file's text holds (a rule made it): every file of the chunk keeps the row,
-                        // where the cross-file rules read the test only joined.
-                        if files.is_empty() && (made_value || joined_tests.contains(rel.as_str())) { entries.keys().copied().collect() } else { files }
-                    } else {
-                        let d = memo::document_of(v);
-                        match &run {
-                            Some((rd, files)) if *rd == d => files.clone(),
-                            _ => owners(v),
+                            merged
                         }
                     };
-                    if files.is_empty() || !files.iter().all(|f| entries.contains_key(f)) {
-                        memo_why.insert(format!("base {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
-                        attributable = false;
-                        break 'base;
-                    }
-                    row.clear();
-                    row.extend(at.iter().map(|c| source.value(r, *c)));
-                    for f in &files {
-                        by_file.entry(*f).or_default().extend_from_slice(&row);
-                    }
-                    for (from, col) in cols.iter_mut() {
-                        col.extend(std::iter::repeat_n(row[*from], files.len()));
-                    }
-                    if !strings {
-                        run = Some((memo::document_of(v), files));
-                    }
-                }
-                // Moved into the entries, not copied: each entry's base rows start empty.
-                for (f, values) in by_file {
-                    let slot = &mut entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1;
-                    if slot.is_empty() {
-                        *slot = values;
-                    } else {
-                        slot.extend(values);
-                    }
-                }
-            }
-        }
-        // A chunk of partial hits (decision 0225 §2) made only what its cone's rules read: the base rows of a span
-        // whose relation it did not make (a source line's, a regex match's) are missing from what it built. Its
-        // documents are as their entries were made, so their base rows are their entries', as a hit's are: into the
-        // new entries whole, and the cross part's from them; none of what the chunk built.
-        // The base columns written as rows were read, cut back: the cross part takes the batch's rows, or a cone's
-        // entries', instead.
-        let cut_base = |base_rows: &mut BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)>, marks: &Option<Vec<(String, Vec<usize>)>>| {
-            for (rel, lens) in marks.iter().flatten() {
-                if let Some((_, cols)) = base_rows.get_mut(rel) {
-                    for (col, &n) in cols.iter_mut().zip(lens) {
-                        if let Some(col) = col {
-                            col.truncate(n);
-                        }
-                    }
-                }
-            }
-        };
-        if cone.is_some() {
-            cut_base(&mut base_rows, &base_marks);
-            raw_base.clear();
-            for (d, ..) in chunk_docs.iter() {
-                let (Some(was), Some(entry)) = (chunk_partials.get(d), entries.get_mut(d)) else { continue };
-                entry.rows.retain(|k, _| !k.starts_with("base:"));
-                entry.rows.extend(was.rows.iter().filter(|(k, _)| k.starts_with("base:")).map(|(k, v)| (k.clone(), v.clone())));
-                for (rel, names) in &stored {
-                    let Some((width, values)) = was.rows.get(&memo::base_key(rel)) else { continue };
-                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                    let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
-                    for name in names {
-                        let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
-                    }
-                }
-            }
-        }
-        // The chunk's base rows for the cross part: its entries' when the memo attributed them all, else the
-        // batch's (decision 0117 step 2).
-        if memoised {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the cross part".into());
-            if attributable {
-                // Written as the entries' rows were read (`'base`).
-            } else {
-                cut_base(&mut base_rows, &base_marks);
-                for (rel, pairs, source, keep) in std::mem::take(&mut raw_base) {
-                    let held = base_rows.get_mut(&rel).expect("a stored relation's rows are held");
-                    for &(c, to) in &pairs {
-                        let col = held.1[to].get_or_insert_with(Vec::new);
-                        match &keep {
-                            Some(keep) => col.extend(keep.iter().map(|&r| source.value(r, c))),
-                            None => col.extend((0..source.len()).map(|r| source.value(r, c))),
-                        }
-                    }
+                    entry.outputs.insert(memo::VALUES.to_owned(), (columns, merged));
                 }
             }
         }
@@ -7623,7 +7423,7 @@ fn run_observed(
             let mut publish: Vec<(memo::Content, String, i64, memo::Entry, bool, Option<[u8; 32]>)> = Vec::with_capacity(chunk_docs.len());
             // A partial hit whose relations the chunk derived came out as its entry held them: its stored rows frame
             // stands, and only the identities they now hold are written (decision 0225 §2).
-            let standing = |d: &i64, entry: &memo::Entry| cone.as_ref().zip(chunk_partials.get(d)).is_some_and(|(cone, was)| cone.iter().all(|r| memo::same_relation(entry, was, r)) && memo::same_guests(entry, was));
+            let standing = |d: &i64, entry: &memo::Entry| cone.as_ref().zip(chunk_partials.get(d)).is_some_and(|(cone, was)| cone.iter().all(|r| memo::same_relation(entry, was, r)));
             for (d, path, source_id, _, _, digest) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(_)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
@@ -7635,9 +7435,17 @@ fn run_observed(
                 // Read no more here: handed to the store's writer (decision 0102). It holds every relation under its
                 // identity now: derived, or (a partial hit's) kept from its entry.
                 let (Some(id), Some(mut entry)) = (source_id, entries.remove(d)) else { continue };
-                memo::cover(&mut entry, memo_ids.values().chain(slice_ids.values().filter(|_| guests_held)));
+                memo::cover(&mut entry, memo_ids.values());
                 let stands = standing(d, &entry);
                 publish.push((*id, world::store_path(path).to_owned(), *d, entry, stands, *digest));
+            }
+            // Decision 0458 R4: no entry keeps a base relation's rows; the cross part reads them off the corpus batch.
+            if let Some((path, rel)) = publish.iter().find_map(|(_, p, _, e, _, _)| e.rows.keys().find(|k| k.starts_with("base:") || stored.iter().any(|(r, _)| r == *k)).map(|k| (p, k))) {
+                return Err(Error::Plan(format!("{path}'s memo entry keeps rows of the base relation {rel} (decision 0458 R4)")));
+            }
+            // Decision 0458 R4: no entry keeps a base relation's rows; the cross part reads them off the corpus batch.
+            if let Some((path, rel)) = publish.iter().find_map(|(_, p, _, e, _, _)| e.rows.keys().find(|k| k.starts_with("base:") || stored.iter().any(|(r, _)| r == *k)).map(|k| (p, k))) {
+                return Err(Error::Plan(format!("{path}'s memo entry keeps rows of the base relation {rel} (decision 0458 R4)")));
             }
             if let Some(memo) = memo {
                 let n = publish.len();
@@ -7682,40 +7490,51 @@ fn run_observed(
     // evaluates here, on the run's connection.
     let drain = |process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>, parallel: bool| -> Result<bool> {
         let k = if parallel && memoised { chunks_at_once } else { 1 };
-        type Slot = Arc<parking_lot::Mutex<Option<Result<Evaluated>>>>;
+        type Slot = Arc<parking_lot::Mutex<Option<(Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans)>>>;
         let mut flight: std::collections::VecDeque<(Ctx, Slot)> = std::collections::VecDeque::new();
+        // The run's plans as the chunks are filed (Q88): each chunk's view, and what it made taken in in their order.
+        let mut ordered = crate::code_rule_dsl::logic::plan::OrderedPlans::begin(plan_window);
         // Files the chunk at the front once it is evaluated, waiting for it (running the pool's jobs meanwhile).
-        let file_front = |flight: &mut std::collections::VecDeque<(Ctx, Slot)>, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<()> {
+        let file_front = |flight: &mut std::collections::VecDeque<(Ctx, Slot)>, ordered: &mut Option<crate::code_rule_dsl::logic::plan::OrderedPlans>, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<()> {
             let (ctx, slot) = flight.pop_front().expect("a chunk in flight");
             main_doing.set("wait for a chunk evaluated");
-            let ev = builder.main_wait("the main thread: a chunk evaluated", || slot.lock().take())?;
-            process(Step::Finish(ctx, ev)).map(drop)
+            let (ev, made) = builder.main_wait("the main thread: a chunk evaluated", || slot.lock().take());
+            if let Some(o) = ordered.as_mut() {
+                o.file(made);
+            }
+            process(Step::Finish(Box::new((ctx, ev?)))).map(drop)
         };
         let got = (|| loop {
             // The chunks evaluated at the front are filed as they are ready: their memory goes back.
             while flight.front().is_some_and(|(_, s)| s.lock().is_some()) {
-                file_front(&mut flight, process)?;
+                file_front(&mut flight, &mut ordered, process)?;
             }
             main_doing.set("wait");
             let next = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs));
             let chunk = match next {
                 Err(()) | Ok(Ok(None)) => {
                     while !flight.is_empty() {
-                        file_front(&mut flight, process)?;
+                        file_front(&mut flight, &mut ordered, process)?;
                     }
                     return Ok(next.is_ok());
                 }
                 Ok(Err(e)) => return Err(e),
                 Ok(Ok(Some(chunk))) => chunk,
             };
-            let Some((task, ctx)) = process(Step::Begin(chunk, flight.len() + 1))? else { continue };
+            let Some((mut task, ctx)) = process(Step::Begin(Box::new(chunk), flight.len() + 1))? else { continue };
+            task.seq = chunk_seq.get();
+            chunk_seq.set(task.seq + 1);
+            task.view = ordered.as_mut().map(|o| o.next_view());
             if k == 1 {
-                let ev = if memoised {
-                    evaluate(task, &db, &modules, None)?
+                let (ev, made) = if memoised {
+                    evaluate(task, db, &modules, None)
                 } else {
-                    evaluate(task, &db, &modules, Some(&mut |rel: &str, rows| process(Step::Hand(rel.to_owned(), rows)).map(drop)))?
+                    evaluate(task, db, &modules, Some(&mut |rel: &str, rows| process(Step::Hand(rel.to_owned(), rows)).map(drop)))
                 };
-                process(Step::Finish(ctx, ev))?;
+                if let Some(o) = ordered.as_mut() {
+                    o.file(made);
+                }
+                process(Step::Finish(Box::new((ctx, ev?))))?;
                 continue;
             }
             let slot: Slot = Arc::default();
@@ -7724,22 +7543,23 @@ fn run_observed(
             jobs.spawn("a chunk evaluated", move |_| {
                 let taken = worker_conns.lock().pop();
                 // A panic is the chunk's error: the main thread waits for its slot.
-                let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    taken.map_or_else(open_worker, Ok).and_then(|(wdb, wmodules)| {
+                let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match taken.map_or_else(open_worker, Ok) {
+                    Err(e) => (Err(e), Default::default()),
+                    Ok((wdb, wmodules)) => {
                         // Beside the other chunks: its joins walk whole, the pool is busy with chunks.
                         let r = crate::code_rule_dsl::logic::native::setfix::walks_whole(|| evaluate(task, &wdb, &wmodules, None));
                         worker_conns.lock().push((wdb, wmodules));
                         r
-                    })
+                    }
                 }))
-                .unwrap_or_else(|_| Err(Error::Plan("a chunk's evaluation panicked".to_owned())));
+                .unwrap_or_else(|_| (Err(Error::Plan("a chunk's evaluation panicked".to_owned())), Default::default()));
                 *into.lock() = Some(got);
                 bell.ring();
             });
             flight.push_back((ctx, slot));
             // As many in flight as the run's headroom holds (Q74), at most `k`.
             while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
-                file_front(&mut flight, process)?;
+                file_front(&mut flight, &mut ordered, process)?;
             }
         })();
         if got.is_err() {
@@ -7760,7 +7580,7 @@ fn run_observed(
     // else parsed), then handing on its rows of the per-file relations the cone reads.
     if let (Some((load, reads)), Some(docs_tx)) = (&loading, &docs_out) {
         let _loading = crate::code_rule_dsl::logic::profile::span(|| "requests answered inside the fixpoint".into());
-        let mut world = world::World::new(root, &head);
+        let mut world = world::World::new(root, head);
         let corpus: BTreeSet<String> = world.canonical_corpus(docs.iter().map(|(_, p)| p));
         let mut all_paths: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         // Read from the cone's version: its answers (by request, in order), widths and inputs.
@@ -7816,7 +7636,7 @@ fn run_observed(
             .collect::<BTreeSet<String>>()
             .into_iter()
             .filter(|r| phased.contains_key(r))
-            .map(|r| Ok((r.clone(), atoms_source(&store, head.decls[r.as_str()].len(), phased[&r].iter())?)))
+            .map(|r| Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), phased[&r].iter())?)))
             .collect::<Result<_>>()?;
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);
         // The cone's relations are kept like any (t33 K1), in a fact space of their own; its stratum that asks and
@@ -7844,10 +7664,7 @@ fn run_observed(
         // What the journal names as changed since the last run kept its rounds (decision 0105): the roots and cursors
         // recorded with them, the paths named since, and the digest of the file system's answers kept with them.
         // The rounds' key: the cone's round program's digest (`Placed::digest`), made once.
-        let rounds_key = match &round {
-            Some(r) => Some(retain::key(&[0; 32], r.placed.digest())),
-            None => None,
-        };
+        let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], r.placed.digest()));
         // A kept manifest names the rounds' key, which keeps their frames (decision 0227); their record names it too,
         // and goes with it (decision 0252, `observe::collect`).
         part_keys.lock().expect("the parts' keys").extend(rounds_key);
@@ -7872,6 +7689,10 @@ fn run_observed(
         // The loads answered and taken back, shared with the rounds (decision 0145).
         let load_ledger: Arc<std::sync::Mutex<cone_rounds::LoadLedger>> = Arc::default();
         let load_ledger_in = Arc::clone(&load_ledger);
+        let git_root = root.to_path_buf();
+        let kept_lookup_reads: Arc<std::sync::Mutex<Vec<(&'static str, String, String, String)>>> = Arc::default();
+        let kept_lookup_reads_in = Arc::clone(&kept_lookup_reads);
+        let payload_sources = Arc::clone(&late_sources);
         let rounds_journal_in = rounds_journal.clone();
         let still_root = root.to_path_buf();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
@@ -7880,8 +7701,9 @@ fn run_observed(
         // Read from the run's cross part's version (`run_placed`): no tree is decoded.
         let decl_types: HashMap<String, Vec<u8>> = run_f.decls_by_name().into_iter().map(|(r, _)| (r.to_owned(), retain::types_of(&run_placed, &lowered.domains, r))).collect();
         let vocabulary_cone = Arc::clone(&vocabulary);
+        let arena = in_memory.then(|| store.atoms_handle());
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
-            let db2 = connections::Cone::take_db(&cone_slot, &db_path)?;
+            let db2 = connections::Cone::take_db(&cone_slot, &db_path, arena)?;
             let statements = Statements::on_as(&db2, ".cone");
             statements.enter("cone");
             // When SQL first runs on it (`vtab::setup_now`), as the run's.
@@ -7914,7 +7736,7 @@ fn run_observed(
             let cone_handle = cone_store.as_deref().map(|p| connections::Cone::take_store(&cone_slot, p)).transpose().map_err(|e| Error::Plan(e.to_string()))?;
             let cone_types = cone_inputs.iter().filter_map(|(r, _)| Some((r.clone(), decl_types.get(r)?.clone()))).collect();
             let load_placed = lowered_load.placed()?;
-            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, prepared_key, &cone_inputs, cone_types).typed(&load_placed, &lowered_load.domains));
+            let mut cone_kept = cone_handle.as_ref().map(|s| kept_strata::Kept::new(s, cone_space, &cone_inputs, cone_types).typed(&load_placed, &lowered_load.domains));
             // Strata kept for the next run keep each relation's whole rows, as a session's cross-file part does: one
             // computed only for the keys its readers reached (the negation split, a corpus run's choice) would miss a
             // key a later run demands (an edited library's new import) whose derivation no delta touches (spike O125,
@@ -7931,7 +7753,9 @@ fn run_observed(
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let k = retain::Retained::from_frames(store, rounds_space, key, key, &r.placed, r.components(), &rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains))?;
+                let digests = rounds_in.constant_digests(&store.atoms_handle(), &r.placed, &r.domains);
+                let load = |space| retain::Retained::bind_kept(store, space, key, key, &r.placed, r.components(), &digests);
+                let k = load(rounds_space)?;
                 let missing = r.missing(&k);
                 if missing.is_empty() {
                     from_rounds = Some(k);
@@ -7948,18 +7772,63 @@ fn run_observed(
             // path the journal names since is it, above it, or (for a directory) an entry of it. Only over the
             // answers the record was kept with.
             let journal = rounds_journal_in.as_ref().filter(|_| std::env::var("RERAIL_CONE_STILL").map_or(true, |v| v != "off")).filter(|(_, _, world)| from_rounds.as_ref().is_some_and(|k| cone_rounds::world_digest(|rel| k.input_digest(rel)) == *world));
-            let db_text = &db2;
-            let still_fn = journal.map(|(roots, named, _)| {
-                move |req: &str, key: &[i64]| -> bool {
-                    let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
-                    // A relative path is the run root's, as the world reads it (`World::allowed`).
-                    let path = still_root.join(&text);
-                    let path = path.as_path();
-                    roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+            // Immutable object answers stay in the same retained inputs as the other world answers.
+            // Check that their object is still available. A failure is requested afresh.
+            let git = std::cell::RefCell::new(None::<git::Git>);
+            let git_selection = std::cell::OnceCell::new();
+            let sym_text = |atom| crate::code_rule_dsl::logic::native::sym_text_of(&db2, atom).ok();
+            let still_fn = |req: &str, key: &[i64], rows: &[&Vec<i64>]| -> bool {
+                if req == git::OBJECT {
+                    let [repo, id] = key else { return false };
+                    let Some(stamp) = rows.iter().find_map(|row| {
+                        (row.get(2).and_then(|&field| sym_text(field)).as_deref() == Some("storage"))
+                            .then(|| row.get(4).and_then(|&value| sym_text(value))).flatten()
+                    }).filter(|stamp| stamp.starts_with("readable:")) else { return false };
+                    let (Some(repo), Some(id)) = (sym_text(*repo), sym_text(*id)) else { return false };
+                    let unchanged = git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root))
+                        .observation(req, &repo, &id).as_ref() == Some(&stamp);
+                    if unchanged {
+                        kept_lookup_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((git::OBJECT, repo, id, stamp));
+                    }
+                    return unchanged;
                 }
-            });
-            let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
-            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref, texts: &vocabulary_cone });
+                if req == git_content::REQUEST {
+                    let ([r, id, _, _], [row]) = (key, rows) else { return false };
+                    let [_, _, _, _, _, handle, _, _, status, stamp] = row.as_slice() else { return false };
+                    let (Some(repo), Some(oid), Some(handle), Some(status), Some(stamp)) =
+                        (sym_text(*r), sym_text(*id), sym_text(*handle), sym_text(*status), sym_text(*stamp)) else { return false };
+                    if status != "ok" || !stamp.starts_with("readable:") { return false; }
+                    if git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root)).observation(git::OBJECT, &repo, &oid).as_ref() != Some(&stamp) {
+                        return false;
+                    }
+                    let Some(source) = cone_handle.as_ref().and_then(|s| git_content::source(s, &handle).ok().flatten()) else { return false };
+                    payload_sources.lock().expect("run sources").push(source);
+                    kept_lookup_reads_in.lock().expect("lookup observations").push((git::OBJECT, repo, oid, stamp));
+                    return true;
+                }
+                if req == analysis_history::REQUEST {
+                    let [kind, key] = key else { return false };
+                    let (Some(kind), Some(key)) = (sym_text(*kind), sym_text(*key)) else { return false };
+                    let Some(digest) = analysis_history::kept(&kind, &key, rows, sym_text) else { return false };
+                    kept_lookup_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((analysis_history::REQUEST, kind, key, digest));
+                    return true;
+                }
+                if matches!(req, git::REVISION | git::REPO_REVISION) {
+                    return false;
+                }
+                if req == git::INVENTORY_CHILD {
+                    let [repo, selection, ..] = key else { return false };
+                    return git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(&git_root)).as_ref()
+                        .is_some_and(|(r, s)| sym_text(*repo).as_ref() == Some(r) && sym_text(*selection).as_ref() == Some(s));
+                }
+                let Some((roots, named, _)) = journal else { return false };
+                let Some(text) = key.first().and_then(|&atom| sym_text(atom)) else { return false };
+                // A relative path is the run root's, as the world reads it (`World::allowed`).
+                let path = still_root.join(&text);
+                let path = path.as_path();
+                roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+            };
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
@@ -8058,9 +7927,9 @@ fn run_observed(
             Ok((out, cone_strata, 0))
         });
         // The answers turn request atoms back into text, warm runs included (nothing else registers them then).
-        crate::code_rule_dsl::logic::native::register_symbols(&db)?;
-        let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(&db, atom)?) };
-        let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
+        crate::code_rule_dsl::logic::native::register_symbols(db)?;
+        let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(db, atom)?) };
+        let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(db, texts.iter().copied())?) };
         let mut pauses = 0;
         // The load budget's levels (decision 0145): the loads held back until the cone is quiet, and the levels taken.
         let levels = std::env::var("RERAIL_LOAD_LEVELS").map_or(true, |v| v != "off");
@@ -8068,6 +7937,8 @@ fn run_observed(
         let mut load_levels = 0usize;
         // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
         let times = std::cell::RefCell::new(AnswerTimes::default());
+        let active_inventory = std::cell::OnceCell::new();
+        let mut payloads = git_content::Reader::default();
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             let t_call = std::time::Instant::now();
@@ -8077,6 +7948,18 @@ fn run_observed(
                 t.rows += rows.len();
                 t.total += t_call.elapsed().as_secs_f64();
             });
+            if rel == git_content::REQUEST {
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let [r, id, offset, length] = row.as_slice() else { return Err(Error::Plan("invalid payload request".into())); };
+                    let (repo, oid) = (text(*r)?, text(*id)?);
+                    let a = payloads.read(world.git(), store, &late_sources, &repo, &oid, *offset, *length)?;
+                    world.consulted_lookup(git::OBJECT, &repo, &oid, a.storage.clone());
+                    let values = atoms(&[&a.kind, &a.handle, &a.bytes, a.status, &a.storage])?;
+                    out.push(vec![*r, *id, *offset, *length, values[0], values[1], a.size, values[2], values[3], values[4]]);
+                }
+                return Ok(vec![(git_content::ANSWER.to_owned(), out)]);
+            }
             // A language's answer (`answerers`): the relations of it the program reads, each row led by the request's key.
             if let Some(answerer) = crate::code_rule_dsl::language::answerer(rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
@@ -8103,6 +7986,57 @@ fn run_observed(
                     out.entry(r).or_default().push(row);
                 }
                 return Ok(out.into_iter().map(|(r, rows)| (r.to_owned(), rows)).collect());
+            }
+            if matches!(rel, git::REVISION | git::REPO_REVISION | git::OBJECT) {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [repo, arg] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a repository and a key"))); };
+                    let key = text(*repo)?;
+                    let arg_text = text(*arg)?;
+                    if rel != git::OBJECT {
+                        let (id, status) = world.git_revision(rel, &key, &arg_text);
+                        let values = atoms(&[&id, status])?;
+                        out.push(vec![*repo, *arg, values[0], values[1]]);
+                    } else {
+                        for record in world.git_object(&key, &arg_text) {
+                            let values = atoms(&[record.field, &record.first, &record.second])?;
+                            out.push(vec![*repo, *arg, values[0], record.position, values[1], values[2], record.number, record.offset]);
+                        }
+                    }
+                }
+                let answer = match rel { git::REVISION => "git_view_revision_of", git::REPO_REVISION => "git_revision_of", _ => "git_object_of" };
+                return Ok(vec![(answer.to_owned(), out)]);
+            }
+            if rel == analysis_history::REQUEST {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [kind, key] = row.as_slice() else { return Err(Error::Plan("analysis_history_request takes a kind and a key".into())); };
+                    let (kind, key) = (text(*kind)?, text(*key)?);
+                    let (records, digest) = analysis_history::requested(&kind, &key)?;
+                    world.consulted_lookup(rel, &kind, &key, digest);
+                    for record in records {
+                        out.push(atoms(&record.each_ref().map(String::as_str))?);
+                    }
+                }
+                return Ok(vec![(analysis_history::ANSWER.to_owned(), out)]);
+            }
+            if rel == git::INVENTORY_CHILD {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [repo, selection, directory, name, mode, encoding] = row.as_slice() else {
+                        return Err(Error::Plan(format!("{rel}: invalid child request")));
+                    };
+                    let Some((r, s)) = active_inventory.get_or_init(|| crate::git_workspace::snapshot::inventory_request_key(root)) else { continue };
+                    if text(*repo)? != *r || text(*selection)? != *s { continue; }
+                    if let Some(path) = world.inventory_child(
+                        &text(*directory)?, &text(*name)?, *mode, text(*encoding)? == "bytes",
+                    ).map_err(Error::Plan)? {
+                        let mut found = row.clone();
+                        found.extend(atoms(&[&path])?);
+                        out.push(found);
+                    }
+                }
+                return Ok(vec![("git_inventory_child_of".to_owned(), out)]);
             }
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
@@ -8385,6 +8319,11 @@ fn run_observed(
         finished = Some(finish()?);
         cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &pf, docs.iter().chain(&loaded_docs))?;
         let summary = world.summary(pauses);
+        if let Ok(mut reads) = kept_lookup_reads.lock() {
+            for (operation, domain, key, digest) in reads.drain(..) {
+                world.consulted_lookup(operation, &domain, &key, digest);
+            }
+        }
         consulted.extend(world.consulted());
         crate::code_rule_dsl::logic::profile::decision("file system and loaded documents (t21)", || summary);
     } else {
@@ -8412,15 +8351,6 @@ fn run_observed(
     Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock()), std::mem::take(&mut c.read_unstored)))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
-    // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
-    if let Some(references) = references {
-        for (rel, columns, values) in references.relations(store, &read)? {
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-            totals.add(rel, source.len(), &syntax::statistics(source.as_ref()));
-            cross_inputs.push((rel.to_owned(), Arc::clone(&source)));
-            modules.bind(&db, rel, source)?;
-        }
-    }
     // The loaded documents are the run's documents from here on; their rows are not its findings.
     for (d, p) in &loaded_docs {
         paths.insert(*d, p.clone());
@@ -8473,7 +8403,7 @@ fn run_observed(
         cache.record_guest_keys();
     }
     let mut publish_later = None;
-    let mut collecting = if recording && cross_plan.is_none() && durable.is_none() {
+    let mut collecting = if recording && durable.is_none() {
         record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
@@ -8483,6 +8413,271 @@ fn run_observed(
         None
     };
     statements.enter("stats");
+    // Decision 0458: the corpus batch, every file's documents, which the cross part reads its base relations off as a
+    // chunk reads its own. The evaluated chunks handed theirs on; a memo hit's is made from its stored tape (parsed
+    // again, in memory, where the store has none), its guests from the requests its entry kept. Nothing is read from
+    // SQL here (decision 0104): the tapes were read with the misses'.
+    // The documents of `source` made from its tape `frame` (parsed in memory where there is none): a file's, or a file
+    // read for its programs' text and tree (decision 0512); none for a text file that is not UTF-8, which is no
+    // document.
+    let doc_of = |key: i64, path: &str, module: Option<Arc<str>>, source: String, frame: Option<&crate::content_store::TapeFrame>| -> Result<Vec<syntax::Document>> {
+        let _doc = crate::code_rule_dsl::logic::profile::span(|| "a document from its tape (decision 0458)".into());
+        let document = |facts: Arc<core::Facts>, tape| {
+            let digest = core::digest(&facts);
+            syntax::Document { key: key as u32, path: path.to_owned(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape, unpackaged: unpackaged.contains(path) }
+        };
+        if text_document(root, path, label) && !host(path) {
+            return Ok(vec![document(Arc::new(core::text(Arc::new(source))), None)]);
+        }
+        let own = if host(path) { crate::code_rule_dsl::language::label_of_path(path).unwrap_or(label) } else { label };
+        let file = core::Source { language: own.to_owned(), source: Arc::new(source) };
+        let built = match (&tapes, frame) {
+            (Some(cache), Some(frame)) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, None, Some(frame), true, keep_tapes),
+            _ => core::build_with_tape(&file, keep_tapes),
+        };
+        let (built, tape) = built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+        let facts = match built {
+            Built::Facts(f) => Arc::new(f),
+            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+        };
+        let tape = tape.filter(|_| keep_tapes).map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+        let d = document(facts, tape);
+        Ok(if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] })
+    };
+    // The tape values the chunks' fixpoints admitted (`memo::VALUES`), in the order answered, as `Guests::admit` and
+    // `Guests::admit_value` made them: each tape found by its text among the root's last runs' and its source named
+    // (decision 0431 R6). A request at a value waits for that value.
+    let with_values = |docs: &mut Vec<syntax::Document>, values: Vec<output::Rows>| -> Result<()> {
+        let mut pending: Vec<memo::Answered> = values.iter().flat_map(memo::Answered::read).collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+        made.seed(docs);
+        while !pending.is_empty() {
+            let before = pending.len();
+            let mut waiting = Vec::new();
+            for asked in pending {
+                if !docs.iter().any(|d| i64::from(d.key) == memo::document_of(asked.at())) {
+                    waiting.push(asked);
+                    continue;
+                }
+                match asked {
+                    memo::Answered::Embed { at, grammar } => {
+                        made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)?;
+                    }
+                    memo::Answered::Value(request) => {
+                        made.admit_value(docs, request, &guest_parses).map_err(Error::Plan)?;
+                    }
+                }
+            }
+            if waiting.len() == before {
+                break;
+            }
+            pending = waiting;
+        }
+        Ok(())
+    };
+    // A run that listed its files as it went compares them with the table now, from the contents its chunks found.
+    // Inside another run's waves (a load's run, phase 1's), where the store is not read (decision 0104), it reads the
+    // old documents where the table's places name them (decision 0494 step 4 part 2).
+    if !base_known {
+        let now_of: HashMap<String, (i64, Option<memo::Content>)> = run_docs_held.lock().expect("the run's documents").iter().map(|(p, (c, k))| (p.clone(), (*k, Some(*c)))).collect();
+        old_base = base_compare(now_of)?;
+    }
+    // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
+    let mut changed_docs: Vec<syntax::Document> = Vec::new();
+    let mut corpus_digest = 0u64;
+    let mut corpus_batch: Option<Arc<syntax::Batch>> = None;
+    // The corpus batch makes the chunks' projection (decision 0458): a span the cross part reads (a line's `line`,
+    // a comment's `col`) is made only where its relation is, and the file-local part names them. Not what makes no
+    // span and the cross part does not read: the tree digests (every node's hash), the text tests and the `ast`
+    // matchers. The old and new batches of an edit are made the same way, so their columns are the batch's.
+    let cross_reads: BTreeSet<String> = stored.iter().map(|(r, _)| r.clone()).collect();
+    let cross_projection = {
+        let mut p = projection.clone();
+        if let Some(reads) = &mut p.reads {
+            reads.retain(|r| !matches!(r.as_str(), "tree_digest" | "def_digest") || cross_reads.contains(r));
+            // The measures' keys (0364 R6) are the cross part's inputs, read off the batch as its base relations are,
+            // though no file-local rule reads them.
+            reads.extend(measure_keys.iter().cloned());
+        }
+        p
+    };
+    let cross_vocabulary = if vocabulary.tests.iter().any(|(t, _)| cross_reads.contains(t)) {
+        Arc::clone(&vocabulary)
+    } else {
+        Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::from_parts(Vec::new(), Vec::new(), vocabulary.matches.clone(), vocabulary.markers.clone()))
+    };
+    let cross_matchers = if cross_reads.iter().any(|r| r.starts_with(matchers::PREFIX)) { chunk_matchers.clone() } else { syntax::Matchers::default() };
+    let corpus_sources: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = if stored.is_empty() || docs.is_empty() {
+        HashMap::new()
+    } else {
+        use rayon::prelude::*;
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the corpus batch (decision 0458)".into());
+        let hits = std::mem::take(&mut corpus_hits);
+        let tapes_of = std::mem::take(&mut *hit_tapes.lock());
+        // The run on each job's thread (`run_state::Carry`, decision 0442): without it a job's tape took a residency
+        // (and a 64 MB slab) of a machine of its own.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let hit_doc = |h: &CorpusHit| -> Result<Vec<syntax::Document>> {
+            let _in = carry.enter();
+            let source = match crate::git_workspace::snapshot::read_to_string(root.join(&h.path)) {
+                Ok(source) => source,
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, &h.path, label) => return Ok(Vec::new()),
+                Err(e) => return Err(Error::Plan(format!("{}: {e}", h.path))),
+            };
+            doc_of(h.key, &h.path, h.module.clone(), source, tapes_of.get(&h.path))
+        };
+        let mut made: Vec<syntax::Document> = crate::code_rule_dsl::logic::profile::on_cores(|| hits.par_iter().map(hit_doc).collect::<Result<Vec<_>>>())?.into_iter().flatten().collect();
+        with_values(&mut made, hits.into_iter().filter_map(|h| h.values).collect())?;
+        let mut all = std::mem::take(&mut corpus_docs);
+        all.extend(made);
+        // A guest two files asked for (a value's askers) is one document, made alike by each.
+        all.sort_by_key(|d| d.key);
+        all.dedup_by_key(|d| d.key);
+        if let Some((changed, _)) = &old_base {
+            changed_docs = all.iter().filter(|d| changed.contains(&d.path)).cloned().collect();
+        }
+        // What the base relations are a function of, under the run's plan: their documents (decision 0458). A base
+        // relation's digest is theirs, taken here, never its rows' (a scan of every row).
+        let words = |d: &syntax::Document| -> [i64; 5] {
+            let at = |i: usize| i64::from_le_bytes(d.digest[i * 8..i * 8 + 8].try_into().expect("eight bytes"));
+            [i64::from(d.key), at(0), at(1), at(2), at(3)]
+        };
+        corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
+        // Each document's views' counts as kept, where its contents are those they were counted of (decision 0494).
+        let given: HashMap<u32, syntax::made::ViewCounts> = all.iter().filter_map(|d| base_counts.get(&d.key).filter(|(digest, _)| *digest == d.digest).map(|(_, c)| (d.key, *c))).collect();
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
+        let sources = syntax::with_matchers(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given).map_err(|e| Error::Plan(e.to_string()))?;
+        corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
+        sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()
+    };
+    // A base relation's digest: its documents', under its name (decision 0458).
+    let base_digest = |rel: &str| corpus_digest ^ super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+    // Decision 0458 step 3: a base relation's change is the changed files' documents, compared one document at a
+    // time: its `Minus` the rows of their old documents (made from the old sources and tapes read before the first
+    // wave, `old_base`) that their new ones do not hold, its `Plus` the reverse, each picked where it lies in its version
+    // (0364 R2). None without the old documents: what reads a base relation then runs again from its reads.
+    type Versions = HashMap<String, (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
+    // And its version before the edit (`input_delta::Before`): the corpus batch's rows but the changed documents',
+    // then their old documents' rows, read where they lie.
+    let mut base_olds: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = HashMap::new();
+    // And its changed documents' whole rows, old and new: its kept statistics' patch (counted out, counted in).
+    type Whole = (Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>);
+    let mut base_wholes: HashMap<String, Whole> = HashMap::new();
+    // The statistics counted or patched this run, with the digest of their rows: kept beside the table.
+    let mut base_stats_out: Vec<(String, u64, super::statkeep::RelStats)> = Vec::new();
+    let base_versions: Versions = match &old_base {
+        Some((changed, olds)) if !corpus_sources.is_empty() && !changed.is_empty() => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' versions (decision 0458)".into());
+            let mut old_docs: Vec<syntax::Document> = Vec::new();
+            let mut old_values: Vec<output::Rows> = Vec::new();
+            for (path, old) in olds {
+                let source = String::from_utf8(old.bytes.to_vec()).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+                old_docs.extend(doc_of(old.key, path, given_modules.get(path).cloned(), source, old.frame.as_ref())?);
+                old_values.extend(old.entry.as_ref().and_then(|e| e.outputs.get(memo::VALUES)).map(|(_, rows)| rows.clone()));
+            }
+            with_values(&mut old_docs, old_values)?;
+            let batch_of = |mut docs: Vec<syntax::Document>| -> Result<HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>> {
+                if docs.is_empty() {
+                    return Ok(HashMap::new());
+                }
+                docs.sort_by_key(|d| d.key);
+                docs.dedup_by_key(|d| d.key);
+                Ok(syntax::with_matchers(store, docs, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
+            };
+            let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key)).collect();
+            let changed_documents: BTreeSet<u32> = changed_keys.iter().filter_map(|&k| u32::try_from(k).ok()).collect();
+            let (old_batch, new_batch) = (batch_of(old_docs)?, batch_of(std::mem::take(&mut changed_docs))?);
+            let mut versions = Versions::new();
+            for (rel, _) in &stored {
+                let Some(source) = corpus_sources.get(rel) else { continue };
+                // A text test is a test of a string (decision 0494): nothing of it changes with an edit.
+                if cross_vocabulary.tests.iter().any(|(t, _)| t == rel) {
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' versions (decision 0458)", || format!("{rel}: a text test, no version (decision 0494)"));
+                    continue;
+                }
+                let columns = source.columns();
+                let width = columns.len();
+                // A version: its source, in the corpus batch's columns (the same projection's), and its rows.
+                let version = |batch: &HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>| -> Result<Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<Vec<i64>>)>> {
+                    let Some(s) = batch.get(rel) else { return Ok(None) };
+                    if s.columns() != columns {
+                        return Err(Error::Plan(format!("{rel}: a version's columns {:?}, the corpus batch's {columns:?}", s.columns())));
+                    }
+                    Ok(Some((Arc::clone(s), (0..s.len()).map(|r| (0..width).map(|c| s.value(r, c)).collect()).collect())))
+                };
+                let (old, new) = (version(&old_batch)?, version(&new_batch)?);
+                base_wholes.insert(rel.clone(), (old.as_ref().map(|(s, _)| Arc::clone(s)), new.as_ref().map(|(s, _)| Arc::clone(s))));
+                let set = |v: &Option<(_, Vec<Vec<i64>>)>| -> BTreeSet<Vec<i64>> { v.as_ref().map_or_else(BTreeSet::new, |(_, rows)| rows.iter().cloned().collect()) };
+                let (old_set, new_set) = (set(&old), set(&new));
+                let names = |suffix: &str| { let name = format!("{rel}__{suffix}"); (0..width).map(|c| super::sql_col(&name, c)).collect::<Vec<_>>() };
+                // Read where they lie (0364 R2): the rows of one version the other does not hold, picked.
+                let picked = |v: Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<Vec<i64>>)>, other: &BTreeSet<Vec<i64>>, suffix: &str| match v {
+                    Some((s, rows)) => crate::code_rule_dsl::logic::native::component::InRel::picked(s, (0..rows.len() as u32).filter(|&r| !other.contains(&rows[r as usize])).collect(), names(suffix)),
+                    None => crate::code_rule_dsl::logic::native::component::columns_source(names(suffix), vec![Some(Vec::new()); width]),
+                };
+                // The changed documents' rows now, through the batch's index of their documents; a relation with none
+                // is read through for them.
+                // Where the batch knows where they lie (decision 0494: by group, by offset), there.
+                let found = source.rows_of_documents(&changed_documents).map(|rows| rows.into_iter().map(|r| r as u32).collect());
+                let skip: Vec<u32> = match found.or_else(|| input_delta::rows_of_documents(source.as_ref(), &changed_keys)) {
+                    Some(rows) => rows,
+                    None => {
+                        crate::code_rule_dsl::logic::profile::decision("the base relations' versions (decision 0458)", || format!("{rel}: no index of its documents, read through for the changed ones"));
+                        let by_document = columns.first().is_some_and(|c| c == "d" || c == "n" || c == "p");
+                        (0..source.len() as u32).filter(|&r| if by_document { changed_keys.contains(&memo::document_of(source.value(r as usize, 0))) } else { new_set.contains(&(0..width).map(|c| source.value(r as usize, c)).collect::<Vec<_>>()) }).collect()
+                    }
+                };
+                base_olds.insert(rel.clone(), Arc::new(input_delta::Before::new(Arc::clone(source), skip, old.as_ref().map(|(s, _)| Arc::clone(s)))));
+                versions.insert(rel.clone(), (picked(new, &old_set, "plus"), picked(old, &new_set, "minus")));
+            }
+            versions
+        }
+        _ => Versions::new(),
+    };
+    // Each base relation's rows, as its kept statistics count them (decision 0494): kept of these documents, or of
+    // the table's and patched by the changed documents' old and new rows. The corpus batch answers its `len` by them,
+    // and fails a relation whose made rows are not them.
+    if let Some(batch) = &corpus_batch {
+        let (table_digest, kept) = &base_stats_kept;
+        let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        let totals: HashMap<String, usize> = stored
+            .iter()
+            .filter_map(|(rel, _)| {
+                let (d, k) = kept.get(rel)?;
+                let rows = if *d == base_digest(rel) {
+                    k.rows()
+                } else if Some(*d) == table_digest.map(|t| t ^ tag(rel)) {
+                    let (old, new) = base_wholes.get(rel)?;
+                    k.rows() - old.as_ref().map_or(0, |s| s.len() as i64) + new.as_ref().map_or(0, |s| s.len() as i64)
+                } else {
+                    return None;
+                };
+                usize::try_from(rows).ok().map(|r| (rel.clone(), r))
+            })
+            .collect();
+        crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} base relations' rows counted by their kept statistics", totals.len(), stored.len()));
+        batch.give_totals(&totals);
+    }
+    if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+        eprintln!("rerail: base versions: old {:?}, corpus {}, versions {:?}", old_base.as_ref().map(|(c, o)| (c.len(), o.len())), corpus_sources.len(), base_versions.iter().map(|(r, (p, m))| (r.clone(), p.len(), m.len())).collect::<Vec<_>>());
+    }
+    for (rel, v) in &base_versions {
+        given_deltas.insert(rel.clone(), v.clone());
+        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
+    }
+    // Each base relation the cross part reads: its columns as the corpus batch has them, and which of them it names
+    // (`stored`). The rows are the batch's; none is gathered.
+    for (rel, names) in stored.iter().filter(|_| !corpus_sources.is_empty()) {
+        let have: Vec<String> = match corpus_sources.get(rel) {
+            Some(source) => source.columns(),
+            None => projection.columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect(),
+        };
+        let values = have.iter().map(|c| names.contains(c).then(Vec::new)).collect();
+        base_rows.insert(rel.clone(), (have, values));
+    }
     // An export no evaluated chunk measured (every file read from the memo, or none with rows): measured as empty.
     for rel in &split.exports {
         if !totals.rels.contains_key(rel) {
@@ -8496,14 +8691,6 @@ fn run_observed(
     // evaluated, measured once (a file read from the memo has no chunk to measure them in).
     if memoised {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "measure the base rows held".into());
-        // A relation no file had rows of (none evaluated, or none with rows) is held empty: the cross-file part binds it.
-        for (rel, names) in &stored {
-            if !base_rows.contains_key(rel) {
-                let have: Vec<String> = projection.columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect();
-                let values = have.iter().map(|c| names.contains(c).then(Vec::new)).collect();
-                base_rows.insert(rel.clone(), (have, values));
-            }
-        }
         // Measured through the source the cross-file part binds: it keeps its statistics, so a session's next run
         // reads them for its `r__old` (0094 §4). A column no cross-file rule names is not held: the planner still
         // asks for it, so it is stated as a key.
@@ -8531,85 +8718,54 @@ fn run_observed(
                 let placed = maintained.placed().map_err(|e| e.to_string())?;
                 let prog = &placed;
                 let fields = prog.fields().map_err(|e| e.to_string())?;
-                let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
-                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &split.locations, &rels, &semijoin).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
+                // The exports alone: the base relations are read off the corpus batch (decision 0458, below).
+                let rels: Vec<String> = split.exports.clone();
+                let kept = retain::kept_inputs(store, kept_strata::space(root), binds, prog, &rels, &semijoin).map_err(|e| e.to_string())?.map_err(|why| format!("no kept inputs of this cross part: {why}"))?;
                 let _s1 = crate::code_rule_dsl::logic::profile::span(|| "the changed files' old and new rows".into());
                 // The changed files' entries as the kept inputs hold them: the keeper's, found before the first wave.
                 let mut old_entries = Vec::new();
                 for (path, found) in &counted_before {
                     let Some((_, key)) = counted_now.get(path) else { continue };
                     let entry = found.as_ref().ok_or_else(|| format!("{path}: its counted entry is not in the memo"))?.entry(*key).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path}: its counted entry is another document's"))?;
-                    old_entries.push(entry);
+                    old_entries.push((path.clone(), entry));
                 }
                 let no_holders = rustc_hash::FxHashMap::default();
                 let mut changed = 0usize;
-                let mut results: Vec<(String, usize, bool, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch)> = Vec::new();
+                let mut results: Vec<(String, usize, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch, Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>)> = Vec::new();
                 // Each input's old rows (the changed files' entries) and this run's, before any is patched.
                 #[allow(clippy::type_complexity)]
-                let mut staged: Vec<(&String, usize, Option<&Vec<String>>, Vec<String>, Vec<Vec<Vec<i64>>>, Vec<Vec<i64>>)> = Vec::new();
+                let mut staged: Vec<(&String, usize, Vec<Vec<Vec<i64>>>, Vec<Vec<i64>>)> = Vec::new();
                 for rel in &rels {
                     let k = &kept[rel];
                     let width = fields.width(rel);
-                    let base = stored.iter().find(|(r, _)| r == rel).map(|(_, held)| held);
-                    // A base relation's frame holds its columns as the run binds them: `base_rows`' columns, every
-                    // input column in order (an unheld one reads as 0). An export's, as it declares them.
-                    let names: Vec<String> = match base {
-                        None => k.source.columns(),
-                        Some(_) => match base_rows.get(rel) {
-                            Some((have, _)) => have.clone(),
-                            None => super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?.iter().map(|c| (*c).to_owned()).collect(),
-                        },
-                    };
-                    if names.len() != width || k.source.columns().len() != width {
-                        return Err(format!("{rel}: the kept input has {} columns, the run binds {}", k.source.columns().len(), names.len()));
+                    if k.source.columns().len() != width {
+                        return Err(format!("{rel}: the kept input has {} columns, the run binds {width}", k.source.columns().len()));
                     }
                     // An export's holders are its owners' (`group_col`): the column the memo attributes its rows by.
                     let g = retain::group_col(prog, &split.locations, rel);
-                    if base.is_none() && width > 0 && split.locations.get(rel).and_then(|l| l.first()) != Some(&g) {
+                    if width > 0 && split.locations.get(rel).and_then(|l| l.first()) != Some(&g) {
                         return Err(format!("{rel}: its rows are kept by column {g}, the memo attributes them by {:?} (declared {:?})", split.locations.get(rel), fields.columns(rel)));
                     }
                     // Each changed file's old rows, read as the kept input's columns.
                     let mut old: Vec<Vec<Vec<i64>>> = Vec::new();
-                    for e in &old_entries {
+                    for (_, e) in &old_entries {
                         let mut rows: Vec<Vec<i64>> = Vec::new();
-                        match base {
-                            None => {
-                                if let Some((w, flat)) = e.rows.get(rel) {
-                                    if *w != width {
-                                        return Err(format!("{rel}: an entry's rows are {w} wide, the input {width}"));
-                                    }
-                                    rows.extend(flat.chunks_exact(width.max(1)).map(<[i64]>::to_vec));
-                                }
+                        if let Some((w, flat)) = e.rows.get(rel) {
+                            if *w != width {
+                                return Err(format!("{rel}: an entry's rows are {w} wide, the input {width}"));
                             }
-                            Some(held) => {
-                                if let Some((w, flat)) = e.rows.get(&memo::base_key(rel)) {
-                                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?;
-                                    let at: Vec<Option<usize>> = names.iter().map(|n| held.contains(n).then(|| all.iter().position(|c| c == n)).flatten().filter(|c| c < w)).collect();
-                                    rows.extend(flat.chunks_exact((*w).max(1)).map(|r| at.iter().map(|c| c.map_or(0, |c| r[c])).collect()));
-                                }
-                            }
+                            rows.extend(flat.chunks_exact(width.max(1)).map(<[i64]>::to_vec));
                         }
                         old.push(rows);
                     }
-                    // This run's rows of the changed files: the sum of their new entries (the chunks' base rows are
-                    // their entries', decision 0117 step 2).
-                    let new: Vec<Vec<i64>> = match base {
-                        None => {
-                            let s = exports.borrow().snapshot(rel, width);
-                            let all: Vec<usize> = (0..width).collect();
-                            let mut row = vec![0i64; width];
-                            (0..s.len()).map(|r| { s.row_at(r, &all, &mut row); row.clone() }).collect()
-                        }
-                        Some(_) => match base_rows.get(rel) {
-                            None => Vec::new(),
-                            Some((have, values)) => {
-                                let at: Vec<Option<&Vec<i64>>> = names.iter().map(|n| have.iter().position(|h| h == n).and_then(|c| values[c].as_ref())).collect();
-                                let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-                                (0..n).map(|r| at.iter().map(|c| c.map_or(0, |c| c[r])).collect()).collect()
-                            }
-                        },
+                    // This run's rows of the changed files: the sum of their new entries.
+                    let new: Vec<Vec<i64>> = {
+                        let s = exports.borrow().snapshot(rel, width);
+                        let all: Vec<usize> = (0..width).collect();
+                        let mut row = vec![0i64; width];
+                        (0..s.len()).map(|r| { s.row_at(r, &all, &mut row); row.clone() }).collect()
                     };
-                    staged.push((rel, g, base, names, old, new));
+                    staged.push((rel, g, old, new));
                 }
                 // The documents this run evaluated: every real document a changed file's old entry or this run's rows
                 // name. A chunk evaluates its unchanged files with its changed ones, so this is more than the files
@@ -8620,16 +8776,16 @@ fn run_observed(
                 // Of the relations owned by a node: a string's owner (`memo::Owner::Text`) is no document.
                 // One owner a row, deduplicated as read: a set of every row's owner sorted millions (Q20).
                 let mut owners: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
-                for (_, g, _, _, old, new) in staged.iter().filter(|(rel, ..)| matches!(memo::owner(rel), memo::Owner::Node(_))) {
+                for (_, g, old, new) in staged.iter().filter(|(rel, ..)| matches!(memo::owner(rel), memo::Owner::Node(_))) {
                     owners.extend(old.iter().flatten().chain(new.iter()).map(|r| retain::owner_of(r, *g)).filter(|o| *o < values));
                 }
                 let evaluated: BTreeSet<i64> = owners.into_iter().collect();
                 // `RERAIL_STATS_KEEP_TRACE`: what the patches read, by input.
                 let mut read_trace: Option<Vec<(usize, usize, usize, String)>> = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some().then(Vec::new);
-                for (rel, g, base, names, old, new) in staged {
+                for (rel, g, old, new) in staged {
                     let k = &kept[rel];
                     let width = fields.width(rel);
-                    let holders = base.is_none().then(|| keeper.as_ref().and_then(|k| k.holders(rel)).unwrap_or(&no_holders));
+                    let holders = keeper.as_ref().and_then(|k| k.holders(rel)).unwrap_or(&no_holders);
                     // `RERAIL_KEPT_INPUTS_TRACE`: each input's old and new rows of the changed files, and its patch.
                     let trace_rows = std::env::var_os("RERAIL_KEPT_INPUTS_TRACE").is_some().then(|| (old.clone(), new.clone()));
                     let atoms = store.atoms_handle();
@@ -8641,17 +8797,16 @@ fn run_observed(
                     if let Some((o, n)) = trace_rows.filter(|(o, n)| !o.iter().all(Vec::is_empty) || !n.is_empty() || !patch.changed.is_empty()) {
                         eprintln!("rerail: kept input {rel} (owner column {g}, {} kept rows): old {o:?}; new {n:?}; owners changed {:?}; minus {:?}; plus {:?}", k.source.len(), patch.changed.iter().map(|(o, r)| (*o, r.len())).collect::<Vec<_>>(), patch.minus, patch.plus);
                     }
-                    let bound: Vec<String> = match base {
-                        None => (0..width).map(|c| format!("c{c}")).collect(),
-                        Some(_) => names.clone(),
-                    };
-                    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if patch.changed.is_empty() {
-                        retain::renamed(Arc::clone(&k.source), bound.clone())
+                    let bound: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+                    let (source, added): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, _) = if patch.changed.is_empty() {
+                        (retain::renamed(Arc::clone(&k.source), bound.clone()), None)
                     } else {
                         changed += 1;
-                        Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(k.ranges()?), std::mem::take(&mut patch.changed)))
+                        let layered = retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(k.ranges()?), std::mem::take(&mut patch.changed));
+                        let added = Arc::clone(layered.added());
+                        (Arc::new(layered), Some(added))
                     };
-                    results.push((rel.clone(), width, base.is_some(), bound, source, patch));
+                    results.push((rel.clone(), width, bound, source, patch, added));
                 }
                 if let Some(mut t) = read_trace {
                     let real = evaluated.len();
@@ -8663,7 +8818,7 @@ fn run_observed(
                 drop(_s2);
                 let _s3 = crate::code_rule_dsl::logic::profile::span(|| "the inputs adopted".into());
                 let mut adopted: HashMap<String, retain::KeptInput> = HashMap::new();
-                for (rel, width, is_base, bound, source, patch) in results {
+                for (rel, width, bound, source, patch, added) in results {
                     let k = &kept[&rel];
                     input_digests.insert(rel.clone(), patch.digest);
                     if let Some(st) = &k.stats {
@@ -8673,21 +8828,26 @@ fn run_observed(
                     if let Some(docs) = patch.docs {
                         // Its rows' digests by owner, for the frames written back and the next run.
                         kept_input_docs.insert(rel.clone(), Arc::new(docs));
-                        // Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
-                        let rows_source = |rows: &[Vec<i64>], suffix: &str| {
-                            let name = format!("{rel}__{suffix}");
-                            crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| super::sql_col(&name, c)).collect(), (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
-                        };
-                        given_deltas.insert(rel.clone(), (rows_source(&patch.plus, "plus"), rows_source(&patch.minus, "minus")));
+                        // Read where they lie (0364 R2): the rows gained among the appended ones, those lost among the kept
+                        // ones. Its versions, named as the relation is (`sql_col`).
+                        let names = || (0..width).map(|c| super::sql_col(&rel, c)).collect::<Vec<_>>();
+                        let none = || crate::code_rule_dsl::logic::native::component::columns_source(names(), vec![Some(Vec::new()); width]);
+                        let plus = added.map_or_else(none, |a| crate::code_rule_dsl::logic::native::component::InRel::picked(a, patch.plus, names()));
+                        let minus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(&k.source), patch.minus, names());
+                        given_deltas.insert(rel.clone(), (plus, minus));
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_owners();
                     }
-                    if is_base {
-                        let held = &stored.iter().find(|(r, _)| *r == rel).expect("a base relation").1;
-                        let values = bound.iter().map(|c| held.contains(c).then(Vec::new)).collect();
-                        base_rows.insert(rel.clone(), (bound, values));
-                        base_layered.insert(rel, source);
-                    } else {
-                        exports.borrow_mut().install(&rel, width, source);
+                    exports.borrow_mut().install(&rel, width, source);
+                }
+                // Decision 0458: each base relation is the corpus batch's, read in place; its versions were made from
+                // the changed files' documents (`base_versions`), none where no file changed. Without the documents'
+                // table, or with a changed file's versions missing, the kept route is not taken.
+                for (rel, _) in &stored {
+                    let source = corpus_sources.get(rel).ok_or_else(|| format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>()))?;
+                    if old_base.as_ref().is_none_or(|(changed, _)| !changed.is_empty() && !base_versions.contains_key(rel)) {
+                        return Err(format!("{rel}: no versions of its changed files' documents"));
                     }
+                    base_layered.insert(rel.clone(), Arc::clone(source));
                 }
                 drop(kept);
                 kept_loaded = Some(adopted);
@@ -8719,35 +8879,15 @@ fn run_observed(
                             let rows = crate::code_rule_dsl::logic::native::component::columns_source((0..*width).map(|c| format!("c{c}")).collect(), cols);
                             exports.borrow_mut().add(rel, *width, rows.as_ref());
                         }
-                        for (rel, names) in &stored {
-                            let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
-                            let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                            let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
-                            for name in names {
-                                let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                                let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                                held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
-                            }
-                        }
                     }
                 }
             }
         }
-        // The base relations' rows and the tree counts of the hits not held again (0096 step 3): the counted rows are
-        // the run's, and the kept tree counts beyond those of the files it saw. Given up, the skipped hits' are taken
-        // from the memo, as the replay would have.
-        match keeper.as_ref().and_then(|k| k.counted_base().zip(k.counted_own())).filter(|_| installed.get()) {
-            Some(((counted, rels), own)) => {
-                let _s = crate::code_rule_dsl::logic::profile::span(|| "the counted base rows".into());
-                for (rel, _, from) in rels {
-                    let Some(held) = base_rows.get_mut(rel) else { continue };
-                    let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
-                    let mut columns = counted.columns_each(rel, from.len()).into_iter();
-                    for c in from {
-                        let to = held.0.iter().position(|h| h == all[*c]).ok_or_else(|| Error::Plan(format!("{rel} has no column {}", all[*c])))?;
-                        held.1[to] = Some(columns.next().expect("one a column"));
-                    }
-                }
+        // The tree counts of the hits not held again (0096 step 3): the kept tree counts beyond those of the files it
+        // saw. Given up, the skipped hits' are taken from the memo, as the replay would have. Their base rows are the
+        // corpus batch's (decision 0458).
+        match keeper.as_ref().and_then(|k| k.counted_own()).filter(|_| installed.get()) {
+            Some(own) => {
                 let mut skipped = own.clone();
                 skipped.sub(&own_seen);
                 own_totals.add(&skipped);
@@ -8757,16 +8897,6 @@ fn run_observed(
                 for (path, content, key) in std::mem::take(&mut *given_up.borrow_mut()).into_iter().filter(|_| memo.is_some()) {
                     let entry = memo.expect("checked").lookup(content, world::store_path(&path), key, &memo_plan).map_err(|e| Error::Plan(e.to_string()))?.ok_or_else(|| Error::Plan(format!("{path}: its memo entry is gone")))?;
                     own_totals.add(&Own::taken(&entry.rows));
-                    for (rel, names) in &stored {
-                        let Some((width, values)) = entry.rows.get(&memo::base_key(rel)) else { continue };
-                        let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                        let held = base_rows.entry(rel.clone()).or_insert_with(|| (all.iter().map(|c| (*c).to_owned()).collect(), vec![None; all.len()]));
-                        for name in names {
-                            let from = all.iter().position(|c| c == name).filter(|c| *c < *width).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                            let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                            held.1[to].get_or_insert_with(Vec::new).extend(values.iter().skip(from).step_by(*width).copied());
-                        }
-                    }
                 }
             }
         }
@@ -8776,9 +8906,9 @@ fn run_observed(
         // An export no chunk measured and the keeper gave none of (it gave up after its hits, as in a phase whose
         // files are all loads) is measured from its rows held too: the planner prices every input it reads.
         let unmeasured: BTreeSet<&String> = split.exports.iter().filter(|rel| !totals.rels.contains_key(rel.as_str())).collect();
-        // `RERAIL_KEPT_DOCS` (Q20): the listed exports' rows this process counted, by document, against those held.
+        // `RERAIL_KEPT_DOCS` (Q20): the listed exports' rows this run counted, by document, against those held.
         if let Some(k) = keeper.as_ref() {
-            for rel in split.exports.iter().filter(|r| keptstats::kept_docs_listed(r)) {
+            for rel in split.exports.iter().filter(|r| k.traces(r)) {
                 for line in k.compare_documents(rel, &exports.borrow(), pf.types(rel).len()) {
                     eprintln!("RERAIL_KEPT_DOCS {rel}: {line}");
                 }
@@ -8837,7 +8967,7 @@ fn run_observed(
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "write the kept statistics, queued".into());
                 // Its constants as the store numbers them, in the writer's transaction (decision 0170): a record of its
                 // own (decision 0306), its relations' symbol columns asked here.
-                let columns = k.symbol_columns(&|key, names| memo_plan.syms.columns_named(key, names));
+                let columns = k.symbol_columns(&|key, names| memo_plan.syms.columns(key, names.len()));
                 fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
                     let (plan, columns): ([u8; 32], std::collections::BTreeMap<String, Option<Vec<bool>>>) = crate::content_store::record::codec::from_body("the kept statistics, mapped", body)?;
                     if !cx.store.atoms_handle().forked() {
@@ -8855,55 +8985,223 @@ fn run_observed(
         if let Some(memo::Memo::Stored(store)) = memo.filter(|_| memoised && !last_unmarked.get()) {
             memo::set_last_program(store, &memo_program, Some(memo_whole));
         }
+        // A base relation's statistics (decision 0458): kept beside its documents' table, of the rows its digest
+        // names. Kept of these rows, they stand; kept of the table's documents, the changed documents' old rows are
+        // counted out and their new ones in (0096 §3's patch, of the documents rather than memo entries); else counted
+        // off the corpus batch, read where its rows lie. Counted at the columns its rules read (`held`).
+        let (table_digest, kept_stats) = &mut base_stats_kept;
+        let table_digest = *table_digest;
+        let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        type Stat = (String, i64, i64, i64, i64);
+        // One relation's statistics, of its kept ones (`kept`, taken from the table's) or counted: what they are, how
+        // they were had, and the counts to keep beside the table when counted or patched. Reads only what it is given
+        // and the batch, so relations are counted side by side (below).
+        let base_counted = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &BTreeSet<&str>, kept: Option<(u64, super::statkeep::RelStats)>| -> (Vec<Stat>, &'static str, Option<super::statkeep::RelStats>) {
+            let columns = source.columns();
+            let width = columns.len();
+            let from: Vec<usize> = (0..width).filter(|&c| held.contains(columns[c].as_str())).collect();
+            let names: Vec<String> = from.iter().map(|&c| columns[c].clone()).collect();
+            let kept = kept.filter(|(_, k)| k.columns() == names.as_slice());
+            // A text test is a test of a string (decision 0494): nothing of it changes with an edit, so its kept
+            // statistics stand, read without its `len` (a scan of the batch's strings).
+            if cross_vocabulary.tests.iter().any(|(t, _)| t == rel)
+                && let Some((_, k)) = &kept
+            {
+                let rows = k.rows();
+                let by_name: HashMap<String, Stat> = k.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+                return (columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect(), "kept, a text test (decision 0494)", None);
+            }
+            let rows = source.len() as i64;
+            let now = base_digest(rel);
+            let counted = match kept {
+                Some((d, k)) if d == now && k.rows() == rows => Some((k, "kept", false)),
+                Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
+                    for (v, sign) in [(old, -1), (new, 1)] {
+                        if let Some(v) = v {
+                            k.documents_scanned(v.as_ref(), &from, sign);
+                        }
+                    }
+                    (k.rows() == rows).then_some((k, "patched by the changed documents", true))
+                }),
+                _ => None,
+            };
+            let (counted, how, keep) = counted.unwrap_or_else(|| {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
+                let mut k = super::statkeep::RelStats::new(names.clone());
+                k.documents_scanned(source, &from, 1);
+                (k, "counted", true)
+            });
+            let by_name: HashMap<String, Stat> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+            let st = columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect();
+            (st, how, (keep && base_binds.is_some()).then_some(counted))
+        };
+        let held_of = |columns: &[String], values: &[Option<Vec<i64>>]| -> BTreeSet<String> { columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.clone()).collect() };
+        // Every value the exports hold, the chunks' and the hits' (as `mention` gathered them per chunk before 0458
+        // step 4's copy 2): the nodes a semi-join's relation is looked up at. Made once, before the relations are
+        // counted, when a semi-join's is read off the batch.
+        let held_nodes: rustc_hash::FxHashSet<i64> = if base_rows.keys().any(|r| semijoin.contains(r) && !base_layered.contains_key(r)) {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
+            let mut held = rustc_hash::FxHashSet::default();
+            let exports = exports.borrow();
+            for rel in &split.exports {
+                exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
+            }
+            held
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
+        // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
+        // statistics.
+        struct Count {
+            rel: String,
+            columns: Vec<String>,
+            held: BTreeSet<String>,
+            source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+            kept: Option<(u64, super::statkeep::RelStats)>,
+        }
+        let mut counts: Vec<Count> = Vec::new();
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
-            base_held.insert(rel.clone(), columns.iter().zip(&values).map(|(c, v)| v.is_some().then(|| c.clone())).collect());
+            let held = held_of(&columns, &values);
             // A kept base relation with its delta (decision 0117 step 2): bound as it is, its digest taken from its
             // owners', its statistics the keeper's.
             if let Some(source) = base_layered.remove(&rel) {
                 let rows = source.len();
-                let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
-                let statistics = match kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64) {
-                    Some(r) => {
-                        let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
-                        let n = rows as i64;
-                        columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
-                    }
+                let statistics = if semijoin.contains(&rel) {
                     // A semi-join's, kept at these rows (`kept_input_stats`), else measured and kept for the next run.
-                    None if semijoin.contains(&rel) => match kept_input_stats.get(&rel).filter(|(d, _)| input_digests.get(&rel) == Some(d)) {
+                    match kept_input_stats.get(&rel).filter(|(d, _)| input_digests.get(&rel) == Some(d)) {
                         Some((_, st)) => st.clone(),
                         None => {
                             let st = syntax::statistics(source.as_ref());
                             semijoin_stats.insert(rel.clone(), st.clone());
                             st
                         }
-                    },
-                    None => syntax::statistics(source.as_ref()),
+                    }
+                } else {
+                    let held: BTreeSet<&str> = held.iter().map(String::as_str).collect();
+                    let (st, how, keep) = base_counted(&rel, source.as_ref(), &held, kept_stats.remove(&rel));
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
+                    if let Some(k) = keep {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), k));
+                    }
+                    st
                 };
                 totals.add(&rel, rows, &statistics);
+                input_digests.insert(rel.clone(), base_digest(&rel));
                 base_sources.insert(rel, source);
                 continue;
             }
-            let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
-            // A semi-join's relation holds only the rows its exports name: measured, as the keeper counts every row.
-            let statistics = kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
-                let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
-                let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
-                let n = rows as i64;
-                columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
-            });
-            let source = match &statistics {
-                Some(st) => crate::code_rule_dsl::logic::native::component::columns_source_measured(columns, values, st.clone()),
-                None => crate::code_rule_dsl::logic::native::component::columns_source(columns, values),
-            };
-            let source = retain::kept_source(parts.as_deref(), &rel, Arc::clone(&source), &retain::cells_of(&input_atoms, &run_placed, &lowered.domains, &rel, source.columns().len()), &mut input_digests);
-            let statistics = statistics.unwrap_or_else(|| {
-                let st = syntax::statistics(source.as_ref());
-                // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
-                if semijoin.contains(&rel) {
-                    semijoin_stats.insert(rel.clone(), st.clone());
+            // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
+            let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>())))?);
+            // The source's columns, in its rows' order: the keyed walk's positions are of these.
+            let columns = source.columns();
+            let kept = if semijoin.contains(&rel) { None } else { kept_stats.remove(&rel) };
+            counts.push(Count { rel, columns, held, source, kept });
+        }
+        // Each relation counted on the pool, side by side: they read the batch alone, which makes a document once,
+        // for whichever reads it first (0494). On the run's thread they took 0.6 s of hogql's cold run, one at a time.
+        enum Counted {
+            /// A semi-join's rows at the held nodes (`SemijoinCounts`): their number and statistics.
+            Looked(usize, Vec<Stat>),
+            /// A semi-join's every row, measured (its keyed walk refused).
+            Measured(Vec<Stat>),
+            Base(Vec<Stat>, &'static str, Option<super::statkeep::RelStats>),
+        }
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let counted: Vec<Counted> = {
+            use rayon::prelude::*;
+            let count = |c: &Count| -> Counted {
+                let _in = carry.enter();
+                let source = c.source.as_ref();
+                if !semijoin.contains(&c.rel) {
+                    let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
+                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone());
+                    return Counted::Base(st, how, keep);
                 }
-                st
-            });
+                // A semi-join's relation is read by the cross part only at the nodes the exports hold: its statistics
+                // are those rows' (`keptstats::SemijoinCounts`), read off the batch by a walk of their documents
+                // (`for_rows_keyed`), not every node's measured: the view's every row is computed from the tape
+                // (1.2-1.5 M rows on hogql, 1 s to measure). Else every row is measured.
+                let looked = (|| {
+                    let input = super::super::sql::select::input_columns(&c.rel)?;
+                    let at: Vec<usize> = input.iter().map(|n| c.columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
+                    let n_at = input.iter().position(|n| *n == "n")?;
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{}'s rows at the held nodes, counted", c.rel));
+                    let mut counts = keptstats::SemijoinCounts::default();
+                    source
+                        .for_rows_keyed(at[n_at], &held_nodes, &at, &mut |_, row| {
+                            counts.row(row[n_at], n_at, row);
+                            true
+                        })
+                        .then_some(())?;
+                    let st = counts.statistics(input, &c.columns)?;
+                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st))
+                })();
+                looked.unwrap_or_else(|| {
+                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({} rows)", source.len()));
+                    Counted::Measured(syntax::statistics(source))
+                })
+            };
+            // Counted in waves within a share of the budget (decision 0126): a column's pass lists each row's
+            // document and value (`RelStats::count`, `ROW_BYTES` a row), so every relation of millions of rows counted
+            // at once held 1.2 GB more on 901 files. A wave is side by side, and has one relation at least. Kept
+            // statistics (a text test's, a patch's) count no row, and a semi-join's only its held nodes'; neither is
+            // asked its rows here, which would make its documents.
+            const ROW_BYTES: usize = 48;
+            let allowance = rerail_accel::budget::share(256 << 20);
+            let bytes = |c: &Count| match () {
+                () if semijoin.contains(&c.rel) => held_nodes.len() * ROW_BYTES,
+                () if c.kept.is_some() => 0,
+                () => c.source.len() * ROW_BYTES,
+            };
+            let mut counted: Vec<Counted> = Vec::with_capacity(counts.len());
+            let mut at = 0;
+            while at < counts.len() {
+                let (mut end, mut held) = (at, 0usize);
+                while end < counts.len() {
+                    let b = bytes(&counts[end]);
+                    if end > at && held + b > allowance {
+                        break;
+                    }
+                    held += b;
+                    end += 1;
+                }
+                let wave = &counts[at..end];
+                if wave.len() > 1 {
+                    counted.extend(crate::code_rule_dsl::logic::profile::on_cores(|| wave.par_iter().map(count).collect::<Vec<_>>()));
+                } else {
+                    counted.extend(wave.iter().map(count));
+                }
+                at = end;
+            }
+            counted
+        };
+        // Applied in the relations' order, as one thread gave them.
+        for (c, counted) in counts.into_iter().zip(counted) {
+            let Count { rel, columns, source, .. } = c;
+            let (rows, statistics) = match counted {
+                Counted::Looked(rows, st) => {
+                    // Counted at the held nodes, a semi-join's statistics are kept as measured ones are, for the next
+                    // run's kept route (`kept_input_stats`): kept of these rows, a warm run reads them and measures
+                    // nothing.
+                    semijoin_stats.insert(rel.clone(), st.clone());
+                    (rows, st)
+                }
+                Counted::Measured(st) => {
+                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || format!("{rel}: columns {columns:?}, input {:?}", super::super::sql::select::input_columns(&rel)));
+                    crate::code_rule_dsl::logic::profile::decision("a base relation measured, not kept", || format!("{rel}: {} rows", source.len()));
+                    // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
+                    semijoin_stats.insert(rel.clone(), st.clone());
+                    (source.len(), st)
+                }
+                Counted::Base(st, how, keep) => {
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
+                    if let Some(k) = keep {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), k));
+                    }
+                    (source.len(), st)
+                }
+            };
+            let source = retain::kept_source_digested(parts.as_deref(), &rel, source, base_digest(&rel), &mut input_digests);
             totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
         }
@@ -8954,7 +9252,7 @@ fn run_observed(
                 columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
             cross_stats.measured(rel, columns.iter().map(|name| ((*name).to_owned(), [0, 0, 0, 0])), []);
             cross_inputs.push((rel.clone(), Arc::clone(&empty)));
-            modules.bind(&db, rel, empty)?;
+            modules.bind(db, rel, empty)?;
         }
     }
 
@@ -8963,11 +9261,23 @@ fn run_observed(
     // Without the memo the base rows are still columns: sources now.
     {
         let parts = session.as_ref().map(|s| s.cross.lock().expect("the session's cross-file parts"));
-        for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
-            base_held.insert(rel.clone(), columns.iter().zip(&values).map(|(c, v)| v.is_some().then(|| c.clone())).collect());
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-            let cells = retain::cells_of(&input_atoms, &run_placed, &lowered.domains, &rel, source.columns().len());
-            base_sources.insert(rel.clone(), retain::kept_source(parts.as_deref(), &rel, source, &cells, &mut input_digests));
+        for rel in std::mem::take(&mut base_rows).into_keys() {
+            // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
+            let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>())))?);
+            base_sources.insert(rel.clone(), retain::kept_source_digested(parts.as_deref(), &rel, source, base_digest(&rel), &mut input_digests));
+        }
+    }
+    // A base relation the cross part reads that no chunk held a row of (a run whose files hold no program reads no
+    // `rr_program` row): known empty, as with no documents (above), and still bound.
+    if !docs.is_empty() {
+        let unheld: Vec<&String> = split.base.iter().filter(|rel| !base_sources.contains_key(*rel) && !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        for rel in unheld {
+            if cross_inputs.iter().any(|(r, _)| r == rel) {
+                continue;
+            }
+            let Some(columns) = projection.columns(rel) else { continue };
+            let empty = crate::code_rule_dsl::logic::native::component::columns_source(columns.iter().map(|name| (*name).to_owned()).collect(), vec![Some(Vec::new()); columns.len()]);
+            base_sources.insert(rel.clone(), empty);
         }
     }
     // What the memo entries written by this run hold (t31 A2): the largest relations, and any join pushed into the
@@ -8978,10 +9288,10 @@ fn run_observed(
         if nodes > 0 {
             let total: u64 = by_rel.values().map(|v| v.1).sum();
             let mut top: Vec<(&String, &(u64, u64))> = by_rel.iter().collect();
-            top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+            top.sort_by_key(|a| std::cmp::Reverse(a.1.1));
             crate::code_rule_dsl::logic::profile::decision("memo entries written", || {
                 let named: Vec<String> = top.iter().take(8).map(|(r, (rows, values))| format!("{r} {:.1} MB ({rows} rows, {:.0}%)", *values as f64 * 8.0 / 1e6, 100.0 * *values as f64 / total.max(1) as f64)).collect();
-                format!("{:.1} MB of values over {nodes} nodes: {}", total as f64 * 8.0 / 1e6, named.join("; "))
+                format!("{}: {:.1} MB of values over {nodes} nodes: {}", phases::current().as_deref().unwrap_or("the program"), total as f64 * 8.0 / 1e6, named.join("; "))
             });
             for (rel, (rows, _)) in &top {
                 let pushed = rel.strip_prefix("fl").and_then(|s| s.split_once('_')).is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
@@ -8996,7 +9306,7 @@ fn run_observed(
             .iter()
             .map(|(rel, source)| (source.len() * source.columns().len(), format!("{rel}({})", source.columns().join(", "))))
             .collect();
-        held.sort_by(|a, b| b.0.cmp(&a.0));
+        held.sort_by_key(|a| std::cmp::Reverse(a.0));
         let total: usize = held.iter().map(|h| h.0).sum();
         let top: Vec<String> = held.iter().take(12).map(|(n, r)| format!("{r} {:.1} MB", *n as f64 * 8.0 / 1e6)).collect();
         format!("{} base relations, at most {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
@@ -9010,7 +9320,7 @@ fn run_observed(
             cross_stats.measured(&rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
         }
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
-        modules.bind(&db, &rel, source)?;
+        modules.bind(db, &rel, source)?;
     }
     // One fixpoint (no bounded rounds) reads each export from `x` when its first reader runs and drops it, and each
     // base relation held for it, after its last; rounds read them all, every round. A session's run keeps its
@@ -9022,8 +9332,6 @@ fn run_observed(
     // strata as before (whole strata run or kept, `kept_strata`), to compare.
     let k4 = durable.is_some() && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off");
     let one_fixpoint = run_placed.v.rules().next().is_some() && session.is_none() && !k4;
-    // The import components (decision 0076) run before the cross part, with no hooks: what they read is bound now.
-    let eager: BTreeSet<&str> = cross_plan.iter().flat_map(|p| p.components.rules().flat_map(|r| r.reads().map(|a| p.components.rel_name(a.rel())))).collect();
     // A new process that maintains its cross-file part from the store (t32 4.1) runs it as a session does: its
     // inputs bound before the run, not loaded as their first reader runs. Not a part whose requests the run answers
     // as it goes (0065 §2a, phase 0's loads): their answers are the loader's, which no kept row stands for.
@@ -9035,10 +9343,10 @@ fn run_observed(
         && cross.placed().ok().is_some_and(|p| p.fields().is_ok_and(|f| f.answers().is_empty()))
         && !phase0::active();
     for rel in &split.exports {
-        if one_fixpoint && !kept_part_on && !eager.contains(rel.as_str()) {
+        if one_fixpoint && !kept_part_on {
             let width = pf.width(rel);
             let empty = crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| format!("c{c}")).collect(), vec![Some(Vec::new()); width]);
-            modules.bind(&db, rel, empty)?;
+            modules.bind(db, rel, empty)?;
             continue;
         }
         let source = exports.borrow_mut().source(rel, pf.width(rel));
@@ -9050,7 +9358,7 @@ fn run_observed(
             retain::kept_source(parts.as_deref(), rel, source, &cells, &mut input_digests)
         };
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
-        modules.bind(&db, rel, source)?;
+        modules.bind(db, rel, source)?;
     }
     // The cone of requests' rows and the answers, as the rest of the cross-file part reads them (decision 0065 §2a).
     if let Some((load, ..)) = &loading {
@@ -9072,7 +9380,7 @@ fn run_observed(
                 cross_inputs.push((rel.clone(), Arc::clone(&source)));
             }
             cross_stats.measured(&rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
-            modules.bind(&db, &rel, source)?;
+            modules.bind(db, &rel, source)?;
         }
     }
     drop(binding_exports);
@@ -9096,105 +9404,29 @@ fn run_observed(
     let mut cross_unloaded = 0usize;
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
+    let mut cross_skipped = 0;
+    // What the cross part binds as rows it holds (`Stats::held`): the exports. Its base relations are the corpus
+    // batch's (decision 0458), views and made relations of the tapes, no held rows (`setfix::held_rel`).
+    cross_stats.held = Arc::new(split.exports.iter().cloned().collect());
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
-    let mut cross_delta_counts = [0usize; 6];
+    let cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
-    // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
-    let mut wanted: BTreeSet<String> = run_f.declared("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !head.outputs.contains(r)).collect();
-    // The import components (decision 0076): derived first, from the exports, and each one's stored rows looked up.
-    // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
-    let mut cross_state: Option<(cross_memo::Components, cross_memo::Found)> = None;
-    if let Some(plan) = &cross_plan {
-        let components_span = crate::code_rule_dsl::logic::profile::span(|| "import components".into());
-        let held: BTreeSet<String> = cross_memo::HELD.iter().map(|r| (*r).to_owned()).collect();
-        let got = texts_run(&part_of(plan.components.clone()), &db, cross_stats.clone(), held, modes, &vocabulary)?;
-        let edges: Vec<(i64, i64)> = held_rows(&db, &got, cross_memo::HELD[1], 2)?.into_iter().map(|r| (r[0], r[1])).collect();
-        let mut keys: HashMap<i64, String> = HashMap::new();
-        let mut rows = Vec::new();
-        for r in held_rows(&db, &got, cross_memo::COMPONENT, 3)? {
-            if !keys.contains_key(&r[2]) {
-                let text = crate::code_rule_dsl::logic::native::symbol_text(&db, r[2])?;
-                keys.insert(r[2], text);
-            }
-            rows.push((r[0], r[1], keys[&r[2]].clone()));
-        }
-        let outputs_of = |rel: &str| head.outputs.iter().any(|o| o == rel);
-        native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("components:{k}")));
-        let components = cross_memo::Components::new(rows, &edges);
-        let found = cross_memo::lookup(&store, plan, &components, &paths)?;
-        // Every component found: a memoised relation's own rules derive nothing (each is guarded to the documents not
-        // found), so only its copy from `<rel>__cross` runs, and only the copies something reads (decision 0076).
-        let all_found = cross_mode == cross_memo::Mode::On && found.misses.is_empty() && !plan.memo.is_empty();
-        if all_found {
-            let before = cross.version.size();
-            cross_memo::keep_copies(&mut cross, plan, &wanted)?;
-            let after = cross.version.size();
-            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-                format!("every component found: {} rules of memoised relations not run, their copies only", before - after)
-            });
-        }
-        // No component found (a new store): `rr_cross_doc` is empty and every guard passes, so none is run.
-        if found.hits.is_empty() && cross_mode != cross_memo::Mode::Verify {
-            let dropped = cross_memo::drop_guards(&mut cross)?;
-            crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || format!("no component found: {dropped} guards on `rr_cross_doc` not run"));
-        }
-        let cross_now = cross.placed()?;
-        let cross_f = cross_now.fields()?;
-        let read: BTreeSet<&str> = cross_now.v.rules().flat_map(|r| r.reads().map(|a| cross_now.v.rel_name(a.rel()))).collect();
-        let mut replayed = Totals::new(tested_values.clone());
-        let inputs = found.inputs(&store, plan, &components, cross_mode, |r| !all_found || read.contains(format!("{r}{}", cross_memo::SUFFIX).as_str()))?;
-        let replayed_rows: usize = inputs.iter().skip(1).map(|(_, _, cols)| cols.first().map_or(0, Vec::len)).sum();
-        for (rel, width, cols) in inputs {
-            let types: Vec<String> = cross_f.types(&rel).into_iter().map(String::from).collect();
-            let columns = (0..width).map(|i| format!("c{i}")).collect();
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, cols.into_iter().map(Some).collect());
-            replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
-            modules.bind(&db, &rel, source)?;
-        }
-        replayed.apply(&mut cross_stats);
-        // Held for storing, unless an output (written to its table, read from there): only when a component missed or
-        // the run verifies. Every component found is replayed, and nothing is stored.
-        if !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify {
-            wanted.extend(plan.memo.keys().filter(|r| !head.outputs.contains(*r)).cloned());
-        }
-        drop(components_span);
-        crate::code_rule_dsl::logic::profile::decision("import components (decision 0076)", || {
-            format!(
-                "{} documents in {} components over {} edges; {} found ({}), {} derived",
-                components.of.len(),
-                found.hits.len() + found.misses.len(),
-                edges.len(),
-                found.hits.len(),
-                if cross_mode == cross_memo::Mode::Verify { "derived again, to compare with their stored rows".to_owned() } else { format!("{replayed_rows} rows replayed") },
-                found.misses.len()
-            )
-        });
-        cross_state = Some((components, found));
-    }
-    // The memoised relations' derived rows, for storing (decision 0076).
-    let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
-    let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
-    let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-    // `derived`: the relations the part derives, each with its width (`derived_widths`).
-    let mut collect = |db: &Connection, got: &Outcome, derived: BTreeMap<&str, usize>| -> Result<()> {
-        for (rel, width) in derived.into_iter().filter(|(r, _)| memo_rels.contains(*r)) {
-            let rows = held_rows(db, got, rel, width)?;
-            memo_rows.entry(rel.to_owned()).or_default().extend(rows);
-        }
-        Ok(())
-    };
+    // declares it and derives it per file (`python/typing.rerail` in a rule's program) has no table of it here.
+    let wanted: BTreeSet<String> = run_f.declared("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !head_outputs.contains(r)).collect();
     let mut returns = Vec::new();
     // A session's outputs whose strata were clean, written by its last run of this program to this directory: their
     // files are as they were, and their row counts. And that program's key, to record what this run writes.
     let mut unchanged_outputs: HashMap<String, usize> = HashMap::new();
     let mut written_key: Option<[u8; 32]> = None;
-    if run_placed.v.rules().next().is_some() {
+    // Constant folding can leave an exported relation with facts and no rule heads.
+    // The cross-file part still has to publish those rows, including for an empty corpus.
+    if run_placed.v.rules().next().is_some() || run_f.outputs().any(|rel| run_f.facts(rel).is_some()) {
         // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line (a debugging aid).
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {
             let _ = std::fs::write(path, run_placed.v.rules().map(|r| format!("{}\n", run_placed.v.show_rule(r))).collect::<String>());
         }
-        let outputs_of = |rel: &str| head.outputs.iter().any(|o| o == rel);
+        let outputs_of = |rel: &str| head_outputs.iter().any(|o| o == rel);
         {
             // A new process keeps its cross-file part in the store, and maintains it as a session does (t32 4.1):
             // the session's branch, its kept part read from the store's frames and written back after the run.
@@ -9202,8 +9434,8 @@ fn run_observed(
                 kept_part_on.then(Default::default);
             // A run with no session keeps its part in the frames (K4): held here for the run, read from them and
             // written back to them. (`kept_part` is t32 4.1's form of it, taken only with `RERAIL_CROSS_K4=off`.)
-            let from_frames: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> = (session.is_none() && k4).then(Default::default);
-            match session.as_ref().map(|s| &s.cross).or(kept_part.as_ref()).or(from_frames.as_ref()) {
+            let kept_cells: Option<std::sync::Mutex<HashMap<[u8; 32], retain::Retained>>> = (session.is_none() && k4).then(Default::default);
+            match session.as_ref().map(|s| &s.cross).or(kept_part.as_ref()).or(kept_cells.as_ref()) {
                 // A session's run evaluates the strata whose inputs changed, the others' rows kept (decision 0077).
                 Some(cell) => {
                     // A session maintains its cross-file part from the rows the last run kept: each relation is
@@ -9228,7 +9460,11 @@ fn run_observed(
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
-                    // A base relation's digest was taken when its source was made (`retain::kept_source`).
+                    // The base relations are read off the corpus batch and kept as their documents' digest alone, no
+                    // rows (decision 0458), and the rows each was bound with: counted without making a document (a
+                    // text test's, its kept statistics', which its `len`, a scan of the batch's strings, is not).
+                    let digest_only: BTreeMap<String, Option<usize>> = stored.iter().map(|(r, _)| (r.clone(), totals.rels.get(r).map(|t| t.0))).collect();
+                    // A base relation's digest was taken when its source was made: its documents' (decision 0458).
                     let digests: HashMap<String, u64> = cross_inputs
                         .iter()
                         .map(|(rel, source)| (rel.clone(), input_digests.get(rel).copied().unwrap_or_else(|| retain::digest(source.as_ref(), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, source.columns().len())))))
@@ -9241,6 +9477,9 @@ fn run_observed(
                     // Kept by the cross program alone (`binds`): a file-local rule's edit changes `ckey`, not the part's
                     // program, whose inputs `cut` compares by digest. The part is taken under this run's key.
                     let mut cell = cells.remove(&binds).map(|c| c.rekeyed(ckey));
+                    if let Some(c) = cell.as_mut() {
+                        c.rebind(store)?;
+                    }
                     let mut kept_frames = None;
                     if kept_part.is_some() {
                         let (loaded, p) = kept_strata::load(store, root, ckey, binds, &cross_placed, &cross.domains, &cross_sccs, &cross_inputs, &digests)?;
@@ -9249,35 +9488,93 @@ fn run_observed(
                     // The phase's space (`kept_strata::space`): a relation two programs of one phase derive alike (its
                     // rules' identity) is one frame, kept once; phase 1's inputs and the pack's are in spaces apart.
                     let frames_space = kept_strata::space(root);
-                    if cell.is_none() && from_frames.is_some() {
+                    if cell.is_none() && kept_cells.is_some() {
                         let _s = span("the kept part, from the frames");
                         let strata = cross_idents.iter().find(|(d, _)| *d == cross_placed.digest()).map(|(_, s)| s);
-                        cell = Some(retain::Retained::from_frames_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
+                        cell = Some(retain::Retained::bind_kept_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
                         if let (Some(c), Some(k)) = (cell.as_mut(), kept_loaded.as_ref()) {
                             c.adopt_inputs(k);
+                        }
+                        // The base relations' old versions (decision 0458), where the frames keep them as changed.
+                        if let Some(c) = cell.as_mut() {
+                            c.adopt_old_inputs(&base_olds);
                         }
                     }
                     let mut cut = retain::cut(cell.as_ref(), ckey, &cross_placed, &cross_sccs, &digests)?;
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
                     }
+                    // Outside a session, the documents whose content and key are its last run's, under its memo plan:
+                    // those the base relations' documents' table names and the compare before the first wave found
+                    // unchanged (`old_base`, decision 0458). An input's rows of them are as they were, and only the
+                    // others' rows are hashed (`retain::document_delta_except`, t43 step 14). Not a semi-join's
+                    // relation, whose rows of a document follow what other documents' exports mention.
+                    let plan_now = retain::memo_plan_tag(&memo_whole);
+                    let same_docs: Option<rustc_hash::FxHashSet<i64>> = match (cell.as_ref(), session.as_ref()) {
+                        (Some(kept), None) => {
+                            let now = run_docs_held.lock().expect("the run's documents");
+                            // The files changed since the documents' table: as 0458's compare found them, else (a run
+                            // whose compare was not made: inside another run's waves, where no store is read) from
+                            // the table as the kept part's space holds it, bound before the first wave. A file whose
+                            // key or content differs from the table's, or that it lacks.
+                            let changed: Option<BTreeSet<String>> = match old_base.as_ref() {
+                                Some((changed, _)) => Some(changed.clone()),
+                                None => {
+                                    // The table read before the first wave (`base_table`), else read here once.
+                                    let read;
+                                    let docs: Option<&[retain::PlacedDocument]> = match (&base_table, base_table_plan.get()) {
+                                        (Some(docs), _) => Some(docs),
+                                        (None, None) => {
+                                            read = kept.bound_space().map(|b| retain::base_documents_in(store, b, binds)).transpose()?.flatten();
+                                            if let Some(t) = &read {
+                                                base_table_plan.set(Some(t.plan));
+                                            }
+                                            read.as_ref().map(|t| t.docs.as_slice())
+                                        }
+                                        (None, Some(_)) => None,
+                                    };
+                                    docs.map(|table| {
+                                        let was: HashMap<&str, (i64, memo::Content)> = table.iter().map(|((p, k, c), _)| (p.as_str(), (*k, *c))).collect();
+                                        now.iter().filter(|(p, (c, k))| !was.get(p.as_str()).is_some_and(|&(wk, wc)| keptstats::same((wc, wk), (*c, *k)))).map(|(p, _)| p.clone()).collect()
+                                    })
+                                }
+                            };
+                            // Only under this run's memo plan is a document of the same content and key taken to hold
+                            // the rows it held.
+                            changed.filter(|_| base_table_plan.get() == Some(Some(plan_now))).map(|changed| now.iter().filter(|(p, _)| !changed.contains(*p)).map(|(_, (_, d))| *d).collect())
+                        }
+                        _ => None,
+                    };
+                    crate::code_rule_dsl::logic::profile::decision("documents as the last run read them", || match &same_docs {
+                        Some(s) => format!("{} of {} documents: their inputs' rows not hashed again", s.len(), run_docs_held.lock().expect("the run's documents").len()),
+                        None => "no record of the last run's documents (a session, or none kept)".to_owned(),
+                    });
                     // Decision 0117 step 4: a maintained run reads the kept rows where a stratum it reaches reads them.
                     let drive = cross_f.gates().is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
-                    if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, &split.locations, drive)? {
+                    // A changed input's old rows of the unchanged documents are its new rows, read in place
+                    // (`retain::OldInput`); not a semi-join's (above).
+                    let new_input = |rel: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+                        if semijoin.contains(rel) {
+                            return None;
+                        }
+                        cross_inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| Arc::clone(s))
+                    };
+                    let news = same_docs.as_ref().map(|same| retain::NewInputs { same, source: &new_input });
+                    if let Some(kept) = cell.as_mut().filter(|_| kept_cells.is_some()) {
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross_placed, &split.locations, drive, news.as_ref())? {
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
                         } else {
                             cut = retain::cut(None, ckey, &cross_placed, &cross_sccs, &digests)?;
                         }
                     }
-                    let was_frames = cell.as_ref().filter(|_| from_frames.is_some()).and_then(|k| k.frames().cloned());
+                    let was_kept = cell.as_ref().filter(|_| kept_cells.is_some()).and_then(|k| k.in_kept().cloned());
                     // An input with the rows it had is read from the last run's source, with its indexes and statistics.
                     let s = span("bind unchanged inputs");
                     let same = cell.as_ref().map(|kept| kept.same_inputs(ckey, &digests)).unwrap_or_default();
                     let at: HashMap<String, usize> = cross_inputs.iter().enumerate().map(|(i, (r, _))| (r.clone(), i)).collect();
                     for (rel, source) in same {
                         if let Some(&i) = at.get(rel.as_str()) {
-                            modules.bind(&db, &rel, Arc::clone(&source))?;
+                            modules.bind(db, &rel, Arc::clone(&source))?;
                             cross_inputs[i].1 = source;
                         }
                     }
@@ -9328,7 +9625,7 @@ fn run_observed(
                             if was.is_none() && std::env::var_os("RERAIL_STRATA_LIVE").is_some() {
                                 eprintln!("RERAIL_STRATA_LIVE changed documents: the kept run holds no documents of this program");
                             }
-                            was.and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_whole))
+                            was.and_then(|was| input_delta::changed(was, &run_docs_held.lock().expect("the run's documents"), &held.memo, &memo_plan.id))
                         }
                         _ => None,
                     };
@@ -9352,41 +9649,39 @@ fn run_observed(
                         };
                         if let Some(changes) = &changes {
                             let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta from the changed documents".into());
-                            let read: Option<(String, Vec<Option<usize>>)> = if let Some(held) = base_held.get(rel) {
-                                super::super::sql::select::input_columns(rel)
-                                    .map(|all| (memo::base_key(rel), held.iter().map(|h| h.as_ref().and_then(|n| all.iter().position(|c| c == n))).collect()))
-                            } else if split.exports.iter().any(|e| e == rel) {
+                            // An export's, from its entries (a base relation's rows are in no entry, decision 0458).
+                            let read: Option<(String, Vec<Option<usize>>)> = if split.exports.iter().any(|e| e == rel) {
                                 Some((rel.to_owned(), (0..new.columns().len()).map(Some).collect()))
                             } else {
                                 None
                             };
                             // Its rows add up: the old less those gone, with those new, are its rows now.
-                            let adds_up = |(gone, plus): &(Vec<Vec<i64>>, Vec<Vec<i64>>)| kept.input_source(rel).is_some_and(|old| old.len() + plus.len() == new.len() + gone.len());
+                            let adds_up = |d: &input_delta::Delta| kept.input_source(rel).is_some_and(|old| old.len() + d.new.len() == new.len() + d.gone.len());
                             let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
                             let read_some = read.is_some();
                             let delta = read.and_then(|(key, cols)| input_delta::delta(changes, &key, &cols));
                             if live {
                                 let why = match &delta {
-                                    _ if !read_some => "not a base input or an export".to_owned(),
+                                    _ if !read_some => "not an export".to_owned(),
                                     None => "a row not its document's alone".to_owned(),
                                     Some(d) if !adds_up(d) => format!(
                                         "rows do not add up: old {:?} + new {} != now {} + gone {}",
-                                        kept.input_source(rel).map(|o| o.len()), d.1.len(), new.len(), d.0.len()
+                                        kept.input_source(rel).map(|o| o.len()), d.new.len(), new.len(), d.gone.len()
                                     ),
-                                    Some((gone, plus)) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", gone.len(), plus.len(), new.len()),
+                                    Some(d) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", d.gone.len(), d.new.len(), new.len()),
                                 };
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: {why}");
                             }
-                            if let Some((gone, plus)) = delta.filter(adds_up) {
+                            if let Some(d) = delta.filter(adds_up) {
                                 from_entries += 1;
-                                from_entries_rows += gone.len() + plus.len();
+                                crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_from_entries();
+                                from_entries_rows += d.gone.len() + d.new.len();
                                 let width = new.columns().len();
-                                // Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
-                                let rows_source = |rows: &[Vec<i64>], suffix: &str| {
-                                    let name = format!("{rel}__{suffix}");
-                                    crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| super::sql_col(&name, c)).collect(), (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
-                                };
-                                return Some((rows_source(&plus, "plus"), rows_source(&gone, "minus")));
+                                // Read from the entries where the rows lie (0364 R2): its versions, named as the
+                                // relation is (`sql_col`).
+                                let names = || (0..width).map(|c| super::sql_col(rel, c)).collect::<Vec<_>>();
+                                let d = Arc::new(d);
+                                return Some((d.source(false, names()), d.source(true, names())));
                             }
                         }
                         let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
@@ -9397,7 +9692,8 @@ fn run_observed(
                             return None;
                         };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
-                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len())) else {
+                        let same = same_docs.as_ref().filter(|_| !semijoin.contains(rel));
+                        let Some((delta, docs)) = retain::document_delta_except(rel, old, kept.input_docs(rel).map(|d| d.as_ref()), new, retain::group_col(&cross_placed, &split.locations, rel), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, new.columns().len()), same, kept.input_ranges(rel).map(|r| r.as_ref())) else {
                             if trace { eprintln!("rerail: input delta of {rel}: not by document (old columns {:?}, new {:?}, {} and {} rows), diffed by rules", old.columns(), new.columns(), old.len(), new.len()); }
                             if live {
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: by the rules (no document delta)");
@@ -9406,6 +9702,7 @@ fn run_observed(
                         };
                         input_docs.insert(rel.to_owned(), docs);
                         hashed.push(rel.to_owned());
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::input_hashed();
                         if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
                             eprintln!("O125 input delta {rel}: +{} -{} of {} rows", delta.0.len(), delta.1.len(), new.len());
                         }
@@ -9426,7 +9723,7 @@ fn run_observed(
                         // No kept part, or a part with gates (which the level driver does not walk): the strata the cut
                         // runs are derived again from their reads, the clean ones bound as kept (decision 0364: no
                         // maintained forms).
-                        maintain::Maintained { program: cut.program(cross)?, sources: Vec::new(), maintained: 0, derived_again: cut.strata.0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
+                        maintain::Maintained::again(cut.program(cross)?, cut.strata.0)
                     };
                     if maintain::levels_wanted() && !driven {
                         qualify(&mut maintained.program, |heads, qualifiers| {
@@ -9437,7 +9734,7 @@ fn run_observed(
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
                         Some(c) => format!("{} documents changed; {from_owners} inputs' deltas kept beside them; {from_entries} read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
-                        None => format!("{from_owners} inputs' deltas kept beside them (decision 0117 step 2); {} found by hashing their documents", hashed.len()),
+                        None => format!("{from_owners} inputs' deltas kept beside them (decision 0117 step 2); {} found by hashing their documents, {} of them every row", hashed.len(), crate::code_rule_dsl::logic::plan::corpus::maintain::shape::now().inputs_hashed_whole),
                     });
                     if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
                         let read: usize = changes.iter().flatten().flat_map(|(a, b)| [a, b]).flatten().map(|e| e.rows.values().map(|(w, r)| r.len() / (*w).max(1)).sum::<usize>()).sum();
@@ -9445,17 +9742,12 @@ fn run_observed(
                     }
                     drop(s);
                     // What the session keeps for the next run is stored, not inlined into its readers (decision
-                    // 0099): its rows are read back to be kept, and maintained from next run as `r__old`. So are the
-                    // measurement aids' deltas. A relation the program declares `inline` is the exception (above): it
+                    // 0099): its rows are read back to be kept, and maintained from them next run. A relation the
+                    // program declares `inline` is the exception (above): it
                     // stays inlined, and is not read back (`Outcome::inlined`). `RERAIL_SESSION_INLINE=on` inlines as a
                     // full run does, to compare (as above).
                     if !std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on") {
-                        let aids = ["RERAIL_SPIKE_DELTA", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_CROSS_VERIFY"].iter().any(|v| std::env::var_os(v).is_some());
-                        let mut stored: BTreeSet<String> = cut.derived(&cross_sccs)?.into_iter().chain(wanted.iter().cloned()).collect();
-                        if aids {
-                            let placed = maintained.program.placed()?;
-                            stored.extend(placed.fields()?.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| ["__del", "__ins", "__minus", "__plus"].iter().any(|x| r.ends_with(x))).map(str::to_owned));
-                        }
+                        let stored: BTreeSet<String> = cut.derived(&cross_sccs)?.into_iter().chain(wanted.iter().cloned()).collect();
                         qualify(&mut maintained.program, |_, qualifiers| {
                             for rel in stored.into_iter().filter(|r| !declared_inline.contains(r)) {
                                 let q = qualifiers.entry(rel).or_default();
@@ -9479,55 +9771,27 @@ fn run_observed(
                     // The part's fields, read from its version: no reader below decodes its tree.
                     let placed = part.placed()?;
                     let fields = placed.fields()?;
-                    step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, placed.v.rules().count(), maintained.sources.len()));
+                    step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules", maintained.maintained, maintained.recursive, maintained.derived_again, placed.v.rules().count()));
                     let mut stats = cross_stats;
                     let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &|r| fields.is_input(r))).unwrap_or_default();
                     // The clean relations the part reads that are left stored: bound where a stratum reads them.
                     let clean_reads: BTreeSet<String> = fields.inputs().filter(|r| cut.clean.contains(*r) && !clean.iter().any(|(c, _, _)| c == r)).map(str::to_owned).collect();
-                    // Each kept relation bound as `r__old`, and its statistics kept by delta if a run kept them: this
-                    // run's `r`, maintained from it, has them patched by its delta (decision 0096 step 4). The kept
-                    // relations whose statistics are made when first planned with (decision 0101 §4), and
-                    // `RERAIL_EAGER_KEPT_STATS` to make them all at binding, as before.
+                    // Each kept relation bound with the statistics a run measured of it while it is kept as it is
+                    // (decision 0094 §4), made when first planned with (decision 0101 §4); `RERAIL_EAGER_KEPT_STATS`
+                    // makes them all at binding, as before.
                     let mut binder = Binder {
                         constants: constants_tested_in(&placed.v).into_iter().map(|(r, c)| (r.to_owned(), c)).collect(),
                         cell: cell.as_ref(),
                         measured_kept: cell.as_ref().map(retain::Retained::measured_all).unwrap_or_default(),
-                        bound_old: HashMap::new(),
                         lazy_kept: std::env::var_os("RERAIL_EAGER_KEPT_STATS").is_none(),
                         lazies: Vec::new(),
-                        copies: {
-                            let inputs: HashMap<&str, &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = cross_inputs.iter().map(|(i, s)| (i.as_str(), s)).collect();
-                            let is_input = |r: &str| inputs.contains_key(r);
-                            let heads = rule_by_head(&cross_placed.v);
-                            let mut copies: HashMap<String, (String, Vec<String>, Vec<usize>)> = cross_inputs.iter().map(|(i, src)| (i.clone(), (i.clone(), src.columns(), (0..src.columns().len()).collect()))).collect();
-                            for rel in fields.decls_by_name().into_iter().filter_map(|(r, _)| r.strip_suffix("__old")).filter(|r| !is_input(r)) {
-                                let Some((src, map)) = projection_of(&cross_placed.v, &heads, &is_input, rel) else { continue };
-                                let Some(columns) = inputs.get(src.as_str()).map(|s| s.columns()) else { continue };
-                                copies.insert(rel.to_owned(), (src, columns, map));
-                            }
-                            copies
-                        },
                     };
-                    for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
-                        let maintains = rel.strip_suffix("__old").is_some_and(|of| fields.declared(&format!("{of}__del")));
-                        bind_kept(&mut binder, &modules, &db, &mut stats, rel, source, held, maintains)?;
+                    // The clean relations, and the changed inputs' deltas.
+                    for (rel, source, held) in clean {
+                        bind_kept(&mut binder, &modules, db, &mut stats, rel, source, held)?;
                     }
                     drop(s);
-                    // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
-                    let mut input_stats: HashMap<String, retain::InputStats> = cross_inputs.iter().filter_map(|(r, src)| Some((r.clone(), stats.of_relation(r, &src.columns())?))).collect();
-                    // A copy of an input's columns has the input's statistics of those columns (`projection_of`): kept
-                    // as an input's are, and its `__old` bound with them next run, never counted, when it holds as
-                    // many rows as the input did (none collapsed).
-                    let inputs: HashMap<&str, &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = cross_inputs.iter().map(|(i, s)| (i.as_str(), s)).collect();
-                    let is_input = |r: &str| inputs.contains_key(r);
-                    let heads = rule_by_head(&cross_placed.v);
-                    for rel in cross_f.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| !is_input(r)) {
-                        let Some((src, map)) = projection_of(&cross_placed.v, &heads, &is_input, rel) else { continue };
-                        let Some(columns) = inputs.get(src.as_str()).map(|s| s.columns()) else { continue };
-                        let Some((cols, vals)) = stats.of_columns(&src, &columns, &map) else { continue };
-                        input_stats.insert(rel.to_string(), (cols, vals));
-                    }
                     let derived = cut.derived(&cross_sccs)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
@@ -9535,9 +9799,6 @@ fn run_observed(
                     // The O125 spike (`RERAIL_SPIKE_DELTA`): each maintained relation's overdeleted and inserted rows.
                     let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
                     step("bound; running");
-                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        keep.extend(fields.decls_by_name().into_iter().map(|(r, _)| r).filter(|r| ["__del", "__ins", "__minus", "__plus", "__cand", "__chk", "__gone", "__held", "__redo"].iter().any(|x| r.ends_with(x))).map(str::to_owned));
-                    }
                     // `RERAIL_CROSS_DEMAND_SPLIT`: keep the demand split in a session (to measure what dropping it costs).
                     let _whole = std::env::var_os("RERAIL_CROSS_DEMAND_SPLIT").is_none().then(super::demand::whole_relations);
                     let verify_stats = std::env::var_os("RERAIL_CROSS_VERIFY").map(|_| stats.clone());
@@ -9552,23 +9813,19 @@ fn run_observed(
                     // its inputs; a run that keeps some (a session's edit) keeps its inputs for the next (0094 §4).
                     // Never with the kept strata (`kept_strata::keep`, which writes each input as held): those need
                     // one fixpoint, the frames need K4.
-                    let hand_off = was_frames.is_some()
+                    let hand_off = was_kept.is_some()
                         && !spike
                         && std::env::var_os("RERAIL_CROSS_VERIFY").is_none()
                         && std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
                         && std::env::var("RERAIL_CROSS_HAND_OFF").map_or(true, |v| v != "off");
                     let handed: std::cell::RefCell<HashMap<String, retain::Handed>> = std::cell::RefCell::new(HashMap::new());
-                    // The part's write, opened before the run: a relation handed off is encoded into its segments
-                    // then (Q89), and `write_frames` queues it with the rest. Its first lease is a guess; the
-                    // segments grow as they fill.
-                    let placer = hand_off.then(|| store.frame_placer(cross_sccs.iter().map(BTreeSet::len).sum::<usize>() * 2 + 16, 64 << 20));
                     let mut unloaded: Vec<String> = Vec::new();
                     let let_go_inputs = hand_off && cut.clean.is_empty();
                     // The relations the driver derives again (`Maintain::no_delta`), as it reaches them.
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
-                    let inputs_done = match (&was_frames, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &semijoin_stats)),
+                    let inputs_done = match (&was_kept, let_go_inputs) {
+                        (Some(was), true) => Some(retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &semijoin_stats, &digest_only)),
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
@@ -9576,9 +9833,8 @@ fn run_observed(
                         if wanted.contains(rel) || fields.is_output(rel) || (driven && !derived_again.borrow().contains(rel)) {
                             return Ok(false);
                         }
-                        let Some(held) = crate::code_rule_dsl::logic::native::component::held(&db, rel) else { return Ok(false) };
-                        let Some(placer) = &placer else { return Ok(false) };
-                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_frames.as_ref(), placer) else { return Ok(false) };
+                        let Some(held) = crate::code_rule_dsl::logic::native::component::held(db, rel) else { return Ok(false) };
+                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was_kept.as_ref()) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
                     };
@@ -9612,8 +9868,6 @@ fn run_observed(
                                 stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
                             }
                             let mut driver = Driver {
-                                general: maintain::StoredForms::new(store),
-                                cross,
                                 cross_placed: &cross_placed,
                                 kept,
                                 store: Some(store),
@@ -9621,21 +9875,20 @@ fn run_observed(
                                 at_end: wanted.clone(),
                                 binder: &mut binder,
                                 modules: &modules,
-                                db: &db,
-                                inputs: fields.inputs().map(str::to_owned).collect(),
+                                db,
                                 has_delta: given_rels,
-                                bound_olds: BTreeSet::new(),
                                 no_delta: BTreeSet::new(),
                                 derived_again: &derived_again,
                                 maintains: BTreeSet::new(),
                                 seeds: std::mem::take(&mut seeds),
-                                counts: (0, 0, 0),
-                                again: Vec::new(),
-                                walked: (0, 0, 0),
-                                atoms: None,
+                                given: maintained.given.clone(),
+                                // The whole program's proofs (0364 §5), else none: a program the split holds whole may
+                                // not stratify as one (phase 1's C includes read their own results negatively, ranked by
+                                // phase), though each part it runs does; the part's run then checks its own version.
+                                proofs: crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok(),
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
-                            let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
+                            let got = super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?;
                             let (rows_read, rels_read) = kept.admitted();
                             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                                 eprintln!("rerail: kept rows read where reached: {rels_read} relations ({rows_read} rows); {} relations left stored, unread", got.unread.len());
@@ -9643,20 +9896,31 @@ fn run_observed(
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames, where reached (decision 0117 step 4)", || {
                                 format!("{rels_read} relations' rows read ({rows_read} rows) for the strata reached; {} relations left stored, unread", got.unread.len())
                             });
-                            let (reached, quiet, of) = driver.walked;
-                            (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
-                            maintained.again = std::mem::take(&mut driver.again);
-                            crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
-                                format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", driver.counts.0, driver.counts.2, driver.counts.1)
+                            let (reached, quiet, of) = got.walked;
+                            // Each stratum's one outcome, as the run counted it (0364 R9).
+                            (maintained.maintained, maintained.recursive) = got.maintained;
+                            maintained.again = got.again.clone();
+                            maintained.derived_again = maintained.again.len();
+                            if !maintained.again.is_empty() {
+                            crate::code_rule_dsl::logic::profile::decision("strata derived again, by reason (0364 R3, R4)", || {
+                                let mut by: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+                                for (rel, why) in &maintained.again {
+                                    by.entry(why).or_default().push(rel);
+                                }
+                                by.iter().map(|(why, rels)| format!("{why}: {} ({}{})", rels.len(), rels.iter().take(6).copied().collect::<Vec<_>>().join(", "), if rels.len() > 6 { ", …" } else { "" })).collect::<Vec<_>>().join("; ")
                             });
-                            step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", driver.counts.0, driver.counts.1));
+                            }
+                            crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
+                                format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", maintained.maintained, maintained.recursive, maintained.derived_again)
+                            });
+                            step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", maintained.maintained, maintained.derived_again));
                             got
                         }
                         None if hand_off => {
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { hand_off: Some(&mut hand), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
-                            super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?
+                            super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?
                         }
-                        None => texts_run(part, &db, stats, keep, modes, &vocabulary)?,
+                        None => texts_run(part, db, stats, keep, modes, &vocabulary)?,
                     };
                     drop(s);
                     let handed = handed.into_inner();
@@ -9664,71 +9928,27 @@ fn run_observed(
                     cross_handed += handed.len();
                     cross_unloaded += unloaded.len();
                     if hand_off {
-                        crate::code_rule_dsl::logic::profile::decision("derived relations handed off (Q74)", || format!("{} relations' frames made once no later stratum read them, their rows let go", handed.len()));
-                        crate::code_rule_dsl::logic::profile::decision("inputs let go (Q74)", || format!("{} inputs' rows and indexes let go after their last reader, their frames written before the run: {}", unloaded.len(), unloaded.join(", ")));
+                        crate::code_rule_dsl::logic::profile::decision("derived relations handed off (Q74)", || format!("{} relations' entries put once no later stratum read them, their rows let go", handed.len()));
+                        crate::code_rule_dsl::logic::profile::decision("inputs let go (Q74)", || format!("{} inputs' rows and indexes let go after their last reader, their entries put before the run: {}", unloaded.len(), unloaded.join(", ")));
                     }
                     cross_atoms_ahead(store);
-                    let Binder { constants, mut measured_kept, bound_old, lazies, .. } = binder;
+                    let Binder { mut measured_kept, lazies, .. } = binder;
                     let mut got = got;
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    // Decision 0090 §4: the maintained strata the run chose to derive again, by their deltas' size.
-                    let run_again = got.again;
-                    let run_quiet = got.quiet;
+                    let (run_quiet, run_skipped) = (got.quiet, got.walked.1);
                     step("ran");
-                    collect(&db, &got, derived_widths_in(&fields))?;
                     step("collected");
                     if spike {
                         for (rel, why) in &maintained.again {
                             eprintln!("O125 derived-again {rel}: {why}");
                         }
-                        // Each maintained relation's rows as its stratum's form left them (`Outcome::spike_forms`; the forms are
-                        // made per stratum when reached, decision 0117 step 3, so the part's program has none of their
-                        // deltas). A relation whose form changed nothing (no row gone, none new) moves no reader: an
-                        // early cutoff's.
-                        let forms = std::mem::take(&mut got.spike_forms);
-                        let unchanged = forms.iter().filter(|(_, c)| c[3] + c[4] == 0).count();
-                        let (mut t, mut lines) = ([0usize; 6], Vec::new());
-                        for (rel, c) in &forms {
-                            for k in 0..6 {
-                                t[k] += c[k];
-                            }
-                            lines.push((c[1], format!("{rel}: old {} new {} overdeleted {} (gone {}, so {} put back) inserted {} (new {})", c[0], c[5], c[1], c[3], c[1].saturating_sub(c[3]), c[2], c[4])));
-                        }
-                        lines.sort_by(|a, b| b.0.cmp(&a.0));
-                        for (_, l) in lines.iter().take(25) {
-                            eprintln!("O125 {l}");
-                        }
-                        let reached = std::mem::take(&mut got.spike_reached);
-                        let mut by_read: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
-                        let mut quiet_in = 0usize;
-                        for (_, changed, ins) in &reached {
-                            if ins.iter().all(|(_, n)| *n == 0) {
-                                quiet_in += 1;
-                            }
-                            for (r, n) in ins {
-                                let e = by_read.entry(r.clone()).or_default();
-                                e.0 += 1;
-                                if !changed { e.1 += 1; }
-                                if *n == usize::MAX { e.2 += 1; }
-                            }
-                        }
-                        let mut top: Vec<_> = by_read.into_iter().collect();
-                        top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
-                        eprintln!("O125 reached: {} strata, {} changed nothing, {quiet_in} with every changed read's delta empty", reached.len(), reached.iter().filter(|r| !r.1).count());
-                        for (r, (n, quiet, unheld)) in top.iter().take(15) {
-                            eprintln!("O125 reached by {r}: {n} strata, {quiet} of them changed nothing, {unheld} with its delta not held");
-                        }
-                        for (k, _, ins) in reached.iter().filter(|r| !r.1).take(12) {
-                            eprintln!("O125 changed nothing: {} <- {ins:?}", if k.len() > 60 { &k[..60] } else { k });
-                        }
-                        eprintln!("O125 cutoff: {} relations maintained, {unchanged} changed nothing (no row gone, none new)", forms.len());
-                        eprintln!("O125 total: overdeleted {}, gone {}, put back {}, inserted {}, new {}; strata {} of {} run, {} maintained ({} recursive), {} derived again", t[1], t[3], t[1].saturating_sub(t[3]), t[2], t[4], cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
+                        eprintln!("O125 total: strata {} of {} run, {} maintained ({} recursive), {} derived again", cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
                     }
                     let s = span("copy derived out");
                     if wanted.contains("returns") && got.kept.contains("returns") {
-                        returns = held_rows(&db, &got, "returns", 2)?;
+                        returns = held_rows(db, &got, "returns", 2)?;
                     }
                     // A relation of no columns is a flag its rows' count holds, which columns do not: derived again.
                     // A relation the engine holds is kept as it is, with its indexes (decision 0090 step 3); one the
@@ -9736,104 +9956,50 @@ fn run_observed(
                     // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     // The relations of the strata the native engine ran this run (each a key `a/b/…`).
                     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
+                    if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
+                        for rel in &derived {
+                            let why = if got.inlined.contains(rel.as_str()) { "inlined" } else if got.unread.contains(rel.as_str()) { "unread" } else if handed.contains_key(rel.as_str()) { "handed" } else if fields.width(rel) == 0 { "no columns" } else { continue };
+                            eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: {why}");
+                        }
+                    }
                     // A view of one input is not kept (decision 0090): the next run reads it over the input's rows.
                     let rows = derived
                         .iter()
-                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()) && !got.unread.contains(rel.as_str()) && !handed.contains_key(rel.as_str()))
+                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !got.unread.contains(rel.as_str()) && !handed.contains_key(rel.as_str()))
                         .map(|rel| (rel, fields.width(rel)))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
                             // An output of a stratum maintained by levels (decision 0090) is still held with its rows' levels, which its
                             // table does not keep: taken from the engine too.
-                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten()
+                            let held = got.kept.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(db, rel)).flatten()
                                 .or_else(|| {
                                     // Only one a native stratum of this run made (`Outcome::native`): any other the engine
                                     // holds may be a copy left by an earlier run (a stratum that ran in SQL this time).
-                                    ran_native.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(&db, rel)).flatten().filter(|h| h.has_levels())
+                                    ran_native.contains(rel.as_str()).then(|| crate::code_rule_dsl::logic::native::component::held(db, rel)).flatten().filter(|h| h.has_levels())
                                 });
+                            if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() && held.as_ref().is_some_and(|h| h.view_kind().is_some() || h.viewed) {
+                                eprintln!("RERAIL_SHAPE_TRACE {rel}: held as a view (kept by the run {}, a native stratum's {})", got.kept.contains(rel.as_str()), ran_native.contains(rel.as_str()));
+                            }
                             let held = match held {
                                 Some(h) => h,
                                 None => {
                                     let types = retain::types_of(&placed, &part.domains, rel);
-                                    crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(&db, &got, rel, width)?, types)
+                                    crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(db, &got, rel, width)?, types)
                                 }
                             };
                             Ok((rel.clone(), width, held))
                         })
                         .collect::<Result<Vec<_>>>()?;
-                    // A warm run's deltas are empty (`RERAIL_WARM`): an input's or stratum's rows gone or new, a maintained
-                    // relation's overdeleted or inserted rows. Read from memory alone, so the check changes nothing a run
-                    // does: the outcome's net deltas, and the delta relations the engine holds. A delta relation a SQL
-                    // stratum left in a table is not read (a statement inside the waves, which the strict mode refuses).
+                    // A warm run's deltas are empty (`RERAIL_WARM`): each relation's rows gone or new, read from the
+                    // outcome in memory, so the check changes nothing a run does.
                     if crate::code_rule_dsl::logic::profile::warm() {
-                        for (rel, (gone, added)) in &got.deltas {
-                            if !gone.is_empty() || !added.is_empty() {
-                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {} values gone, {} added", gone.len(), added.len()));
-                            }
-                        }
-                        let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        for (rel, cols) in fields.decls_by_name() {
-                            if cols.is_empty() || !derived_here.contains(rel) || !["__minus", "__plus", "__del", "__ins", "__gone"].iter().any(|x| rel.ends_with(x)) {
-                                continue;
-                            }
-                            let n = crate::code_rule_dsl::logic::native::component::derived(&db, rel).map_or(0, |h| h.len());
-                            if n > 0 {
-                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {n} rows"));
+                        for (rel, d) in &got.deltas {
+                            let (gone, added) = d.counts(1);
+                            if gone + added > 0 {
+                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {gone} gone, {added} added"));
                             }
                         }
                     }
-                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
-                    // and hold after the run, for measuring delete-and-rederive (spike O125).
-                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
-                        // [over-deleted, inserted by the insert rules, held after, input and derived-again deltas
-                        // (`__minus` + `__plus`), truly deleted, truly inserted].
-                        let mut counts = [0usize; 6];
-                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s, _)| (rel.as_str(), s.len())).collect();
-                        let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        let rows_of = |rel: &str| held_rows(&db, &got, rel, fields.width(rel)).unwrap_or_default();
-                        for (rel, cols) in fields.decls_by_name() {
-                            if !derived_here.contains(rel) || cols.is_empty() {
-                                continue;
-                            }
-                            if rel.ends_with("__minus") || rel.ends_with("__plus") {
-                                counts[3] += rows_of(rel).len();
-                            } else if rel.ends_with("__ins") {
-                                counts[1] += rows_of(rel).len();
-                            } else if fields.declared(&format!("{rel}__gone")) && fields.declared(&format!("{rel}__cand")) {
-                                // Levels (decision 0090): candidates, those checked, gone, rederived and inserted.
-                                let n = |s: &str| rows_of(&format!("{rel}__{s}")).len();
-                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
-                                    eprintln!("O125 levels rows {rel}: old {}, candidates {}, checked {}, gone {}, rederived {}, inserted {}", olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0), n("cand"), n("chk"), n("gone"), n("redo"), n("ins"));
-                                }
-                                counts[0] += n("gone");
-                            } else if !rel.ends_with("__del") && fields.declared(&format!("{rel}__del")) {
-                                let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
-                                let del = rows_of(&format!("{rel}__del"));
-                                let gone = del.iter().filter(|r| !after.contains(*r)).count();
-                                let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
-                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
-                                    let ins = fields.declared(&format!("{rel}__ins")).then(|| rows_of(&format!("{rel}__ins")).len()).unwrap_or(0);
-                                    eprintln!("O125 delta rows {rel}: old {old}, overdeleted {}, gone {gone}, inserted {ins}, after {}", del.len(), after.len());
-                                }
-                                counts[0] += del.len();
-                                counts[2] += after.len();
-                                counts[4] += gone;
-                                counts[5] += (after.len() + gone).saturating_sub(old);
-                            }
-                        }
-                        cross_delta_counts = counts;
-                    }
-                    let verify_deltas: HashMap<String, std::collections::HashSet<Vec<i64>>> = if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        fields
-                            .decls_by_name()
-                            .into_iter()
-                            .filter(|(r, c)| (r.ends_with("__del") || r.ends_with("__ins")) && !c.is_empty() && derived_here.contains(r))
-                            .map(|(r, c)| (r.to_string(), held_rows(&db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
-                            .collect()
-                    } else {
-                        HashMap::new()
-                    };
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     // An output whose file stands is not read back (`unchanged_outputs`).
                     let read_back: Vec<String> = cross_f.outputs().filter(|o| !unchanged_outputs.contains_key(*o)).map(str::to_owned).collect();
@@ -9849,7 +10015,7 @@ fn run_observed(
                             .filter_map(|o| kept.kept(o).map(|(h, _)| (o.clone(), h)))
                             .collect();
                         if !rows.is_empty() {
-                            let (decoded, nodes) = super::decode_kept(&db, &cross, rows)?;
+                            let (decoded, nodes) = super::decode_kept(db, cross, rows)?;
                             clean_outputs.extend(decoded.into_iter().map(|(rel, r)| {
                                 let n = nodes.get(&rel).cloned().unwrap_or_default();
                                 (rel, r, n)
@@ -9866,7 +10032,7 @@ fn run_observed(
                     // `RERAIL_CROSS_VERIFY`: derive the run's strata again (the cut's program, no maintenance) and name the
                     // first relations, in stratum order, whose maintained rows differ (spike O125).
                     if let Some(vstats) = verify_stats.filter(|_| maintained.maintained > 0) {
-                        let plain = cut.program(&cross)?;
+                        let plain = cut.program(cross)?;
                         // `O125_VERIFY_RULES=<rel>`: the rules for `rel` the verifier derives with, and the maintained ones.
                         if let Ok(r) = std::env::var("O125_VERIFY_RULES") {
                             for (name, v) in [("plain", &plain.version), ("maintained", &placed.v)] {
@@ -9879,7 +10045,7 @@ fn run_observed(
                         let plain_placed = plain.placed()?;
                         let plain_f = plain_placed.fields()?;
                         vkeep.extend(derived.iter().filter(|rel| !plain_f.is_output(rel)).cloned());
-                        let again = texts_run(&plain, &db, vstats, vkeep, modes, &vocabulary)?;
+                        let again = texts_run(&plain, db, vstats, vkeep, modes, &vocabulary)?;
                         let mut shown = 0;
                         let rows_of = |h: &Arc<crate::code_rule_dsl::logic::native::component::InRel>, width: usize| -> Vec<Vec<i64>> {
                             let s = h.source((0..width).map(|c| format!("c{c}")).collect());
@@ -9887,21 +10053,10 @@ fn run_observed(
                         };
                         let rows: Vec<(String, usize, Vec<Vec<i64>>)> = rows.iter().map(|(r, w, h)| (r.clone(), *w, rows_of(h, *w))).collect();
                         for (rel, width, kept_rows) in &rows {
-                            let want: std::collections::HashSet<Vec<i64>> = held_rows(&db, &again, rel, *width)?.into_iter().collect();
+                            let want: std::collections::HashSet<Vec<i64>> = held_rows(db, &again, rel, *width)?.into_iter().collect();
                             let have: std::collections::HashSet<Vec<i64>> = kept_rows.iter().cloned().collect();
                             if want != have && shown < 6 {
                                 shown += 1;
-                                let delta = |name: String| -> std::collections::HashSet<Vec<i64>> { verify_deltas.get(&name).cloned().unwrap_or_default() };
-                                let old_rows: std::collections::HashSet<Vec<i64>> = maintained
-                                    .sources
-                                    .iter()
-                                    .find(|(r, _, _)| *r == format!("{rel}__old"))
-                                    .map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
-                                    .unwrap_or_default();
-                                let (del, ins) = (delta(format!("{rel}__del")), delta(format!("{rel}__ins")));
-                                for row in have.difference(&want).take(3) {
-                                    eprintln!("O125_VERIFY   {rel}{row:?}: in old {}, in del {}, in ins {}", old_rows.contains(row), del.contains(row), ins.contains(row));
-                                }
                                 eprintln!(
                                     "O125_VERIFY {rel}: {} extra, {} missing; e.g. extra {:?}, missing {:?}",
                                     have.difference(&want).count(),
@@ -9915,38 +10070,62 @@ fn run_observed(
                             let vs: Vec<i64> = v.split(',').map(|x| x.parse().unwrap()).collect();
                             let hit = |row: &Vec<i64>| vs.iter().all(|v| row.contains(v));
                             for (rel, width, kept_rows) in &rows {
-                                let fresh = held_rows(&db, &again, rel, *width)?;
-                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
+                                let fresh = held_rows(db, &again, rel, *width)?;
                                 let (a, b): (Vec<_>, Vec<_>) = (kept_rows.iter().filter(|r| hit(r)).collect(), fresh.iter().filter(|r| hit(r)).collect());
-                                let del: Vec<_> = verify_deltas.get(&format!("{rel}__del")).map(|d| d.iter().filter(|r| hit(r)).cloned().collect()).unwrap_or_default();
-                                if !a.is_empty() || !b.is_empty() || !olds.is_empty() {
-                                    eprintln!("O125_TRACE {rel}: old {:?} del {:?} maintained {:?} fresh {:?}", &olds[..olds.len().min(4)], &del[..del.len().min(4)], &a[..a.len().min(4)], &b[..b.len().min(4)]);
+                                if !a.is_empty() || !b.is_empty() {
+                                    eprintln!("O125_TRACE {rel}: maintained {:?} fresh {:?}", &a[..a.len().min(4)], &b[..b.len().min(4)]);
                                 }
                             }
                             for (rel, src) in &cross_inputs {
                                 let w = src.columns().len();
                                 let now: Vec<Vec<i64>> = (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect();
-                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
-                                if !now.is_empty() || olds.as_ref().is_some_and(|o| !o.is_empty()) {
-                                    eprintln!("O125_TRACE input {rel}: now {now:?} old {olds:?}");
+                                if !now.is_empty() {
+                                    eprintln!("O125_TRACE input {rel}: now {now:?}");
                                 }
                             }
                         }
                         eprintln!("O125_VERIFY done: {shown} relations differ (first 6)");
                     }
                     drop(s);
-                    // A maintained relation's statistics as next run binds it (`r__old`): those of the relation it
-                    // started as, patched by its delta; counted from its rows once, the first run it is maintained.
-                    let s = span("patch the maintained relations' statistics");
-                    // The lazy statistics a plan made are kept as the eager ones are: by delta, or as measured. One no
-                    // plan read is left to next run, which binds this run's relation lazily in turn.
-                    let (patched, made, lazy_made) = kept_statistics(lazies, bound_old, &mut measured_kept, &rows, &input_stats, &constants);
+                    // The lazy statistics a plan made are kept as the eager ones are, as measured. One no plan read is
+                    // left to next run, which binds this run's relation lazily in turn.
+                    let s = span("keep the kept relations' statistics");
+                    let (made, lazy_made) = kept_statistics(lazies, &mut measured_kept);
                     step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
                     drop(s);
                     let s = span("retain");
-                    let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget(), false);
-                    if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats, placer)?;
+                    let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), retain::budget(), false);
+                    if let Some(was) = &was_kept {
+                        let written = next.write_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats, &digest_only)?;
+                        // The base relations' documents, as this run read them (decision 0458): the next run's change.
+                        if !digest_only.is_empty() {
+                            let mut table: Vec<retain::BaseDocument> = run_docs_held.lock().expect("the run's documents").iter().map(|(p, (c, k))| (p.clone(), *k, *c)).collect();
+                            table.sort_by(|a, b| a.0.cmp(&b.0));
+                            // Written with the digests it is the documents of: when one changed (or none was kept).
+                            let unchanged = digest_only.keys().all(|r| was.input_digest(r).is_some() && was.input_digest(r) == digests.get(r).copied());
+                            // And when the table read was of another memo plan, or none was read.
+                            let plan = plan_now;
+                            let unchanged = unchanged && base_table_plan.get() == Some(Some(plan));
+                            // Its documents' tapes in the run's grammar, whose places the writer keeps with them (decision
+                            // 0494 step 4 part 2), as the compare reads them (`tape_frames_for`'s key).
+                            let tape = crate::code_rule_dsl::language::dialect_by_label(label)
+                                .and_then(crate::code_rule_dsl::language::tape_tag)
+                                .filter(|_| cfg!(feature = "tape-cache"))
+                                .map(|tag| [i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version())]);
+                            if !unchanged && !retain::put_base_documents(store, was, binds, plan, &table, corpus_digest, tape) {
+                                crate::code_rule_dsl::logic::profile::decision("the base relations' documents (decision 0458)", || "not kept: a content held in memory alone, or a path with no atom; the next run reads its base relations' readers again".into());
+                            }
+                        }
+                        // Their statistics, as this run counted or patched them.
+                        if let Some(binds) = base_binds {
+                            for (rel, digest, stats) in &base_stats_out {
+                                retain::put_base_stats(store, was, binds, rel, *digest, stats);
+                            }
+                        }
+                        // The corpus batch's documents' views' counts (decision 0494), when one was not kept.
+                        if let (Some(binds), Some(batch)) = (base_binds, corpus_batch.as_ref().filter(|b| !b.lazy())) {
+                            retain::put_base_counts(store, was, binds, &batch.kept_counts(), corpus_digest);
+                        }
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -9969,6 +10148,8 @@ fn run_observed(
                         }
                     }
                     if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
+                        // Decision 0364's required shape, so far in this run (`maintain::shape`).
+                        eprintln!("SHAPE {:?}", maintain::shape::now());
                         for (kind, rows, values, levels, index) in next.held() {
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
                         }
@@ -9976,9 +10157,13 @@ fn run_observed(
                             eprintln!("{}", next.index_report(&crate::code_rule_dsl::logic::native::component::probed::take()));
                         }
                     }
+                    // `RERAIL_SPIKE_PRESORTED`: the run's sorts, and the rows of them already in order (decision 0187).
+                    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() {
+                        eprintln!("presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report());
+                    }
                     // A session's run reports its strata here; a new process's, as `cross_kept` (above, or here when kept
                     // in the frames).
-                    if from_frames.is_some() {
+                    if kept_cells.is_some() {
                         cross_kept = Some(cut.strata);
                     } else if kept_part.is_none() {
                         cross_strata = Some(cut.strata);
@@ -9987,14 +10172,12 @@ fn run_observed(
                     cross_recursive = maintained.recursive;
                     cross_derived_again = maintained.derived_again;
                     cross_quiet = run_quiet;
+                    cross_skipped = run_skipped;
                     cross_changed = cut.changed.clone();
                     cross_again = maintained.again.iter().fold(BTreeMap::new(), |mut m, (_, why)| {
                         *m.entry(*why).or_insert(0) += 1;
                         m
                     });
-                    if run_again > 0 {
-                        cross_again.insert("input deltas past θ", run_again);
-                    }
                     // Every program's kept part shares the one budget: past it, only this program's is kept.
                     if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
                         cells.clear();
@@ -10013,7 +10196,7 @@ fn run_observed(
                     let exported: BTreeSet<&String> = split.exports.iter().collect();
                     // Without a session, the strata are kept in the tape cache from run to run (decision 0077 §4).
                     let typed_by = cross.placed()?;
-                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), prepared_key, &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&typed_by, &cross.domains, r))).collect()).typed(&typed_by, &cross.domains));
+                    let mut kept_strata = (durable.is_some() && one_fixpoint).then(|| kept_strata::Kept::new(store, kept_strata::space(root), &cross_inputs, cross_inputs.iter().map(|(r, _)| (r.clone(), retain::types_of(&typed_by, &cross.domains, r))).collect()).typed(&typed_by, &cross.domains));
                     let loaded = kept_strata.as_ref().map(|k| std::rc::Rc::clone(&k.loaded));
                     let mut load = |rels: &[String]| -> Result<()> {
                         for rel in rels.iter().filter(|r| exported.contains(r)) {
@@ -10021,7 +10204,7 @@ fn run_observed(
                             if let Some(loaded) = &loaded {
                                 loaded.borrow_mut().insert(rel.clone(), Arc::clone(&src));
                             }
-                            modules.bind(&db, rel, src)?;
+                            modules.bind(db, rel, src)?;
                         }
                         Ok(())
                     };
@@ -10036,7 +10219,7 @@ fn run_observed(
                     };
                     let strata = kept_strata.as_mut().map(|k| k as &mut dyn super::KeptStrata);
                     let hooks = if one_fixpoint { super::Hooks { load: Some(&mut load), unload: Some(&mut unload), strata, texts: Some(Arc::clone(&vocabulary)), ..Default::default() } } else { super::Hooks { texts: Some(Arc::clone(&vocabulary)), ..Default::default() } };
-                    let got = super::run_atoms_native_hooked(&cross, &db, "main", cross_stats, wanted.clone(), modes, hooks)?;
+                    let got = super::run_atoms_native_hooked(&cross, db, "main", cross_stats, wanted.clone(), modes, hooks)?;
                     cross_atoms_ahead(store);
                     if let Some(k) = kept_strata {
                         let written = k.written_rows;
@@ -10044,12 +10227,8 @@ fn run_observed(
                         k.finish();
                         crate::code_rule_dsl::logic::profile::decision("cross-file strata kept across runs (decision 0077 §4)", || format!("{written} rows of the relations whose rows changed written to the store"));
                     }
-                    {
-                        let placed = cross.placed()?;
-                        collect(&db, &got, derived_widths_in(&placed.fields()?))?;
-                    }
                     if wanted.contains("returns") && got.kept.contains("returns") {
-                        returns = held_rows(&db, &got, "returns", 2)?;
+                        returns = held_rows(db, &got, "returns", 2)?;
                     }
                     native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("cross:{k}")));
                 }
@@ -10058,23 +10237,6 @@ fn run_observed(
     }
     phase("cross", statements.count());
     drop(waves.take());
-    let mut cross_counts = (0, 0);
-    if let (Some(plan), Some((components, found))) = (&cross_plan, &cross_state) {
-        cross_counts = (found.hits.len(), found.misses.len());
-        let _storing = crate::code_rule_dsl::logic::profile::span(|| "store import components' rows".into());
-        let cross_placed = cross.placed()?;
-        let cross_f = cross_placed.fields()?;
-        let nodes: BTreeMap<String, Vec<usize>> = plan
-            .memo
-            .keys()
-            .map(|rel| (rel.clone(), cross_f.types(rel).iter().enumerate().filter(|(_, t)| **t == "node").map(|(i, _)| i).collect()))
-            .collect();
-        let recorded = cross_memo::record(&store, plan, components, found, cross_mode, &memo_rows, &nodes, &paths)?;
-        crate::code_rule_dsl::logic::profile::decision("import components stored (decision 0076)", || {
-            format!("{} components' rows stored ({} rows); {} found components verified", recorded.stored, recorded.rows, recorded.verified)
-        });
-        run_sources.extend(found.sources.iter().copied().chain(recorded.sources.iter().copied()));
-    }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
         collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
@@ -10085,8 +10247,8 @@ fn run_observed(
     let writing = crate::code_rule_dsl::logic::profile::span(|| "write the outputs".into());
     // Every output has its file, empty when nothing made a row: a run read whole from the memo hands no rows of a
     // file-local output no file made (`rr_embed_req`), which an evaluated run writes empty (O109).
-    for rel in &head.outputs {
-        if !outputs.contains_key(rel) && let Some(cols) = head.decls.get(rel.as_str()) {
+    for rel in &head_outputs {
+        if !outputs.contains_key(rel) && let Some(cols) = head.columns_of(rel) {
             outputs.insert(rel.clone(), Vec::new());
             node_columns.entry(rel.clone()).or_insert_with(|| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
         }
@@ -10094,7 +10256,7 @@ fn run_observed(
     let mut rows = BTreeMap::new();
     // An output with no rows is written empty: a run whose files all came from the memo replays only the lines
     // there are.
-    for rel in &head.outputs {
+    for rel in &head_outputs {
         outputs.entry(rel.clone()).or_default();
         node_columns.entry(rel.clone()).or_default();
     }
@@ -10165,8 +10327,9 @@ fn run_observed(
             // rule leaves `message` empty and its holes last; the row is written with its message and without them.
             let messaged: Vec<Arc<output::Rows>>;
             let parts: &[Arc<output::Rows>] = if crate::code_rule_dsl::logic::rr::is_diagnostic(rel) {
-                let templates = templates.get_or_init(|| message_templates(programs, &head.settings));
-                let holes = head.decls.get(rel.as_str()).map_or(0, |d| d.iter().filter(|(c, _)| c.starts_with(crate::code_rule_dsl::logic::rr::lower::findings::HOLE)).count());
+                // The wording is the handed program's where one was handed (a reused combine's may be of an earlier wording).
+                let templates = templates.get_or_init(|| message_templates(programs, &given.read.map_or_else(|| head_settings.clone(), |read| ProgramFields::settings(&**read))));
+                let holes = head.columns_of(rel).map_or(0, |d| d.iter().filter(|(c, _)| c.starts_with(crate::code_rule_dsl::logic::rr::lower::findings::HOLE)).count());
                 messaged = parts.iter().map(|p| Arc::new(compose_messages(p, holes, templates))).collect();
                 &messaged
             } else {
@@ -10249,6 +10412,10 @@ fn run_observed(
         });
         let mut wrote = 0usize;
         let (depth, deltas, base) = match &over {
+            _ if capturing => {
+                captured.expect("the in-memory destination").extend_from_slice(&bytes);
+                (1, 0, true)
+            }
             Some(h) if overlay.is_empty() => (h.depth, h.deltas, false),
             Some(h) => {
                 let image = overlay.finish();
@@ -10311,11 +10478,11 @@ fn run_observed(
             };
         }
     }
-    if head.decls.contains_key("declared_ret") {
+    if head.declares("declared_ret") {
         let fn_q = split.exports.iter().any(|e| e == "fn_q").then(|| exports.borrow_mut().source("fn_q", 2));
         // `type_of`'s rows, its parts as the runs handed them.
         let type_of: Option<&[Arc<output::Rows>]> = outputs.get("type_of").map(Vec::as_slice);
-        typing::outputs(typing, &db, &store, root, type_of, &returns, &declared, fn_q.as_deref(), &mut typed)?;
+        typing::outputs(typing, db, store, root, type_of, &returns, &declared, fn_q.as_deref(), &mut typed)?;
     }
     drop(writing);
     phase("write", statements.count());
@@ -10336,7 +10503,8 @@ fn run_observed(
         format!("{atoms} atoms appended to the store's blocks in {segments} commits ({:.1} MB of strings), {pending} pending at the end (decisions 0049, 0401)", bytes as f64 / 1e6)
     });
     if memoised {
-        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
+        crate::code_rule_dsl::prof::count("corpus.file_memo_misses", docs.len().saturating_sub(memo_hits));
+        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{}: {memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", phases::current().as_deref().unwrap_or("the program"), docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
     }
     if let Some(collecting) = collecting {
         let collection = crate::code_rule_dsl::logic::profile::Activity::default();
@@ -10386,7 +10554,13 @@ fn run_observed(
         if std::env::var_os("RERAIL_WRITES").is_some() {
             eprintln!("RERAIL_WRITES queue peak {:.1} MB, producers held {} times ({:.3} s); {}", peak as f64 / 1048576.0, held.0, held.1, text());
         }
-        outcome.map_err(|e| Error::Plan(e.to_string()))?;
+        if let Err(error) = outcome {
+            let warning = error.to_string();
+            let owner = ThreadStore::owner(root);
+            if !owner.is_some_and(|owner| owner.warn(warning.clone())) {
+                return Err(Error::Plan(warning));
+            }
+        }
     }
     store.atoms_handle().run_over();
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
@@ -10422,35 +10596,27 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
 
 
 
-/// What binding a session's kept relations and sources keeps for after its run: each kept relation bound as
-/// `r__old` with the statistics it is planned with (decision 0094 §4, 0096 step 4, 0101 §4).
+/// What binding a session's kept relations and sources keeps for after its run: each kept relation bound with the
+/// statistics it is planned with (decision 0094 §4, 0101 §4).
 pub(in crate::code_rule_dsl) struct Binder<'k> {
     constants: HashMap<String, BTreeSet<(usize, i64)>>,
     cell: Option<&'k retain::Retained>,
     measured_kept: HashMap<(String, usize), retain::Measured>,
-    bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)>,
     lazy_kept: bool,
     lazies: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>, Arc<crate::code_rule_dsl::logic::plan::LazyStats<LazyKept>>)>,
-    /// Each input of the cross part, and each relation that copies some of an input's columns (`projection_of`): the
-    /// input, its columns, and the input's column each of the relation's copies. A new process's `r__old` of one has
-    /// this run's statistics of those columns, never counted for it.
-    copies: HashMap<String, (String, Vec<String>, Vec<usize>)>,
 }
 
-/// The driver's side of a session's maintained run (decision 0117 step 3, `plan::Maintain`): a reached stratum's
-/// form is `maintain::rewrite` over a program of that stratum alone, its reads bound as inputs, and the old rows it
-/// reads bound here with their statistics, as the whole program's rewrite bound every one before the run.
+/// The driver's side of a session's maintained run (decision 0117 step 3, `plan::Maintain`): the kept rows a
+/// reached stratum reads, read and bound here with their statistics, and what each stratum's run left of its delta
+/// (decision 0364: the maintain mode, or derived again).
 struct Driver<'d, 'k> {
-    cross: &'d lower::Lowered,
-    /// Where a reached stratum's general form is (decision 0298): the store's steps.
-    general: maintain::StoredForms<'d>,
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
     kept: &'k retain::Retained,
@@ -10464,12 +10630,8 @@ struct Driver<'d, 'k> {
     binder: &'d mut Binder<'k>,
     modules: &'d Modules,
     db: &'d rusqlite::Connection,
-    /// The run's inputs: the program's, the clean relations' and the given deltas.
-    inputs: std::collections::HashSet<String>,
-    /// Relations whose deltas are relations of the run: given, or made by their stratum's form.
+    /// Relations whose deltas are relations of the run: given, or made by their stratum's run.
     has_delta: BTreeSet<String>,
-    /// Relations whose old rows are bound (`r__old`).
-    bound_olds: BTreeSet<String>,
     /// Relations that changed with no delta: derived again, their old rows not kept.
     no_delta: BTreeSet<String>,
     /// The same, shared with the run's hand-off (Q74): a relation derived again is written whole, so it can be
@@ -10478,61 +10640,12 @@ struct Driver<'d, 'k> {
     /// Relations of the strata maintained so far.
     maintains: BTreeSet<String>,
     seeds: Vec<String>,
-    /// Strata maintained, derived again, and of those maintained the recursive.
-    counts: (usize, usize, usize),
-    again: Vec<(String, &'static str)>,
-    walked: (usize, usize, usize),
-    /// The run's version's atoms and relations alone (`Builder::under`, made at the first form): each form is an
-    /// overlay of it (decision 0241), so a form costs its own size, not the run's names.
-    atoms: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    /// The changed inputs' rows gone and added (`driven_part`).
+    given: maintain::Given,
+    /// The static check of the whole program (decision 0364 §5), when the caller has it.
+    proofs: Option<Arc<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>>,
 }
 
-/// A stratum's form for the reads `moved` changed, selected from its general form `g` (decision 0298): its rules those
-/// moved reads drive and those every selection keeps, a view of the general form's version with the run's own fields
-/// over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where `g` does not stand for the
-/// form written for `moved`: a moved read is not among its reads or has no delta (an earlier stratum derived again),
-/// or an old row it reads is not kept. The caller picks a recursive stratum's general form by its kept rows' levels.
-fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
-    use crate::code_rule_dsl::logic::plan::body::Placed;
-    if g.form.maintained == 0 || g.form.derived_again > 0 || moved.iter().any(|r| !has_delta(r)) {
-        return Ok(None);
-    }
-    let Some(at) = maintain::selected(g, moved) else { return Ok(None) };
-    // The inputs the selected rules read.
-    let mut read = vec![false; g.inputs.len()];
-    for &k in &at {
-        for &i in &g.rule_inputs[k] {
-            read[i as usize] = true;
-        }
-    }
-    let reads = |name: &str| g.inputs.iter().position(|r| r == name).is_some_and(|i| read[i]);
-    let mut old_reads = Vec::new();
-    for r in g.form.old_reads.iter().filter(|r| !bound_old(r) && reads(&format!("{r}__old"))) {
-        if !kept.has_old(r) {
-            return Ok(None);
-        }
-        old_reads.push(r.clone());
-    }
-    let pv = &g.form.placed;
-    let mut ids: Vec<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
-    ids.sort_unstable();
-    // The inputs the form for `moved` would state: those the run binds and the old rows, less the deltas and old rows
-    // of the reads that did not move (no rule selected reads them).
-    let piece = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
-    let inputs: Vec<&str> = g.inputs.iter().zip(&read).filter(|&(r, &read)| (run_input(r) || r.ends_with("__old")) && (read || !piece(r))).map(|(r, _)| r.as_str()).collect();
-    let part = pv.v.part_rules(|id| ids.binary_search(&id).is_ok(), &inputs, &g.outputs).map_err(Error::Plan)?;
-    let mut placed = Placed::whole(part);
-    // Its maintenance: the general form's, each group derived again reading the deltas of the moved reads alone, as
-    // the form written for `moved` reads; the others' deltas are not the run's (each would be looked up, and priced
-    // at a default size).
-    placed.maint = pv.maint.as_ref().map(|fm| {
-        let of_moved = |r: &str| r.strip_suffix("__plus").or_else(|| r.strip_suffix("__minus")).is_none_or(|of| moved.contains(of));
-        let again = fm.again.iter().map(|a| crate::code_rule_dsl::logic::plan::body::AgainRef { reads: a.reads.iter().copied().filter(|&r| of_moved(fm.v.rel_name(r))).collect(), ..a.clone() }).collect();
-        Arc::new(crate::code_rule_dsl::logic::plan::body::Maint { v: Arc::clone(&fm.v), again, together: fm.together.clone() })
-    });
-    let m = &g.form;
-    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, by_levels: m.by_levels, again: m.again.clone() }))
-}
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn kept(&mut self, rel: &str) -> Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>> {
@@ -10557,7 +10670,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
             let Some((held, width)) = self.kept.kept(rel) else { continue };
             let source = held.source((0..width).map(|c| super::sql_col(rel, c)).collect());
             model.stats.lazy.0.remove(rel);
-            bind_kept(self.binder, self.modules, self.db, &mut model.stats, rel.clone(), source, Some(held), false)?;
+            bind_kept(self.binder, self.modules, self.db, &mut model.stats, rel.clone(), source, Some(held))?;
             if !model.stats.lazy.0.contains_key(rel) {
                 let _ = super::input_stats(&mut model.stats, &mut model.ndv, self.cross_placed.fields()?.arity(rel), rel);
             }
@@ -10569,73 +10682,6 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.at_end.contains(rel)
     }
 
-    fn form(&mut self, v0: &crate::code_rule_dsl::logic::plan::body::Placed, rules: &[crate::code_rule_dsl::logic::plan::body::RuleKey], scc: &BTreeSet<String>, moved: &BTreeSet<String>, model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<(crate::code_rule_dsl::logic::plan::body::Placed, Vec<String>)> {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "form".into());
-        let places: Vec<usize> = rules.iter().map(|k| k.index()).collect();
-        let (has_delta, bound_olds, inputs) = (&self.has_delta, &self.bound_olds, &self.inputs);
-        let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
-        let atoms = match &self.atoms {
-            Some(a) => Arc::clone(a),
-            None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
-        };
-        // A recursive stratum whose kept rows all have levels is maintained by them, where its form can be (its
-        // general form by levels); else as every other stratum.
-        let by_levels = scc.iter().all(|r| maintain::Olds::levels(self.kept, r).is_some_and(|(has, _)| has));
-        let steps = &self.general;
-        let identity = steps.over(v0, &atoms);
-        let levels = by_levels && maintain::levels_wanted() && maintain::recursive(v0, &places, scc);
-        let mut general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, levels)?;
-        // A form that cannot be by levels (a rule not a join) is the one without.
-        if levels && general.as_ref().is_some_and(|g| g.form.by_levels == 0) {
-            general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, false)?;
-        }
-        let selection = match &general {
-            Some(g) => general_selection(g, moved, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
-            None => None,
-        };
-        let mut m = match selection {
-            Some(m) => m,
-            None => maintain::form(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &one, &|r| inputs.contains(r))?,
-        };
-        maintain::bind_old_rows(&mut m.sources, std::mem::take(&mut m.old_reads), self.kept);
-        let form = m.placed;
-        let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(&form).ok_or_else(|| Error::Plan("a maintained form holds its rules alone".into()))?;
-        let mut adopted = Vec::new();
-        for (name, source, held) in m.sources {
-            let Some(of) = name.strip_suffix("__old").map(str::to_owned) else { continue };
-            let maintains = (m.maintained > 0 && scc.contains(&of)) || self.maintains.contains(&of);
-            if held.is_some() {
-                adopted.push(name.clone());
-            }
-            bind_kept(self.binder, self.modules, self.db, &mut model.stats, name.clone(), source, held, maintains)?;
-            if !model.stats.lazy.0.contains_key(&name) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(&name), &name);
-            }
-            self.bound_olds.insert(of);
-        }
-        // The inputs' deltas this form reads (`r__plus`, `r__minus`): bound with the run, measured then, but the run's
-        // model was made from the base program, which reads none, so none had a size (each was priced as the
-        // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
-        let v = &form.v;
-        for r in v.rules().flat_map(|r| r.body()).filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())) {
-            if (r.ends_with("__plus") || r.ends_with("__minus")) && f.is_input(r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(r), r);
-            }
-        }
-        if m.maintained > 0 {
-            self.maintains.extend(scc.iter().cloned());
-        }
-        self.counts.0 += m.maintained;
-        self.counts.1 += m.derived_again;
-        self.counts.2 += m.recursive;
-        self.again.extend(m.again);
-        for r in v.rules() {
-            if let Some(of) = v.rel_name(r.head().rel()).strip_suffix("__minus") {
-                self.has_delta.insert(of.to_owned());
-            }
-        }
-        Ok((form, adopted))
-    }
 
     fn has_delta(&self, rel: &str) -> bool {
         self.has_delta.contains(rel)
@@ -10650,93 +10696,48 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.has_delta.insert(rel.to_owned());
     }
 
-    fn walked(&mut self, reached: usize, quiet: usize, of: usize) {
-        self.walked = (reached, quiet, of);
-    }
-
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
+    }
+
+    fn given(&self, rel: &str) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]> {
+        self.given.get(rel).cloned()
     }
 
     fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
         self.kept.old_source(rel, rel).filter(|(_, held)| held.is_none()).map(|(s, _)| s)
     }
 
+    fn proofs(&self) -> Option<Arc<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>> {
+        self.proofs.clone()
+    }
+
     fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool) {
         self.has_delta.extend(scc.iter().cloned());
         self.maintains.extend(scc.iter().cloned());
-        self.counts.0 += 1;
         if recursive {
-            self.counts.2 += 1;
             maintain::by_levels_ran();
         }
     }
 }
 
-/// The statistics a maintained run kept of the relations it bound, as the next run binds them (`retain::after`'s
-/// `measured` and `patched`): the lazy statistics a plan made, kept by delta or as measured, and each maintained
-/// relation's patched by its delta (decision 0096 step 4); `rows` the run's derived relations. Returns how many of the
-/// lazy statistics were made, too. Shared by the session's run and `maintained::run`.
+/// The statistics a run kept of the relations it bound, as the next run binds them (`retain::after`'s `measured`):
+/// the lazy statistics a plan made, as measured. Returns how many of them were made, of how many. Shared by the
+/// session's run and `maintained::run`.
 #[allow(clippy::type_complexity)]
 pub(in crate::code_rule_dsl) fn kept_statistics(
     lazies: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>, Arc<super::LazyStats<LazyKept>>)>,
-    mut bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)>,
     measured_kept: &mut HashMap<(String, usize), retain::Measured>,
-    rows: &[(String, usize, Arc<crate::code_rule_dsl::logic::native::component::InRel>)],
-    input_stats: &HashMap<String, retain::InputStats>,
-    constants: &HashMap<String, BTreeSet<(usize, i64)>>,
-) -> (HashMap<String, retain::Patched>, usize, usize) {
-    let mut unmade: BTreeSet<String> = BTreeSet::new();
+) -> (usize, usize) {
     let lazy_made = lazies.len();
     let mut made = 0;
     for (rel, h, lazy) in lazies {
-        let of = rel.strip_suffix("__old").map(str::to_owned);
-        match lazy.made().map(|m| &m.2) {
-            Some(LazyKept::Patched(p)) => {
-                made += 1;
-                if let Some(entry) = of.as_ref().and_then(|of| bound_old.get_mut(of)) {
-                    entry.1 = Some(p.clone());
-                }
-            }
-            Some(LazyKept::Measured(m, counts, tested)) => {
-                made += 1;
-                measured_kept.insert((rel.clone(), Arc::as_ptr(&h) as *const u8 as usize), (m.clone(), counts.clone(), tested.clone()));
-            }
-            None => unmade.extend(of),
+        if let Some(LazyKept::Measured(m, counts, tested)) = lazy.made().map(|m| &m.2) {
+            made += 1;
+            measured_kept.insert((rel, Arc::as_ptr(&h) as *const u8 as usize), (m.clone(), counts.clone(), tested.clone()));
         }
     }
-    let mut patched: HashMap<String, retain::Patched> = HashMap::new();
-    for (rel, width, new) in rows {
-        let Some((old, kept)) = bound_old.get(rel) else { continue };
-        // A copy of an input's columns is bound next run with the input's statistics (`projection_of`).
-        if unmade.contains(rel) || input_stats.contains_key(rel) {
-            continue;
-        }
-        let name = format!("{rel}__old");
-        let next = match kept {
-            Some(p) => p.after(old, new, *width),
-            // Held on unchanged (a quiet stratum's, decision 0101 §1): nothing to count yet. Next run
-            // finds what was measured of it by the same relation, or binds it lazily, and it is
-            // counted once it changes (O125 step 1: 238 counts instead of 521).
-            None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
-            // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
-            None if let Some(stats) = new.kept_stats((0..*width).map(|c| super::sql_col(&name, c)).collect()) => {
-                let tested = tested_of(constants, &name).cloned().unwrap_or_default();
-                let counts = kept_counts(&stats, &tested, new.source(stats.columns().to_vec()).as_ref());
-                Some(retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested })
-            }
-            // Not counted here (decision 0123): the next run counts it from its postings when a round
-            // requests it, and patches it by delta from then on. Before 0123 it was counted here, the
-            // first run it was maintained, as a lazy statistic was measured (not counted) at every step
-            // it was planned with (O125 steps 06-08: 2.5, 2.5 and 3.0 s so, against 5.6, 0.7 and 0.2 s
-            // counted here).
-            None => None,
-        };
-        if let Some(p) = next {
-            patched.insert(name, p);
-        }
-    }
-    (patched, made, lazy_made)
+    (made, lazy_made)
 }
 
 /// A driven maintained run's program (decision 0117 step 3): the cut's base program, each changed input's delta that
@@ -10746,10 +10747,10 @@ pub(in crate::code_rule_dsl) fn kept_statistics(
 pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lowered, answer: &mut dyn FnMut(&str) -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>) -> Result<(maintain::Maintained, Vec<String>, BTreeSet<String>)> {
     let mut seeds: Vec<String> = Vec::new();
     let mut given_rels: BTreeSet<String> = BTreeSet::new();
-    let mut part = cut.program(cross)?;
-    let mut sources = Vec::new();
-    // Each delta input made, and the relation it is a delta of.
-    let mut added: Vec<(String, String)> = Vec::new();
+    let part = cut.program(cross)?;
+    // Each changed input's rows gone and added, handed to the maintain mode as its versions (0364 R1): not declared
+    // as relations of the program, nor bound under names of their own.
+    let mut given = maintain::Given::new();
     for rel in &cut.changed {
         let Some((plus, minus)) = answer(rel) else {
             seeds.push(rel.clone());
@@ -10758,213 +10759,82 @@ pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lo
         if plus.len() + minus.len() > 0 {
             seeds.push(rel.clone());
         }
-        for (suffix, source) in [("plus", plus), ("minus", minus)] {
-            let name = format!("{rel}__{suffix}");
-            if let Some(d) = part.domains.get(rel).cloned() {
-                part.domains.insert(name.clone(), d);
-            }
-            added.push((name.clone(), rel.clone()));
-            sources.push((name, source, None));
-        }
+        given.insert(rel.clone(), [minus, plus]);
         given_rels.insert(rel.clone());
     }
-    // The deltas' inputs, each declared as its relation (decision 0244): over the cut's version, an overlay of fields.
-    let v = part.version.clone();
-    let placed = super::body::Placed::whole(v.clone());
-    let f = placed.fields()?;
-    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-    let (mut nullary, mut inputs): (Vec<&str>, Vec<String>) = (Vec::new(), f.inputs().map(str::to_owned).collect());
-    for (name, rel) in &added {
-        if let Some(cols) = f.columns(rel) {
-            b.declare(name, &cols);
-        }
-        if f.nullary(rel) {
-            nullary.push(name.as_str());
-        }
-        inputs.push(name.clone());
-    }
-    b.add_nullary(&nullary);
-    b.set_inputs(&inputs);
-    part.version = b.finish_overlay().map_err(Error::Plan)?;
-    Ok((maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }, seeds, given_rels))
+    Ok((maintain::Maintained { program: part, given, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new() }, seeds, given_rels))
 }
 
-/// The constants the rules test `rel` by: a relation's own, or for its old rows (`r__old`) its relation's.
+/// The constants the rules test `rel` by.
 fn tested_of<'c>(constants: &'c HashMap<String, BTreeSet<(usize, i64)>>, rel: &str) -> Option<&'c BTreeSet<(usize, i64)>> {
-    constants.get(rel).or_else(|| constants.get(rel.strip_suffix("__old")?))
+    constants.get(rel)
 }
 
 /// Binds `rel` (a kept relation, adopted when `held`, or a source) for a session's run, with its statistics in
-/// `stats`; `maintains`: this run maintains the relation whose old rows `rel` is.
-fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats: &mut super::Stats, rel: String, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, held: Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>, maintains: bool) -> Result<()> {
-        let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
-        // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
-        let tested = tested_of(&b.constants, &rel).cloned().unwrap_or_default();
-        // An input's old rows are its rows of the last run: their statistics are those that run planned with,
-        // when they cover every constant the rules test it by (decision 0094 §4).
-        // With none kept (a new process, which reads the kept part from the frames), an input's old rows, or a copy of
-        // an input's columns (`projection_of`), have this run's statistics of the same columns: the two differ by the
-        // documents that changed, not counted again for it.
-        let carried: Option<retain::InputStats> = rel.strip_suffix("__old").and_then(|of| {
-            if let Some(kept) = b.cell.and_then(|c| c.input_stats(of)) {
-                return Some(kept.clone());
+/// `stats`.
+fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats: &mut super::Stats, rel: String, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, held: Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>) -> Result<()> {
+    maintain::shape::held(&rel);
+    let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
+    // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
+    let tested = tested_of(&b.constants, &rel).cloned().unwrap_or_default();
+    // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
+    if let Some(held) = &held {
+        crate::code_rule_dsl::logic::native::component::adopt(db, &rel, Arc::clone(held));
+    }
+    let measured_before = held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested));
+    // Kept, and not measured before for these constants: its statistics are made when a stratum first plans with
+    // it (decisions 0101 §4, 0123), as the eager path below would make them. Most strata a step reaches are quiet
+    // or join an empty delta and never do.
+    if b.lazy_kept
+        && let Some(h) = &held
+    {
+        let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
+        let wanted = tested_of(&b.constants, &rel).cloned();
+        let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
+            let as_cols = |m: &[(String, i64, i64, i64, i64)]| m.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])).collect::<Vec<_>>();
+            // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
+            if let Some(stats) = h2.kept_stats(source2.columns()) {
+                let counts = kept_counts(&stats, &tested2, source2.as_ref());
+                let measured = stats.statistics(&|_| true);
+                return (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested2));
             }
-            let (src, columns, map) = b.copies.get(of)?;
-            stats.of_columns(src, columns, map)
+            // Measured by an earlier run of the same relation: as it was.
+            if let Some((measured, counts, tested)) = measured_before {
+                return (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested));
+            }
+            let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
+            let measured = syntax::statistics(source2.as_ref());
+            let counts = constant_counts(wanted.as_ref(), source2.as_ref());
+            (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested2))
         });
-        // As many rows as the statistics say, within 1%: a copy whose rows collapsed is measured.
-        let carried = carried.filter(|(cols, _)| cols.len() == source.columns().len() && cols.first().is_some_and(|c| (c[0] - source.len() as i64).abs() as f64 <= 0.01 * c[0].max(1) as f64));
-        // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
-        if let Some(held) = &held {
-            crate::code_rule_dsl::logic::native::component::adopt(db, &rel, Arc::clone(held));
-        }
-        if let Some((cols, vals)) = carried {
-            // By the bound source's own column names, as the planner reads them. A constant the rules test that the run
-            // did not count is counted here, by its column alone, not the relation measured.
-            let names: Vec<String> = source.columns();
-            let missing: BTreeSet<(usize, i64)> = tested.iter().filter(|(c, v)| !vals.iter().any(|(vc, vv, _)| vc == c && vv == v)).copied().collect();
-            let extra = constant_counts(Some(&missing), source.as_ref());
-            stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)).chain(extra));
-        } else {
-            let patched = held.as_ref().and_then(|h| b.cell.and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested));
-            // Kept, and known neither by delta nor as measured for these constants: its statistics are
-            // made when a stratum first plans with it (decision 0101 §4), as the eager path below would
-            // make them. Most strata a step reaches are quiet or join an empty delta and never do.
-            let measured_before = held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested));
-            // Decision 0123: made only when a planning round requests them, measured before or not.
-            if patched.is_none() && b.lazy_kept
-                && let Some(h) = &held
-            {
-                let maintains = maintains && rel.ends_with("__old");
-                let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
-                let wanted = tested_of(&b.constants, &rel).cloned();
-                let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
-                    let as_cols = |m: &[(String, i64, i64, i64, i64)]| m.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])).collect::<Vec<_>>();
-                    // Counted from the engine's postings of it, and kept by this run's delta (decision 0096
-                    // step 4), if this run maintains it; else, or with no index to count from, measured.
-                    // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
-                    if let Some(stats) = h2.kept_stats(source2.columns()) {
-                        let counts = kept_counts(&stats, &tested2, source2.as_ref());
-                        let cols = as_cols(&stats.statistics(&|_| true));
-                        if maintains {
-                            let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
-                            return (cols, counts, LazyKept::Patched(p));
-                        }
-                        let measured = stats.statistics(&|_| true);
-                        return (cols, counts.clone(), LazyKept::Measured(measured, counts, tested2));
-                    }
-                    // Counted in the form patched by delta: from its postings where every column has them, else
-                    // from its rows (its indexes dropped once no later stratum read it), as the run that first
-                    // maintained it counted it before decision 0123.
-                    if maintains {
-                        let names = source2.columns();
-                        let stats = if h2.posts_all() {
-                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
-                            super::statkeep::RelStats::from_postings(names.clone(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit))
-                        } else {
-                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2} from its rows"));
-                            h2.live_rows().map(|live| {
-                                let mut stats = super::statkeep::RelStats::paired(names.clone());
-                                stats.documents(&live, names.len(), 1);
-                                stats
-                            })
-                        };
-                        if let Some(stats) = stats {
-                            let counts = constant_counts(Some(&tested2), source2.as_ref());
-                            let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
-                            return (as_cols(&p.stats.statistics(&|_| true)), counts, LazyKept::Patched(p));
-                        }
-                    }
-                    // Measured by an earlier run of the same relation: as it was.
-                    if let Some((measured, counts, tested)) = measured_before {
-                        return (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested));
-                    }
-                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
-                    let measured = syntax::statistics(source2.as_ref());
-                    let counts = constant_counts(wanted.as_ref(), source2.as_ref());
-                    (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested2))
-                });
-                stats.lazily(&rel, h.rows(), lazy.clone());
-                if let Some(of) = rel.strip_suffix("__old") {
-                    b.bound_old.insert(of.to_owned(), (Arc::clone(h), None));
-                }
-                b.lazies.push((rel.clone(), Arc::clone(h), lazy));
-                modules.bind(db, &rel, source)?;
-                return Ok(());
-            }
-            // Not kept by delta yet: counted from the engine's postings of it, in place of measuring it,
-            // and patched by this run's delta (decision 0096 step 4): a relation's first count costs
-            // about what a measure did, once.
-            let patched = patched.or_else(|| {
-                // Only a relation this run maintains (it has an overdelete): one derived again is measured.
-                rel.strip_suffix("__old")?;
-                let h = held.as_ref().filter(|_| maintains)?;
-                let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
-                let names = source.columns();
-                // One the engine kept no index on (no later stratum read it) is measured: its count is
-                // taken from this run's relation, made with its indexes.
-                let stats = super::statkeep::RelStats::from_postings(names, h.rows() as i64, &mut |c, visit| h.each_posting(c, visit))?;
-                let counts = constant_counts(Some(&tested), source.as_ref());
-                Some(retain::Patched { at: Arc::as_ptr(h) as *const u8 as usize, stats, counts, tested: tested.clone() })
-            });
-            if let (Some(h), Some(of)) = (&held, rel.strip_suffix("__old")) {
-                b.bound_old.insert(of.to_owned(), (Arc::clone(h), patched.clone()));
-            }
-            let known = match patched {
-                Some(p) => Some((p.stats.statistics(&|_| true), p.counts, tested.clone())),
-                None => held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested)),
-            };
-            let (measured, counts) = match known {
-                Some((measured, counts, _)) => (measured, counts),
-                None => {
-                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
-                    let measured = syntax::statistics(source.as_ref());
-                    // The constants the rules test it by are counted too: a column measured without them
-                    // reads as holding none, so `kind__old(r, identifier)` was planned as one row and drove
-                    // a delta rule.
-                    let counts = constant_counts(tested_of(&b.constants, &rel), source.as_ref());
-                    if let Some(h) = &held {
-                        b.measured_kept.insert((rel.clone(), Arc::as_ptr(h) as *const u8 as usize), (measured.clone(), counts.clone(), tested));
-                    }
-                    (measured, counts)
-                }
-            };
-            stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
-        }
+        stats.lazily(&rel, h.rows(), lazy.clone());
+        b.lazies.push((rel.clone(), Arc::clone(h), lazy));
         modules.bind(db, &rel, source)?;
-    
+        return Ok(());
+    }
+    let (measured, counts) = match measured_before {
+        Some((measured, counts, _)) => (measured, counts),
+        None => {
+            let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
+            let measured = syntax::statistics(source.as_ref());
+            // The constants the rules test it by are counted too: a column measured without them reads as holding
+            // none, so `kind(r, identifier)` was planned as one row and drove a delta rule.
+            let counts = constant_counts(tested_of(&b.constants, &rel), source.as_ref());
+            if let Some(h) = &held {
+                b.measured_kept.insert((rel.clone(), Arc::as_ptr(h) as *const u8 as usize), (measured.clone(), counts.clone(), tested));
+            }
+            (measured, counts)
+        }
+    };
+    stats.measured(&rel, measured.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])), counts);
+    modules.bind(db, &rel, source)?;
     Ok(())
 }
 
 
-/// Per relation, the integer constants its atoms test, by column (`constant_counts`'s): one pass over the rules,
-/// not one per relation.
-pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
-    let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
-    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom) {
-        for (c, t) in a.args.iter().enumerate() {
-            if let Some(v) = t.integer() {
-                by.entry(a.rel.as_str()).or_default().insert((c, v));
-            }
-        }
-    }
-    let mut projections: HashMap<(&str, usize), Vec<(&str, usize)>> = HashMap::new();
-    for rule in &prog.rules {
-        let [front::Literal::Atom(a)] = rule.body.as_slice() else { continue };
-        if a.neg { continue; }
-        for (hc, term) in rule.head.args.iter().enumerate() {
-            let front::Term::Var(v) = term else { continue };
-            for (bc, arg) in a.args.iter().enumerate() {
-                if matches!(arg, front::Term::Var(x) if x == v) {
-                    projections.entry((&rule.head.rel, hc)).or_default().push((&a.rel, bc));
-                }
-            }
-        }
-    }
-    tested_through(by, &projections)
-}
-
-/// `constants_tested` of the program of version `v`, read by its rules' handles.
+/// Per relation, the integer constants its atoms test, by column (`constant_counts`'s), read from version `v` by its
+/// rules' handles: one pass over the rules, not one per relation. A relation that copies another's columns (a rule
+/// of one positive atom) passes its tests on to the columns it copies (`tested_through`).
 pub fn constants_tested_in(v: &crate::code_rule_dsl::logic::program_image::Version) -> HashMap<&str, BTreeSet<(usize, i64)>> {
     use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
     let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
@@ -11021,58 +10891,6 @@ fn kept_counts(stats: &super::statkeep::RelStats, tested: &BTreeSet<(usize, i64)
     tested.iter().filter(|(c, _)| *c < names.len()).map(|&(c, v)| (names[c].clone(), v, exact[&c].get(&v).copied().unwrap_or(0))).collect()
 }
 
-/// A relation the cross-file part makes as a copy of some columns of one input, or of such a copy
-/// (`kind(n, k) :- node(_, n, k, _, _)`): that input, and
-/// for each of the relation's columns the input's column it copies. When it holds as many rows as the input, its
-/// rows are the input's one for one, so its statistics are the input's by column: kept with the input's, never
-/// counted (a full count of `kind` and `docof` was 0.32 s of a one-file edit's 0.38 s of statistics).
-/// `heads`: each relation's one rule (`None` when it has more), `rule_by_head`.
-fn projection_of(v: &crate::code_rule_dsl::logic::program_image::Version, heads: &HashMap<&str, Option<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>>, is_input: &dyn Fn(&str) -> bool, rel: &str) -> Option<(String, Vec<usize>)> {
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
-    let (mut at, mut map): (String, Option<Vec<usize>>) = (rel.to_owned(), None);
-    for _ in 0..8 {
-        if is_input(&at) {
-            return map.map(|m| (at, m));
-        }
-        let Some(Some(r)) = heads.get(at.as_str()) else { return None };
-        let mut body = r.body();
-        let (Some(l), None) = (body.next(), body.next()) else { return None };
-        let Lit::Atom(a) = l.view() else { return None };
-        if a.neg() {
-            return None;
-        }
-        // Each variable once in the body (no equality between columns), and nothing tested.
-        let mut col: HashMap<u32, usize> = HashMap::new();
-        for (i, t) in a.args().enumerate() {
-            match t {
-                TermRef::Var(s) => {
-                    if col.insert(s.0, i).is_some() {
-                        return None;
-                    }
-                }
-                TermRef::Wild => {}
-                _ => return None,
-            }
-        }
-        let step: Vec<usize> = r.head().args().map(|t| t.var().and_then(|s| col.get(&s.0).copied())).collect::<Option<_>>()?;
-        if step.iter().collect::<BTreeSet<_>>().len() != step.len() {
-            return None;
-        }
-        map = Some(match map { None => step, Some(m) => m.iter().map(|&c| step[c]).collect() });
-        at = v.rel_name(a.rel()).to_owned();
-    }
-    None
-}
-
-/// Each relation of `prog` that heads one rule, with it; `None` for one that heads more (`projection_of`).
-fn rule_by_head(v: &crate::code_rule_dsl::logic::program_image::Version) -> HashMap<&str, Option<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>> {
-    let mut heads: HashMap<&str, Option<crate::code_rule_dsl::logic::program_image::RuleRef<'_>>> = HashMap::new();
-    for r in v.rules() {
-        heads.entry(v.rel_name(r.head().rel())).and_modify(|h| *h = None).or_insert(Some(r));
-    }
-    heads
-}
-
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
     let mut wanted: BTreeMap<(usize, i64), i64> = tested.into_iter().flatten().map(|k| (*k, 0)).collect();
     if wanted.is_empty() {
@@ -11097,12 +10915,7 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
     wanted.into_iter().filter(|((c, _), _)| *c < names.len()).map(|((c, v), n)| (names[c].clone(), v, n)).collect()
 }
 
-/// The relations `p` derives, each with its declared width (`collect`'s).
-fn derived_widths(p: &front::Program) -> BTreeMap<&str, usize> {
-    p.rules.iter().map(|r| (r.head.rel.as_str(), p.decls[r.head.rel.as_str()].len())).collect()
-}
-
-/// `derived_widths` of a version's program, read from its fields.
+/// The relations a version's program derives, each with its declared width (`collect`'s), read from its fields.
 fn derived_widths_in<'v>(f: &super::fields::Fields<'v>) -> BTreeMap<&'v str, usize> {
     f.v.rules().map(|r| f.v.rel_name(r.head().rel())).map(|rel| (rel, f.width(rel))).collect()
 }
@@ -11155,7 +10968,7 @@ impl Statements {
         unsafe extern "C" fn trace(event: u32, state: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
             // SAFETY: the state outlives the callback (removed on drop).
             let state = unsafe { &*state.cast::<StatementState>() };
-            if event == ffi::SQLITE_TRACE_STMT as u32 {
+            if event == ffi::SQLITE_TRACE_STMT {
                 state.count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if crate::code_rule_dsl::logic::profile::strict() {
                     // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
@@ -11200,7 +11013,7 @@ impl Statements {
         }
         let state = Box::new(StatementState { costs: std::env::var_os("RDL_STMTS").map(|_| Default::default()), ..Default::default() });
         let profile = state.costs.is_some() || crate::code_rule_dsl::logic::profile::on();
-        let mask = ffi::SQLITE_TRACE_STMT as u32 | if profile { ffi::SQLITE_TRACE_PROFILE as u32 } else { 0 };
+        let mask = ffi::SQLITE_TRACE_STMT | if profile { ffi::SQLITE_TRACE_PROFILE } else { 0 };
         // SAFETY: the connection is live for the run; the state is boxed (a stable address) and outlives the callback.
         let db = unsafe { db.handle() };
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
@@ -11453,25 +11266,68 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 /// Whether the corpus runner reads the file at `path` as text only in a run of `label`'s grammar: it is not of that
 /// grammar, so it is in the run only because a `.scope text` glob reads it (`scoped`), and it has `doc` and the
 /// source text's relations and no tree.
-fn text_document(path: &str, label: &str) -> bool {
-    crate::code_rule_dsl::language::label_of_path(path) != Some(label)
+fn text_document(root: &Path, path: &str, label: &str) -> bool {
+    match crate::git_workspace::snapshot::source_language(&root.join(path)) {
+        Some(grammar) => grammar.as_deref() != Some(label),
+        None => crate::code_rule_dsl::language::label_of_path(path) != Some(label),
+    }
 }
 
-/// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
+/// A corpus's files by language: Python's, Rust's and `.rerail` rule files, and the text-only documents.
 #[derive(Clone)]
 pub struct CorpusFiles {
     /// Each dialect's files, by its label (the language registry's).
     pub by_label: BTreeMap<&'static str, Vec<String>>,
-    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`),
+    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`ProgramFields::text_globs`),
     /// with the files of a grammar it matches (a `.md` file is Markdown's, and text to a run of another grammar).
     pub text: Vec<String>,
+    /// Whether the program reads the files that hold its language's programs (`.embedded on`, decision 0470 step 2);
+    /// set by `scoped`. Off by default.
+    pub embedded: bool,
+    /// The root the paths are under: a place embedding's host is read only where its text names a place.
+    pub root: std::path::PathBuf,
+}
+
+/// Whether `path`'s dialect embeds `label`'s (decision 0470 step 2): its file holds programs a run of `label` reads
+/// under `.embedded on`.
+pub(crate) fn embeds_label(path: &str, label: &str) -> bool {
+    use crate::code_rule_dsl::language;
+    language::label_of_path(path)
+        .filter(|own| *own != label)
+        .and_then(language::dialect_by_label)
+        .is_some_and(|d| d.embeds().iter().any(|&(_, e)| language::label(e) == Some(label)))
+}
+
+/// Whether the program says `.embedded on`: its run reads the files that hold its language's programs.
+pub(crate) fn embedded_on(prog: &(impl ProgramFields + ?Sized)) -> bool {
+    prog.setting_values("embedded").iter().any(|v| v.trim().trim_matches('"') == "on")
+}
+
+/// Whether a host file of a place embedding holds a program of `label` (decision 0470 §4): its text names a place's
+/// last segment. An embedding of whole elements (an HTML file's scripts) holds one wherever its file has them.
+fn names_a_place(root: &Path, path: &str, label: &str) -> bool {
+    use crate::code_rule_dsl::language;
+    let Some(dialect) = language::label_of_path(path).and_then(language::dialect_by_label) else { return false };
+    let places: Vec<&str> = dialect.embed_places().iter().filter(|(_, e, ..)| language::label(*e) == Some(label)).map(|(_, _, callee, _)| callee.rsplit('.').next().unwrap_or(callee)).collect();
+    let whole = dialect.embeds().iter().any(|&(via, e)| language::label(e) == Some(label) && !dialect.embed_places().iter().any(|(v, ..)| *v == via));
+    if whole {
+        return true;
+    }
+    std::fs::read(root.join(path)).is_ok_and(|text| places.iter().any(|p| memchr::memmem::find(&text, p.as_bytes()).is_some()))
 }
 
 impl CorpusFiles {
-    /// The run's documents: the language's files, then the text ones, in path order.
+    /// The run's documents: the language's files, then the text ones, in path order; under `.embedded on`, also the
+    /// files that hold its programs (decision 0470 step 2).
     /// A file of `label`'s grammar a `.scope text` glob also matches is parsed, not read as text as well.
     fn of(mut self, label: &str) -> Vec<String> {
         let mut files = self.by_label.remove(label).unwrap_or_default();
+        if self.embedded {
+            let root = self.root.clone();
+            for paths in self.by_label.values() {
+                files.extend(paths.iter().filter(|p| embeds_label(p, label) && names_a_place(&root, p, label)).cloned());
+            }
+        }
         files.extend(self.text.into_iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) != Some(label)));
         files.sort();
         files.dedup();
@@ -11493,8 +11349,8 @@ impl CorpusFiles {
 /// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
 /// The grammar a run of `prog` reads (`corpus_language`, as `run_observed` picks it): its `.language`'s, else the
 /// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0168).
-pub fn run_language(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<&'static str> {
-    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+pub fn run_language(root: &Path, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> Result<&'static str> {
+    let language = prog.setting_values("language").into_iter().next().map(|v| v.trim_matches('"').to_owned());
     if let Some(label) = language.as_deref().and_then(crate::code_rule_dsl::language::label_named) {
         return Ok(label);
     }
@@ -11523,14 +11379,17 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 /// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
 /// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
 /// language has one dialect: the run reads it as before.
-pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+pub fn run_dialects(root: &Path, prog: &crate::code_rule_dsl::logic::program_image::Version, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+    if crate::git_workspace::snapshot::contains(root) && git::metadata_only(prog) {
+        return Ok(Vec::new());
+    }
     run_dialects_in(&|| corpus_files(root), prog, options)
 }
 
 /// [`run_dialects`] over a corpus listing `files` makes (once, for many programs).
-pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> Result<Vec<&'static str>> {
     use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
-    let Some(name) = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned()) else {
+    let Some(name) = prog.setting_values("language").into_iter().next().map(|v| v.trim_matches('"').to_owned()) else {
         return Ok(Vec::new());
     };
     let Some(language) = CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name) else { return Ok(Vec::new()) };
@@ -11543,12 +11402,20 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Pr
     Ok(labels)
 }
 
-/// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
+/// The files the program's policies select (`ProgramFields::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
-fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
-    let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
+fn scoped(mut found: CorpusFiles, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> CorpusFiles {
+    found.embedded = embedded_on(prog);
+    if let Some(paths) = options.get("sourcePaths").and_then(serde_json::Value::as_array) {
+        let paths: Vec<&Path> = paths.iter().filter_map(serde_json::Value::as_str).map(Path::new).collect();
+        let allowed = |path: &String| paths.iter().any(|prefix| Path::new(path).starts_with(prefix));
+        found.by_label.values_mut().for_each(|files| files.retain(allowed));
+        found.text.retain(allowed);
+    }
+    let globs = prog.text_globs();
+    let text_glob = |p: &String| globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
     // A glob names files of a grammar too (`"**/*.md"`): a run of another grammar reads them as text (`CorpusFiles::of`).
     // A hidden file (`.hidden.md`) is no text document, as `corpus_files` has it.
@@ -11557,7 +11424,7 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
     found.text.extend(of_grammars);
     found.text.sort();
     // A program of JSON policies (`.policy {…}`) and no `.scope`: their `scope`s (decision 0107).
-    let doc_scopes = prog.doc_scopes.clone().or_else(|| json_scopes(&prog.policies));
+    let doc_scopes = prog.doc_scopes().or_else(|| json_scopes(&prog.policies()));
     if doc_scopes.is_none() {
         return found;
     }
@@ -11658,17 +11525,31 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 /// hosts send). Below a source root the two differ: `src/shop/base.py` is `shop.base`, which `from shop.base import
 /// Base` names, not `src.shop.base`. A file in no package (a script, or a folder of the root without `__init__.py`)
 /// keeps its path's name, as does one whose names keep a dot.
-pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> BTreeMap<String, String> {
-    let mut packages: HashMap<String, bool> = HashMap::new();
-    let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| root.join(dir).join("__init__.py").is_file());
-    let mut out = BTreeMap::new();
+///
+/// Also the Python files no regular package holds: a file of the root, or one whose folder has no `__init__.py`
+/// (core.rerail's `unpackaged`). Ruff names such a file's module by its stem and resolves no relative import from it.
+/// `packages` gains each folder whose marker was looked up, and whether it holds one: in a revision they are read
+/// from its tree, and are its run's inputs.
+pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String], packages: &mut HashMap<String, bool>) -> (BTreeMap<String, String>, BTreeSet<String>) {
+    let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| crate::git_workspace::snapshot::is_file(root.join(dir).join("__init__.py")));
+    let (mut out, mut unpackaged) = (BTreeMap::new(), BTreeSet::new());
     for p in paths.iter().filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
-        let Some((dir, _)) = p.rsplit_once('/') else { continue };
+        let Some((dir, _)) = p.rsplit_once('/') else {
+            unpackaged.insert(p.clone());
+            continue;
+        };
         // Climbs while each folder holds an `__init__.py`; `top` is the package root's first segment's index.
         let segments: Vec<&str> = dir.split('/').collect();
         let mut top = segments.len();
         while top > 0 && is_package(&segments[..top].join("/")) {
             top -= 1;
+        }
+        if top == segments.len() {
+            unpackaged.insert(p.clone());
+        }
+        if top == 0 {
+            // The root's own marker decides that the tree's root is no package's folder.
+            is_package("");
         }
         if top == segments.len() || top == 0 {
             // In no package, or the root's own folders are packages up to the tree's root: the path's name.
@@ -11679,14 +11560,14 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
             out.insert(p.clone(), m);
         }
     }
-    out
+    (out, unpackaged)
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rr`), skipping hidden directories and `target`.
+/// (`.rerail`), skipping hidden directories and `target`.
 pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
-    let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
+    let mut classify = |relative: String, grammar: Option<&'static str>| match grammar {
         Some(label) => by_label.entry(label).or_default().push(relative),
         // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
         None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
@@ -11695,6 +11576,20 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
     // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
+    install_git_inventory();
+    if let Some(files) = crate::git_workspace::snapshot::scan_files(root, ThreadStore::git_reads().as_deref()) {
+        use crate::git_workspace::snapshot::InventoryError;
+        for (relative, grammar) in files.map_err(|error| match error {
+            InventoryError::Source(reason) => Error::Plan(reason),
+            InventoryError::Cache(error) => Error::Cache(error),
+        })? {
+            if relative.rsplit_once('/').is_some_and(|(dirs, _)| dirs.split('/').any(|d| d.starts_with('.') || d == "target")) {
+                continue;
+            }
+            classify(relative, grammar.as_deref().and_then(crate::code_rule_dsl::language::label_named));
+        }
+        return Ok(CorpusFiles { by_label, text, embedded: false, root: root.to_path_buf() });
+    }
     let git = git_files(root);
     if let Some((under, overlays)) = git {
         let mut listed = 0;
@@ -11705,13 +11600,22 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
                 continue;
             }
             listed += 1;
-            classify(relative.to_owned());
+            classify(relative.to_owned(), crate::code_rule_dsl::language::label_of_path(relative));
         }
         crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
     } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
-    observe(|o| o.preload(root));
+    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+    observe(|o| {
+        o.preload(root);
+        if let Ok(real) = std::fs::canonicalize(root)
+            && real != root
+        {
+            o.preload(&real);
+        }
+    });
     while let Some(dir) = pending.pop() {
         let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
         for (name, is_dir) in listing.iter() {
@@ -11727,7 +11631,8 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
             // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            classify(relative);
+            let grammar = crate::code_rule_dsl::language::label_of_path(&relative);
+            classify(relative, grammar);
         }
     }
     }
@@ -11741,26 +11646,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok(CorpusFiles { by_label, text })
-}
-
-/// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
-fn base_inputs(prog: &mut front::Program) {
-    let read: Vec<String> = {
-        let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
-        prog.rules
-            .iter()
-            .flat_map(|r| r.body.iter().filter_map(front::Literal::atom))
-            .map(|a| a.rel.as_str())
-            .filter(|rel| !derived.contains(rel) && prog.decls.contains_key(*rel) && super::super::sql::select::input_columns(rel).is_some())
-            .map(str::to_owned)
-            .collect()
-    };
-    for rel in read {
-        if !prog.inputs.contains(&rel) {
-            prog.inputs.push(rel);
-        }
-    }
+    Ok(CorpusFiles { by_label, text, embedded: false, root: root.to_path_buf() })
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
@@ -11814,6 +11700,49 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
     if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
 }
 
+/// `sampled_statistics` of `rel`'s columns its layout does not answer (decision 0361 item 5): an answered column's
+/// statistic is its facts' estimate (`Shapes::statistic`), not counted, and a relation they answer whole reads none
+/// of its rows.
+#[doc(hidden)]
+pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, shapes: &super::shapes::Shapes, counts: super::shapes::Counts) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() { return known; }
+    if source.made_on_lookup() { return Vec::new(); }
+    let rows = source.len();
+    let names = source.columns();
+    let answered: Vec<Option<(i64, i64, i64, i64)>> = names.iter().map(|n| shapes.statistic(rel, n, rows as i64, counts)).collect();
+    let open: Vec<usize> = (0..names.len()).filter(|&c| answered[c].is_none()).collect();
+    let mut counted: HashMap<usize, (String, i64, i64, i64, i64)> = HashMap::new();
+    if !open.is_empty() {
+        let count = rows.min(STAT_SAMPLE_ROWS);
+        let mut values = vec![Vec::with_capacity(count); open.len()];
+        let mut row = vec![0; open.len()];
+        for i in 0..count {
+            let at = (i as u128 * rows as u128 / count as u128) as usize;
+            source.row_at(at, &open, &mut row);
+            for (column, value) in values.iter_mut().zip(&row) { column.push(*value); }
+        }
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * open.len()) as u64);
+        let sample = Rows { columns: open.iter().map(|&c| names[c].clone()).collect(), values };
+        let measured = syntax::measured(&sample);
+        let measured = if count == rows { measured } else { scaled_statistics(&measured, count, rows) };
+        counted = open.iter().copied().zip(measured).collect();
+    }
+    names
+        .iter()
+        .enumerate()
+        .map(|(c, n)| match answered[c] {
+            Some((r, ndv, sq, sqd)) => (n.clone(), r, ndv, sq, sqd),
+            None => counted.remove(&c).expect("counted"),
+        })
+        .collect()
+}
+
+/// Rows held as columns that keep no statistics of their own (`Rows`), for a test of a measurement.
+#[doc(hidden)]
+pub fn unmeasured_rows(columns: Vec<String>, values: Vec<Vec<i64>>) -> impl crate::code_rule_dsl::facts::vtab::Source {
+    Rows { columns, values }
+}
+
 /// A digest as lowercase hex.
 fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -11858,22 +11787,6 @@ impl Own {
             }
             for (col, n) in tested {
                 out.entry((rel.to_owned(), super::sql_col(rel, col))).or_default().insert(n);
-            }
-        }
-        out
-    }
-
-    pub fn constants(prog: &front::Program) -> BTreeMap<(String, String), BTreeSet<i64>> {
-        let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
-        for literal in prog.rules.iter().flat_map(|r| &r.body) {
-            let Some(atom) = literal.atom() else { continue };
-            if !prog.inputs.iter().any(|x| x == &atom.rel) {
-                continue;
-            }
-            for (i, arg) in atom.args.iter().enumerate() {
-                if let Some(v) = arg.integer() {
-                    out.entry((atom.rel.to_string(), super::sql_col(&atom.rel, i))).or_default().insert(v);
-                }
             }
         }
         out
@@ -12057,15 +11970,15 @@ impl Own {
     /// Add a frame directly to the run's totals. No per-file maps are reconstructed.
     pub fn add_rows(&mut self, rows: &BTreeMap<String, (usize, Vec<i64>)>) {
         let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
-        for r in flat(OWN_KINDS).chunks_exact(3) {
+        for r in flat(OWN_KINDS).as_chunks::<3>().0 {
             let k = self.kinds.entry(r[0]).or_default(); k.0 += r[1]; k.1 += r[2];
         }
-        for r in flat(OWN_EDGES).chunks_exact(3) { *self.edges.entry((r[0], r[1])).or_default() += r[2]; }
-        for r in flat(OWN_FIELDS).chunks_exact(4) { *self.fields.entry((r[0], r[1], r[2])).or_default() += r[3]; }
+        for r in flat(OWN_EDGES).as_chunks::<3>().0 { *self.edges.entry((r[0], r[1])).or_default() += r[2]; }
+        for r in flat(OWN_FIELDS).as_chunks::<4>().0 { *self.fields.entry((r[0], r[1], r[2])).or_default() += r[3]; }
         self.docs += flat(OWN_DOCS).first().copied().unwrap_or(0);
         for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
             let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
-            for r in values.chunks_exact(2) { *self.postings.entry((rel.into(), col.into(), r[0])).or_default() += r[1]; }
+            for r in values.as_chunks::<2>().0 { *self.postings.entry((rel.into(), col.into(), r[0])).or_default() += r[1]; }
         }
     }
 
@@ -12075,7 +11988,7 @@ impl Own {
         let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
         own.kinds = flat(OWN_KINDS).chunks(3).map(|r| (r[0], (r[1], r[2]))).collect();
         own.edges = flat(OWN_EDGES).chunks(3).map(|r| ((r[0], r[1]), r[2])).collect();
-        own.fields = flat(OWN_FIELDS).chunks_exact(4).map(|r| ((r[0], r[1], r[2]), r[3])).collect();
+        own.fields = flat(OWN_FIELDS).as_chunks::<4>().0.iter().map(|r| ((r[0], r[1], r[2]), r[3])).collect();
         own.docs = flat(OWN_DOCS).first().copied().unwrap_or(0);
         for (key, (_, values)) in rows.range(OWN_POSTINGS.to_owned()..).take_while(|(k, _)| k.starts_with(OWN_POSTINGS)) {
             let Some((rel, col)) = key[OWN_POSTINGS.len()..].split_once(':') else { continue };
@@ -12106,7 +12019,7 @@ pub mod tests {
     #[test]
     fn the_totals_keep_per_value_counts_only_for_what_the_planner_reads() {
         use crate::code_rule_dsl::logic::plan::{Constant, Stats};
-        let p = crate::code_rule_dsl::logic::rr::parse(".decl e(a: number, b: number)\n.output e\n").unwrap();
+        let p = crate::code_rule_dsl::logic::plan::body::Placed::whole(crate::code_rule_dsl::logic::rr::parse_version(".decl e(a: number, b: number)\n.output e\n").unwrap());
         let many: Vec<i64> = (0..1000).map(|i| 100 + i % 500).collect();
         let few: Vec<i64> = (0..1000).map(|i| i % 3).collect();
         let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(many), Some(few)]);
@@ -12114,7 +12027,7 @@ pub mod tests {
         // Two chunks holding the same values: each value's rows are its total over both.
         totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
         totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
-        let mut stats = Stats::empty(&p);
+        let mut stats = Stats::empty_of(&p.fields().unwrap());
         totals.apply(&mut stats);
         let memo = &stats.memo["e"];
         let of = |col: &str| memo.keys().filter(|(c, _)| c == col).count();
@@ -12137,7 +12050,19 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let work = dir.path().join("work");
         std::fs::create_dir_all(work.join("ignored/pkg")).unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&work).args(args).output().unwrap().status.success(), "git {args:?}");
+        // Git as the test states it, not as the host's configuration does (a farm host's signing or hooks failed the
+        // commit): no global or system configuration, no signing.
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-C"])
+                .arg(&work)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
         git(&["init", "-q"]);
         std::fs::write(work.join(".gitignore"), "/ignored/\n").unwrap();
         std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
@@ -12174,29 +12099,6 @@ pub mod tests {
         assert_eq!(super::git_files(&root), None, "and answered from the record");
     }
 
-    /// A string's test rows (`strtest_<k>`, `memo::Owner::Text`) are held once by each file whose text holds the
-    /// string: a changed file that holds it still keeps the other files' copies, though the string's id is also a
-    /// number the evaluated documents may hold (O-text-owner-evaluated).
-    #[test]
-    fn a_strings_rows_keep_the_other_files_copies() {
-        use super::*;
-        let string = 5i64;
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![string; 3])]);
-        let hash = super::super::row_digest(&[string]);
-        let docs: retain::DocDigests = [(string, (hash.wrapping_mul(3), 3))].into_iter().collect();
-        let ranges: retain::Ranges = [(string, (0u32, 3u32))].into_iter().collect();
-        let kept = retain::KeptInput::laid(source, docs, ranges);
-        let evaluated: BTreeSet<i64> = [string].into_iter().collect();
-        // The changed file held the string, and holds it still.
-        let cells = super::super::Cells::plain(1);
-        let patch = patch_owners("strtest_1", &kept, 0, None, &evaluated, &[vec![vec![string]]], vec![vec![string]], &cells).unwrap();
-        assert!(patch.changed.is_empty() && patch.docs.is_none(), "three files hold it, as before: {:?}", patch.changed);
-        // The changed file no longer holds it: two files' copies are left.
-        let patch = patch_owners("strtest_1", &kept, 0, None, &evaluated, &[vec![vec![string]]], Vec::new(), &cells).unwrap();
-        assert_eq!(patch.changed, vec![(string, vec![vec![string]; 2])]);
-        assert!(patch.minus.is_empty() && patch.plus.is_empty(), "the string is still held: no row gone from the set");
-    }
-
     /// Q20: an evaluated document no old entry names, whose rows this run are its kept digest's, is unchanged without
     /// its kept rows read (`no-reads-of-unchanged`): here the kept source holds other rows than the digest says, so a
     /// read of them is an error. A document whose rows changed is patched from its kept rows as before.
@@ -12212,26 +12114,24 @@ pub mod tests {
         let evaluated: BTreeSet<i64> = [doc].into_iter().collect();
         let cells = super::super::Cells::plain(2);
         let other = kept_of(vec![9, 9]);
-        let patch = patch_owners("defs", &other, 0, None, &evaluated, &[], rows.clone(), &cells).unwrap();
-        assert!(patch.changed.is_empty() && patch.docs.is_none(), "its rows are its kept digest's: {:?}", patch.changed);
-        // An export's document (`holders`), held once: this run's rows, a row twice among them, are its kept set.
         let holders = rustc_hash::FxHashMap::default();
+        let patch = patch_owners("defs", &other, 0, &holders, &evaluated, &[], rows.clone(), &cells).unwrap();
+        assert!(patch.changed.is_empty() && patch.docs.is_none(), "its rows are its kept digest's: {:?}", patch.changed);
+        // Held once: this run's rows, a row twice among them, are its kept set.
         let twice = vec![vec![doc, 2], vec![doc, 1], vec![doc, 2]];
-        let patch = patch_owners("defs", &other, 0, Some(&holders), &evaluated, &[], twice, &cells).unwrap();
+        let patch = patch_owners("defs", &other, 0, &holders, &evaluated, &[], twice, &cells).unwrap();
         assert!(patch.changed.is_empty() && patch.docs.is_none(), "an export's rows are its kept set: {:?}", patch.changed);
         let kept = kept_of(vec![1, 2]);
-        let patch = patch_owners("defs", &kept, 0, None, &evaluated, &[], vec![vec![doc, 1], vec![doc, 3]], &cells).unwrap();
+        let patch = patch_owners("defs", &kept, 0, &holders, &evaluated, &[], vec![vec![doc, 1], vec![doc, 3]], &cells).unwrap();
         assert_eq!(patch.changed, vec![(doc, vec![vec![doc, 1], vec![doc, 3]])]);
-        assert_eq!((patch.plus, patch.minus), (vec![vec![doc, 3]], vec![vec![doc, 2]]));
+        // Named by place: the second of the appended rows, the second kept one.
+        assert_eq!((patch.plus, patch.minus), (vec![1], vec![1]));
     }
 
     #[test]
     fn constant_demands_reach_projected_input_columns() {
-        let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
-        let demands=super::constants_tested(&p);
-        // And read from the program's version, by its rules' handles: the same.
-        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        assert_eq!(super::constants_tested_in(&v),demands);
+        let v=crate::code_rule_dsl::logic::rr::parse_version(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
+        let demands=super::constants_tested_in(&v);
         assert!(demands["alias"].contains(&(1,9)));
         assert!(demands["tags"].contains(&(1,9)));
         assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
@@ -12245,12 +12145,12 @@ pub mod tests {
     #[test]
     fn branded_constants_have_their_postings_counted() {
         use super::*;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        let p = super::preparation::pruned(crate::code_rule_dsl::logic::rr::parse_version(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap()).unwrap();
         // Lowered for its dialect, as the run's prepared program is (`Own::constants_of(&prepared_placed.v)`): the
         // names are branded by lowering (0281 step 6b), not by the parse.
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let mut atoms: HashMap<String, u32> = HashMap::new();
-        let lowered = crate::code_rule_dsl::logic::plan::lower::lower(&p, python, &mut |s| {
+        let lowered = crate::code_rule_dsl::logic::plan::lower::lowered(p, python, &mut |s| {
             Ok(s.iter().map(|s| { let n = atoms.len() as u32 + 1; *atoms.entry((*s).to_owned()).or_insert(n) }).collect())
         })
         .unwrap();
@@ -12311,10 +12211,8 @@ pub mod tests {
     }
 }
 
-/// What a kept relation's lazy statistics leave the session (decision 0101 §4): its form kept by delta, or its
-/// measure.
+/// What a kept relation's lazy statistics leave the session (decision 0101 §4): its measure.
 pub(in crate::code_rule_dsl) enum LazyKept {
-    Patched(retain::Patched),
     Measured(Vec<(String, i64, i64, i64, i64)>, Vec<(String, i64, i64)>, BTreeSet<(usize, i64)>),
 }
 
@@ -12407,7 +12305,10 @@ impl Asks {
         if self.early.is_empty() && !wait.is_zero() {
             match self.rx.recv_timeout(wait) {
                 Ok((t, r)) => self.came(t, r)?,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    // Every pool worker can be waiting here while the callers need a queued chunk to answer them.
+                    if rerail_accel::exec::on_pool() { rerail_accel::exec::help_once(); }
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Err(Error::Plan("the answer channel closed".to_owned())),
             }
         }
@@ -12457,19 +12358,12 @@ fn stats_key(root: &str) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }
 
-/// An edit's version of a part (decision 0244): made wherever the part had one. In a debug build (every test's), an
-/// edit that made none is a fault, never a quiet fall back to an image of the tree.
-pub(super) fn made_from<T>(had: bool, made: Option<T>, edit: &str) -> Option<T> {
-    debug_assert!(!had || made.is_some(), "{edit}: no version was made from the part's");
-    made
-}
-
 /// The cone of requests of the cross-file part `cross`, answered inside the fixpoint (decision 0065 §2a): a load's
 /// answer is the loaded document's rows of every per-file relation the cone reads (an export, `exports`; a base
 /// relation, `base`, is refused), made by the chunk path as any file's are; the rest of the cross-file part reads the
 /// cone's rows as inputs. A derivation of the part's version alone (`answers::gate`, `answers::split`), reading no
 /// tree: made once for a prepared split (`Prepared::cone`).
-fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], prog: &front::Program) -> Result<Cone> {
+fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], prog: &dyn ProgramFields) -> Result<Cone> {
     let f = cross.fields()?;
     let mut answers = world::answers(&f);
     if answers.is_empty() {
@@ -12484,7 +12378,11 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
         .filter(|r| cone.contains(v.rel_name(r.head().rel())))
         .flat_map(|r| r.reads())
         .map(|a| v.rel_name(a.rel()).to_owned())
-        .filter(|r| (exports.contains(r) || base.contains(r)) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, r))
+        .filter(|r| {
+            (exports.contains(r) || base.contains(r))
+                && !answers.values().flatten().any(|answer| answer == r)
+                && !crate::code_rule_dsl::typing::file_local::run_constant(prog, r)
+        })
         .collect();
     if let Some(base) = per_file.iter().find(|r| base.contains(*r)) {
         let rule = cross.rules().find(|r| cone.contains(v.rel_name(r.head().rel())) && r.reads().any(|a| v.rel_name(a.rel()) == base.as_str())).map(|r| v.show_rule(r)).unwrap_or_default();
@@ -12496,6 +12394,9 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let gated = crate::code_rule_dsl::logic::answers::gate(cross, &answers).map_err(Error::Plan)?;
     let whole = super::body::Placed::whole(gated);
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
+    // Git answers start empty and are produced by the fixpoint. Unlike a
+    // document load's exports, they have no caller-supplied seed rows.
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_view_revision_of" | "git_revision_of" | "git_object_of" | git_content::ANSWER | "git_inventory_child_of" | analysis_history::ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {
@@ -12586,18 +12487,20 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
         }
     })?;
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", &cross.version, &stored.version);
+        crate::code_rule_dsl::logic::version_trace::note("session.maintained", &cross.version, &stored.version);
     }
     Ok(stored)
 }
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the
 /// input gained and lost as a set (`r__plus`, `r__minus`), and its digests by owner and digest after it (`None`, the
-/// kept ones, when no owner's rows changed).
+/// kept ones, when no owner's rows changed). The rows gained and lost are named where they lie (0364 R2): `plus`
+/// by their places in `changed`'s rows, one after another (the layered input's appended rows), `minus` by their
+/// places in the kept rows. Neither is copied.
 struct OwnerPatch {
     changed: Vec<(i64, Vec<Vec<i64>>)>,
-    plus: Vec<Vec<i64>>,
-    minus: Vec<Vec<i64>>,
+    plus: Vec<u32>,
+    minus: Vec<u32>,
     docs: Option<retain::DocDigests>,
     digest: u64,
     /// Measured (`RERAIL_STATS_KEEP_TRACE`): the owners read, the kept rows read, the owners found unchanged.
@@ -12606,14 +12509,12 @@ struct OwnerPatch {
 
 /// Decision 0117 step 2: input `rel` after an edit, from its kept rows `kept` (each owner's a range, owner by
 /// column `g`), the changed files' old entries' rows (`old`, one list a file) and this run's rows of them (`new`).
-/// Only the owners those rows name are read.
-/// - A base relation (`holders` `None`) holds a row once per file whose entry holds it: an owner's rows are its kept
-///   rows less each old entry's, plus this run's.
-/// - An export holds each row once. An owner's rows are this run's if a changed file holds it now; else its kept
-///   rows while another file holds it (a value document: the keeper's `holders`), else none. A value document's
-///   rows are the same in every file that holds it, which is checked.
+/// Only the owners those rows name are read. An input is an export (the base relations are read off the corpus
+/// batch, decision 0458), which holds each row once: an owner's rows are this run's if a changed file holds it now;
+/// else its kept rows while another file holds it (a value document: the keeper's `holders`), else none. A value
+/// document's rows are the same in every file that holds it, which is checked.
 /// `Err` when the kept rows do not hold what the old entries say (the run then decodes its hits whole).
-fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&rustc_hash::FxHashMap<i64, i64>>, evaluated: &BTreeSet<i64>, old: &[Vec<Vec<i64>>], new: Vec<Vec<i64>>, cells: &super::Cells) -> std::result::Result<OwnerPatch, String> {
+fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: &rustc_hash::FxHashMap<i64, i64>, evaluated: &BTreeSet<i64>, old: &[Vec<Vec<i64>>], new: Vec<Vec<i64>>, cells: &super::Cells) -> std::result::Result<OwnerPatch, String> {
     use rustc_hash::FxHashMap;
     let width = kept.source.columns().len();
     let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
@@ -12621,7 +12522,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     // a document evaluated.
     let text = matches!(memo::owner(rel), memo::Owner::Text(_));
     if width == 0 {
-        // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
+        // A relation of no columns is its rows' count (`write_kept`): none of its rows names an owner.
         return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest, read: (0, 0, 0) }) } else { Err(format!("{rel}: a relation of no columns changed")) };
     }
     let mut by_old: BTreeMap<i64, Vec<Vec<Vec<i64>>>> = BTreeMap::new();
@@ -12664,21 +12565,19 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     };
     let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
     let mut read = (0usize, 0usize, 0usize);
+    // The rows of `changed` so far: where the next changed owner's rows start among the appended ones.
+    let mut appended = 0u32;
     for o in touched {
         // A real document evaluated this run, which no changed file's old entry names: its rows are this run's
         // (below), so when they are its kept digest's it is unchanged, and its kept rows are not read (Q20: read,
         // copied and sorted for every evaluated owner of every input, 84 G of an edit on ep2).
-        // An export's real document (`holders`) is held once: its rows are the set of this run's, so the same test
-        // reads their distinct rows.
+        // An export's real document is held once: its rows are the set of this run's, so the same test reads their
+        // distinct rows.
         let real = o < values && !text && !by_old.contains_key(&o);
-        if real && (holders.is_some() || evaluated.contains(&o)) {
+        if real {
             let rows = by_new.get(&o).map_or(&[][..], Vec::as_slice);
-            let (sum, n) = if holders.is_some() {
-                let distinct: rustc_hash::FxHashSet<&[i64]> = rows.iter().map(Vec::as_slice).collect();
-                (distinct.iter().map(|r| cells.row(r)).fold(0u64, u64::wrapping_add), distinct.len())
-            } else {
-                (cells.rows(&rows.concat()).into_iter().fold(0u64, u64::wrapping_add), rows.len())
-            };
+            let distinct: rustc_hash::FxHashSet<&[i64]> = rows.iter().map(Vec::as_slice).collect();
+            let (sum, n) = (distinct.iter().map(|r| cells.row(r)).fold(0u64, u64::wrapping_add), distinct.len());
             if kept_docs.get(&o).copied() == (n > 0).then_some((sum, n as u64)) {
                 by_new.remove(&o);
                 continue;
@@ -12688,6 +12587,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         read.0 += 1;
         read.1 += kept_ranges.get(&o).map_or(0, |r| r.1 as usize);
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
+        let was_at = kept_ranges.get(&o).map_or(0, |r| r.0);
         let was: Vec<Vec<i64>> = match kept_ranges.get(&o) {
             Some(&(start, n)) => {
                 let mut row = vec![0i64; width];
@@ -12702,60 +12602,25 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         };
         let old_rows = by_old.remove(&o).unwrap_or_default();
         let new_rows = by_new.remove(&o);
-        let now: Vec<Vec<i64>> = match holders {
-            // A real document's rows are its own file's alone (`memo::document_of`): evaluated this run, they are this
-            // run's rows. Taking the kept rows less the old entry's instead counted a chunk's unchanged file twice
-            // (it has no old entry here), and kept rows an old entry did not hold (O-kept-inputs-stale).
-            None if o < values && !text && evaluated.contains(&o) => {
-                let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
-                for r in &was {
-                    *count.entry(r).or_default() += 1;
-                }
-                for r in old_rows.iter().flatten() {
-                    let n = count.entry(r).or_default();
-                    *n -= 1;
-                    if *n < 0 {
-                        return Err(format!("{rel}: a changed file's old row is not kept ({r:?})"));
-                    }
-                }
-                sorted(new_rows.unwrap_or_default())
+        let now: Vec<Vec<i64>> = {
+            let kept_set = set(&was);
+            if old_rows.iter().any(|rows| set(rows) != kept_set) {
+                return Err(format!("{rel}: owner {o}'s kept rows are not a changed file's old ones"));
             }
-            None => {
-                let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
-                for r in &was {
-                    *count.entry(r).or_default() += 1;
-                }
-                for r in old_rows.iter().flatten() {
-                    let n = count.entry(r).or_default();
-                    *n -= 1;
-                    if *n < 0 {
-                        return Err(format!("{rel}: a changed file's old row is not kept ({r:?})"));
+            let held = if o >= values { holders.get(&o).copied().unwrap_or(0) } else { i64::from(new_rows.is_some()) };
+            match (held > 0, new_rows) {
+                (false, _) => Vec::new(),
+                (true, Some(rows)) => {
+                    let rows: Vec<Vec<i64>> = set(&rows).into_iter().collect();
+                    // A value document's rows are its key's (its text, parsed): the same in every file that
+                    // holds it, so rows kept of it that differ are another run's mistake.
+                    if o >= values && !kept_set.is_empty() && rows.iter().ne(kept_set.iter()) {
+                        return Err(format!("{rel}: value document {o}'s rows differ between the files that hold it"));
                     }
+                    rows
                 }
-                let mut now: Vec<Vec<i64>> = count.into_iter().flat_map(|(r, n)| std::iter::repeat_n(r.to_vec(), n as usize)).collect();
-                now.extend(new_rows.unwrap_or_default());
-                sorted(now)
-            }
-            Some(h) => {
-                let kept_set = set(&was);
-                if old_rows.iter().any(|rows| set(rows) != kept_set) {
-                    return Err(format!("{rel}: owner {o}'s kept rows are not a changed file's old ones"));
-                }
-                let held = if o >= values { h.get(&o).copied().unwrap_or(0) } else { i64::from(new_rows.is_some()) };
-                match (held > 0, new_rows) {
-                    (false, _) => Vec::new(),
-                    (true, Some(rows)) => {
-                        let rows: Vec<Vec<i64>> = set(&rows).into_iter().collect();
-                        // A value document's rows are its key's (its text, parsed): the same in every file that
-                        // holds it, so rows kept of it that differ are another run's mistake.
-                        if o >= values && !kept_set.is_empty() && rows.iter().ne(kept_set.iter()) {
-                            return Err(format!("{rel}: value document {o}'s rows differ between the files that hold it"));
-                        }
-                        rows
-                    }
-                    (true, None) if !was.is_empty() => sorted(was.clone()),
-                    (true, None) => return Err(format!("{rel}: value document {o} is held, but no rows of it are")),
-                }
+                (true, None) if !was.is_empty() => sorted(was.clone()),
+                (true, None) => return Err(format!("{rel}: value document {o} is held, but no rows of it are")),
             }
         };
         if now == sorted(was.clone()) {
@@ -12763,8 +12628,12 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             continue;
         }
         let (a, b) = (set(&was), set(&now));
-        minus.extend(a.difference(&b).cloned());
-        plus.extend(b.difference(&a).cloned());
+        // Each row once, at its first place.
+        let mut once: rustc_hash::FxHashSet<&[i64]> = Default::default();
+        minus.extend(was.iter().enumerate().filter(|(_, r)| !b.contains(*r) && once.insert(r.as_slice())).map(|(i, _)| was_at + i as u32));
+        once.clear();
+        plus.extend(now.iter().enumerate().filter(|(_, r)| !a.contains(*r) && once.insert(r.as_slice())).map(|(i, _)| appended + i as u32));
+        appended += now.len() as u32;
         let d = docs.get_or_insert_with(|| (**kept_docs).clone());
         if now.is_empty() {
             d.remove(&o);
@@ -12775,4 +12644,19 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     }
     let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
     Ok(OwnerPatch { changed, plus, minus, docs, digest, read })
+}
+
+/// A measurement made once per mix (Q88): the chunk that made it (its place in the filing order), the rows it was
+/// made over, and the measurement.
+#[derive(Clone)]
+struct Once<T>(usize, usize, T);
+
+/// Keeps `once` for `key` where no earlier chunk's is kept: the earliest chunk's stands, whichever finished first.
+fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, once: Once<T>) {
+    match map.get(&key) {
+        Some(o) if o.0 <= once.0 => {}
+        _ => {
+            map.insert(key, once);
+        }
+    }
 }

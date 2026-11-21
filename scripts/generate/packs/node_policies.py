@@ -658,9 +658,18 @@ def prefer_promises_docs():
 
 def no_path_concat_doc():
     slash_text = {"any": [{"kind": "string_fragment", "regex": "^/"}, {"kind": "escape_sequence", "regex": "^\\\\/$"}]}
+    from node_es_syntax.globals import WRITE_SLOT
     utils = fn_utils("^(?:node:)?path$", "^sep$")
+    # ReferenceTracker skips a global the file writes anywhere (isModifiedGlobal): after `__dirname = '.'` it is not
+    # Node's __dirname. One verdict per name at the program, as node_es_syntax/globals.py does.
+    wrapper_names = ("__dirname", "__filename")
+    for name in wrapper_names:
+        utils[f"modified:{name}"] = {"kind": "program", "has": {"stopBy": "end", "any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier_pattern"}],
+                                                                "regex": f"^{name}$", "resolves": {"global": [name]}, "matches": "write-slot"}}
+    utils["write-slot"] = WRITE_SLOT
     utils["path-source"] = {"any": [
-        {"kind": "identifier", "regex": "^(?:__dirname|__filename)$", "resolves": {"global": ["__dirname", "__filename"]}},
+        *({"kind": "identifier", "regex": f"^{name}$", "resolves": {"global": [name]}, "not": {"inside": {"stopBy": "end", "kind": "program", "matches": f"modified:{name}"}}}
+          for name in wrapper_names),
         {"kind": "member_expression", "all": [{"has": {"field": "object", "kind": "meta_property"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^(?:dirname|filename|url)$"}}]},
         {"kind": "subscript_expression", "all": [{"has": {"field": "object", "kind": "meta_property"}}, {"has": {"field": "index", **str_const("^(?:dirname|filename|url)$")}}]}]}
     utils["first-slash"] = {"any": [
@@ -954,11 +963,15 @@ def syntax_docs():
 
     ok_last = statement_of_call({"nthChild": LAST, "inside": {"kind": "statement_block", "inside": {**any_func, "field": "body"}}})
     ok_before_return = statement_of_call({"nthChild": SECOND_LAST, "inside": {"kind": "statement_block", "has": {"kind": "return_statement", "nthChild": LAST}}})
+    # The two statement positions exempt a plain call only: ESTree wraps an optional call `cb?.()` in a ChainExpression,
+    # which upstream's `parentNode.expression === node` check never accepts, so upstream reports it there. The JavaScript
+    # grammar marks the call with an optional_chain child, the TypeScript grammar with a bare `?.` token.
+    optional_call = {"any": [{"has": {"kind": "optional_chain"}}, {"has": {"regex": "^\\?\\.$"}}]}
     docs.append(policy("n-callback-return", "n/callback-return", DESCRIPTIONS["n-callback-return"], [
         {"id": "upstream", "ast": {"rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb|next)$"}},
             {"not": {"inside": {"stopBy": stop, "any": [{"kind": "return_statement"}, {"kind": "arrow_function"}]}}},
-            {"not": ok_last}, {"not": ok_before_return},
+            {"any": [optional_call, {"all": [{"not": ok_last}, {"not": ok_before_return}]}]},
             {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Expected return with your callback function."}]))
     return docs
 

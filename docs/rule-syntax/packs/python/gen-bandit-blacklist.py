@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate lib/python/security-blacklist.rr, Bandit 1.9.4's blacklists (B3xx calls, B4xx imports), from the
+"""Generate lib/python/security-blacklist.rerail, Bandit 1.9.4's blacklists (B3xx calls, B4xx imports), from the
 pack's rerail.policy/v1 rules (packs/python/rules/bandit-*.json at the repository root).
 
 Each call rule's JSON lists its qualified names under `resolves.import`; each import rule's JSON lists its modules as
@@ -19,7 +19,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 RR = HERE.parent.parent
 REPO = RR.parent.parent
 RULES = REPO / "packs" / "python" / "rules"
-OUT = RR / "lib" / "python" / "security-blacklist.rr"
+OUT = RR / "lib" / "python" / "security-blacklist.rerail"
 
 CALLS = ["B301", "B302", "B303", "B304", "B305", "B306", "B307", "B308", "B310", "B311", "B312", "B313", "B314",
          "B315", "B316", "B317", "B318", "B319", "B321", "B323"]

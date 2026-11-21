@@ -3,7 +3,7 @@
 Status: done by the implementer. The two items are the user's (2026-11-20: "complete this": `s.part_at` "is still a
 field the `"` arm sets and the string method reads. The lean parser passes the place as an argument instead", and
 "the dispatch states are bare numbers (`d = 3`). The lean parser uses a named `Label` enum"). How each is done is the
-implementer's choice. Follows 0519, 0521. Page 40, step 44.
+implementer's choice. Follows 0537, 0538. Page 40, step 44.
 
 ## The decision
 

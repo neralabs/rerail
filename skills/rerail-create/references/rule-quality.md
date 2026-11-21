@@ -11,6 +11,7 @@ A draft goes to the read-back only when it passes all of these.
 | Gate | Pass | Otherwise |
 |---|---|---|
 | Valid | `rules test` reports `valid: true` | Fix what the error names. It gives the field path. |
+| Title | `title` is the rule in the person's words, plain text, as [Writing the title](code-rules.md#writing-the-title) says | Rewrite it. Without one, `rules test` reports a `refusal` and `rules add` refuses the rule |
 | Cases | Every case `ok`, none `notChecked`; at least 2 caught and 2 passed, one of them a near miss | Fix the matcher, or the case's code if it does not parse |
 | Evidence | The code or command the person corrected is a caught case | The rule does not catch what was asked for: rework it |
 | Repo matches | You read every match in `repository.matches`, and each is a real violation | Narrow the matcher, and add the false positive as a passed case |
@@ -64,7 +65,7 @@ is fine, but the rule itself is harmful" is the usual finding.
    import that makes the name what the rule thinks it is.
 4. **Reword the message so it informs.** Replace a command with a statement plus a condition: "`@` hides errors. If this call can
    fail in normal operation, keep it." instead of "Remove the `@` operator."
-5. **Set it to Log.** Rerail keeps a record and the agent is not told. This is right when the repo's existing code chose
+5. **Set it to Log.** Rerail only records it, for the person to review, and the agent is not told. This is right when the repo's existing code chose
    otherwise, or when the matcher cannot be made safe.
 6. **Remove the rule.**
 

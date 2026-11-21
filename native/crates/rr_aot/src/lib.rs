@@ -1,4 +1,6 @@
-//! The `.rr` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
+//! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
 //! rule, as the lean parser's.
@@ -46,12 +48,15 @@ pub struct Tiers {
 /// build script wrote.
 #[cfg(feature = "generated")]
 pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
-    native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
-    // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`BIT_TEST`).
+    // Its compile's options are a run's (decision 0442): its caller's, else one of its own.
+    let _run = rerail_context::run_own().is_none().then(|| rerail_context::within(rerail_context::default_shared()));
+    let options = rerail_compiler::native_cpu_codegen::options();
+    options.keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Compiled for Rust's NEON as the source was (`rr_aot_gen`): its bit tests (`bit_test`).
     // The same meaning either way; the flag back as it was for the JIT's compiles after.
-    let bit_test = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
+    let bit_test = options.bit_test.swap(true, std::sync::atomic::Ordering::Relaxed);
     let c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules);
-    rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit_test, std::sync::atomic::Ordering::Relaxed);
+    options.bit_test.store(bit_test, std::sync::atomic::Ordering::Relaxed);
     let mut c = c?;
     let one = clif_rust::rust_source(&c.parser)?;
     let (widths, tag) = c.parser.tier2.widths_tag();
@@ -89,7 +94,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     Ok(c)
 }
 
-/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0516): the run's
+/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0535): the run's
 /// node numbers are its, literals in the source, so a format 16 run of the ahead-of-time build takes it.
 pub fn lang() -> &'static rerail_tape_format::f16::Lang {
     rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("rr's format 16 table")

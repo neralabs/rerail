@@ -24,7 +24,7 @@ use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
     BusyRetries, CandidateCatalogIdentity, CandidateClause, DocumentPayload, HashKey,
     LocalResultPublication, OverlayFilePublication, PublicationResult, StoreError, StoredFile,
-    TapePayload, compress,
+    TapePayload,
 };
 use napi::Result;
 use rayon::prelude::*;
@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, Weak};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -453,15 +453,7 @@ pub(super) fn grammar_id(language: GrammarDialect) -> i64 {
 /// that text parses to. The id keeps each its own row, never a primary's, while texts with the same
 /// omissions share one.
 pub(super) fn document_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
-    let fingerprint = if omissions.is_empty() {
-        0
-    } else {
-        let digest = HashKey::sha256(omissions)
-            .sha256_bytes()
-            .expect("a SHA-256 key");
-        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
-    };
-    ((fingerprint as i64) << 9) | (1 << 8) | grammar_id(dialect)
+    tape::derived_grammar_id(dialect, omissions)
 }
 
 /// The dialect of a stored tape's grammar id, a primary's (`grammar_id`) or a derived
@@ -585,7 +577,8 @@ type CatalogMemo = (
     Vec<Weak<CompiledCodeRule>>,
     CandidateCatalogIdentity,
 );
-static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
+#[derive(Default)]
+struct Catalogs(parking_lot::Mutex<Vec<CatalogMemo>>);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
 pub fn candidate_catalog(
@@ -601,11 +594,13 @@ pub fn candidate_catalog(
                 .all(|(known, code_rule)| std::ptr::eq(known.as_ptr(), Arc::as_ptr(code_rule)))
             && known.iter().all(|known| known.strong_count() > 0)
     };
-    if let Some((_, _, catalog)) = CATALOGS.lock().iter().find(|memo| same(memo)) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    if let Some((_, _, catalog)) = held_.0.lock().iter().find(|memo| same(memo)) {
         return Ok(*catalog);
     }
     let catalog = hash_candidate_catalog(engine, code_rules)?;
-    let mut catalogs = CATALOGS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<Catalogs>();
+    let mut catalogs = held_.0.lock();
     catalogs.retain(|(_, known, _)| known.iter().all(|known| known.strong_count() > 0));
     if catalogs.len() >= 16 {
         catalogs.remove(0);
@@ -685,9 +680,9 @@ pub(super) fn persist_files(
             clause_index,
         )
     };
-    // Each file's payloads (tape bytes, encoded and compressed local results, blob alias) are
+    // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = (|| {
+    let prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
         paths
             .par_iter()
             .map(|path| {
@@ -751,14 +746,7 @@ pub(super) fn persist_files(
                             file.failures.get(id).copied(),
                             file.syntax.as_deref(),
                         )?;
-                        let frame =
-                            compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
-                        Ok(LocalResultPublication {
-                            candidate: candidate(id),
-                            context,
-                            raw_length: bytes.len(),
-                            frame,
-                        })
+                        Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 if !file.transient_failure {
@@ -778,7 +766,7 @@ pub(super) fn persist_files(
                 ))
             })
             .collect::<Result<Vec<_>>>()
-    })()?;
+    })?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()
@@ -799,6 +787,7 @@ pub(super) fn persist_files(
                     tape: &bytes.tape,
                     source_map: &bytes.source_map,
                     host_errors: &bytes.host_errors,
+                    at: document.at,
                 })
                 .collect::<Vec<_>>()
         })
@@ -839,7 +828,7 @@ pub(super) fn persist_files(
     ) {
         Ok(result) => result,
         Err(StoreError::Busy) => return Ok(Persisted::Busy { retries: busy }),
-        Err(error) => return Err(invalid(error.to_string())),
+        Err(error) => return Err(super::api::store_unavailable(error)),
     };
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
@@ -856,18 +845,20 @@ pub(super) fn persist_files(
         |written: crate::content_store::StoreResult<()>, during: &'static str| match written {
             Ok(()) => Ok(None),
             Err(StoreError::Busy) => Ok(Some(during)),
-            Err(error) => Err(invalid(error.to_string())),
+            Err(error) => Err(super::api::store_unavailable(error)),
         };
     let clean_paths = prepared
         .iter()
         .filter(|(_, _, _, _, aliases, _)| !aliases.is_empty())
-        .map(|(file, _, _, _, _, _)| file.input.path.as_str())
+        .map(|(file, _, _, grammar, _, _)| (file.input.path.as_str(), *grammar))
         .collect::<Vec<_>>();
     let mut busy_during = busy_store(
         storage.store.promote_overlay_files_to_snapshot(
             storage.workspace_id,
             storage.snapshot_id,
             &clean_paths,
+            grammar_version(),
+            i64::from(tape::formats::stored_version()),
         ),
         "while sharing results with the snapshot",
     )?;

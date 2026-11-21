@@ -20,6 +20,7 @@
 //!   - **The search.** The value under the values chosen so far; when it turns on an unchosen
 //!     one, each way of it in turn. Then the equations of the chosen carried values, likewise.
 //!     A budget of tries per byte: past it, the byte may have a bit (sound, less sharp).
+//!
 //! The carried values an equation may choose are those the value reads (its cone, closed under
 //! the equations' operands): an equation reaching outside them tells only what its operands do.
 //!
@@ -27,10 +28,7 @@
 //! stream's or before it (`within` is which), one after it may be past the end.
 
 use crate::block::{BlockOp, ClassTable};
-/// The prover's maps and sets: hashed with a fixed seed (`foldhash`'s), so a search that iterates them (which
-/// value to choose next, the order of a window's clauses) goes the same way each run, and fast.
-type HashMap<K, V> = std::collections::HashMap<K, V, foldhash::fast::FixedState>;
-type HashSet<K> = std::collections::HashSet<K, foldhash::fast::FixedState>;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
@@ -283,6 +281,14 @@ impl<'a> Proof<'a> {
     }
 }
 
+/// The carried values `v` reads (`cone`), each once, in order.
+pub fn carried_in(ops: &[BlockOp], v: u16) -> Vec<u16> {
+    let mut out: Vec<u16> = cone(ops, v).0.into_iter().map(|(at, _)| at).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 /// The carried values `v` reads, closed under their equations' operands, and the readers of
 /// each lag's byte.
 fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<Reader>>) {
@@ -414,14 +420,14 @@ pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
 }
 
 /// Whether a value is zero at every byte of every stream, proved by a SAT solver over a window
-/// of bytes (`Unrolled`), with no lemmas kept (`Induction` keeps them).
+/// of bytes (`Unrolled`), as `Induction::never`.
 pub fn never_unrolled(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, horizon: u32, conflicts: u32) -> bool {
     Induction::new(rounds, horizon, conflicts).never(ops, tables, v, d)
 }
 
 /// A lemma: values that never hold together at a position, each an operation at a lag from it
 /// (read as a `prev` reads it) and its value; `STREAM` for "the byte is in the stream".
-type Lemma = Vec<(u16, u32, bool)>;
+pub type Lemma = Vec<(u16, u32, bool)>;
 
 /// A lemma's value "the byte at this lag is in the stream" (`Lemma`).
 const STREAM: u16 = u16::MAX;
@@ -441,7 +447,8 @@ const STREAM: u16 = u16::MAX;
 /// edge (the carried values and bytes past the horizon) is a set of values to prove never hold
 /// together at any position, by the same proof one level down. Proved, it is made smaller (each
 /// value dropped while the rest still never hold), kept, and holds at every lag of every window
-/// after; the value is tried again. Not proved, or past the levels or rounds: not proved (sound,
+/// after, to the question's end (a question's answer depends on it alone, so a later one starts
+/// with none: decision 0414); the value is tried again. Not proved, or past the levels or rounds: not proved (sound,
 /// a lemma is a proof of its own).
 pub struct Induction {
     nexts: HashMap<u16, u16>,
@@ -450,9 +457,316 @@ pub struct Induction {
     lemmas: Vec<Lemma>,
     /// The solves left to the question being asked (`SOLVES`).
     solves: u32,
+    /// The streams the bounded solves found, which refute a question before its proof.
+    witnesses: Witnesses,
+    /// The fixed points, as the program has them (`Witnesses` runs them).
+    rounds: Vec<Vec<(u16, u16)>>,
+    /// The windows made for the question being asked, by value, delay and the operations the
+    /// question added up to the value (`question`: the first of them), and whether the root's
+    /// hypothesis is made at every lag (`whole_hypothesis`).
+    windows: HashMap<(u16, u8, bool, Vec<BlockOp>), Window>,
+    question: usize,
+    /// The solver, reset for each solve (its memory kept).
+    solver: Solver,
+    /// The lemmas a caller proved and gave (`add_lemma`, `never_inductive`, decision 0412), kept
+    /// across its questions, unlike a question's own (`lemmas`). A prover's answers depend on
+    /// them, so a prover given any is not asked through the keyed answers (`Proofs`, decision
+    /// 0414), which are keyed by a question's content alone: `gap_ends`' prover is its own.
+    given: Vec<Lemma>,
     /// The root's hypothesis is made at every lag of the window (`never_inductive`): a value
     /// the window reads at the position only is then assumed at the lags before it too.
     whole_hypothesis: bool,
+}
+
+/// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
+/// bumped with any change that can make one answer differently.
+pub const PROOFS_VERSION: u32 = 2;
+
+/// An answer the provers made: whether a value is zero everywhere, or the bytes it can be at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Never(bool),
+    Bytes(ByteSet),
+}
+
+/// A question's key as it is kept: the first 16 bytes of the SHA-256 of its text (`question`). The
+/// text is the question's whole cone, about 4.7 KB of Kotlin's 2,974 (14 MB); its digest names it
+/// as well, in 16 bytes. Two questions share a digest with odds of about 2^-128 a pair: a wrong
+/// answer that way is past any run's reach, as for content stores' keys.
+pub type Key = [u8; 16];
+
+/// `text`'s [`Key`].
+pub fn key_of(text: &[u8]) -> Key {
+    use sha2::Digest as _;
+    let d = sha2::Sha256::digest(text);
+    let mut k = [0u8; 16];
+    k.copy_from_slice(&d[..16]);
+    k
+}
+
+/// Answers by question's key (`question`, as [`Key`]).
+pub type Known = HashMap<Key, Answer>;
+
+/// The provers' answers by question (decision 0414): `known`, given to a compile, answers a
+/// question without its proof; `made`, each question the compile answered otherwise, for the
+/// caller to keep (as the engine keeps images, 0264). A question is its key (`question`): the
+/// answer depends on nothing else.
+#[derive(Clone, Debug, Default)]
+pub struct Proofs {
+    pub known: Known,
+    pub made: Vec<(Key, Answer)>,
+}
+
+impl Proofs {
+    /// The answer to the question `text` (`question`): a known one, else `f`'s, kept in `made`.
+    pub fn ask(&mut self, text: Vec<u8>, f: impl FnOnce() -> Answer) -> Answer {
+        let key = key_of(&text);
+        if let Some(&a) = self.known.get(&key) {
+            return a;
+        }
+        let a = f();
+        self.made.push((key, a));
+        a
+    }
+
+    /// `ask` for a question answered yes or no.
+    pub fn never(&mut self, key: Vec<u8>, f: impl FnOnce() -> bool) -> bool {
+        matches!(self.ask(key, || Answer::Never(f())), Answer::Never(true))
+    }
+
+    /// `ask` for a question answered by bytes.
+    pub fn bytes(&mut self, key: Vec<u8>, f: impl FnOnce() -> ByteSet) -> ByteSet {
+        match self.ask(key, || Answer::Bytes(f())) {
+            Answer::Bytes(b) => b,
+            Answer::Never(_) => [!0; 4],
+        }
+    }
+}
+
+/// The bytes [`encode`] starts with: the format (keys as digests, [`Key`]) and the provers' version.
+fn header() -> Vec<u8> {
+    let mut out = b"RRANSWER".to_vec();
+    out.extend(PROOFS_VERSION.to_le_bytes());
+    out
+}
+
+/// Answers as bytes, for a store (decision 0414): `RRANSWER`, the provers' version (u32), then each
+/// answer: its key (16 bytes), a tag (0 no, 1 yes, 2 bytes) and, for bytes, the four words. Sorted
+/// by key, so the same answers are the same bytes. About 17 bytes an answer: Kotlin's 2,974 in 52 KB.
+pub fn encode(answers: &[(Key, Answer)]) -> Vec<u8> {
+    let mut sorted: Vec<&(Key, Answer)> = answers.iter().collect();
+    sorted.sort_by_key(|a| a.0);
+    sorted.dedup_by(|a, b| a.0 == b.0);
+    let mut out = header();
+    for (key, answer) in sorted {
+        out.extend(key);
+        match answer {
+            Answer::Never(b) => out.push(u8::from(*b)),
+            Answer::Bytes(set) => {
+                out.push(2);
+                set.iter().for_each(|w| out.extend(w.to_le_bytes()));
+            }
+        }
+    }
+    out
+}
+
+/// `encode`'s answers again: none when the bytes are not of this format and version (their keys would
+/// not be asked), and those before the first malformed one.
+pub fn decode(bytes: &[u8]) -> Known {
+    let mut known = Known::default();
+    let head = header();
+    let Some(mut rest) = bytes.strip_prefix(&head[..]) else { return known };
+    let mut take = |n: usize| -> Option<&[u8]> {
+        let (a, b) = (rest.get(..n)?, rest.get(n..)?);
+        rest = b;
+        Some(a)
+    };
+    let mut one = || -> Option<(Key, Answer)> {
+        let key: Key = take(16)?.try_into().ok()?;
+        let answer = match take(1)?[0] {
+            0 => Answer::Never(false),
+            1 => Answer::Never(true),
+            2 => {
+                let mut set = [0u64; 4];
+                for w in &mut set {
+                    *w = u64::from_le_bytes(take(8)?.try_into().ok()?);
+                }
+                Answer::Bytes(set)
+            }
+            _ => return None,
+        };
+        Some((key, answer))
+    };
+    while let Some((key, answer)) = one() {
+        known.insert(key, answer);
+    }
+    known
+}
+
+/// A question's key (decision 0414): what the prover reads of it and nothing else. The value's
+/// cone (the operations it reads, through the fixed points' nexts), numbered in the order a walk
+/// from the value meets them, each class by its table's bytes; the delay; and `asker`, the prover
+/// and its settings. The same question in another grammar, or at other numbers, has this key.
+pub fn question(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str) -> Vec<u8> {
+    question_given(ops, tables, rounds, v, d, asker, &[])
+}
+
+/// `question`, asked of a prover given `given` (`Induction::given`): the lemmas whose values all lie in the cone, as
+/// the cone numbers them, are in the key too, as the answer may use them (a walk's kinds apart, decision 0484, which
+/// the equations do not show). A lemma with a value outside the cone is never applied (the window is the cone's).
+pub fn question_given(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8, asker: &str, given: &[Lemma]) -> Vec<u8> {
+    use std::fmt::Write;
+    let nexts: HashMap<u16, u16> = rounds.iter().flatten().copied().collect();
+    let mut number: HashMap<u16, u16> = HashMap::default();
+    let mut order: Vec<u16> = Vec::new();
+    let mut work = vec![v];
+    while let Some(at) = work.pop() {
+        if number.contains_key(&at) {
+            continue;
+        }
+        number.insert(at, order.len() as u16);
+        order.push(at);
+        let op = ops[usize::from(at)];
+        if let (BlockOp::Carry(_), Some(&n)) = (op, nexts.get(&at)) {
+            work.push(n);
+        }
+        work.extend(op.operands().into_iter().rev());
+    }
+    let mut out = format!("v{PROOFS_VERSION} {asker} d{d}");
+    let table = |t: u16| tables.get(usize::from(t)).map(|t| (t.lo, t.hi));
+    for &at in &order {
+        let op = ops[usize::from(at)].renumbered(|x| number[&x]);
+        let _ = match op {
+            BlockOp::Class { table: t, bits } => write!(out, ";class {bits} {:?}", table(t)),
+            BlockOp::Pair { before, table: t, bits } => write!(out, ";pair {bits} {:?} {:?}", table(before), table(t)),
+            BlockOp::Carry(_) => write!(out, ";{op:?} {:?}", nexts.get(&at).map(|n| number[n])),
+            _ => write!(out, ";{op:?}"),
+        };
+    }
+    let mut lemmas: Vec<Vec<(u16, u32, bool)>> = given
+        .iter()
+        .filter(|l| l.iter().all(|(at, _, _)| number.contains_key(at)))
+        .map(|l| {
+            let mut l: Vec<(u16, u32, bool)> = l.iter().map(|&(at, lag, b)| (number[&at], lag, b)).collect();
+            l.sort_unstable();
+            l
+        })
+        .collect();
+    lemmas.sort_unstable();
+    lemmas.dedup();
+    for l in &lemmas {
+        let _ = write!(out, ";lemma {l:?}");
+    }
+    out.into_bytes()
+}
+
+/// The most witnesses kept (`Witnesses`): each is evaluated for every question asked.
+const WITNESSES: usize = 256;
+
+/// Real streams, each one a bounded solve found (a way where the stream begins within the
+/// window, so every carried value has its equation: `Induction::solve`), with every operation's
+/// words on them as the interpreter makes them (`BlockProgram::rounds_values`, the walks' groups
+/// as rounds, as the proofs read them). A value with a bit inside one of them is not zero on
+/// every stream: the question is refuted by evaluating it, with no proof. Most questions a
+/// grammar's compile asks fail (a row's start fixes no mode, two rows can start at a byte), and a
+/// failing proof is the dear one: the SAT solves until a way, at every level. The values of
+/// operations the asker appends after the witnesses' were made (an `and` of two values, its
+/// question) are made from theirs, word by word.
+#[derive(Default)]
+struct Witnesses {
+    files: Vec<Vec<u8>>,
+    /// The operations `values` are of, and their words over the files end to end.
+    ops: Vec<BlockOp>,
+    values: Vec<Vec<u64>>,
+    /// Each file's blocks in `values`, and whether a block is its file's first.
+    spans: Vec<std::ops::Range<usize>>,
+    first: Vec<bool>,
+    /// A file added since the values were made.
+    stale: bool,
+}
+
+impl Witnesses {
+    fn add(&mut self, file: Vec<u8>) {
+        if self.files.len() < WITNESSES && !self.files.contains(&file) {
+            self.files.push(file);
+            self.stale = true;
+        }
+    }
+
+    /// Whether `v` (at delay `d`) has a bit inside one of the files: at a position `p` that is
+    /// byte `p - d`'s, `d <= p < len + d`.
+    fn refutes(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8) -> bool {
+        if self.files.is_empty() || !self.sync(ops, tables, rounds) {
+            return false;
+        }
+        let words = &self.values[usize::from(v)];
+        self.files.iter().zip(&self.spans).any(|(f, span)| {
+            let (lo, hi) = (usize::from(d), f.len() + usize::from(d));
+            (lo..hi).step_by(64).any(|p| {
+                let (w, b) = (span.start + p / 64, p % 64);
+                // The bits from `p` to the word's end or `hi`.
+                let n = (64 - b).min(hi - p);
+                let m = if n == 64 { !0 } else { ((1u64 << n) - 1) << b };
+                words.get(w).is_some_and(|x| x & m != 0)
+            })
+        })
+    }
+
+    /// The values made for `ops`: the appended operations' from the others', else all again.
+    /// False where they can not be made (no stream to make them over).
+    fn sync(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>]) -> bool {
+        let n = self.ops.len();
+        if !self.stale && ops.len() >= n && ops[..n] == self.ops[..] {
+            for (i, op) in ops.iter().enumerate().skip(n) {
+                let Some(words) = self.combine(*op) else {
+                    return self.remake(ops, tables, rounds);
+                };
+                debug_assert_eq!(self.values.len(), i);
+                self.values.push(words);
+                self.ops.push(*op);
+            }
+            return true;
+        }
+        self.remake(ops, tables, rounds)
+    }
+
+    /// An operation of values made already, word by word: `None` for one that reads the bytes
+    /// or carries (made by the interpreter, `remake`).
+    fn combine(&self, op: BlockOp) -> Option<Vec<u64>> {
+        let at = |x: u16| &self.values[usize::from(x)];
+        let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| at(a).iter().zip(at(b)).map(|(&x, &y)| f(x, y)).collect();
+        Some(match op {
+            BlockOp::Const(c) => vec![c; self.first.len()],
+            BlockOp::Not(a) => at(a).iter().map(|&x| !x).collect(),
+            BlockOp::And(a, b) => two(a, b, |x, y| x & y),
+            BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
+            BlockOp::Xor(a, b) => two(a, b, |x, y| x ^ y),
+            BlockOp::AndNot(a, b) => two(a, b, |x, y| x & !y),
+            BlockOp::Prev(a, k) if (1..64).contains(&k) => {
+                let x = at(a);
+                (0..x.len()).map(|i| crate::block::carry::prev(x[i], if self.first[i] { 0 } else { x[i - 1] }, k)).collect()
+            }
+            _ => return None,
+        })
+    }
+
+    fn remake(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>]) -> bool {
+        let program = crate::block::BlockProgram { tables: tables.to_vec(), ops: ops.to_vec(), rounds: rounds.to_vec(), delay: 63, ..Default::default() };
+        if crate::block::groups(ops, rounds).is_err() {
+            return false;
+        }
+        let files: Vec<&[u8]> = self.files.iter().map(|f| f.as_slice()).collect();
+        let (values, spans) = program.rounds_values(&files);
+        self.first = vec![false; values.first().map_or(0, |v| v.len())];
+        for s in &spans {
+            if let Some(f) = self.first.get_mut(s.start) {
+                *f = true;
+            }
+        }
+        (self.values, self.spans, self.ops, self.stale) = (values, spans, ops.to_vec(), false);
+        true
+    }
 }
 
 /// The solves a question may take, lemmas included: past them, not proved.
@@ -472,12 +786,28 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, whole_hypothesis: false }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false }
+    }
+
+    /// This prover and its settings, asking `what`: a part of each question's key (`question`).
+    pub fn asker(&self, what: &str) -> String {
+        format!("induction {what} h{} c{} s{SOLVES} l{LEVELS} r{ROUNDS}", self.horizon, self.conflicts)
+    }
+
+    /// Whether `v` (at delay `d`) has a bit in a stream a solve found before (`Witnesses`): then
+    /// it is not zero everywhere, and no proof is needed. A question a caller would send to
+    /// another prover first (`never`) can ask this before it.
+    pub fn refutes(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        self.witnesses.refutes(ops, tables, &self.rounds, v, d)
     }
 
     /// Whether `v` is zero at every byte of every stream, at delay `d`.
     pub fn never(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        if self.refutes(ops, tables, v, d) {
+            return false;
+        }
         let mut ops = ops.to_vec();
+        self.ask(&ops);
         self.solves = SOLVES;
         self.prove(&mut ops, tables, v, d, LEVELS, None, &[0; 4])
     }
@@ -489,6 +819,7 @@ impl Induction {
     /// that cannot begin inside another) is proved so where `never` finds no lemma.
     pub fn never_inductive(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
         let mut ops = ops.to_vec();
+        self.ask(&ops);
         self.solves = SOLVES;
         let hypothesis: Lemma = vec![(v, 0, true)];
         self.whole_hypothesis = true;
@@ -497,7 +828,7 @@ impl Induction {
         // Proved, it is a lemma of the proofs after (their operations are these and more): `v`
         // holds at no position.
         if proved {
-            self.lemmas.push(hypothesis);
+            self.given.push(hypothesis);
         }
         proved
     }
@@ -513,7 +844,13 @@ impl Induction {
     /// Over carried values, it constrains a window's edge, where they are free. The caller
     /// proves it first (`never_inductive` of their conjunction).
     pub fn add_lemma(&mut self, lemma: Vec<(u16, u32, bool)>) {
-        self.lemmas.push(lemma);
+        self.given.push(lemma);
+    }
+
+    /// The lemmas given so far (`add_lemma`, `never_inductive`): what a keyed answer may depend on beside its
+    /// question (`question_given`).
+    pub fn given(&self) -> &[Lemma] {
+        &self.given
     }
 
     /// `hypothesis`: `v` is this lemma's values all holding, assumed not to hold at every lag
@@ -525,6 +862,7 @@ impl Induction {
     /// proved: every byte (sound).
     pub fn first_bytes(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
         let mut ops = ops.to_vec();
+        self.ask(&ops);
         let mut found = [0u64; 4];
         for _ in 0..256 {
             match self.solve(&ops, tables, v, d, None, true, &found) {
@@ -596,70 +934,91 @@ impl Induction {
         false
     }
 
+    /// A new question, of `ops`: the windows of the last are dropped (its operations may not
+    /// be these).
+    fn ask(&mut self, ops: &[BlockOp]) {
+        // A question's lemmas are its own: its answer depends on it alone (decision 0414).
+        self.lemmas.clear();
+        self.windows.clear();
+        self.question = ops.len();
+    }
+
     /// `bounded`: the stream begins within the window (before it past the horizon).
     #[allow(clippy::too_many_arguments)]
-    fn solve(&self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet) -> Outcome {
+    fn solve(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet) -> Outcome {
         let nexts = &self.nexts;
-        let (_, plain) = cone(ops, v);
-        let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
-        // The root at its lag, and the hypothesis' values at every lag of the window where they are made there
-        // (`whole_hypothesis`, below): their readers too, so each byte `op` reads has its groups.
+        // The window as the operations make it, before the solve's own clauses (the bounded
+        // start, the bytes left out, the lemmas): the same for every solve of a question's value
+        // (`Window`).
+        let end = ops.len().min(usize::from(v) + 1);
+        // The root's hypothesis at every lag (`whole_hypothesis`), where it is the root's own.
         let whole = hypothesis.filter(|h| self.whole_hypothesis && h.iter().any(|&(at, _, _)| at == v));
-        let mut roots = vec![(v, 0u32)];
-        if let Some(h) = whole {
-            for lag in 1..=reach {
-                roots.extend(h.iter().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
-            }
-        }
-        let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
-        let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Vec::new(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
-        // A literal that is true.
-        u.clauses.push(vec![1]);
-        // Before the stream: from some lag past the position's on.
-        for lag in u.d + 1..=far {
-            let b = u.fresh();
-            u.before.insert(lag, b);
-            if let Some(&p) = u.before.get(&(lag - 1)) {
-                u.clauses.push(vec![-p, b]);
-            }
-        }
-        // Past its end: from some lag short of the position's down (the stream ends once).
-        for lag in (0..u.d).rev() {
-            let x = u.fresh();
-            u.past.insert(lag, x);
-            if let Some(&p) = u.past.get(&(lag + 1)) {
-                u.clauses.push(vec![-p, x]);
-            }
-        }
-        let mut lags: Vec<u32> = readers.keys().copied().collect();
-        lags.sort_unstable();
-        for lag in lags {
-            let gs = groups(tables, &readers[&lag]);
-            let vs: Vec<Lit> = gs.iter().map(|_| u.fresh()).collect();
-            let b = u.before.get(&lag).copied();
-            // Exactly one group, or none before the stream.
-            u.clauses.push(vs.iter().copied().chain(b).collect());
-            for (i, &x) in vs.iter().enumerate() {
-                if let Some(b) = b {
-                    u.clauses.push(vec![-b, -x]);
+        let key = (v, d, whole.is_some(), ops[self.question.min(end)..end].to_vec());
+        if !self.windows.contains_key(&key) {
+            let window = {
+                let (_, plain) = cone(ops, v);
+                let reach = plain.keys().copied().max().unwrap_or(0).max(u32::from(d)) + self.horizon;
+                // The root at its lag, and the hypothesis' values at every lag of the window where they are made there
+                // (`whole`): their readers too, so each byte `op` reads has its groups; one walk from every root.
+                let mut roots = vec![(v, 0u32)];
+                for lag in 1..=reach {
+                    roots.extend(whole.into_iter().flatten().filter(|&&(at, _, _)| at != STREAM).map(|&(at, l, _)| (at, lag + l)));
                 }
-                for &y in &vs[i + 1..] {
-                    u.clauses.push(vec![-x, -y]);
+                let (readers, far) = unrolled_readers(ops, nexts, &roots, reach);
+                let mut u = Unrolled { ops, tables, nexts, d: u32::from(d), reach, clauses: Clauses::default(), vars: 1, memo: HashMap::default(), before: HashMap::default(), past: HashMap::default(), groups: HashMap::default(), readers: HashMap::default() };
+                // A literal that is true.
+                u.clauses.push(&[1]);
+                // Before the stream: from some lag past the position's on.
+                for lag in u.d + 1..=far {
+                    let b = u.fresh();
+                    u.before.insert(lag, b);
+                    if let Some(&p) = u.before.get(&(lag - 1)) {
+                        u.clauses.push(&[-p, b]);
+                    }
                 }
-            }
-            // Past the end the bytes are 0x00 (`block::padded`): the group of 0x00 is the one
-            // `groups` gives first.
-            if let Some(&p) = u.past.get(&lag) {
-                u.clauses.push(vec![-p, vs[0]]);
-            }
-            u.groups.insert(lag, gs.into_iter().zip(vs).collect());
+                // Past its end: from some lag short of the position's down (the stream ends once).
+                for lag in (0..u.d).rev() {
+                    let x = u.fresh();
+                    u.past.insert(lag, x);
+                    if let Some(&p) = u.past.get(&(lag + 1)) {
+                        u.clauses.push(&[-p, x]);
+                    }
+                }
+                let mut lags: Vec<u32> = readers.keys().copied().collect();
+                lags.sort_unstable();
+                for lag in lags {
+                    let gs = groups(tables, &readers[&lag]);
+                    let vs: Vec<Lit> = gs.iter().map(|_| u.fresh()).collect();
+                    let b = u.before.get(&lag).copied();
+                    // Exactly one group, or none before the stream.
+                    u.clauses.push(&vs.iter().copied().chain(b).collect::<Vec<_>>());
+                    for (i, &x) in vs.iter().enumerate() {
+                        if let Some(b) = b {
+                            u.clauses.push(&[-b, -x]);
+                        }
+                        for &y in &vs[i + 1..] {
+                            u.clauses.push(&[-x, -y]);
+                        }
+                    }
+                    // Past the end the bytes are 0x00 (`block::padded`): the group of 0x00 is the one
+                    // `groups` gives first.
+                    if let Some(&p) = u.past.get(&lag) {
+                        u.clauses.push(&[-p, vs[0]]);
+                    }
+                    u.groups.insert(lag, gs.into_iter().zip(vs).collect());
+                }
+                let root = u.op(v, 0);
+                u.clauses.push(&[root]);
+                let at_position: Vec<Reader> = readers.get(&u32::from(d)).map(|r| r.iter().copied().collect()).unwrap_or_default();
+                u.detach(far, at_position)
+            };
+            self.windows.insert(key.clone(), window);
         }
-        let root = u.op(v, 0);
-        u.clauses.push(vec![root]);
-        if bounded {
-            if let Some(&b) = u.before.get(&(reach + 1)) {
-                u.clauses.push(vec![b]);
-            }
+        let window = self.windows[&key].clone();
+        let (far, reach, at_position) = (window.far, window.reach, window.at_position.clone());
+        let mut u = window.attach(ops, tables, nexts);
+        if bounded && let Some(&b) = u.before.get(&(reach + 1)) {
+            u.clauses.push(&[b]);
         }
         // The position's byte is none of `exclude`'s: each group of them left out (a group is
         // one way of its readers, so all its bytes are or none).
@@ -672,7 +1031,7 @@ impl Induction {
             }
             for &(b, l) in &position {
                 if has(exclude, b) {
-                    u.clauses.push(vec![-l]);
+                    u.clauses.push(&[-l]);
                 }
             }
         }
@@ -688,7 +1047,7 @@ impl Induction {
         // The lemmas, at each lag of the window whose values they read are in it.
         let mut held: Vec<(u16, u32)> = u.memo.keys().copied().collect();
         held.sort_unstable();
-        let lemmas = self.lemmas.iter().map(|l| (l, 0)).chain(hypothesis.map(|l| (l, 1)));
+        let lemmas = self.lemmas.iter().chain(&self.given).map(|l| (l, 0)).chain(hypothesis.map(|l| (l, 1)));
         for (lemma, from) in lemmas {
             let Some(&(a0, l0, _)) = lemma.iter().find(|&&(at, _, _)| at != STREAM) else { continue };
             for &(_, lag) in held.iter().filter(|&&(at, _)| at == a0) {
@@ -705,25 +1064,28 @@ impl Induction {
                     let x = if at == STREAM { u.inside(base + l) } else if l == 0 { u.memo[&(at, base)] } else { u.prev(at, base + l) };
                     c.push(if val { -x } else { x });
                 }
-                u.clauses.push(c);
+                u.clauses.push(&c);
             }
         }
-        let mut s = Solver::new(u.vars as usize);
-        for c in &u.clauses {
-            s.add(c);
-        }
+        let s = &mut self.solver;
+        s.reset(u.vars as usize);
+        s.add_all(&u.clauses);
         match s.solve(self.conflicts) {
-            Answer::Unsat => Outcome::Proved,
-            Answer::Unknown => Outcome::Unknown,
-            Answer::Sat => {
+            Sat::Unsat => Outcome::Proved,
+            Sat::Unknown => Outcome::Unknown,
+            Sat::Sat => {
                 let holds = |l: Lit| if l == 1 { true } else if l == -1 { false } else { s.holds(l.unsigned_abs() as usize) == (l > 0) };
                 let inside = |lag: u32| holds(u.inside(lag));
+                // A stream that begins within the window is a real one: kept (`Witnesses`).
+                if bounded && let Some(file) = u.stream(&holds) {
+                    self.witnesses.add(file);
+                }
                 let edge: Vec<(u16, u32)> = held.iter().copied().filter(|&(at, lag)| lag > reach && inside(lag) && (carried(ops, nexts, at) || matches!(ops[usize::from(at)], BlockOp::Eq(_) | BlockOp::Class { .. }))).collect();
                 // The position's byte's group: the bytes its readers can not tell from it.
                 let group = match position.iter().find(|&&(_, l)| holds(l)) {
                     None => [!0; 4],
                     Some(&(b, _)) => {
-                        let readers: Vec<Reader> = readers[&pos].iter().copied().collect();
+                        let readers = &at_position;
                         let sig = |x: u8| readers.iter().map(|&r| match r {
                             Reader::Eq(c) => x == c,
                             Reader::Class(t, bits) => tables[usize::from(t)].member(x, bits),
@@ -772,7 +1134,7 @@ fn cube(ops: &mut Vec<BlockOp>, lemma: &Lemma) -> u16 {
     acc
 }
 
-use crate::bitlex_sat::{Answer, Lit, Solver};
+use crate::bitlex_sat::{Answer as Sat, Clauses, Lit, Solver};
 
 /// Whether `at` is a carried value with an equation (`never_unrolled`).
 fn carried(ops: &[BlockOp], nexts: &HashMap<u16, u16>, at: u16) -> bool {
@@ -835,7 +1197,7 @@ struct Unrolled<'a> {
     nexts: &'a HashMap<u16, u16>,
     d: u32,
     reach: u32,
-    clauses: Vec<Vec<Lit>>,
+    clauses: Clauses,
     vars: i32,
     memo: HashMap<(u16, u32), Lit>,
     /// Each lag past the position's: "the byte is before the stream".
@@ -847,6 +1209,38 @@ struct Unrolled<'a> {
     readers: HashMap<(Reader, u32, bool), Lit>,
 }
 
+/// A window's clauses and literals, apart from the operations they were made of (`Unrolled`
+/// again, by `attach`): a question's solves differ only in the clauses they add to it.
+#[derive(Clone)]
+struct Window {
+    d: u32,
+    reach: u32,
+    far: u32,
+    /// The readers of the position's byte, in the order its group is told by.
+    at_position: Vec<Reader>,
+    clauses: Clauses,
+    vars: i32,
+    memo: HashMap<(u16, u32), Lit>,
+    before: HashMap<u32, Lit>,
+    past: HashMap<u32, Lit>,
+    groups: HashMap<u32, Vec<(u8, Lit)>>,
+    readers: HashMap<(Reader, u32, bool), Lit>,
+}
+
+impl Window {
+    fn attach<'a>(self, ops: &'a [BlockOp], tables: &'a [ClassTable], nexts: &'a HashMap<u16, u16>) -> Unrolled<'a> {
+        let Window { d, reach, far: _, at_position: _, clauses, vars, memo, before, past, groups, readers } = self;
+        Unrolled { ops, tables, nexts, d, reach, clauses, vars, memo, before, past, groups, readers }
+    }
+}
+
+impl<'a> Unrolled<'a> {
+    fn detach(self, far: u32, at_position: Vec<Reader>) -> Window {
+        let Unrolled { d, reach, clauses, vars, memo, before, past, groups, readers, .. } = self;
+        Window { d, reach, far, at_position, clauses, vars, memo, before, past, groups, readers }
+    }
+}
+
 impl Unrolled<'_> {
     fn fresh(&mut self) -> Lit {
         self.vars += 1;
@@ -855,7 +1249,9 @@ impl Unrolled<'_> {
 
     fn and(&mut self, a: Lit, b: Lit) -> Lit {
         let x = self.fresh();
-        self.clauses.extend([vec![-x, a], vec![-x, b], vec![x, -a, -b]]);
+        self.clauses.push(&[-x, a]);
+        self.clauses.push(&[-x, b]);
+        self.clauses.push(&[x, -a, -b]);
         x
     }
 
@@ -865,16 +1261,36 @@ impl Unrolled<'_> {
 
     fn xor(&mut self, a: Lit, b: Lit) -> Lit {
         let x = self.fresh();
-        self.clauses.extend([vec![-x, a, b], vec![-x, -a, -b], vec![x, -a, b], vec![x, a, -b]]);
+        for c in [[-x, a, b], [-x, -a, -b], [x, -a, b], [x, a, -b]] {
+            self.clauses.push(&c);
+        }
         x
     }
 
     /// `x` is `a` exactly: `x`'s equation.
     fn equal(&mut self, x: Lit, a: Lit) {
-        self.clauses.extend([vec![-x, a], vec![x, -a]]);
+        self.clauses.push(&[-x, a]);
+        self.clauses.push(&[x, -a]);
     }
 
     /// Whether the byte at `lag` is in the stream: neither before it nor past its end.
+    /// The stream of a solved window, as bytes, where it begins within the window: from the
+    /// first lag in it (`before` not holding) to its last (`past` not holding), each byte its
+    /// group's (a byte the readers can not tell from the solver's), a space where nothing reads it.
+    fn stream(&self, holds: &dyn Fn(Lit) -> bool) -> Option<Vec<u8>> {
+        let far = self.before.keys().copied().max()?;
+        // The first lag before the stream, from the position's on: the stream's first byte is the
+        // lag after it.
+        let begin = (self.d + 1..=far).find(|lag| holds(self.before[lag]))? - 1;
+        let end = (0..self.d).rev().find(|lag| holds(self.past[lag])).map_or(0, |lag| lag + 1);
+        Some(
+            (end..=begin)
+                .rev()
+                .map(|lag| self.groups.get(&lag).and_then(|g| g.iter().find(|&&(_, l)| holds(l)).map(|&(b, _)| b)).unwrap_or(b' '))
+                .collect(),
+        )
+    }
+
     fn inside(&self, lag: u32) -> Lit {
         self.before.get(&lag).or(self.past.get(&lag)).map_or(1, |&b| -b)
     }
@@ -890,17 +1306,18 @@ impl Unrolled<'_> {
         };
         let yes: Vec<Lit> = self.groups[&lag].iter().filter(|&&(b, _)| member(self.tables, b)).map(|&(_, l)| l).collect();
         let mut yes = yes;
-        if zero_before && member(self.tables, 0) {
-            if let Some(&b) = self.before.get(&lag) {
-                yes.push(b);
-            }
+        if zero_before
+            && member(self.tables, 0)
+            && let Some(&b) = self.before.get(&lag)
+        {
+            yes.push(b);
         }
         let x = self.fresh();
         let mut c = vec![-x];
         c.extend(&yes);
-        self.clauses.push(c);
+        self.clauses.push(&c);
         for &y in &yes {
-            self.clauses.push(vec![x, -y]);
+            self.clauses.push(&[x, -y]);
         }
         self.readers.insert((r, lag, zero_before), x);
         x
@@ -993,6 +1410,39 @@ impl Unrolled<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A question's key is its content: the same cone at other numbers is the same key, and any
+    /// change to it another (decision 0414). And answers keep through `encode`.
+    #[test]
+    fn questions_are_keyed_by_content() {
+        let tables = vec![ClassTable { lo: [1; 16], hi: [1; 16] }];
+        let a = [BlockOp::Eq(b'x'), BlockOp::Class { table: 0, bits: 1 }, BlockOp::And(0, 1)];
+        // The same, after an operation the value does not read.
+        let b = [BlockOp::Const(7), BlockOp::Class { table: 0, bits: 1 }, BlockOp::Eq(b'x'), BlockOp::And(2, 1)];
+        let c = [BlockOp::Eq(b'y'), BlockOp::Class { table: 0, bits: 1 }, BlockOp::And(0, 1)];
+        let key = |ops: &[BlockOp], v: u16, d: u8| question(ops, &tables, &[], v, d, "test");
+        assert_eq!(key(&a, 2, 0), key(&b, 3, 0));
+        assert_ne!(key(&a, 2, 0), key(&c, 2, 0));
+        assert_ne!(key(&a, 2, 0), key(&a, 2, 1));
+        let other = vec![ClassTable { lo: [2; 16], hi: [1; 16] }];
+        assert_ne!(key(&a, 2, 0), question(&a, &other, &[], 2, 0, "test"));
+        // Kept by digest: 17 bytes a yes or no, 49 a byte set, after the header.
+        let made = vec![(key_of(&key(&a, 2, 0)), Answer::Never(true)), (key_of(&key(&c, 2, 0)), Answer::Bytes([1, 2, 3, u64::MAX]))];
+        let bytes = encode(&made);
+        assert_eq!(bytes.len(), 12 + 17 + 49);
+        let known = decode(&bytes);
+        assert_eq!(known.len(), 2);
+        assert!(made.iter().all(|(k, a)| known.get(k) == Some(a)));
+        // Another format or version: no answers.
+        assert!(decode(b"RRPROOFS\0\0\0\0").is_empty());
+        let mut other_version = bytes.clone();
+        other_version[8] ^= 1;
+        assert!(decode(&other_version).is_empty());
+        // `ask` keys by the digest of the question it is given.
+        let mut p = Proofs { known, made: Vec::new() };
+        assert_eq!(p.ask(key(&a, 2, 0), || Answer::Never(false)), Answer::Never(true));
+        assert!(p.made.is_empty(), "a known answer proved again");
+    }
 
     fn class(set: &[u8]) -> (ClassTable, BlockOp) {
         let mut t = ClassTable { lo: [0; 16], hi: [0; 16] };

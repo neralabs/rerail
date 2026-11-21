@@ -155,7 +155,10 @@ fn simultaneous_compilations_admit_one_schema_inference() {
         .map(|_| {
             let start = Arc::clone(&start);
             let inferences = Arc::clone(&inferences);
+            // The test's thread, on its object (decision 0442).
+            let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
             std::thread::spawn(move || -> Result<SharedColumns> {
+                let _caller = caller.enter();
                 let query = "SELECT CAST(1 AS REAL) AS value /* concurrent-schema-inference */";
                 let schemas = Registry::new();
                 let key = Key::new(query, &schemas, schemas.keys(), std::iter::empty());

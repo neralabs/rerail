@@ -5,7 +5,7 @@
     fn production_encoders_cannot_bypass_the_launch_guard() {
         // The engine's Metal files, and every file of the Metal crate (its runtime is the old
         // `metal_backend.rs`, its launch layer `launch.rs`).
-        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
         let engine = std::fs::read_dir(root.join("src/code_rule_dsl/transducer/packed")).unwrap();
         let crate_files = std::fs::read_dir(root.join("crates/metal/src")).unwrap();
         for (in_crate, entry) in engine.map(|e| (false, e)).chain(crate_files.map(|e| (true, e))) {
@@ -15,7 +15,9 @@
             if !(in_crate || name.starts_with("metal"))
                 || !name.ends_with(".rs")
                 || name.ends_with("_tests.rs")
-                || (in_crate && name == "launch.rs")
+                // The checked layers themselves: Metal's (`launch.rs`) and the device layer's (`lane.rs`, which
+                // charges each launch and checks the submission there).
+                || (in_crate && (name == "launch.rs" || name == "lane.rs"))
             {
                 continue;
             }
@@ -35,8 +37,10 @@
                 );
             }
             if name != "metal_backend.rs" {
+                // A commit is the checked pass's (`rerail_accel::gpu::join::Pass::commit`, which checks the
+                // submission's budget), never a Metal command buffer's this file made.
                 assert!(
-                    !source.contains(".commit()"),
+                    !(source.contains(".commit()") && source.contains("new_command_buffer")),
                     "{name} bypasses checked submission"
                 );
             } else {

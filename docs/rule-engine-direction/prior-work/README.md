@@ -9,7 +9,7 @@ The two indexes in this folder are organised by decision topic. Each conclusion 
 | `ast-index-spike-design-index.md` | `DESIGN.md`, `README.md`, `LINTER_ARCHITECTURE.md`, `LINTER_CASE_STUDY.md`, `SQL_ONLY_RECOVERY_ANALYSIS.md`, `bench/AST_GREP_SQL_GAPS.md` | Current conclusions; a revision and contradiction ledger; the section map |
 | `ast-index-spike-history-index.md` | `DESIGN_HISTORY.md` plus the bench notes | Experiments with numbers; 57 measurement traps (T1–T57); 75 dead ends (D1–D75); a "before deciding X, read Y" checklist (Part 4) |
 
-The other prior source is `../lessons-ledger.md`. It holds lessons from nera-data-layer PR 2539 (the declarative YAML linter over SQLite facts) and the runtime comparison.
+The other prior source is `../lessons-ledger.md`. It holds lessons from the data-layer repository's PR 2539 (the declarative YAML linter over SQLite facts) and the runtime comparison.
 
 ## Protocol
 

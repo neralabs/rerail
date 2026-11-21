@@ -165,8 +165,8 @@ impl std::fmt::Debug for PackagePublication {
 /// Whether a configured Node range is a subset of a condition's range, by the two ranges' texts
 /// (`Manifest::node_range_is_subset_of`): every manifest with the same range, and every copy of
 /// one, asks the same of each gated rule. Cleared when it holds `NODE_SUBSETS_MAX` answers.
-static NODE_SUBSETS: LazyLock<Mutex<HashMap<(String, String), bool>>> =
-    LazyLock::new(Mutex::default);
+#[derive(Default)]
+struct NodeSubsets(Mutex<HashMap<(String, String), bool>>);
 const NODE_SUBSETS_MAX: usize = 1 << 16;
 
 /// Whether a configured Node range (`None`: eslint-plugin-n's default, as for a file without a
@@ -174,11 +174,13 @@ const NODE_SUBSETS_MAX: usize = 1 << 16;
 pub(crate) fn node_range_is_subset_of(configured: Option<&Range>, range: &Range) -> bool {
     let configured = configured.unwrap_or(&DEFAULT_NODE_RANGE);
     let key = (configured.text().to_owned(), range.text().to_owned());
-    if let Some(&subset) = NODE_SUBSETS.lock().get(&key) {
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<NodeSubsets>();
+    if let Some(&subset) = held_.0.lock().get(&key) {
         return subset;
     }
     let subset = configured.is_subset_of(range);
-    let mut subsets = NODE_SUBSETS.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<NodeSubsets>();
+    let mut subsets = held_.0.lock();
     if subsets.len() >= NODE_SUBSETS_MAX {
         subsets.clear();
     }
@@ -769,6 +771,16 @@ pub fn manifest_in<'m>(
 /// one: a regular file (never a symlink) of at most 1 MiB; any other is `unreadable`.
 fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
     let path = directory.join("package.json");
+    if crate::git_workspace::snapshot::contains(&path) {
+        return match crate::git_workspace::snapshot::read_bounded(&path, MAX_MANIFEST_BYTES as u64) {
+            Ok(bytes) => Some(Manifest::parse(folder, &bytes).with_ignore_files(
+                ignore_file_on_disk(directory, NPMIGNORE),
+                ignore_file_on_disk(directory, GITIGNORE),
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => Some(Manifest::unreadable(folder)),
+        };
+    }
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
@@ -793,6 +805,10 @@ fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
 /// replaced; `None` for any other, or where it cannot be read.
 fn ignore_file_on_disk(directory: &Path, name: &str) -> Option<String> {
     let path = directory.join(name);
+    if crate::git_workspace::snapshot::contains(&path) {
+        let bytes = crate::git_workspace::snapshot::read_bounded(&path, MAX_MANIFEST_BYTES as u64).ok()?;
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
     let metadata = std::fs::symlink_metadata(&path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
         return None;
@@ -819,7 +835,7 @@ impl Manifests {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         Self {
-            canonical_root: std::fs::canonicalize(&root).ok(),
+            canonical_root: crate::git_workspace::snapshot::canonicalize(&root).ok(),
             root,
             server_graph: false,
             directories: HashMap::new(),
@@ -859,7 +875,7 @@ impl Manifests {
             }
             unknown.push(ancestor);
             let contained = self.canonical_root.as_ref().is_some_and(|root| {
-                std::fs::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
+                crate::git_workspace::snapshot::canonicalize(ancestor).is_ok_and(|directory| directory.starts_with(root))
             });
             if let Some(manifest) = contained
                 .then(|| manifest_on_disk(ancestor, self.folder(ancestor)))
@@ -967,7 +983,10 @@ impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
         self
     }
     fn same(&self, other: &dyn crate::code_rule_dsl::language::ProjectManifest) -> bool {
-        other.as_any().downcast_ref::<Manifest>().is_some_and(|other| self == other)
+        other
+            .as_any()
+            .downcast_ref::<Manifest>()
+            .is_some_and(|other| self == other)
     }
     fn digest(&self) -> &[u8; 32] {
         Manifest::digest(self)
@@ -1007,7 +1026,8 @@ pub struct NoManifest;
 
 /// A request file's `package` (`language::set_manifest_reader`).
 pub fn read_wire(value: &Value, at: &str) -> Result<crate::code_rule_dsl::language::FileManifest> {
-    Manifest::from_wire(value, at).map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
+    Manifest::from_wire(value, at)
+        .map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
 }
 
 /// The manifest of a file the workspace holds, where it is ECMA's.

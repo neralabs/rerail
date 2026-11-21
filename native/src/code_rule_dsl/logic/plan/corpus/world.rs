@@ -1,5 +1,5 @@
 //! The file system a program reads and the documents it loads (t21 E1, E2): the generic half of typing against
-//! libraries. No rule here knows a language; a language's `env.rr` and `modules.rr` say what to read.
+//! libraries. No rule here knows a language; a language's `env.rerail` and `modules.rerail` say what to read.
 //!
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
@@ -21,6 +21,7 @@
 //! Only paths under the corpus root, or under a directory a setting names (`env(k, v)` with v a directory, relative
 //! to the root or absolute), are read. A path elsewhere, or missing, has no entries or lines.
 
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use super::front;
 use crate::code_rule_dsl::logic::rr::{FILE_SYSTEM, WORLD};
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,16 +33,34 @@ const BUDGET: usize = 4000;
 pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
 
+/// The relations the outputs read, with the rules that decide which keys are requested: a request's answer that is
+/// needed makes its request a root too, until no answer adds one (`analyses::needed`, by the version's rules and natives).
+pub(super) fn needed(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeSet<String> {
+    use crate::code_rule_dsl::logic::program_image::{About, RelId, analyses};
+    let about = About::of(v);
+    let mut roots: BTreeSet<String> = v.output_names().into_iter().collect();
+    loop {
+        let need = analyses::needed(v, &about, roots.iter().filter_map(|r| v.rel(r)));
+        let mut needed: BTreeSet<String> = (0..v.rel_end()).filter(|&i| need[i as usize]).map(|i| v.rel_name(RelId(i)).to_owned()).collect();
+        needed.extend(roots.iter().cloned());
+        let previous = roots.len();
+        roots.extend(WORLD.iter().filter(|(answer, req)| needed.contains(*answer) && !needed.contains(*req)).map(|(_, req)| (*req).to_owned()));
+        if roots.len() == previous {
+            return needed;
+        }
+    }
+}
+
 /// Whether the program reads the file system or loads documents.
-/// `prog` is the program's header (`Version::header`), `shape` its rules'.
-pub(super) fn wanted(prog: &front::Program, shape: &super::shape::Shape) -> bool {
+/// `prog` is the program's fields (a version's), `shape` its rules'.
+pub(super) fn wanted(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape) -> bool {
     std::iter::once(LOAD).chain(WORLD.iter().map(|(_, req)| *req)).any(|req| asks(prog, shape, req))
 }
 
 /// Whether `prog` makes request `req`: by a rule, or as facts (a constant key lowers to one: `dir_entry("sub", …)`
 /// asks with the fact `rr_dir_req("sub")`, `rr::lower`'s `world_demand`).
-fn asks(prog: &front::Program, shape: &super::shape::Shape, req: &str) -> bool {
-    shape.made.contains(req) || prog.facts.get(req).is_some_and(|rows| !rows.is_empty())
+fn asks(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, req: &str) -> bool {
+    shape.made.contains(req) || prog.has_fact_rows(req)
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -70,18 +89,22 @@ pub(super) struct Loaded {
 
 #[derive(Default)]
 pub(super) struct World {
+    git: Option<super::git::Git>,
+    inventory_filter: Option<crate::git_workspace::snapshot::InventoryFilter>,
+    observations: BTreeMap<(String, String), String>,
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
-    files: BTreeMap<String, Vec<String>>,
+    files: BTreeMap<String, (Vec<String>, String)>,
+    git_file_storage: BTreeMap<String, String>,
     digests: BTreeMap<String, String>,
-    /// The files a language's answer read whole (`bytes`).
-    read: BTreeSet<String>,
+    /// The files a language's answer read whole (`bytes`), each with its content digest.
+    read: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
     /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
-    /// the run's own tree is always loaded (phase 1, `sources.rr`).
+    /// the run's own tree is always loaded (phase 1, `sources.rerail`).
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
@@ -94,7 +117,7 @@ pub(super) struct World {
 
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
-    pub(super) fn new(root: &Path, prog: &front::Program) -> World {
+    pub(super) fn new(root: &Path, prog: &(impl ProgramFields + ?Sized)) -> World {
         let (roots, budget) = Self::roots(root, prog);
         // Watched before the first wave (`watch`); asked again here, each is one this run asked already.
         Self::watch_roots(root, &roots);
@@ -104,7 +127,7 @@ impl World {
     /// Watches the roots a request of `prog` may read (decision 0105), before the first wave: watching a root reads
     /// its part of the observer's store, which no wave may ask (decision 0104). A `World` made inside the waves then
     /// finds each asked already (Q150: a warm run faulted, "the observer's store not asked inside the waves").
-    pub(super) fn watch(root: &Path, prog: &front::Program) {
+    pub(super) fn watch(root: &Path, prog: &(impl ProgramFields + ?Sized)) {
         Self::watch_roots(root, &Self::roots(root, prog).0);
     }
 
@@ -118,21 +141,57 @@ impl World {
     }
 
     /// The roots (`new`) and the load budget `prog`'s settings give.
-    fn roots(root: &Path, prog: &front::Program) -> (Vec<PathBuf>, usize) {
-        let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+    fn roots(root: &Path, prog: &(impl ProgramFields + ?Sized)) -> (Vec<PathBuf>, usize) {
+        let canonical = |p: &Path| crate::git_workspace::snapshot::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
-        for row in prog.facts.get("env").into_iter().flatten() {
+        for row in prog.fact_rows("env") {
             if let [front::Value::Str(k), front::Value::Str(v)] = row.as_slice() {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
                 }
-                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| p.is_dir()) {
+                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| crate::git_workspace::snapshot::is_dir(p)) {
                     roots.push(dir);
                 }
             }
         }
         (roots, budget)
+    }
+
+    pub(super) fn git(&mut self) -> &super::git::Git {
+        self.git.get_or_insert_with(|| super::git::Git::new(&self.root))
+    }
+
+    pub(super) fn consulted_lookup(&mut self, operation: &str, domain: &str, value: &str, digest: String) {
+        let key = serde_json::to_string(&(domain, value)).expect("string tuple");
+        self.observations.insert((operation.to_owned(), key), digest);
+    }
+
+    pub(super) fn git_revision(&mut self, operation: &str, key: &str, expression: &str) -> (String, &'static str) {
+        let (id, status) = self.git().resolve(operation, key, expression);
+        self.consulted_lookup(operation, key, expression, format!("{status}:{id}"));
+        (id, status)
+    }
+
+    pub(super) fn git_object(&mut self, repo: &str, id: &str) -> Vec<super::git::Record> {
+        let records = self.git().records(repo, id);
+        let status = records.iter().find(|record| matches!(record.field, "storage" | "error"))
+            .map_or("unchecked", |record| record.first.as_str());
+        self.consulted_lookup(super::git::OBJECT, repo, id, status.to_owned());
+        records
+    }
+
+    pub(super) fn inventory_child(&mut self, directory: &str, name: &str, mode: i64, raw: bool) -> Result<Option<String>, String> {
+        let is_dir = mode == 16384;
+        if !is_dir && !(32768..36864).contains(&mode) {
+            return Ok(None);
+        }
+        if self.inventory_filter.is_none() {
+            self.inventory_filter = Some(crate::git_workspace::snapshot::inventory_filter(&self.root)?);
+        }
+        crate::code_rule_dsl::prof::count("git.path_filters", 1);
+        let filter = self.inventory_filter.as_ref().unwrap();
+        Ok(if raw { filter.invalid_child(directory, name, is_dir) } else { filter.child(directory, name, is_dir) })
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -170,29 +229,44 @@ impl World {
         entries
     }
 
+    /// A Git blob needs a checked read between matching storage observations. An empty stamp
+    /// makes an incomplete read ineligible for reuse, even when the tree still names the blob.
+    fn read_file(&mut self, asked: &str, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
+        use crate::git_workspace::snapshot;
+        if !snapshot::contains(path) {
+            return super::observe(|o| o.read(path));
+        }
+        let before = snapshot::file_stamp(path);
+        let result = super::observe(|o| o.read(path));
+        let stamp = before.filter(|s| result.is_some() && snapshot::file_stamp(path).as_ref() == Some(s));
+        self.git_file_storage.insert(asked.to_owned(), stamp.unwrap_or_default());
+        result
+    }
+
     /// A file's lines (none when it is refused or missing).
     pub(super) fn file(&mut self, asked: &str) -> Vec<String> {
-        if let Some(lines) = self.files.get(asked) {
+        if let Some((lines, _)) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
+        let read = self.allowed(asked).and_then(|p| self.read_file(asked, &p));
+        let Some((text, digest)) = read.and_then(|(bytes, digest)| String::from_utf8(bytes).ok().map(|text| (text, digest))) else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
-        self.files.insert(asked.to_owned(), lines.clone());
+        self.files.insert(asked.to_owned(), (lines.clone(), hex(&digest)));
         lines
     }
 
     /// A file's bytes, for a language's answer (`answerers`); none when it is refused or missing. Consulted as a
     /// file's lines are: by its digest.
     pub(super) fn bytes(&mut self, asked: &str) -> Option<Vec<u8>> {
-        let Some((bytes, _)) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))) else {
+        let Some((bytes, digest)) = self.allowed(asked).and_then(|p| self.read_file(asked, &p)) else {
             self.refused.insert(asked.to_owned());
             return None;
         };
-        self.read.insert(asked.to_owned());
+        self.read.insert(asked.to_owned(), hex(&digest));
         Some(bytes)
     }
 
@@ -202,7 +276,14 @@ impl World {
         if let Some(d) = self.digests.get(asked) {
             return Some(d.clone());
         }
-        let Some(d) = self.allowed(asked).filter(|p| p.is_file()).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+        let read = self.allowed(asked).filter(|p| crate::git_workspace::snapshot::is_file(p)).and_then(|path| {
+            if crate::git_workspace::snapshot::contains(&path) {
+                if let Some((_, digest)) = self.files.get(asked) { return Some(digest.clone()); }
+                return self.read_file(asked, &path).map(|(_, digest)| hex(&digest));
+            }
+            Some(bytes_digest(&path)).filter(|digest| !digest.is_empty())
+        });
+        let Some(d) = read else {
             self.refused.insert(asked.to_owned());
             return None;
         };
@@ -240,7 +321,7 @@ impl World {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
         }
-        let Some(path) = path.filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
+        let Some(path) = path.filter(|p| crate::git_workspace::snapshot::is_file(p)).map(|p| p.to_string_lossy().into_owned()) else {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
@@ -262,7 +343,12 @@ impl World {
             self.over_budget += 1;
             return None;
         }
-        let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        let identity = if crate::git_workspace::snapshot::contains(&self.root) {
+            Path::new(&path).strip_prefix(&self.root).ok().and_then(Path::to_str).unwrap_or(&path)
+        } else {
+            &path
+        };
+        let loaded = Loaded { path: identity.to_owned(), module: module.to_owned(), grammar: grammar.to_owned() };
         self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
@@ -275,7 +361,7 @@ impl World {
 
     /// The documents taken back this run and not loaded again: not the run's documents.
     pub(super) fn taken_paths(&self) -> impl Iterator<Item = &String> {
-        self.taken.keys()
+        self.taken.values().map(|loaded| &loaded.path)
     }
 
     /// Whether a load is one the budget bounds, by its request's path (`resolve`): a file beyond the corpus root, not
@@ -297,9 +383,10 @@ impl World {
     /// Takes back the document loaded from `path` this run (decision 0145, a load taken back): its place in the
     /// budget is free again. Whether it was loaded.
     pub(super) fn unload(&mut self, path: &str) -> bool {
-        let Some(loaded) = self.loads.remove(path) else { return false };
-        self.beyond -= usize::from(!self.own(path));
-        self.taken.insert(path.to_owned(), loaded);
+        let path = self.root.join(path).to_string_lossy().into_owned();
+        let Some(loaded) = self.loads.remove(&path) else { return false };
+        self.beyond -= usize::from(!self.own(&path));
+        self.taken.insert(path, loaded);
         true
     }
 
@@ -326,12 +413,18 @@ impl World {
     /// loaded document's bytes, and for a path refused or missing what is there now (decision 0083 §2). A run whose
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
-        let mut out = Vec::new();
+        let mut out: Vec<_> = self.observations.iter().map(|((op, key), value)| (op.clone(), key.clone(), value.clone())).collect();
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
-        for asked in self.files.keys().chain(self.read.iter().filter(|a| !self.files.contains_key(*a))) {
-            out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
+        for (asked, (_, digest)) in &self.files {
+            out.push(("file".to_owned(), asked.clone(), digest.clone()));
+        }
+        for (asked, digest) in self.read.iter().filter(|(a, _)| !self.files.contains_key(*a)) {
+            out.push(("file".to_owned(), asked.clone(), digest.clone()));
+        }
+        for (asked, stamp) in &self.git_file_storage {
+            out.push(("git_file_storage".to_owned(), asked.clone(), stamp.clone()));
         }
         for (asked, d) in &self.digests {
             out.push(("digest".to_owned(), asked.clone(), d.clone()));
@@ -355,15 +448,27 @@ impl World {
     /// request no longer asked).
     pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
         consulted.iter().find_map(|c| {
-            let (what, path, digest) = c;
-            let now = match what.as_str() {
-                "dir" => listing_digest(&self.dir(path)),
-                "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
-                "load" => bytes_digest(Path::new(path)),
-                "refused" => self.probe(path),
-                _ => return Some((c, None)),
-            };
-            (now != *digest).then_some((c, Some(now)))
+            let now = self.observation(&c.0, &c.1);
+            (now.as_ref() != Some(&c.2)).then_some((c, now))
+        })
+    }
+
+    pub(super) fn observation(&mut self, what: &str, path: &str) -> Option<String> {
+        Some(match what {
+            "dir" => listing_digest(&self.dir(path)),
+            "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
+            "git_file_storage" => crate::git_workspace::snapshot::file_stamp(&self.allowed(path)?)?,
+            "load" => bytes_digest(Path::new(path)),
+            "refused" => self.probe(path),
+            super::analysis_history::REQUEST => {
+                let (kind, key) = serde_json::from_str::<(String, String)>(path).ok()?;
+                super::analysis_history::requested(&kind, &key).ok()?.1
+            }
+            super::git::REVISION | super::git::REPO_REVISION | super::git::OBJECT => {
+                let (repo, arg) = serde_json::from_str::<(String, String)>(path).ok()?;
+                self.git().observation(what, &repo, &arg)?
+            }
+            _ => return None,
         })
     }
 
@@ -381,7 +486,7 @@ impl World {
 
     pub(super) fn summary(&self, pauses: usize) -> String {
         let entries: usize = self.dirs.values().map(Vec::len).sum();
-        let lines: usize = self.files.values().map(Vec::len).sum();
+        let lines: usize = self.files.values().map(|(lines, _)| lines.len()).sum();
         format!(
             "requests answered in {pauses} pauses of the fixpoint: {} directories ({entries} entries), {} files ({lines} lines), {} documents loaded; {} paths refused or missing, {} loads not taken",
             self.dirs.len(),
@@ -429,29 +534,49 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
     use crate::content_store::observe::{DigestRead, DigestStep};
     use rayon::prelude::*;
     let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
-    let hashed: Vec<Option<(u64, [u8; 32])>> = steps
-        .par_iter()
-        .zip(paths.par_iter())
-        .map(|(s, path)| match s {
-            DigestStep::Read(r) => {
-                let bytes = r.read()?;
-                let hashed = DigestRead::hashed(&bytes);
-                if let Some(hold) = hold {
-                    let s = r.stat();
-                    hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+    // A blob several paths share is read and hashed once: its first path's step answers the rest.
+    let mut first_by_blob = std::collections::HashMap::new();
+    let representatives: Vec<_> = steps.iter().enumerate().map(|(i, step)| match step {
+        DigestStep::Read(read) if let Some(key) = read.blob_key() => *first_by_blob.entry(key).or_insert(i),
+        _ => i,
+    }).collect();
+    let hashed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        steps
+            .par_iter()
+            .zip(paths.par_iter())
+            .enumerate()
+            .map(|(i, (s, path))| match s {
+                DigestStep::Read(r) if representatives[i] == i => {
+                    let bytes = r.read()?;
+                    let hashed = DigestRead::hashed(&bytes);
+                    let mut git_text = None;
+                    if let Some(hold) = hold {
+                        if let Some(s) = r.stat() {
+                            hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                        } else {
+                            git_text = Some(bytes);
+                        }
+                    }
+                    Some((hashed, git_text))
                 }
-                Some(hashed)
+                _ => None,
+            })
+            .collect()
+    });
+    if let Some(hold) = hold {
+        for (path, &first) in paths.iter().zip(&representatives) {
+            if let Some((_, Some(bytes))) = &hashed[first] {
+                hold.keep_git(path, bytes);
             }
-            DigestStep::Answered(_) => None,
-        })
-        .collect();
+        }
+    }
     super::observe(|o| {
         steps
             .into_iter()
-            .zip(hashed)
+            .zip(representatives)
             .map(|(s, h)| match s {
                 DigestStep::Answered(d) => d,
-                DigestStep::Read(r) => o.digest_read(r, h),
+                DigestStep::Read(r) => o.digest_read(r, hashed[h].as_ref().map(|(digest, _)| *digest)),
             })
             .map(|d| d.map(|d| hex(&d)).unwrap_or_default())
             .collect()

@@ -112,7 +112,7 @@ impl ContentStore {
                 "overlay publication batch must contain 1 to {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        let identities = (|| {
+        let identities = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
             publications
                 .par_iter()
                 .map(|publication| {
@@ -127,11 +127,13 @@ impl ContentStore {
                     Ok((
                         publication,
                         source,
-                        publication.tape.map(|tape| HashKey::tape_identity(source, tape.bytes)),
+                        publication
+                            .tape
+                            .map(|tape| HashKey::tape_identity(source, tape.bytes)),
                     ))
                 })
                 .collect::<StoreResult<Vec<_>>>()
-        })()?;
+        })?;
         let candidate_identities = publication_candidate_identities(publications);
         // Path identities are hashed once, before any transaction takes the write lock.
         let path_hashes = publications
@@ -225,6 +227,7 @@ impl ContentStore {
                     &mut prepared,
                     &current_objects,
                     &self.database_path,
+                    self.connection.flush(),
                 )?;
                 let object_pass = prepare_object_pass(
                     &prepared,
@@ -365,7 +368,10 @@ impl ContentStore {
         )?;
         #[cfg(any(test, feature = "test-hooks"))]
         run_publication_test_hook(&BEFORE_RELATIONSHIP_WRITE_HOOK);
-        let (elapsed, statement_count, current) = retry_busy(busy, || {
+        // The results' bytes, as they are, in one segment of the pass's (decision 0450 step 2): numbered in its
+        // transaction, named once it commits; a pass that does not commit leaves no file.
+        let mut placing = Placing::write(&self.database_path, &relationship_pass.result_bytes(), self.connection.flush())?;
+        let (elapsed, statement_count, current, seg) = retry_busy(busy, || {
             if cancelled() {
                 return Err(StoreError::Invalid(
                     "overlay publication was cancelled".to_owned(),
@@ -392,9 +398,11 @@ impl ContentStore {
                     u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                     0,
                     false,
+                    None,
                 ));
             }
-            execute_relationship_pass(&transaction, &relationship_pass)?;
+            let seg = placing.number(&transaction)?;
+            execute_relationship_pass(&transaction, &relationship_pass, &placing, seg)?;
             let statement_count = relationship_pass.statement_count();
             if cancelled() {
                 return Err(StoreError::Invalid(
@@ -406,8 +414,10 @@ impl ContentStore {
                 u64::try_from(transaction_started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 statement_count,
                 true,
+                seg,
             ))
         })?;
+        placing.name(seg)?;
         if !current {
             if stale_relationship_retries >= 8 {
                 return Err(StoreError::Invalid(
@@ -508,6 +518,7 @@ fn place_missing_objects(
     prepared: &mut [PreparedOverlayPublication<'_>],
     stored_objects: &[(Option<SourceId>, Option<TapeId>)],
     database: &std::path::Path,
+    flush: rerail_blocks::block::Flush,
 ) -> StoreResult<Placing> {
     // (file, which: 0 source, 1 tape, 2 + document), in the order written.
     let mut bytes: Vec<&[u8]> = Vec::new();
@@ -533,7 +544,7 @@ fn place_missing_objects(
             }
         }
     }
-    let placing = Placing::write(database, &bytes)?;
+    let placing = Placing::write(database, &bytes, flush)?;
     let mut at = 0;
     for (index, which) in slots {
         let item = &mut prepared[index];
@@ -828,16 +839,16 @@ fn prepare_object_pass(
                 "WITH input(source_algorithm,source_lane0,source_lane1,source_lane2,source_lane3,grammar_id,\
                  grammar_version,format_version,ordinal,parent_ordinal,role_id,via_id,document_algorithm,\
                  document_lane0,document_lane1,document_lane2,document_lane3,document_grammar_id,source_map,\
-                 host_errors) AS (VALUES ",
+                 host_errors,at_start,at_end) AS (VALUES ",
             );
-            let mut values = Vec::with_capacity(document_rows.len() * 20);
+            let mut values = Vec::with_capacity(document_rows.len() * 22);
             for (index, (source, payload, ordinal, document, document_source)) in
                 document_rows.into_iter().enumerate()
             {
                 if index != 0 {
                     sql.push(',');
                 }
-                sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+                sql.push_str("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
                 values.extend(
                     hash_params(source)
                         .into_iter()
@@ -864,10 +875,12 @@ fn prepare_object_pass(
                 values.push(document.grammar_id.into());
                 values.push(document.source_map.to_vec().into());
                 values.push(document.host_errors.to_vec().into());
+                values.push(document.at.map_or(rusqlite::types::Value::Null, |(start, _)| i64::from(start).into()));
+                values.push(document.at.map_or(rusqlite::types::Value::Null, |(_, end)| i64::from(end).into()));
             }
             sql.push_str(
-                ") INSERT OR IGNORE INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors) \
-                 SELECT pt.tape_id,i.ordinal,i.parent_ordinal,i.role_id,i.via_id,dt.tape_id,i.source_map,i.host_errors FROM input i \
+                ") INSERT OR IGNORE INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors,at_start,at_end) \
+                 SELECT pt.tape_id,i.ordinal,i.parent_ordinal,i.role_id,i.via_id,dt.tape_id,i.source_map,i.host_errors,i.at_start,i.at_end FROM input i \
                  JOIN hashes ph INDEXED BY hashes_by_prefix ON ph.algorithm_id=i.source_algorithm AND ph.lane0=i.source_lane0 \
                  AND ph.lane1=i.source_lane1 AND ph.lane2=i.source_lane2 AND ph.lane3=i.source_lane3 \
                  JOIN source_objects ps ON ps.canonical_hash_id=ph.hash_id \
@@ -898,10 +911,7 @@ fn prepare_object_pass(
     })
 }
 
-fn execute_object_pass(
-    transaction: &Connection,
-    pass: &PreparedObjectPass,
-) -> StoreResult<usize> {
+fn execute_object_pass(transaction: &Connection, pass: &PreparedObjectPass) -> StoreResult<usize> {
     let mut statements = 0;
     transaction.prepare_cached(
         "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) algorithm,\

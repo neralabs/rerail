@@ -250,7 +250,7 @@ impl DatasetFeatureSpace {
     /// parallel; a column's index is its place in the list (upstream: the dataset's columns that were asked for).
     pub fn from_columns(columns: &[(String, Vec<crate::bucket::CellValue>)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, values)| ColumnInfo::from_values(name, values, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;
@@ -345,23 +345,24 @@ impl ColumnInfo {
     ///   each row's bucket by its key against the split points' keys (`numericBucketsKernel`).
     /// - Categorical: the codes present (`markCodesKernel`), their names' buckets, then each row's
     ///   (`categoricalBucketsKernel`).
+    ///
     /// The buckets are packed on the device (`packBucketsKernel`). The host's work is a pass for the keys, the split
     /// points over the distinct values, and one copy of the packed words.
     pub fn from_column_device(column_name: &str, data: &ColumnData, max_num_buckets: i32) -> Result<ColumnInfo, String> {
         use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Int};
-        use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeQueue};
+        use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, ComputeQueue};
         use crate::randomforest_kernels_grid::kernel;
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
         let n = data.len();
-        let run = |queue: &MetalComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
+        let run = |queue: &ComputeQueue, name: &str, args: &[(&str, crate::compute_kernel_grid::ComputeKernelArgument)], grid: u32| -> Result<(), String> {
             let k = kernel(name)?;
             let mut ctx = queue.new_bind_context(k.function);
             k.enqueue(args, &[grid], &mut ctx)
         };
         let mut descriptions = BucketDescriptions::default();
         let buckets = alloc_uninitialized_array_sync::<u32>(device, n);
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        let mut queue = ComputeQueue::new(&shared.queue);
         match data {
             ColumnData::Numeric(values) => {
                 let mut has_nulls = false;
@@ -431,7 +432,7 @@ impl DatasetFeatureSpace {
     /// `from_columns` on the device (`ColumnInfo::from_column_device`, 255 buckets), the columns in parallel.
     pub fn from_columns_device(columns: &[(String, ColumnData)], label_info: FeatureType) -> Result<Self, String> {
         use rayon::prelude::*;
-        let infos: Vec<ColumnInfo> = columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>()?;
+        let infos: Vec<ColumnInfo> = rerail_context::on_cores(|| columns.par_iter().map(|(name, data)| ColumnInfo::from_column_device(name, data, 255)).collect::<Result<_, _>>())?;
         let mut fs = DatasetFeatureSpace { label_info, ..Default::default() };
         for (i, mut info) in infos.into_iter().enumerate() {
             info.index = i as i32;
@@ -481,11 +482,11 @@ mod device_tests {
         let n = 5003;
         let columns: Vec<(&str, Vec<CellValue>)> = vec![
             ("many reals", (0..n).map(|i| CellValue::Float((h(i, 1) % 100_000) as f64 / 7.0 - 3000.0)).collect()),
-            ("reals and nulls", (0..n).map(|i| if h(i, 2) % 10 == 0 { CellValue::Empty } else { CellValue::Float((h(i, 3) % 50) as f64 * 0.5 - 3.0) }).collect()),
+            ("reals and nulls", (0..n).map(|i| if h(i, 2).is_multiple_of(10) { CellValue::Empty } else { CellValue::Float((h(i, 3) % 50) as f64 * 0.5 - 3.0) }).collect()),
             ("zeros", (0..n).map(|i| CellValue::Float(if i % 2 == 0 { -0.0 } else { 0.0 })).collect()),
             ("ints", (0..n).map(|i| CellValue::Integer((h(i, 6) % 6) as i64 - 2)).collect()),
             ("big ints", (0..n).map(|i| CellValue::Integer(h(i, 7) as i64)).collect()),
-            ("categories and nulls", (0..n).map(|i| if h(i, 4) % 9 == 0 { CellValue::Empty } else { CellValue::String(cats[(h(i, 5) % 6) as usize].into()) }).collect()),
+            ("categories and nulls", (0..n).map(|i| if h(i, 4).is_multiple_of(9) { CellValue::Empty } else { CellValue::String(cats[(h(i, 5) % 6) as usize].into()) }).collect()),
             ("many categories", (0..n).map(|i| CellValue::String(format!("form{}", h(i, 8) % 700))).collect()),
             ("only nulls", vec![CellValue::Empty; n]),
             ("constant", vec![CellValue::Integer(7); n]),

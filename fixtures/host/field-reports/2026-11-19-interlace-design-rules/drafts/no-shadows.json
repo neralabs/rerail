@@ -1,0 +1,86 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:no-shadows",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Leave shadows off everything but the bottom sheet; cards use a 1 px border instead, as DESIGN.md says.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/theme/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "shadow-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])(?:drop-)?shadow(?:-(?:sm|md|lg|xl|2xl|inner|\\[[^\\]\\s]+\\]))?(?:$|[\\s'\"`])",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "SHADOW_CLASS",
+          "anchor": "witness.span",
+          "message": "Take this shadow (and its shadow color) off; use a 1 px `border border-border` if it needs an edge. DESIGN.md allows one shadow, on the bottom sheet."
+        }
+      },
+      {
+        "id": "shadow-style",
+        "forbid": {
+          "regex": {
+            "pattern": "\\b(?:shadowColor|shadowOpacity|shadowRadius|shadowOffset|elevation|boxShadow)\\s*:",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "SHADOW_STYLE",
+          "anchor": "witness.span",
+          "message": "Take this shadow style off; use a 1 px `border border-border` for an edge. DESIGN.md allows one shadow, on the bottom sheet; if this is it, keep it."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/components/ui/button.tsx",
+        "content": "const d = 'bg-primary active:bg-primary/90 shadow-sm shadow-black/5';\n"
+      },
+      {
+        "path": "src/app/a.tsx",
+        "content": "const s = StyleSheet.create({ card: { shadowColor: x, elevation: 2 } });\n"
+      },
+      {
+        "path": "src/app/b.tsx",
+        "content": "<View className=\"shadow rounded-card\" />\n"
+      },
+      {
+        "path": "src/app/b2.tsx",
+        "content": "<View className=\"shadow-[0_1px_2px_rgba(0,0,0,0.1)]\" />\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/components/ui/button2.tsx",
+        "content": "const d = 'rounded-button shadow-none';\n"
+      },
+      {
+        "path": "src/app/c.tsx",
+        "content": "<View className=\"border-border rounded-card border\" />\n"
+      },
+      {
+        "path": "src/app/c2.tsx",
+        "content": "<View className=\"drop-shadow-none shadow-none\" />\n"
+      }
+    ]
+  }
+}

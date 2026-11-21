@@ -1,0 +1,17 @@
+[package]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Kotlin's parser as Rust, written by the Bitlex compiler from the grammar: tier 1 from its lexer statements (`bitlex_lex_rust`), tier 2 from its tree rules (`bitlex_rust`); rerail-kotlin-parser's tests check it against the lean parser."
+
+[features]
+# The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
+test-hooks = ["rerail-tape-format/test-hooks"]
+
+[dependencies]
+rerail-tape-format = { path = "../tape_format" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-kotlin-aot = { path = ".", features = ["test-hooks"] }

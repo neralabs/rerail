@@ -8,6 +8,8 @@
 //!   at most the body atom's, and a forest's edges kept are a forest);
 //! - **an order** holds the same way, dense only where the rule is the relation itself, renamed (a filter leaves
 //!   gaps);
+//! - **a bound on a column's values** (`values(c, documents | kinds | ~N)`) holds of a head column that copies it;
+//!   a share of the rows (`many`, `rows / N`, `within document`) is not carried, as a rule keeps any part of them;
 //! - **local** holds where every atom is local, every node the head holds is an atom's, and the atoms that hold
 //!   nodes are joined by them (or by `nearest`, which stays in its node's document). A relation of one node column
 //!   at most is local by its shape.
@@ -23,7 +25,7 @@ use super::analyses::Strata;
 use super::handles::{CmpOp, Lit, RuleRef, TermRef};
 use super::manager::{Analysis, Cx, Reads};
 use super::version::Version;
-use crate::code_rule_dsl::logic::front::LayoutFact;
+use crate::code_rule_dsl::logic::front::{LayoutFact, LayoutValues};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Where a relation's fact came from.
@@ -35,6 +37,8 @@ pub enum Origin {
     Rule(super::RuleId),
     /// Inferred from every rule of its component (a union's branches, a recursion's rules).
     Rules,
+    /// The engine's, for an input it makes from a kind set (`front::ast::made_from_a_kind_set`).
+    Made,
 }
 
 /// Each relation's facts, by relation id, each once.
@@ -51,6 +55,16 @@ impl Layouts {
     /// from the facts of the relations it reads.
     pub fn infer(v: &Version, about: &About, strata: &Strata) -> Layouts {
         let mut out: BTreeMap<RelId, Vec<(LayoutFact, Origin)>> = about.layouts.iter().map(|(rel, facts)| (*rel, facts.iter().map(|f| (f.clone(), Origin::Declared)).collect())).collect();
+        // An input the transducer makes from a kind set (an axis's, `nearest`'s) has the engine's facts, where none
+        // are declared (decision 0361 step 5): the planner sizes the rules over it with the program.
+        for rel in v.inputs().filter_map(|a| v.rel_of(a)) {
+            if out.contains_key(&rel) {
+                continue;
+            }
+            if let Some(facts) = crate::code_rule_dsl::logic::front::ast::made_from_a_kind_set(v.rel_name(rel)) {
+                out.insert(rel, facts.into_iter().map(|f| (f, Origin::Made)).collect());
+            }
+        }
         // What is made other than by its rules alone takes its declared facts only.
         let mut other: BTreeSet<RelId> = about.natives.iter().map(|n| n.rel).collect();
         other.extend(about.produced().map(|(p, _)| p));
@@ -109,6 +123,7 @@ impl Layouts {
                     Origin::Declared => format!("{} (declared)", f.show(&col)),
                     Origin::Rule(r) => format!("{} (by rule {})", f.show(&col), v.rules().position(|x| x.id() == *r).map_or_else(|| "?".to_owned(), |k| format!("#{k:04}"))),
                     Origin::Rules => format!("{} (by its rules)", f.show(&col)),
+                    Origin::Made => format!("{} (the engine's)", f.show(&col)),
                 })
                 .collect();
             out.push_str(&format!("{name}: {}\n", shown.join(", ")));
@@ -273,6 +288,15 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
                         && let (Some(&col), Some(within)) = (place.get(&cv), places(&wv))
                     {
                         add(LayoutFact::Order { col, within, dense: *dense && renamed });
+                    }
+                }
+                // A bound on a column's values holds of any column that copies it: the documents, the kinds, at most
+                // about N. A share of the rows (`many`, `rows / N`, `within document`) does not: a rule keeps any part.
+                LayoutFact::Values { col, values: values @ (LayoutValues::Documents | LayoutValues::Kinds | LayoutValues::About(_)) } => {
+                    if let Some(cv) = one(args, *col)
+                        && let Some(&col) = place.get(&cv)
+                    {
+                        add(LayoutFact::Values { col, values: *values });
                     }
                 }
                 _ => {}

@@ -1,4 +1,4 @@
-//! `core.rr`'s repository inputs (decision 0046): facts about the repository that are not source code, one reader
+//! `core.rerail`'s repository inputs (decision 0046): facts about the repository that are not source code, one reader
 //! per kind of file, made once a run (not per batch) and bound beside the batches' relations.
 //!
 //! - `option(name, v)` and `option_item(name, i, v)`: the policy's `options` (`rerail.policy/v1`), as rrlab reads

@@ -1,9 +1,8 @@
 //! What the projection reads of a program's rules (decision 0281's path, step R), over its version: the spans and
 //! tokens whose text a rule reads (`span_text_demand`), the node kinds whose text a rule reads and the nodes it reads
-//! within the bound (`text_kind_demand`), and the anchors of a phase's nodes (`node_anchors`). Each is the facts
-//! crate's analysis of the same name, which reads a tree (`facts::vtab::syntax`), on the version's rules: a variable
-//! is its slot in its rule, a string its atom's text. `projection` puts them together as `Projection::of` and
-//! `with_long_text` do.
+//! within the bound (`text_kind_demand`), and the anchors of a phase's nodes (`node_anchors`), each read by the
+//! version's handles: a variable is its slot in its rule, a string its atom's text. `projection` puts them together
+//! as the facts crate's `Projection` holds them.
 
 use crate::code_rule_dsl::facts::vtab::syntax::{Projection, ProjectionParts, TextDemand, TextNodes};
 use crate::code_rule_dsl::logic::front::ast::SpanIn;
@@ -12,21 +11,29 @@ use rustc_hash::FxHashMap as HashMap;
 use rustc_hash::FxHashSet as HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A program's matchers, by relation: its matcher text and its captures' names (`matchers::lower`).
+/// A program's matchers, by relation: its matcher text and its captures' names (`preparation::text::MatcherRelations`).
 pub type Matchers = [(String, String, Vec<String>)];
 
-/// The projection of the program `v` (its fields besides its rules `head`), reading `reads`, with its long text and
-/// anchors: `Projection::of(prog, reads).with_long_text(prog, matchers)` of its tree.
-pub fn projection(v: &Version, head: &crate::code_rule_dsl::logic::front::Program, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
+/// The projection of the program `v`, reading `reads`, with its long text and anchors (`projection_of`, then
+/// `Projection::with_long_text_parts`).
+pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
+    let demand = text_kind_demand(v, matchers);
+    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) };
+    projection_of(v, reads).with_long_text_parts(demand, anchors)
+}
+
+/// The projection of the program `v` reading `reads`, before its long text and anchors: `core.rerail`'s shape for a
+/// program that includes `core.rerail` (declares every relation it declares as an input), T's for one that declares its
+/// base relations itself (T's programs, the converter's, O74).
+pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
     let (spans, token_text) = span_text_demand(v);
     let derived: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
-    let outputs: BTreeSet<String> = head.outputs.iter().cloned().collect();
+    let outputs: BTreeSet<String> = v.output_names().into_iter().collect();
     crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads);
     let core = crate::code_rule_dsl::facts::core::core_names();
-    let core_shape = !core.is_empty() && core.iter().all(|r| head.decls.contains_key(r.as_str()));
-    let partial: BTreeSet<String> = head
-        .facts
-        .get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)
+    let core_shape = !core.is_empty() && core.iter().all(|r| v.declares(r));
+    let partial: BTreeSet<String> = v
+        .fact_values(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY, &Default::default())
         .into_iter()
         .flatten()
         .filter_map(|row| match row.as_slice() {
@@ -34,11 +41,11 @@ pub fn projection(v: &Version, head: &crate::code_rule_dsl::logic::front::Progra
             _ => None,
         })
         .collect();
-    let error_triple = head.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
-    let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: head.rx_spans.iter().cloned().collect(), ast_patterns: head.ast_patterns.iter().cloned().collect() };
-    let demand = text_kind_demand(v, matchers);
-    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &head.settings, matchers) };
-    Projection::of_parts(parts, reads).with_long_text_parts(demand, anchors)
+    let error_triple = v.columns_of("syntax_error").is_some_and(|cols| cols.len() == 3);
+    let rx_spans = v.rx_spans().expect("a version's spans are read");
+    let ast_patterns = v.ast_patterns().expect("a version's patterns are read");
+    let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: rx_spans.into_iter().collect(), ast_patterns: ast_patterns.into_iter().collect() };
+    Projection::of_parts(parts, reads)
 }
 
 /// Each relation's readers: the heads of the rules reading it, and the natives reading it.
@@ -66,7 +73,9 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
     matches!(t, Some(TermRef::Var(x)) if *x == s)
 }
 
-/// The spans whose text a rule reads (a document's source, a line), and whether a token's.
+/// The spans whose text a rule reads (a document's source, a line), and whether a token's. Plan-time provenance, not
+/// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
+/// own bounded ranges and do not demand the container text.
 pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
     // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
     let mut columns: HashMap<(&str, usize), u8> = [(("source", 1), 1), (("src_line", 2), 2)]
@@ -140,7 +149,8 @@ fn root_kind(text: &str) -> Option<String> {
     rule.get("all")?.as_array()?.iter().find_map(|r| r.get("kind").and_then(|k| k.as_str()).map(str::to_owned))
 }
 
-/// Whether `field(_, "F", v)` in `r`'s body puts `v` in a field whose every kind is a leaf.
+/// Whether `field(_, "F", v)` in `r`'s body puts `v` in a field whose every kind is a leaf (`field(x, "attribute",
+/// v)`): a token's text, which `text` holds at any length (`core_rr::TEXT_INLINE`).
 fn leaf_field(v: &Version, r: RuleRef<'_>, s: Slot) -> bool {
     use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
     r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) == "field").any(|a| {
@@ -198,9 +208,18 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
     kinds
 }
 
-/// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind
-/// (`facts::vtab::syntax::text_kind_demand`, on the version).
+/// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
+/// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
+/// rules' head variables can have, each the intersection of what its body fixes (`kind(v, "K")`, a matcher atom's
+/// root, a column whose kinds are known), the union over its rules. An input's column is any kind. A positive
+/// `text(v, …)` then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
+/// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
+/// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
 pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
+    // A node's kinds to a fixpoint, on numbers: each kind name interned, a set of kinds a sorted vector of them, each
+    // derived relation's columns a vector by its number, and each rule head variable's constraints found once
+    // (`fixers`). Looked up by an owned `(String, usize)` key and cloned as sets of names at every step of every round,
+    // the fixpoint was most of this function. `None` is any kind.
     let kind_table: std::cell::RefCell<(HashMap<String, u32>, Vec<String>)> = Default::default();
     let intern = |k: String| -> u32 {
         let mut t = kind_table.borrow_mut();
@@ -222,7 +241,9 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         d
     };
     let derived_id: HashMap<&str, u32> = derived.iter().enumerate().map(|(i, r)| (*r, i as u32)).collect();
-    // `kind(n, k) :- node(_, n, k, _, _)`: the lowering's projection, not a rule of the program's own.
+    // A base relation's name the program gives rules of its own: a relation like any other there, which narrows
+    // nothing by the base relation's meaning. `kind(n, k) :- node(_, n, k, _, _)` (the lowering's projection,
+    // `rr::lower` `projections`, and the data-layer prelude's) is `kind` itself, not a rule of the program's.
     let projection = |r: RuleRef<'_>| {
         if head_of(r) != "kind" {
             return false;
@@ -243,9 +264,12 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 if !matches!(t, TermRef::Var(x) if *x == s) {
                     continue;
                 }
+                // The base relations narrow by their meaning only where the program gives no rules of its own to one
+                // of that name (`redefined`): there it is a relation like any other (its columns).
                 out.push(match (rel, c, args.get(1)) {
                     ("kind", 0, Some(TermRef::Str(k))) if !redefined.contains("kind") => Fix::Known(Some(vec![intern(bare(v.text(*k)))])),
                     ("kind", _, _) if !redefined.contains("kind") => Fix::Known(None),
+                    // T's base `node(d, n, kind, …)` (a program that declares its base relations itself): `n` of `kind`.
                     ("node", 1, _) if !redefined.contains("node") => Fix::Known(match args.get(2) {
                         Some(TermRef::Str(k)) => Some(vec![intern(bare(v.text(*k)))]),
                         _ => None,
@@ -261,6 +285,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         }
         out
     };
+    // Each derived relation's columns, as wide as its widest head; each rule head variable's fixers.
     let mut columns: Vec<Vec<Kinds>> = vec![Vec::new(); derived.len()];
     let mut heads: Vec<(u32, usize, Vec<Fix>)> = Vec::new();
     for &rule in &rules {
@@ -293,12 +318,14 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             break;
         }
     }
+    // A text atom's variable's kinds, by name.
     let of_var = |r: RuleRef<'_>, s: Slot| -> Option<BTreeSet<String>> {
         let fixes = fixers(r, s);
         let names = kind_table.borrow();
         fold(&columns, &fixes).map(|ks| ks.into_iter().map(|k| names.1[k as usize].clone()).collect())
     };
-    // Each (head, variable) a rule reads the long text of by `@rr_node_text(v)`: its twin (`long_text_twins`).
+    // A rule (by head relation) that reads `v`'s long text by `@rr_node_text(v)`: its twin (`long_text_twins`).
+    // Found in one pass: each (head, variable) a rule reads so.
     let twins: HashSet<(&str, &str)> = rules
         .iter()
         .flat_map(|&r| {
@@ -312,14 +339,16 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         })
         .collect();
     let twinned = |head: &str, var: &str| twins.contains(&(head, var));
-    // Whether `s` is a span (a `span` column binds it): its text is a span's, not a node's.
+    // Whether `s` is a span (a `span` column binds it): its text is a span's (`text_spans`), not a node's.
     let span = |r: RuleRef<'_>, s: Slot| {
         r.body().filter_map(|l| l.atom()).filter(|a| !a.neg() && v.rel_name(a.rel()) != "text").any(|a| {
             let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
             a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(x) if x == s) && types.as_ref().and_then(|ts| ts.get(c)).is_some_and(|ty| *ty == "span"))
         })
     };
-    // A matcher capture's node: the kinds and fields its matcher gives it.
+    // A matcher capture's node: the kinds and fields its matcher gives it (`{"pattern": "$N", "field": "name"}`, or a
+    // `kind` or `field` beside the pattern in an `all`). Columns past the root are the captures, in order. An
+    // `inside`'s `field` is where the node it holds sits in that ancestor, not the ancestor's own.
     let captured = |r: RuleRef<'_>, s: Slot| -> (BTreeSet<String>, BTreeSet<String>) {
         let mut got: Option<(BTreeSet<String>, BTreeSet<String>)> = None;
         for a in r.body().filter_map(|l| l.atom()).filter(|a| !a.neg()) {
@@ -338,6 +367,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                 if kinds.is_empty() && fields.is_empty() {
                     continue;
                 }
+                // Bound by two captures: the narrower is enough, the first is kept.
                 got.get_or_insert((kinds.iter().map(|k| bare(k)).collect(), fields));
             }
         }
@@ -357,7 +387,8 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             })
             .collect()
     };
-    // What narrows the nodes `s` is a child of (`child(p, v, _)`).
+    // What narrows the nodes `s` is a child of (`child(p, v, _)`): each such parent's kinds, or the fields it is in;
+    // `None` when one is not narrowed, or `s` is no child.
     let parents_of = |r: RuleRef<'_>, s: Slot| -> Option<(BTreeSet<String>, BTreeSet<String>)> {
         let (mut kinds, mut fields) = (BTreeSet::new(), BTreeSet::new());
         let mut any = false;
@@ -365,6 +396,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             let args = args(a);
             if let (Some(TermRef::Var(p)), true) = (args.first(), is_var(args.get(1), s)) {
                 any = true;
+                // Its kinds, its fields, or a matcher capture's (a rewritten `kind`/`field` body, `rr_ast_…(i, mn)`).
                 match (of_var(r, *p), fields_of(r, *p)) {
                     (Some(k), _) => kinds.extend(k.iter().map(|k| bare(k))),
                     (None, f) if !f.is_empty() => fields.extend(f),
@@ -403,11 +435,13 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                         (f, _) if !f.is_empty() => nodes.fields.extend(f),
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
+                        // Compared with a constant within the bound: only a node whose text is that constant.
                         _ if short_constant(v, text) => {
                             if let Some(TermRef::Str(c)) = text.args().nth(1) {
                                 nodes.values.insert(v.text(c).to_owned());
                             }
                         }
+                        // A child of a node of known kinds: only such children.
                         _ if let Some((kinds, fields)) = parents_of(rule, s) => {
                             nodes.parents.extend(kinds);
                             nodes.parent_fields.extend(fields);
@@ -450,6 +484,7 @@ fn find(x: &serde_json::Value, name: &str, ancestor: bool, outer: Outer<'_>, out
                         own(sib, false, &mut kinds, &mut fields);
                     }
                 }
+                // Two sites of one capture: either constrains it, or none does.
                 *out = Some(match out.take() {
                     None => (kinds, fields),
                     Some((k, f)) if k.is_empty() && f.is_empty() || kinds.is_empty() && fields.is_empty() => Default::default(),
@@ -471,8 +506,17 @@ fn find(x: &serde_json::Value, name: &str, ancestor: bool, outer: Outer<'_>, out
     }
 }
 
-/// The node kinds whose subtrees hold every node a phase's exports depend on, or why every node is projected
-/// (`facts::vtab::syntax::node_anchors`, on the version; `settings` the program's).
+/// The node kinds whose subtrees hold every node a phase's exports depend on (`Projection::node_anchors`), or why
+/// every node is projected; `settings` the program's. Only a phase (`.phase`) whose exports hold no node qualifies:
+/// its node ids never leave it, so a projection of fewer nodes may number them its own way.
+///
+/// Each rule the exports reach is checked. A variable a node column binds must be proven to lie in an anchor's
+/// subtree: by `kind(v, "K")` (`K` an anchor), as a child of a proven node (`child(p, v, _)`, `field(p, _, v)`), as a
+/// matcher's root or capture (`rr_ast_*`, a matcher with no `inside`, `follows` or `precedes`), or by a column of a
+/// relation whose every rule proves it. Of a proven node a rule may read only what the node itself holds (its kind,
+/// text, literals, place in the source, document), and its children: no parent, ancestor, sibling or neighbouring
+/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rerail` (phase 1): import
+/// statements' subtrees.
 pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Matchers) -> Result<BTreeSet<String>, String> {
     let setting = |key: &str| settings.iter().filter(|(k, _)| k == key).map(|(_, x)| x.trim().to_owned()).collect::<Vec<_>>();
     if setting("phase").is_empty() {
@@ -493,6 +537,8 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
         return Err("no exports".into());
     }
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || types(rel).and_then(|ts| ts.get(c).copied()).is_some_and(is_node);
+    // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
+    // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
     const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel {
         "child" => Some(1),
@@ -500,6 +546,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
         _ => None,
     };
     let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
+    // A matcher's root kind, where it reaches only below its root.
     let roots: HashMap<&str, Option<String>> = matchers
         .iter()
         .map(|(rel, text, _)| {
@@ -507,6 +554,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
             (rel.as_str(), root_kind(text).filter(|_| below).map(|k| bare(&k)))
         })
         .collect();
+    // The rules the exports reach, tree views left as the base relations they stand for.
     let mut by_head: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::default();
     for r in v.rules() {
         by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
@@ -530,6 +578,8 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     }
     let rules: Vec<RuleRef<'_>> = reached.iter().flat_map(|r| by_head.get(r).into_iter().flatten().copied()).collect();
     let derived = |rel: &str| !tree(rel) && by_head.contains_key(rel);
+    // Every read of a node column is of a node-local relation, a child below a named parent, a matcher, or a relation
+    // the program derives.
     for r in &rules {
         for a in r.body().filter_map(|l| l.atom()) {
             let rel = v.rel_name(a.rel());
@@ -545,6 +595,8 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
             }
         }
     }
+    // The derived columns proven to hold anchored nodes: every node column at first, dropped where a rule cannot prove
+    // its head's (the greatest such set: by induction on derivations, every row's node is in an anchor's subtree).
     let mut proven_cols: BTreeSet<(String, usize)> = rules
         .iter()
         .flat_map(|r| {
@@ -552,11 +604,13 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
             (0..r.head().args().count()).filter(move |&c| node_col(rel, c)).map(move |c| (rel.to_owned(), c))
         })
         .collect();
+    // A rule's proven variables, and the variables a kind or a matcher anchors that nothing above them reaches.
     let prove = |r: RuleRef<'_>, cols: &BTreeSet<(String, usize)>| -> (BTreeSet<Slot>, BTreeSet<Slot>, Vec<(Slot, String)>) {
         let var = |t: Option<&TermRef<'_>>| match t {
             Some(TermRef::Var(s)) => Some(*s),
             _ => None,
         };
+        // Down edges (parent, child) and each variable's own grounds: a kind constant or matcher root, or a column.
         let mut edges: Vec<(Slot, Slot)> = Vec::new();
         let mut kinds: Vec<(Slot, String)> = Vec::new();
         let mut grounded: BTreeSet<Slot> = BTreeSet::new();
@@ -613,6 +667,8 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
                 }
             }
         };
+        // A kind's variable is an anchor where nothing proven, nor another such variable, reaches it from above (one of
+        // a cycle, where they reach each other).
         let mut anchors: BTreeSet<Slot> = BTreeSet::new();
         loop {
             let proven = closure(&grounded.iter().copied().chain(anchors.iter().copied()).collect());

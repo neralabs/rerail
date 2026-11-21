@@ -2,9 +2,9 @@
 
 use rerail_rr_syntax as rr;
 
-/// The repository's `.rr` files.
+/// The repository's `.rerail` files.
 fn corpus() -> Vec<String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -13,7 +13,7 @@ fn corpus() -> Vec<String> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok());
             }
         }
@@ -73,7 +73,7 @@ fn aot_tapes_are_the_jits() {
 
 /// Every corpus file, and the table's in-place cases: tier 2 ahead of time writes the JIT's format 16 tapes (16 and
 /// 16z, presence and all) by the writer's ops, and refuses where it does. The language is rr's shipped table, the one
-/// the source's numbers are literals of (`crate::lang`, decision 0516).
+/// the source's numbers are literals of (`crate::lang`, decision 0535).
 #[test]
 #[ignore = "the corpus: run by name"]
 fn aot_format_16_tapes_are_the_jits() {

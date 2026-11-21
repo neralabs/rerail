@@ -1,11 +1,11 @@
 // Inside `src/` so every copy of the native sources (release builds) carries it; the
 // library compiles it only for tests.
+#[path = "src/build_grammars.rs"]
+mod grammars;
 #[path = "src/build_identity.rs"]
 mod identity;
 #[path = "src/build_languages.rs"]
 mod languages;
-#[path = "src/build_grammars.rs"]
-mod grammars;
 
 use grammars::{GRAMMARS, LFS_POINTER, LFS_REMEDY, collect_sources};
 use identity::{grammar_build_id, hex};
@@ -13,9 +13,18 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // A debug CLI run compiling sources.rerail exhausts the default 1 MiB main-thread stack.
+        println!("cargo:rustc-link-arg-bin=rerail-engine=/STACK:8388608");
+    }
     check_compiler_cache();
     // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
-    if !std::env::var("TARGET").unwrap_or_default().starts_with("wasm32") {
+    if !std::env::var("TARGET")
+        .unwrap_or_default()
+        .starts_with("wasm32")
+    {
         napi_build::setup();
     }
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
@@ -42,7 +51,9 @@ fn check_compiler_cache() {
     for name in ["RUSTC_WRAPPER", "RERAIL_FARM_ANY_ENV", "RELAX_STD"] {
         println!("cargo:rerun-if-env-changed={name}");
     }
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else { return };
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return;
+    };
     let config = std::env::var_os("RERAIL_FARM_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".config/rerail-farm/farm.json"));
@@ -54,8 +65,11 @@ fn check_compiler_cache() {
     // Relax drives its own cargo pass with itself as the wrapper (`RUSTC_WRAPPER=.../bin/relax`); its
     // builds are outside the farm by design (AGENTS.md, "Relax: the live test loop").
     let relax = std::env::var_os("RELAX_STD").is_some()
-        && (wrapper.is_empty() || Path::new(&wrapper).file_name().is_some_and(|n| n == "relax"));
-    if PathBuf::from(&wrapper) == farm || relax {
+        && (wrapper.is_empty()
+            || Path::new(&wrapper)
+                .file_name()
+                .is_some_and(|n| n == "relax"));
+    if wrapper == farm || relax {
         return;
     }
     panic!(
@@ -67,14 +81,17 @@ fn check_compiler_cache() {
     );
 }
 
-
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
 /// `lang-<id>` (all are by default; the browser build picks the ones a page needs, `wasm/README.md`).
 fn omitted_languages() -> Vec<String> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    languages::omitted_languages(&manifest.parent().expect("repository root").join("languages"))
+    languages::omitted_languages(
+        &manifest
+            .parent()
+            .expect("repository root")
+            .join("languages"),
+    )
 }
-
 
 /// The language registry, `languages/` at the repository root: validated, and generated into
 /// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes. The languages only
@@ -84,12 +101,18 @@ fn omitted_languages() -> Vec<String> {
 /// The `omitted` languages keep their tables but no grammar (`language_registry.rs`'s `built`).
 fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
-    let vendored = GRAMMARS.iter().map(|grammar| grammar.name).collect::<Vec<_>>();
-    assert_eq!(vendored, languages::VENDORED, "GRAMMARS and build_languages.rs's VENDORED name the same grammars");
+    let vendored = GRAMMARS
+        .iter()
+        .map(|grammar| grammar.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        vendored,
+        languages::VENDORED,
+        "GRAMMARS and build_languages.rs's VENDORED name the same grammars"
+    );
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
     languages::generate_registry(&manifest, omitted, &out)
 }
-
 
 /// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
 /// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
@@ -111,7 +134,6 @@ fn check_names_table(manifest: &Path) {
         );
     }
 }
-
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
 /// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a
@@ -144,13 +166,14 @@ fn configure_fixtures() {
         "RERAIL_ORACLES_DIR={} is not a fixtures directory",
         directory.display()
     );
-    let directory = directory
-        .canonicalize()
-        .expect("fixtures directory is readable");
+    let directory = dunce::canonicalize(&directory).expect("fixtures directory is readable");
     println!("cargo:rustc-env=RERAIL_ORACLES_DIR={}", directory.display());
     // What the tests' `fixtures_dir!` reads (`code_rule_dsl/fixtures.rs`); the engine's crates have it from
     // `.cargo/config.toml`, the engine from here, so an `RERAIL_ORACLES_DIR` override holds for its tests.
-    println!("cargo:rustc-env=RERAIL_FIXTURES_DIR={}", directory.display());
+    println!(
+        "cargo:rustc-env=RERAIL_FIXTURES_DIR={}",
+        directory.display()
+    );
     println!("cargo:rerun-if-changed={}", directory.display());
 }
 
@@ -164,6 +187,30 @@ fn is_checkout(directory: &Path) -> bool {
 /// dependency, so a stored clause result is only reused by the build that would compute it.
 /// `RERAIL_GRAMMAR_BUILD_ID` covers the parser and grammar versions a stored tape was parsed with.
 /// The language registry is engine source: which dialects a language spans and what it supports.
+/// The workspace crates `manifest`'s crate depends on by path (`path = "..."` naming a directory with a `Cargo.toml`),
+/// and theirs, transitively; not the vendored crates, whose versions the lock pins. Each directory once, in order.
+fn path_crates(manifest: &Path) -> Vec<PathBuf> {
+    let own = manifest.canonicalize().expect("the manifest directory");
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut pending = vec![own.clone()];
+    while let Some(dir) = pending.pop() {
+        let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else { continue };
+        for line in text.lines() {
+            let Some(at) = line.find("path = \"") else { continue };
+            let rest = &line[at + "path = \"".len()..];
+            let Some(end) = rest.find('"') else { continue };
+            let Ok(dep) = dir.join(&rest[..end]).canonicalize() else { continue };
+            if !dep.join("Cargo.toml").is_file() || dep == own || dep.components().any(|c| c.as_os_str() == "vendor") || seen.contains(&dep) {
+                continue;
+            }
+            seen.push(dep.clone());
+            pending.push(dep);
+        }
+    }
+    seen.sort();
+    seen
+}
+
 fn build_identities(registry: &[(String, Vec<u8>)]) {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let lock = manifest
@@ -183,6 +230,33 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
         engine.update([0]);
         engine.update(std::fs::read(path).expect("engine source is readable"));
         engine.update([0]);
+    }
+    // The workspace crates the engine reaches by path are its code too: the lock names them, not what they hold, so a
+    // change to one (the accelerator's pool, a device crate) kept the id, and what the id keys (a stored clause
+    // result, the test stores' template) outlived the build that made it.
+    let root = manifest.canonicalize().expect("the manifest directory");
+    let root = root.parent().expect("workspace root");
+    for krate in path_crates(&manifest) {
+        let mut files = Vec::new();
+        for part in ["src", "build.rs", "Cargo.toml"] {
+            let at = krate.join(part);
+            if at.is_dir() {
+                collect_sources(&at, &mut files);
+            } else if at.is_file() {
+                files.push(at.clone());
+            }
+            if at.exists() {
+                println!("cargo:rerun-if-changed={}", at.display());
+            }
+        }
+        files.sort();
+        for path in &files {
+            let relative = path.strip_prefix(root).expect("a path crate under the workspace root");
+            engine.update(relative.to_string_lossy().as_bytes());
+            engine.update([0]);
+            engine.update(std::fs::read(path).expect("path crate source is readable"));
+            engine.update([0]);
+        }
     }
     for (path, bytes) in registry {
         engine.update(path.as_bytes());
@@ -213,7 +287,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
     view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
     view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
-    // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
+    // A `.rerail` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
     view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
     // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the
@@ -272,4 +346,3 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed={}", lock.display());
 }
-

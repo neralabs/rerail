@@ -345,12 +345,12 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
-    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0403).
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0463).
     pub source_len: u64,
 }
 
 /// Format 15, read where its columns lie, through the tape's reads (`crate::reads`, written directly,
-/// decision 0510) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// decision 0534) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
 /// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {
@@ -450,7 +450,7 @@ impl Tape for F15<'_> {
     fn end(&self, i: usize) -> u64 {
         u64::from(reads::end(self.bytes, &self.view, i as u32))
     }
-    /// A scan's span is the tape's as stated (decision 0403: what its check reads; its slices are checked).
+    /// A scan's span is the tape's as stated (decision 0463: what its check reads; its slices are checked).
     fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
         u64::from(reads::start_stated(self.bytes, &self.view, i as u32))
     }

@@ -78,7 +78,9 @@ pub fn compile_nth_child(
     // Equal `ofRule`s count the same siblings: their key (its JSON and dialect) shares one count
     // per tape. A rule calling a utility reads its scope's, so it has none.
     let of_rule_key = match (&of_rule, rule) {
-        (Some(compiled), Some(rule)) if !compiled.calls_util() => Some(format!("{language:?}|{rule}")),
+        (Some(compiled), Some(rule)) if !compiled.calls_util() => {
+            Some(format!("{language:?}|{rule}"))
+        }
         _ => None,
     };
     Ok(AstMatcher::NthChild(Box::new(NthChild {

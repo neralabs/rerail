@@ -111,7 +111,7 @@ pub(in crate::code_rule_dsl) fn select(
         .collect::<Vec<_>>();
     // In order per plan (the statement's arms stream unsorted, `lower::batch`).
     use rayon::prelude::*;
-    rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
+    crate::code_rule_dsl::logic::profile::on_cores(|| rows.par_iter_mut().for_each(|rows| rows.sort_unstable()));
     Ok(rows)
 }
 
@@ -182,6 +182,7 @@ pub(in crate::code_rule_dsl) fn select_indexed_sql(
 /// tape (`nera_tree`), over `tapes`. Per plan, its (index in `tapes`, preorder) rows and whether
 /// they are exactly its rule's roots; where not, they are a superset, as `select`'s. The wave's
 /// `Candidates::Sql` route (`RERAIL_CANDIDATES=sql`) drives it.
+#[allow(clippy::type_complexity)]
 pub(in crate::code_rule_dsl) fn fallback(
     store: &ContentStore,
     lang: u32,

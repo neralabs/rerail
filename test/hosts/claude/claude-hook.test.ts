@@ -1,8 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -10,8 +14,36 @@ import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/present
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
+
+/**
+ * The daemon's waits (`daemon-waits.ts`) as the hook reads them, each as it waits: the product's, unless a test sets
+ * its own, as the tests that wait out a busy or silent daemon do.
+ */
+const waits = vi.hoisted(() => ({ probeMs: undefined as number | undefined, busyMs: undefined as number | undefined }));
+vi.mock("../../../src/runtime/daemon/daemon-waits.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon/daemon-waits.js")>("../../../src/runtime/daemon/daemon-waits.js");
+  return {
+    ...actual,
+    get PROBE_TIMEOUT_MS() { return waits.probeMs ?? actual.PROBE_TIMEOUT_MS; },
+    get BUSY_DAEMON_WAIT_MS() { return waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS; },
+    get HOOK_DAEMON_WAIT_MS() { return (waits.probeMs ?? actual.PROBE_TIMEOUT_MS) + (waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS); },
+  };
+});
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
+
+/**
+ * `hookOptions` without the test's embedder, so a hook takes the daemon path a coding agent's hook takes, and, unless
+ * `keepDatabase`, without the test's database, so the hook reads the one the daemon serves.
+ */
+function daemonHookOptions(root: string, { keepDatabase }: { keepDatabase: boolean }): HookOptions {
+  const options = hookOptions(root);
+  delete options.embedder;
+  if (!keepDatabase) delete options.databasePath;
+  return options;
+}
 
 function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = [], rules = steeredRules(ruleIds)): AdapterDelivery {
   return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds, rules };
@@ -33,7 +65,7 @@ describe("Claude Code hook without a daemon", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     try {
       // The test runtime's embedder is left out, so the hook takes the daemon path a coding agent's hook takes.
-      const { embedder: _, ...daemonPath } = hookOptions(root);
+      const daemonPath = daemonHookOptions(root, { keepDatabase: true });
       const output = await runClaudeHook({
         session_id: "s", cwd: root, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "t", tool_input: {}, tool_response: "ok",
       }, daemonPath);
@@ -42,6 +74,221 @@ describe("Claude Code hook without a daemon", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("Claude Code hook with a daemon that misses its health probe", () => {
+  // The hook's waits for the daemon, shorter than the product's 2 s probe and 10 s busy wait, in the same order and
+  // with the same 2 s start check (`READ_TIMEOUT_MS`) before them: a hook waits `HOOK_WAIT_MS` from the event's arrival.
+  // The probe stays long enough that hooks waiting in turn would finish a second or more apart.
+  const PROBE_MS = 1_000;
+  const BUSY_MS = 6_000;
+  const HOOK_WAIT_MS = PROBE_MS + BUSY_MS;
+  const servers: Server[] = [];
+  beforeEach(() => {
+    waits.probeMs = PROBE_MS;
+    waits.busyMs = BUSY_MS;
+  });
+  afterEach(async () => {
+    waits.probeMs = undefined;
+    waits.busyMs = undefined;
+    vi.unstubAllEnvs();
+    await Promise.all(servers.splice(0).map(server => {
+      server.closeAllConnections();
+      return new Promise(resolve => server.close(resolve));
+    }));
+    await closeNativeTestDaemons();
+  });
+
+  /** A listener at a new loopback URL that answers each request as `upstream` does, `delayMs` late: a busy daemon. */
+  async function slowFront(upstream: string, delayMs: number): Promise<string> {
+    const server = createHttpServer((request, response) => {
+      setTimeout(() => {
+        const headers = Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+        fetch(new URL(request.url ?? "/", upstream), { headers }).then(async answer => {
+          response.writeHead(answer.status, { "content-type": answer.headers.get("content-type") ?? "application/json" });
+          response.end(await answer.text());
+        }, () => response.destroy());
+      }, delayMs);
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  /** Rewrites the home's daemon.json with `change` applied; returns the state as the daemon wrote it. */
+  async function rewriteState(change: (state: Record<string, unknown>) => Record<string, unknown>): Promise<Record<string, unknown>> {
+    const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+    const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
+    await writeFile(stateFile, JSON.stringify(change(state)));
+    return state;
+  }
+
+  function eventIds(): string[] {
+    const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      return database.prepare<[], { eventId: string }>("SELECT event_id AS eventId FROM events ORDER BY sequence").all().map(row => row.eventId);
+    } finally {
+      database.close();
+    }
+  }
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the session-start hook may start a daemon; 0 starts none.
+  it.each(["1", "0"])("waits for a busy daemon to answer as itself, then records the session (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    const daemon = await startNativeTestDaemon(root);
+    // The daemon answers 2.5 s late, past the start check's 2 s and the first probe's, as one does while an audit holds
+    // its event loop.
+    const front = await slowFront(daemon.url, 2_500);
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "busy-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(eventIds()).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
+  });
+
+  it("sends no capability to an engine socket whose daemon never answers as itself, so a squatter gets none", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    await startNativeTestDaemon(root);
+    // Something else listens where the state file says the engine is, and nothing answers at the recorded URL.
+    const received: string[] = [];
+    const squatter = createHttpServer((request, response) => {
+      received.push(`${request.method} ${request.url} ${String(request.headers["x-rerail-access"] ?? "no capability")}`);
+      response.writeHead(500).end();
+    });
+    servers.push(squatter);
+    const squatted = process.platform === "win32" ? `\\\\.\\pipe\\rerail-squatted-${process.pid}-${Date.now()}` : join(root, "squatted.sock");
+    await new Promise<void>(resolve => squatter.listen(squatted, resolve));
+    await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: squatted }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "squatted-session", cwd: root };
+    const start = await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)
+      .catch((error: unknown) => error);
+    // Neither start records the session. Elsewhere the recorded pid is alive and its URL never answers, so the start
+    // fails for that daemon; on Windows no engine on the recorded pipe proves itself, so no daemon runs, and the start
+    // says that nothing is recorded, as it does for any start RERAIL_AUTOSTART keeps without a daemon.
+    if (process.platform === "win32") expect(start).toEqual({ systemMessage: expect.stringContaining("so nothing is recorded") });
+    else expect(start).toMatchObject({ name: "DaemonUnreachableError", cause: { name: "LiveDaemonError" } });
+    expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
+    // On Windows the hook asks the engine there to prove it holds the capability, which sends only a challenge.
+    expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
+  });
+
+  /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
+  async function silentFront(): Promise<string> {
+    const server = createHttpServer(() => undefined);
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  it("waits out a silent daemon once for a session's concurrent hooks, not once per hook in turn", { timeout: 90_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "parallel-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    // Parallel tool calls and subagents send one session's PreToolUse hooks at once, while a walk holds the daemon.
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    const toolCall = async (id: string): Promise<number> => {
+      await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: id, tool_input: { file_path: "a.ts" } }, daemonPath);
+      return performance.now() - started;
+    };
+    const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
+    // Each hook gives up on the silent daemon `HOOK_WAIT_MS` after its event arrives. Under the session's lock each
+    // would begin its wait when the one before it gave up, and the three would finish a probe or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(PROBE_MS);
+  });
+
+  it("gives up on a silent daemon at the hook's wait after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "silent-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
+    // Had the wait begun after the start check, the check would have waited 2 s, then the endpoint lookup its own
+    // `HOOK_WAIT_MS`.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
+  });
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start at the hook's wait after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    await startNativeTestDaemon(root);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const started = performance.now();
+    await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
+      .rejects.toThrow(/is alive but not answering/u);
+    // Had the wait begun after the start check, the check would have waited 2 s, then the start's lookup its own
+    // `HOOK_WAIT_MS`, and with RERAIL_AUTOSTART=0 the busy wait twice.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
+  });
+});
+
+describe("Claude Code hook with a running daemon", () => {
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await closeNativeTestDaemons();
+  });
+
+  const LedgerSample = z.object({
+    type: z.literal("sample"),
+    item: z.object({ text: z.string(), metadata: z.object({ fields: z.object({ eventId: z.string(), boundary: z.string() }) }) }),
+  });
+
+  /** Each sample of `sessionId` the session's ledger under `root` holds at `boundary`, with the event that made it. */
+  async function ledgerSamples(root: string, sessionId: string, boundary: string): Promise<Array<{ eventId: string; text: string }>> {
+    const folder = createHash("sha256").update(sessionId).digest("hex");
+    const lines = (await readFile(join(root, "sessions", folder, "events.jsonl"), "utf8")).split("\n").filter(Boolean);
+    return lines.flatMap(line => {
+      const entry = LedgerSample.safeParse(JSON.parse(line));
+      if (!entry.success || entry.data.item.metadata.fields.boundary !== boundary) return [];
+      return [{ eventId: entry.data.item.metadata.fields.eventId, text: entry.data.item.text }];
+    });
+  }
+
+  it("ends a reply at its empty last batch and stores the whole reply, blank line kept, as one message", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    // Claude Code runs the hook once per batch, so only the daemon holds a reply from one batch to the next.
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "reply-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+
+    const reply = { ...common, hook_event_name: "MessageDisplay", turn_id: "turn-1", message_id: "m1" };
+    for (const [index, delta, final] of [[0, "Here is the plan:\n", false], [1, "\n", false], [2, "Fix the test.\n", false], [3, "", true]] as const) {
+      expect(await runClaudeHook({ ...reply, index, delta, final }, daemonPath)).toEqual({});
+    }
+
+    // The empty last batch ends the reply: the session's record gains it whole, once, as the message every conversation
+    // rule on a whole message checks.
+    expect(await ledgerSamples(root, "reply-session", "message")).toEqual([
+      { eventId: "reply-session:message:m1:3", text: "Here is the plan:\n\nFix the test." },
+    ]);
   });
 });
 
@@ -96,6 +343,30 @@ describe("Claude Code one-shot hook", () => {
       expect.stringMatching(/^claude-session:turn:p1:continued:/),
     ]);
     expect(new Set(turnEnds).size).toBe(3);
+  });
+
+  it("records each batch of a reply, a blank line and the empty last batch of a reply that ends on a newline included", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const common = { session_id: "claude-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
+
+    // Interactive Claude Code sends whole lines per batch, so a batch can be a blank line, and the last batch's delta
+    // is empty when the reply ends on a newline: `final` marks the end, not the text.
+    const reply = { ...common, hook_event_name: "MessageDisplay", turn_id: "turn-1", message_id: "m1" };
+    for (const [index, delta, final] of [[0, "Here is the plan:\n", false], [1, "\n", false], [2, "", true]] as const) {
+      expect(await runClaudeHook({ ...reply, index, delta, final }, options)).toEqual({});
+    }
+
+    const batches = sessionDatabaseQuery<{ eventId: string; payload: string }>(
+      root,
+      "SELECT event_id AS eventId, payload_json AS payload FROM events WHERE kind = 'assistant-delta' ORDER BY sequence",
+    );
+    expect(batches.map(({ eventId, payload }) => [eventId, JSON.parse(payload) as unknown])).toEqual([
+      ["claude-session:message:m1:0", expect.objectContaining({ delta: "Here is the plan:\n", final: false })],
+      ["claude-session:message:m1:1", expect.objectContaining({ delta: "\n", final: false })],
+      ["claude-session:message:m1:2", expect.objectContaining({ delta: "", final: true })],
+    ]);
   });
 
   it("ignores hook events the adapter does not model without touching storage", async () => {
@@ -157,7 +428,7 @@ describe("Claude Code one-shot hook", () => {
     const home = join(root, "home");
     await mkdir(home);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
-      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     try {
       const common = { session_id: "claude-session", cwd: root };
@@ -254,6 +525,18 @@ describe("Claude Code one-shot hook", () => {
     const linked = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
     expect(claudeHookOutput("PostToolUse", [linked], { links: "plain" })).toMatchObject({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a",
+    });
+  });
+
+  it("gives the agent a conflict note as context and the person its line, beside a rule's, with the card linked as open", () => {
+    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Tim", summary: "Share compiled matchers", pullRequest: true });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Tim): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    const rule = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
+    const output = claudeHookOutput("PostToolUse", [rule, { ...delivery("steer", note), conflict }], { links: "plain", mark: "RERAIL" });
+    expect(output).toEqual({
+      systemMessage: "\n◆ RERAIL · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a"
+        + "\n◆ RERAIL · your edit overlaps PR #398 (Tim): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `${editSteer("a", "Fix a.")}\n\n${note}` },
     });
   });
 

@@ -7,12 +7,15 @@ const rangeButton = (page: Page, days: number) => content(page).locator(`.rollhe
 const topRows = (page: Page) => content(page).locator(".ovtop .row");
 const recentRows = (page: Page) => content(page).locator(".ovrecent .sesrow");
 
-/** The mature scenario's figures per range, as GET /api/rules/activity measures them at SEED_NOW (e2e harness). */
+/**
+ * The mature scenario's figures per range, as GET /api/rules/activity measures them at SEED_NOW (e2e harness). Steered
+ * leaves out the open session's declined steer, which every range holds.
+ */
 const MATURE = [
-  { days: 0, steered: 14, total: 21, sessions: 4 },
-  { days: 7, steered: 31, total: 53, sessions: 12 },
-  { days: 30, steered: 42, total: 97, sessions: 27 },
-  { days: 9999, steered: 45, total: 106, sessions: 30 },
+  { days: 0, steered: 13, total: 21, sessions: 4 },
+  { days: 7, steered: 30, total: 53, sessions: 12 },
+  { days: 30, steered: 41, total: 97, sessions: 27 },
+  { days: 9999, steered: 44, total: 106, sessions: 30 },
 ];
 
 const sinceOf = (days: number) => (days === 0 ? Date.UTC(2026, 9, 22) : days === 9999 ? 0 : SEED_NOW - days * DAY);
@@ -39,13 +42,13 @@ test.describe("mature", () => {
 
   test("tiles land on the list that produced their number", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
-    await expect(tileValue(page, "steered")).toHaveText("31 of 53");
+    await expect(tileValue(page, "steered")).toHaveText("30 of 53");
 
     // Violations steered: History by rule with Steered chosen, whose rules add up to the tile's figure.
     await content(page).locator('[data-tile="steered"]').click();
     await expect(page).toHaveURL(/#history\?outcome=steered$/u);
     await expect(content(page).locator('.hchips [aria-pressed="true"]')).toHaveText("Steered");
-    await expect.poll(async () => (await content(page).locator(".hrow .c b").allTextContents()).reduce((sum, n) => sum + Number(n), 0)).toBe(31);
+    await expect.poll(async () => (await content(page).locator(".hrow .c b").allTextContents()).reduce((sum, n) => sum + Number(n), 0)).toBe(30);
     await page.goto(await rerail.dashboard("mature"));
     await content(page).locator('[data-tile="sessions"]').click();
     await expect(page).toHaveURL(/#sessions\?filter=violations$/u);

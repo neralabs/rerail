@@ -84,7 +84,7 @@ it twice, and kept two sets of incremental state. `cargo test -p <crate>` (the c
 The engine's `test-hooks` feature now turns on everything the dev-dependencies add, and a
 development build of the CLI uses it (`AGENTS.md`). `cargo tree` then gives both builds the same
 features for every crate but the engine itself and the test-only `rerail-parser-tests`.
-`scripts/check/check-dev-features.py` (in the pre-commit hook) checks that the feature keeps
+`scripts/check/check_dev_features.py` (in the pre-commit hook) checks that the feature keeps
 up with the dev-dependencies, target-specific ones included, and the farm's wrapper tells a CLI
 build without it. Product and `profiling` builds are unchanged.
 
@@ -222,8 +222,10 @@ The gate's 14 failures:
 On a host, two more things differ from this checkout. The store's git tests made repositories
 under the host's own git config, and a host that signs its commits failed 10 of them; their git
 now runs without the global and system config. And
-`git_workspace::tests::discovers_current_repository_without_a_git_process` reads this checkout's
-`.git`, which the mirror does not send, so it fails on a host only. A command over ssh also starts
+`git_workspace::tests::discovers_current_repository_without_a_git_process` read this checkout's
+`.git`, which the mirror does not send, so it failed on a host only; it is
+`discovers_a_repository_from_inside_it_without_a_git_process` now, over a repository of its own
+(2026-11-19). A command over ssh also starts
 with 256 open files (a terminal has far more), and 17 of the engine's session, plan and executor
 tests ran out of them in parallel; `test-remote` and `live-test-remote` now raise the limit to
 `kern.maxfilesperproc` first.
@@ -435,10 +437,52 @@ What adoption needs:
 
 | Option | What it can do here |
 |---|---|
-| sccache-dist | Build servers must be Linux or FreeBSD. The Macs cannot serve. |
+| sccache-dist | Build servers must be Linux or FreeBSD: the farm's Linux hosts can serve. Tested on 2026-11-20 (below): it distributes this Mac's registry libraries, but refuses every compile that loads a proc macro. |
 | icecream, distcc | No Rust support. |
 | Bazel or BuildBuddy remote execution | A rewrite of the build into rules_rust, with no incremental builds. |
 | sccache in general | Never caches incremental crates, nor anything that links. Only dependencies can be shared. |
+
+### sccache-dist on a Linux host (2026-11-20)
+
+The table's first version said the Macs could not serve and stopped there. The farm has Linux
+hosts, so it was tried: sccache-dist's scheduler and build server, built from the farm's patched
+sccache (the client's source), in one privileged container on the Linux VM on the M3 (16 cores),
+and a separate sccache here (its own port, cache and config) sending to it over an ssh tunnel.
+The client's toolchain is an archive of the host's Linux rustc 1.99.1 with the
+`aarch64-apple-darwin` std, and the glibc and loader it needs (the sandbox's root is the archive).
+A probe crate with clap, serde, regex, serde_json, anyhow, thiserror and itertools, cold:
+
+| | Compiles |
+|---|---|
+| library crates sent and compiled there | 27 of 30 |
+| refused: they load a proc macro (`clap`, `serde`, `thiserror`) | 3 |
+| proc macros and build scripts | here, always |
+| outputs the same bytes as a plain local build | all 56 that embed no target path |
+
+The refusal is by design: a macOS client never sends a dylib input (`CAN_DIST_DYLIBS` is false off
+Linux and FreeBSD, `src/compiler/compiler.rs`), and a proc macro is one. The farm compiles those
+remotely: the host rebuilds the proc macro natively and gives it this Mac's SVH ("Mac compiles on
+a Linux host" in the farm's README). In the workspace's graph (`cargo metadata`, all platforms),
+29 of its 404 registry libraries load a proc macro (serde, futures-util, zerocopy, gix-protocol,
+wasm-bindgen among them), and 26 are proc macros: sccache-dist would send the other 349 or so.
+
+Either way it changes nothing for an edit: like the farm, it sends one whole crate per compile,
+and never an incremental one. The engine's own compile, on the idle M3 (`-Z time-passes`, the
+library's test target): 46 s for the crate whole, 8.3 s after a one-line edit.
+
+| Pass, whole compile | Time |
+|---|---|
+| macro expansion | 2.4 s |
+| type checking | 9.7 s |
+| borrow checking | 9.2 s |
+| monomorphization collection | 8.1 s |
+| LLVM IR generation | 11.4 s |
+| LLVM passes and code generation (over codegen units) | 10.4 s |
+| link | 1.1 s |
+
+About half is the serial front end; the link is 1 s. The same edit build on this Mac takes
+18–170 s because of this Mac's load and the chain of workspace crates above the edit
+(`rerail-logic` 13–41 s), not the link.
 
 ### The farm (`scripts/build/farm`, 2026-11-14)
 

@@ -1,8 +1,10 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
 //! function, compiled by rustc and LLVM, so the two builds differ only in the compiler. (The reads
-//! in Rust are written directly: decisions 0510, 0517.)
+//! in Rust are written directly: decisions 0534, 0536.)
 //!
 //! A function's graph is structured control (`Shape`); each value a local, a block's
 //! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
@@ -204,20 +206,30 @@ pub struct Shape {
     merges: Vec<Vec<usize>>,
     header: Vec<bool>,
     merge: Vec<bool>,
+    /// The structure printed as C (`clif_ukl`), which has no labels: each labelled
+    /// block a `do { … } while (false)` and each loop a `for (;;)` over one. A jump sets the
+    /// target's number (`j`: a loop's `2x + 1`, a merge's `2y + 2`) and breaks; each construct
+    /// on the way out stops it there or breaks on.
+    pub c: bool,
 }
 
-fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
+pub fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
     let Some(last) = f.layout.last_inst(b) else { return Vec::new() };
     f.dfg.insts[last].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().map(|c| c.block(&f.dfg.value_lists)).collect()
 }
 
 /// The graph's order, dominators and loops: reverse postorder, each node's immediate dominator
 /// (by place), its predecessors; or the first edge back to a node that does not dominate it.
+/// The dominator tree numbered in preorder (`pre`, by place) with each subtree's end (`end`): `a`
+/// dominates `b` where `b`'s number is in `a`'s subtree's, one test (`dominates`) where a walk up the
+/// tree is as long as it is deep, for each edge of each round of `Shape::threaded`'s splitting.
 struct Order {
     order: Vec<usize>,
     rpo: Vec<usize>,
     idom: Vec<usize>,
     preds: Vec<Vec<usize>>,
+    pre: Vec<usize>,
+    end: Vec<usize>,
 }
 
 impl Order {
@@ -251,53 +263,108 @@ impl Order {
                 preds[t].push(b);
             }
         }
-        // Immediate dominators (Cooper, Harvey, Kennedy), by place in the order.
-        let mut idom = vec![usize::MAX; order.len()];
-        idom[0] = 0;
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for i in 1..order.len() {
-                let mut new = usize::MAX;
-                for &p in &preds[order[i]] {
-                    let mut q = rpo[p];
-                    if idom[q] == usize::MAX {
-                        continue;
-                    }
-                    if new == usize::MAX {
-                        new = q;
-                        continue;
-                    }
-                    let mut a = new;
-                    while a != q {
-                        while a > q {
-                            a = idom[a];
-                        }
-                        while q > a {
-                            q = idom[q];
-                        }
-                    }
-                    new = a;
-                }
-                if idom[i] != new {
-                    idom[i] = new;
-                    changed = true;
-                }
+        let idom = Self::idoms(succ, &order, &rpo, &preds);
+        // The dominator tree in preorder, iteratively: each place's number, and its subtree's end.
+        let m = order.len();
+        let mut children = vec![Vec::new(); m];
+        for i in 1..m {
+            children[idom[i]].push(i);
+        }
+        let (mut pre, mut end) = (vec![0; m], vec![0; m]);
+        let mut next = 0;
+        let mut stack = vec![(0usize, 0usize)];
+        pre[0] = 0;
+        next += 1;
+        while let Some(top) = stack.last_mut() {
+            let (i, k) = *top;
+            if let Some(&c) = children[i].get(k) {
+                top.1 += 1;
+                pre[c] = next;
+                next += 1;
+                stack.push((c, 0));
+            } else {
+                end[i] = next;
+                stack.pop();
             }
         }
-        Order { order, rpo, idom, preds }
+        Order { order, rpo, idom, preds, pre, end }
     }
 
-    fn dominates(&self, a: usize, mut b: usize) -> bool {
-        loop {
-            if a == b {
-                return true;
+    /// Each place's immediate dominator, by place (the entry's its own), by Semi-NCA (Georgiadis;
+    /// LLVM's): semidominators by Lengauer and Tarjan's evaluation with path compression on a
+    /// depth-first spanning tree, then each node's immediate dominator the nearest of its tree
+    /// parent's dominators at or above its semidominator. One pass, where Cooper, Harvey and
+    /// Kennedy's iteration to a fixed point takes many on an irreducible graph.
+    fn idoms(succ: &[Vec<usize>], order: &[usize], rpo: &[usize], preds: &[Vec<usize>]) -> Vec<usize> {
+        const NONE: usize = usize::MAX;
+        let n = succ.len();
+        // The spanning tree: each node's preorder number, the node at each, each one's parent.
+        let mut num = vec![NONE; n];
+        let (mut vertex, mut parent) = (vec![0usize], vec![0usize]);
+        num[0] = 0;
+        let mut stack = vec![(0usize, 0usize)];
+        while let Some(top) = stack.last_mut() {
+            let (b, k) = *top;
+            if let Some(&t) = succ[b].get(k) {
+                top.1 += 1;
+                if num[t] == NONE {
+                    num[t] = vertex.len();
+                    parent.push(num[b]);
+                    vertex.push(t);
+                    stack.push((t, 0));
+                }
+            } else {
+                stack.pop();
             }
-            if b == 0 {
-                return false;
-            }
-            b = self.idom[b];
         }
+        let m = vertex.len();
+        let mut semi: Vec<usize> = (0..m).collect();
+        let mut label: Vec<usize> = (0..m).collect();
+        let mut ancestor = vec![NONE; m];
+        let mut path = Vec::new();
+        for w in (1..m).rev() {
+            for &v in &preds[vertex[w]] {
+                let v = num[v];
+                // `eval(v)`: the least semidominator on `v`'s path in the linked forest, the path
+                // compressed on the way.
+                let u = if ancestor[v] == NONE {
+                    v
+                } else {
+                    let mut x = v;
+                    while ancestor[ancestor[x]] != NONE {
+                        path.push(x);
+                        x = ancestor[x];
+                    }
+                    while let Some(x) = path.pop() {
+                        let a = ancestor[x];
+                        if semi[label[a]] < semi[label[x]] {
+                            label[x] = label[a];
+                        }
+                        ancestor[x] = ancestor[a];
+                    }
+                    label[v]
+                };
+                semi[w] = semi[w].min(semi[u]);
+            }
+            ancestor[w] = parent[w];
+        }
+        let mut idom = parent;
+        for w in 1..m {
+            while idom[w] > semi[w] {
+                idom[w] = idom[idom[w]];
+            }
+        }
+        // By place in the order.
+        let mut by_place = vec![0; order.len()];
+        for (i, &b) in order.iter().enumerate().skip(1) {
+            by_place[i] = rpo[vertex[idom[num[b]]]];
+        }
+        by_place
+    }
+
+    /// Whether place `a` dominates place `b`: `b` in `a`'s subtree of the dominator tree.
+    fn dominates(&self, a: usize, b: usize) -> bool {
+        self.pre[a] <= self.pre[b] && self.pre[b] < self.end[a]
     }
 
     /// An edge (its source node and its place in the source's successors) back to a node that
@@ -406,7 +473,7 @@ impl Shape {
         for m in &mut merges {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
-        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge })
+        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, c: false })
     }
 
     /// The dispatch nearest above node `x` in the dominator tree.
@@ -532,7 +599,11 @@ impl Shape {
     /// `Label`s. `tree_named`'s are the places, numbers.
     pub fn tree_labelled(&self, emit: Emit<'_>, x: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         let within = self.within(emit, x, &self.merges[x], name, label)?;
-        Ok(if self.header[x] { format!("'{}: loop {{\n{within}}}\n", name(x, true)) } else { within })
+        Ok(match (self.header[x], self.c) {
+            (false, _) => within,
+            (true, false) => format!("'{}: loop {{\n{within}}}\n", name(x, true)),
+            (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
+        })
     }
 
     /// The node a dispatch's `k`th entry is: what its label names.
@@ -554,9 +625,9 @@ impl Shape {
     fn transfer(&self, emit: Emit<'_>, x: usize, k: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            format!("continue '{};", name(to, true))
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue '{};", name(to, true)) }
         } else if self.merge[to] {
-            format!("break '{};", name(to, false))
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break '{};", name(to, false)) }
         } else {
             self.tree_labelled(emit, to, name, label)?
         };
@@ -570,9 +641,21 @@ impl Shape {
         if let Some((&y, rest)) = ys.split_first() {
             let inner = self.within(emit, x, rest, name, label)?;
             let after = self.tree_labelled(emit, y, name, label)?;
+            if self.c {
+                return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
+            }
             return Ok(format!("'{}: {{\n{inner}}}\n{after}", name(y, false)));
         }
         let Some(b) = self.block[x] else {
+            if self.c {
+                // A jump in a case breaks the `switch`, then the construct around it.
+                let mut s = String::from("switch (d) {\n");
+                for k in 0..self.succ[x].len() {
+                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k, name, label)?).unwrap();
+                }
+                s.push_str("default: break;\n}\n");
+                return Ok(s);
+            }
             let mut s = String::from("match d {\n");
             // Only the arms an edge labels (`thread` leaves some none).
             for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
@@ -702,7 +785,7 @@ fn cond(cc: IntCC, a: &str, b: &str, s: &str, u: &str) -> String {
 
 /// Whether call `inst` is followed by a return of its results, in order, and nothing else:
 /// `return f(…)`.
-fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
+pub fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
     let dfg = &f.dfg;
     if dfg.insts[inst].opcode() != ir::Opcode::Call {
         return false;
@@ -710,7 +793,57 @@ fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
     f.layout.next_inst(inst).is_some_and(|r| dfg.insts[r].opcode() == ir::Opcode::Return && dfg.inst_args(r) == dfg.inst_results(inst) && !dfg.inst_results(inst).is_empty())
 }
 
+/// Instruction `inst`'s code: a branch's by `branch`, its successors' code by `jump`; any other's by
+/// `operation`. The structuring recurses through a branch (`Shape::tree`, a successor's code
+/// inside its branch's), so the frame held per level is `branch`'s, not the whole match's.
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+    match f.dfg.insts[inst].opcode() {
+        Opcode::Jump | Opcode::Brif | Opcode::BrTable => branch(f, inst, name, jump),
+        _ => operation(f, inst, name),
+    }
+}
+
+/// A branch's code: each successor's arguments into its parameters, then its code (`jump`).
+fn branch(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+    let data = &f.dfg.insts[inst];
+    Ok(match data {
+        InstructionData::Jump { destination, .. } => goto(f, destination, 0, name, jump)?,
+        InstructionData::Brif { blocks, arg, .. } => format!("if {} != 0 {} else {}", name(*arg), goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?),
+        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
+        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
+        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
+        // `b'0'..=b'9' =>`; those that are the default's, the default's.
+        InstructionData::BranchTable { table, arg, .. } => {
+            let jt = &f.dfg.jump_tables[*table];
+            let default = goto(f, &jt.default_block(), 0, name, jump)?;
+            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+            for (i, call) in jt.as_slice().iter().enumerate() {
+                let to = goto(f, call, i + 1, name, jump)?;
+                if to == default {
+                    continue;
+                }
+                match arms.iter_mut().find(|a| a.0 == to) {
+                    Some(a) => match a.1.last_mut() {
+                        Some(r) if r.1 + 1 == i => r.1 = i,
+                        _ => a.1.push((i, i)),
+                    },
+                    None => arms.push((to, vec![(i, i)])),
+                }
+            }
+            let mut s = format!("match {} {{ ", name(*arg));
+            for (to, ranges) in &arms {
+                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
+            }
+            write!(s, "_ => {default} }}").unwrap();
+            s
+        }
+        _ => return Err(format!("{}: not a branch", data.opcode())),
+    })
+}
+
+/// An instruction's code, but a branch's (`branch`).
+fn operation(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -732,7 +865,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         if off == 0 { format!("({p} as usize)") } else { format!("(({p} as usize).wrapping_add({off}isize as usize))") }
     };
     let vector = |t: Option<ir::Type>| t.is_some_and(|t| t.is_vector());
-    if vector(rt) || (vector(at) && !matches!(op, Opcode::Brif | Opcode::Jump | Opcode::Return | Opcode::Call)) {
+    if vector(rt) || (vector(at) && !matches!(op, Opcode::Return | Opcode::Call)) {
         return vector_instruction(f, inst, op, &args, rt, at, &set, &addr);
     }
     let slot = |ss: &ir::StackSlot, offset: i64| format!("((ss{}.as_mut_ptr() as usize).wrapping_add({offset}isize as usize))", ss.as_u32());
@@ -869,51 +1002,13 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             1 => format!("return {};", args[0]),
             _ => format!("return ({});", args.join(", ")),
         },
-        Opcode::Jump => {
-            let InstructionData::Jump { destination, .. } = data else { return Err("a jump with no destination".into()) };
-            goto(f, destination, 0, name, jump)?
-        }
-        Opcode::Brif => {
-            let InstructionData::Brif { blocks, .. } = data else { return Err("a branch with no blocks".into()) };
-            format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
-        }
-        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
-        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
-        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
-        // `b'0'..=b'9' =>`; those that are the default's, the default's.
-        Opcode::BrTable => {
-            let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
-            let jt = &f.dfg.jump_tables[*table];
-            let default = goto(f, &jt.default_block(), 0, name, jump)?;
-            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
-            for (i, call) in jt.as_slice().iter().enumerate() {
-                let to = goto(f, call, i + 1, name, jump)?;
-                if to == default {
-                    continue;
-                }
-                match arms.iter_mut().find(|a| a.0 == to) {
-                    Some(a) => match a.1.last_mut() {
-                        Some(r) if r.1 + 1 == i => r.1 = i,
-                        _ => a.1.push((i, i)),
-                    },
-                    None => arms.push((to, vec![(i, i)])),
-                }
-            }
-            let mut s = format!("match {} {{ ", args[0]);
-            for (to, ranges) in &arms {
-                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
-                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
-            }
-            write!(s, "_ => {default} }}").unwrap();
-            s
-        }
         op => return Err(format!("the opcode {op}")),
     })
 }
 
 /// The `band`s each read only by compares that print as a bit test (`tested_bits`): the
 /// test is the `and` too, so they are not printed.
-fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
+pub fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
     let dfg = &f.dfg;
     let insts: Vec<ir::Inst> = f.layout.blocks().flat_map(|b| f.layout.block_insts(b)).collect();
     let mut tested = std::collections::HashSet::new();
@@ -1168,6 +1263,56 @@ mod tests {
         b.seal_all_blocks();
         b.finalize();
         f
+    }
+
+    /// `Order::of`'s dominators are the definition's (a node's are itself and those of all its
+    /// predecessors), on random graphs, irreducible ones among them: each node's immediate
+    /// dominator, and `dominates` for every pair.
+    #[test]
+    fn the_dominators_are_the_definitions() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as usize
+        };
+        for _ in 0..300 {
+            let n = 2 + next(30);
+            let succ: Vec<Vec<usize>> = (0..n).map(|_| (0..next(4)).map(|_| next(n as u64)).collect()).collect();
+            let order = super::Order::of(&succ);
+            let m = order.order.len();
+            // By the definition, over the places reached: each place's dominators, to a fixed point.
+            let mut dom: Vec<Vec<bool>> = (0..m).map(|i| (0..m).map(|j| i == 0 && j == 0 || i != 0).collect()).collect();
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for i in 1..m {
+                    let mut d = vec![true; m];
+                    for &p in &order.preds[order.order[i]] {
+                        for (j, x) in d.iter_mut().enumerate() {
+                            *x &= dom[order.rpo[p]][j];
+                        }
+                    }
+                    d[i] = true;
+                    if d != dom[i] {
+                        dom[i] = d;
+                        changed = true;
+                    }
+                }
+            }
+            for (i, of) in dom.iter().enumerate() {
+                for (j, &d) in of.iter().enumerate() {
+                    assert_eq!(order.dominates(j, i), d, "{succ:?}: does place {j} dominate {i}?");
+                }
+                if i > 0 {
+                    // The immediate one: a strict dominator every other strict one dominates.
+                    let strict: Vec<usize> = (0..m).filter(|&j| j != i && of[j]).collect();
+                    let want = *strict.iter().find(|&&d| strict.iter().all(|&e| dom[d][e])).expect("an immediate dominator");
+                    assert_eq!(order.idom[i], want, "{succ:?}: place {i}'s immediate dominator");
+                }
+            }
+        }
     }
 
     #[test]

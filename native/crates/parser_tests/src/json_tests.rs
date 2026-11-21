@@ -27,11 +27,11 @@ use std::path::{Path, PathBuf};
 
 /// JSON in simdjson's structure (`json_parser/json-simdjson.bitlex`, page 40), compiled.
 fn simdjson_form() -> Compiled {
-    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let source = std::fs::read_to_string(std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
     compile_step("json-simdjson", &source)
 }
 
-/// The language a format 16 source is generated for and its runs take (decision 0516): every key a direct run of the
+/// The language a format 16 source is generated for and its runs take (decision 0535): every key a direct run of the
 /// grammar writes (`rust_stream::direct_entries`), then every other key the files' format 15 tapes hold, as the
 /// engine's language holds its grammar's. One for every file, known before the Rust is written: its numbers are
 /// literals there, and no node word of the grammar is left without one.
@@ -292,7 +292,7 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
     inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
     // At the depth's limit (`DEPTH`, 1,024 calls) and past it, arrays and objects and both by turns: the open nodes
-    // the writer's stack is reserved for (`rust_stream::open_bound`, decision 0519), at their most; past it, refused.
+    // the writer's stack is reserved for (`rust_stream::open_bound`, decision 0537), at their most; past it, refused.
     inputs.extend(deep_nests(1022..1028));
     inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
     inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
@@ -439,7 +439,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // No working row: the rule touches neither rows nor supertype records, only the stack of open
     // nodes (a call's number in each) and the ops.
     let rule16 = src16.split("\nfn r0(").nth(1).expect("the rule");
-    // Each node's number a literal at its word, as the lean parser's kind constants (decision 0516): no table read.
+    // Each node's number a literal at its word, as the lean parser's kind constants (decision 0535): no table read.
     assert!(!src16.contains("fn number16(") && src16.contains("pub const LANG: u64"), "a direct run's numbers are the language's literals");
     let reads: Vec<&str> = rule16.split("\n}\n").next().unwrap_or_default().lines().filter(|l| l.contains("numbers")).collect();
     assert!(reads.is_empty(), "a direct run's rule reads the numbers: {reads:?}");
@@ -553,7 +553,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     }
     assert_eq!(written, parsed, "every parsed file written in format 16");
     eprintln!("{written} files in format 16 and 16z, the Rust's bytes the JIT's");
-    // Each refusal names its reason (`native_cpu_stream::refusal`, decision 0519): a file the JIT refuses, the Rust
+    // Each refusal names its reason (`native_cpu_stream::refusal`, decision 0537): a file the JIT refuses, the Rust
     // refuses for the reason its word has.
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     let deep = deep_nests(1025..1026);
@@ -619,12 +619,8 @@ fn simdjson_form_against_simdjson() {
     let src16 = rerail_compiler::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
     // SAFETY: the Rust of this program's tier 2 in format 16, on the format 16 run's harness.
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(aot_entry(&src16), 4) };
-    let retired = || {
-        let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-        // SAFETY: `info` is a `rusage_info_v4`, as the flavor says.
-        unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-        info.ri_instructions as f64
-    };
+    // The process's instructions retired (`native_cpu_codegen::retired`: macOS's count, zero elsewhere).
+    let retired = || rerail_compiler::native_cpu_codegen::retired().0 as f64;
     // The median of each run's instructions and time.
     let measure = |run: &mut dyn FnMut()| {
         run();
@@ -918,8 +914,11 @@ fn median(mut xs: Vec<f64>) -> f64 {
 fn json_bench() {
     // `RERAIL_OPT`: Cranelift's optimizer on tier 1 (`1`), tier 2 (`2`), or both (`1,2`).
     let opt = std::env::var("RERAIL_OPT").unwrap_or_default();
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(opt.split(',').any(|t| t == "1"), std::sync::atomic::Ordering::Relaxed);
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(opt.split(',').any(|t| t == "2"), std::sync::atomic::Ordering::Relaxed);
+    // The compiles' options are the run's (decision 0442).
+    let _run = rerail_context::test_run();
+    let options = rerail_compiler::native_cpu_codegen::options();
+    options.optimize_tier1.store(opt.split(',').any(|t| t == "1"), std::sync::atomic::Ordering::Relaxed);
+    options.optimize_tier2.store(opt.split(',').any(|t| t == "2"), std::sync::atomic::Ordering::Relaxed);
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     // `RERAIL_FORMS`: other Bitlex files to time, as paths, in place of the two forms.
     let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
@@ -1002,8 +1001,9 @@ fn json_bench() {
 #[ignore = "a dump: run by name with RERAIL_DUMP_TIER2"]
 fn json_tier2_by_word() {
     let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "json-rfc".to_owned());
-    // Each function's IR kept, for its Rust (`rerail_clif::rust`).
-    rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+    // Each function's IR kept, for its Rust (`rerail_clif::rust`): the run's option (decision 0442).
+    let _run = rerail_context::test_run();
+    rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
     let c = if name == "simdjson" { simdjson_form() } else { form(&name) };
     let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
     let dir = std::env::var("RERAIL_DUMP_TIER2").expect("RERAIL_DUMP_TIER2");
@@ -1062,16 +1062,19 @@ fn json_optimizer_bench() {
     let paths = files_in("RERAIL_JSON_CORPUS");
     let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
     let bytes: usize = files.iter().map(Vec::len).sum();
+    // The compiles' options are the run's (decision 0442).
+    let _run = rerail_context::test_run();
+    let options = rerail_compiler::native_cpu_codegen::options();
     let forms: Vec<(&str, Compiled)> = [("off", false, false), ("tier 1", true, false), ("tier 2", false, true), ("both", true, true)]
         .into_iter()
         .map(|(label, one, two)| {
-            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(one, Relaxed);
-            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(two, Relaxed);
+            options.optimize_tier1.store(one, Relaxed);
+            options.optimize_tier2.store(two, Relaxed);
             (label, form(&name))
         })
         .collect();
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(false, Relaxed);
-    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(false, Relaxed);
+    options.optimize_tier1.store(false, Relaxed);
+    options.optimize_tier2.store(false, Relaxed);
     // Each form's batches and tapes, made once.
     let mut state: Vec<Vec<_>> = forms
         .iter()

@@ -122,7 +122,8 @@ fn blade_view_reads_the_regions_blade_compiles() {
 /// whose nodes stand for template bytes (`origin::InFile`); `None` where it embeds none.
 fn view(source: &str) -> Option<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
-    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).expect("encodes");
+    let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
+        .expect("encodes");
     let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
         .expect("restores");
     let guests = host.guests().expect("owned");
@@ -214,7 +215,11 @@ fn compare_definedness(
     )
     .expect("table builds");
     let program = doc.root();
-    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
+    let flow = table
+        .flow
+        .as_deref()
+        .and_then(crate::code_rule_dsl::scope::php::Flow::of)
+        .expect("a PHP flow");
     let inside = |at: usize| foreign.iter().any(|span| span.contains(&at));
     // Each read's claim: `Some(true)` undefined on every path, `Some(false)` defined or
     // guarded, `None` nothing.
@@ -349,7 +354,11 @@ fn a_template_variable_some_paths_define_is_unknown() {
         Reading::default(),
     )
     .expect("table builds");
-    let flow = table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of).expect("a PHP flow");
+    let flow = table
+        .flow
+        .as_deref()
+        .and_then(crate::code_rule_dsl::scope::php::Flow::of)
+        .expect("a PHP flow");
     let read = descendants(&doc.root())
         .into_iter()
         .filter(|node| node.kind() == "variable_name" && node.text() == "$x")

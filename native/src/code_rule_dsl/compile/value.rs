@@ -1,7 +1,6 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    ValueFeature, gate,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ValueFeature, gate};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::{AstMatcher, Bound, Reading, ValueTest};
 use crate::code_rule_dsl::matcher::{Semantic, SemanticText};
@@ -12,7 +11,6 @@ use crate::code_rule_dsl::value::text_regex::TextRegex;
 use napi::Result;
 use serde_json::Value as Json;
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 const VALUE_KEYS: &[&str] = &[
     "eq",
@@ -182,11 +180,19 @@ pub fn compile_value_with(
     path: &str,
     reading: Reading,
 ) -> Result<AstMatcher> {
-    { let pack = language_pack::pack(Family::of(language)); compile_value_in(pack, value, path, reading) }
+    {
+        let pack = language_pack::pack(Family::of(language));
+        compile_value_in(pack, value, path, reading)
+    }
 }
 
 /// `compile_value_with` for a grammar whose family's adapter is `A`.
-fn compile_value_in(pack: &dyn language_pack::LanguagePack, value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
+fn compile_value_in(
+    pack: &dyn language_pack::LanguagePack,
+    value: &Json,
+    path: &str,
+    reading: Reading,
+) -> Result<AstMatcher> {
     let name = value.get("name").and_then(Json::as_bool) == Some(true);
     if name {
         gate(

@@ -67,8 +67,9 @@ lowered relational operands"). The predicate's sub-rules are lowered as labels o
    - A node holds where the producer matches it and each slot's target has the label of the
      slot's sub-rule, which is lowered as a label of its own.
 2. **Rows before passes** (`fact_rows`):
-   - Per tape, the producer runs at its kinds' nodes under one file evaluation (`FileScopeSlot`),
-     so the scope table is built once per file.
+   - Per tape, the producer runs at its kinds' nodes under one file evaluation (`FileScopeSlot`,
+     and W's file memo, `with_file_memo`, as W's run holds them), so the scope table is built once
+     per file and a parent's gaps are read once, not again for each child, fact and node.
    - The rows are (node, slot targets). They are computed in parallel over tapes and timed as
      `labels.facts`.
    - On the CPU a label is a bit per row whose targets are in their slots' labels.

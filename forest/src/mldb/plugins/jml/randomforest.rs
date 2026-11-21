@@ -25,7 +25,7 @@
 //! trees of `trainMultipleSamplings` in parallel.
 
 use crate::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
-use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, MetalComputeEvent, MetalComputeQueue};
+use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, transfer_to_host_sync, ComputeEvent, ComputeQueue};
 use crate::dataset_feature_space::DatasetFeatureSpace;
 use crate::memory_region::FrozenMemoryRegionT;
 use crate::compute_kernel_grid::{GridComputeKernelSpecialization, GridLaunchPlan};
@@ -35,7 +35,7 @@ use crate::memory_region::{MappedSerializer, MemorySerializer};
 use crate::randomforest_recursive::{extract_tree, side_of, split_and_recurse_partitioned, test_all};
 use crate::randomforest_types::*;
 use crate::tree::{Ptr, Tree};
-use metal::Buffer;
+use crate::device::Buffer;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -239,7 +239,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
         let targets: &[f32] = rows.targets.as_deref().map_or(&[], |t| &t[..]);
         let device_targets = transfer_to_device_immutable(device, if targets.is_empty() { &[0f32][..] } else { targets });
 
-        let mut queue = MetalComputeQueue::new(&shared.queue);
+        let mut queue = ComputeQueue::new(&shared.queue);
         if num_examples.is_none() {
         run(&queue, "decodeRows", &[
             ("rowData", B(&row_data)),
@@ -310,7 +310,7 @@ impl<'a> FeatureSamplingTrainerKernel<'a> {
 }
 
 /// Enqueues grid kernel `name` on the queue.
-fn run(queue: &MetalComputeQueue, name: &str, args: &[(&str, ComputeKernelArgument)], grid: &[u32]) -> Result<(), String> {
+fn run(queue: &ComputeQueue, name: &str, args: &[(&str, ComputeKernelArgument)], grid: &[u32]) -> Result<(), String> {
     let k = kernel(name)?;
     let mut ctx = queue.new_bind_context(k.function);
     k.enqueue(args, grid, &mut ctx)
@@ -402,7 +402,7 @@ pub struct FeatureSamplingTrainerPartition<'o, 'a> {
     pub splits_pool: usize,
     /// Whether the device can stop before its levels (on width or on the splits pool).
     pub can_stop: bool,
-    pub depth_queue: MetalComputeQueue,
+    pub depth_queue: ComputeQueue,
     pub device_tree_training_info: Buffer,
     pub device_bucket_numbers: Buffer,
     pub device_feature_is_active: Buffer,
@@ -493,7 +493,7 @@ struct ResultSlot {
 }
 
 impl ResultSlot {
-    fn new(d: &metal::DeviceRef, splits_pool: usize, continuation: Option<[u64; 3]>, busy: bool) -> Self {
+    fn new(d: &crate::device::DeviceRef, splits_pool: usize, continuation: Option<[u64; 3]>, busy: bool) -> Self {
         let bytes = |n: u64| alloc_uninitialized_array_sync::<u8>(d, n as usize);
         ResultSlot {
             splits: alloc_uninitialized_array_sync::<IndexedPartitionSplit>(d, splits_pool),
@@ -508,7 +508,7 @@ impl ResultSlot {
 /// tree's use of the pools does not touch them). When the device leaves levels for the host, the rows' partitions,
 /// and the active partitions' weights and places in the tree, as the last device level left them.
 pub struct ScheduledTree {
-    pub event: MetalComputeEvent,
+    pub event: ComputeEvent,
     pub partition_splits: Buffer,
     pub tree_depth_info: Buffer,
     pub continuation: Option<(Buffer, Buffer, Buffer)>,
@@ -537,7 +537,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             width,
             splits_pool,
             can_stop,
-            depth_queue: MetalComputeQueue::new(&shared.queue),
+            depth_queue: ComputeQueue::new(&shared.queue),
             device_tree_training_info: alloc_uninitialized_array_sync::<TreeTrainingInfo>(d, 1),
             device_bucket_numbers: alloc_uninitialized_array_sync::<u32>(d, nf + 1),
             device_feature_is_active: alloc_uninitialized_array_sync::<u32>(d, nf),
@@ -853,7 +853,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let new_leaves = split_and_recurse_partitioned(device_depth as i32, o.tree_max_depth as i32, &mut tree, None, data.num_active_buckets, &data.bucket_numbers, &features, &data.active_features_in, &decoded_rows, &partitions, &w_all, &indexes, o.fs)?;
             leaves.1.extend(new_leaves);
         }
-        tree.root = extract_tree(0, o.tree_max_depth as i32, &mut tree, PartitionIndex::root(), &leaves.0, &leaves.1, o.features, o.fs)?;
+        tree.root = extract_tree(0, &mut tree, PartitionIndex::root(), &leaves.0, &leaves.1, o.features, o.fs)?;
         Ok((tree, device_depth))
     }
 }
@@ -1065,7 +1065,7 @@ pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &
     assert_eq!(tree_depth_info.depth + 1, max_depth);
     let mut tree = Tree::new();
     let (all_splits, leaves) = finished_leaves(&mut tree, &all_partition_splits[..tree_depth_info.num_finished_partitions as usize]);
-    tree.root = extract_tree(0, max_depth as i32, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
+    tree.root = extract_tree(0, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
     Ok(tree)
 }
 
@@ -1158,7 +1158,7 @@ impl PartitionData {
         let mut keep = Vec::new();
         for i in 0..n {
             let w = weight_of(i);
-            if !(w >= 0.0) || !w.is_finite() {
+            if !w.is_finite() || w < 0.0 {
                 return Err(format!("row {i}: weight {w}"));
             }
             if w != 0.0 {
@@ -1207,18 +1207,20 @@ impl PartitionData {
 
         // The active features' buckets over the kept rows, each encoded on its own (in parallel), then in one block.
         use rayon::prelude::*;
-        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = self.features.par_iter().map(|f| {
-            if !f.active {
-                return None;
-            }
-            let mut s = MemorySerializer;
-            let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
-            for &i in &keep {
-                bl.write(f.buckets.get(self.rows.get_example_num(i)));
-            }
-            let frozen = bl.freeze(&mut s);
-            Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
-        }).collect();
+        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = rerail_context::on_cores(|| {
+            self.features.par_iter().map(|f| {
+                if !f.active {
+                    return None;
+                }
+                let mut s = MemorySerializer;
+                let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
+                for &i in &keep {
+                    bl.write(f.buckets.get(self.rows.get_example_num(i)));
+                }
+                let frozen = bl.freeze(&mut s);
+                Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
+            }).collect()
+        });
         let words: usize = lists.iter().flatten().map(|l| l.0.len()).sum();
         let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
         let mut spans = Vec::new();
@@ -1377,18 +1379,20 @@ impl PartitionData {
             return trainer.train_partitioned(feature_vector_sampling, debug_name, features_active).map_err(|e| format!("Error training partition {debug_name}: {e}"));
         }
         use rayon::prelude::*;
-        features_active.par_iter().enumerate().map(|(i, af)| {
-            let mut my_data = self.clone();
-            for f in my_data.features.iter_mut() {
-                f.active = false;
-            }
-            for &f in af {
-                my_data.features[f as usize].active = true;
-            }
-            let mut tree = Tree::new();
-            tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
-            Ok(tree)
-        }).collect()
+        rerail_context::on_cores(|| {
+            features_active.par_iter().enumerate().map(|(i, af)| {
+                let mut my_data = self.clone();
+                for f in my_data.features.iter_mut() {
+                    f.active = false;
+                }
+                for &f in af {
+                    my_data.features[f as usize].active = true;
+                }
+                let mut tree = Tree::new();
+                tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
+                Ok(tree)
+            }).collect()
+        })
     }
 }
 
@@ -1431,7 +1435,7 @@ pub(crate) mod tests {
             let buckets = BucketList { storage: FrozenMemoryRegionT::new(raw), entry_bits, num_buckets: nb as i32, num_entries: nr as usize };
             let mut bucket_descriptions = crate::bucket::BucketDescriptions::default();
             bucket_descriptions.initialize_from(false, (0..nb).map(|v| v as f64).collect(), vec![], nb as i32).unwrap();
-            let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions, ..Default::default() });
+            let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions });
             features.push(Feature { active: true, ordinal, subsets: false, info: Some(info), buckets });
         }
         PartitionData { fs: Arc::new(fs), rows, bucket_memory, features }
@@ -1541,7 +1545,7 @@ pub(crate) mod tests {
     /// train over the same schedule; several trees (feature samplings) scheduled before any is awaited each come
     /// out the same as trained alone.
     #[test]
-    fn trees_trained_on_metal_match_the_host_schedule() {
+    fn trees_trained_on_the_device_match_the_host_schedule() {
         if crate::gpu::shared::get().is_none() {
             eprintln!("no Metal device: skipped");
             return;

@@ -1,6 +1,6 @@
 //! C's and C++'s directives in Bitlex (decision 0327, mode (a) compiled): the grammar
 //! `directives.bitlex`, compiled once a process through the Bitlex compiler to tier 1
-//! and tier 2 on Cranelift, as `.rr`'s (`rerail_rr_parser`) and Kotlin's are.
+//! and tier 2 on Cranelift, as `.rerail`'s (`rerail_rr_parser`) and Kotlin's are.
 //!
 //! Its tape is the directive tape: a `directives` root and a node a directive, of its kind
 //! (`KINDS`), from its `#` to its line's last token's end, its operands fields' nodes below it.
@@ -153,14 +153,14 @@ impl Compiled {
 
     /// The same for each of `files`, tier 1 on Metal and tier 2 over its buffers; `None` for a
     /// file refused, and for all where the device cannot run the batch.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn metal_read(&self, files: &[&[u8]]) -> Result<Vec<Option<Read>>, rerail_compiler::Error> {
         Ok(self.metal_images(files)?.into_iter().map(|t| t.and_then(|t| read(&t).ok())).collect())
     }
 
     /// Each of `files`' tapes, tier 1 on Metal and tier 2 over its buffers; `None` for a file
     /// refused; the device's error where it cannot run the batch.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub fn metal_images(&self, files: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>, rerail_compiler::Error> {
         use rerail_metal::block_program::serial::{Segments, run_resident};
         let batch: Vec<_> = files.iter().map(|f| rerail_compiler::block::BatchFile { bytes: f, program: 0 }).collect();
@@ -196,6 +196,27 @@ pub struct Read {
     pub word_ends: Vec<u32>,
     /// The first directive's expression's leaves (at most 5: a guard's test), kind and bytes.
     pub first_expr: Vec<(&'static str, u32, u32)>,
+}
+
+/// A tape image as text, a node a line: its depth's indent, its field (`name:`), its kind (by
+/// `kinds`, its id where `kinds` has none) and its bytes. For tests and for reading a tape.
+pub fn outline(image: &[u8], kinds: &[&str], fields: &[&str], src: &[u8]) -> Result<String, String> {
+    let v = rerail_tape_format::View::new(image)?;
+    let mut out = String::new();
+    let mut ends: Vec<usize> = Vec::new();
+    for i in 0..v.len() {
+        while ends.last().is_some_and(|&e| e <= i) {
+            ends.pop();
+        }
+        let (k, f) = ((v.key(i) & 0x3ff) as usize, ((v.key(i) & 0xffff) >> rerail_tape_format::KIND_BITS) as usize);
+        let kind = kinds.get(k).map_or_else(|| format!("#{k}"), |k| k.to_string());
+        let field = f.checked_sub(1).and_then(|f| fields.get(f)).map_or(String::new(), |f| format!("{f}: "));
+        let (s, e) = (v.start(i) as usize, v.end(i) as usize);
+        let text = String::from_utf8_lossy(src.get(s..e.min(s + 40)).unwrap_or(b"")).replace('\n', "\\n");
+        out += &format!("{}{field}{kind} {s}..{e} {text:?}\n", "  ".repeat(ends.len()));
+        ends.push(i + v.size(i));
+    }
+    Ok(out)
 }
 
 /// A tape image read in place, in one walk: each directive (a node of a directive's kind, at the
@@ -257,11 +278,11 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
         } else {
             groups.last().and_then(|g| g.1)
         };
-        out.rows.push(Row { kind: k, start: v.start(i) as u32, end: v.end(i) as u32, parent });
+        out.rows.push(Row { kind: k, start: v.start(i), end: v.end(i), parent });
         let end = i + v.size(i);
         // Its `#`'s leaf, then its word's (a line marker's number is its `rest`'s).
         let word = if i + 2 < end && field(i + 2).is_none() { i + 2 } else { i + 1 };
-        out.word_ends.push(v.end(word) as u32);
+        out.word_ends.push(v.end(word));
         let mut last_param = false;
         for n in i + 1..end {
             let what = match field(n) {
@@ -290,9 +311,9 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
                 }
             };
             last_param = what == What::Param;
-            out.operands.push(Operand { i: d, what, start: v.start(n) as u32, end: v.end(n) as u32 });
+            out.operands.push(Operand { i: d, what, start: v.start(n), end: v.end(n) });
             if d == 0 && what == What::Expr && v.size(n) <= 6 {
-                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l) as u32, v.end(l) as u32)).collect();
+                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l), v.end(l))).collect();
             }
         }
         i = end;
@@ -357,6 +378,8 @@ mod facts;
 pub use facts::Facts;
 pub mod expand;
 pub mod tokens;
+pub mod pp;
+pub mod eval;
 
 /// `src`'s mode (a) facts: from the compiled grammar's tape where it reads the file, else (a
 /// construct the grammar does not read, or a grammar that does not compile) the lean scan's.

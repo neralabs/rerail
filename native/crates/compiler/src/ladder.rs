@@ -77,14 +77,74 @@ impl Ids {
     }
 }
 
-/// JSON's grammars.
-pub const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser");
+/// JSON's grammars' directory (`json_parser/`, beside this crate), found as the program runs: above the program,
+/// `CARGO_MANIFEST_DIR` or the working directory. Not written into the build (decision 0224): with its checkout's path
+/// in, this crate and every crate above it were a different crate in every checkout, for every profile.
+pub fn dir() -> String {
+    let crates = std::path::Path::new(file!()).ancestors().nth(3).expect("crates/compiler/src/ladder.rs");
+    let json = crates.join("json_parser");
+    let starts = [std::env::current_exe().ok(), std::env::var_os("CARGO_MANIFEST_DIR").map(Into::into), std::env::current_dir().ok()];
+    starts
+        .into_iter()
+        .flatten()
+        .find_map(|start| start.ancestors().map(|a| a.join(&json)).find(|d| d.is_dir()))
+        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", json.display()))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// A grammar whose gap mark (`semi`) is read from the blank run before each token, with two
+/// comment kinds as extras (`ladder_tests::a_gap_mark_read_from_the_blanks`): each extra keeps
+/// the blank marks of its own gap (`Records::extra`). The Metal tests run it too.
+pub const BLANKS_STEP: &str = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class dq        = '"'
+class word      = 'a'..'z'
+class punct     = '(' ')' ';'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  str   = dq .. dq
+}
+mask code       = ~hidden & ~o_line & ~o_block & ~o_str
+mask last_byte  = ~next(~empty)
+error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token string    = start o_str read str
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { "k" }
+keywords punct { "(" ")" ";" } required
+skip ws
+mark semi       = lf & code unless after ";", end, ends
+tree t {
+  node source_file whole = (statement (semi | ';'))*
+  choice statement nested = call | simple_identifier | string
+  node call             = 'k' '(' [simple_identifier | string] ')'
+  hidden semi
+  extra line_comment multiline_comment
+}
+"#;
+
+/// A text of `BLANKS_STEP` whose comments lie after a line break, one after another too, and
+/// on their token's line: semi's bits of its records are 0, 0, 1, 1, 0, 1.
+pub const BLANKS_TEXT: &[u8] = b"a // x\n// y\n/* z */ /* w */\nb\n";
 
 /// JSON's two reference forms, by name: `json-rfc` (RFC 8259, as simdjson accepts it) and `jsonc` (with comments, as
-/// tree-sitter-json parses it). The token loop's forms in `DIR` (`json`, `json-simdjson`) have their own shape and are
+/// tree-sitter-json parses it). The token loop's forms in `dir()` (`json`, `json-simdjson`) have their own shape and are
 /// checked by `rerail_parser_tests::json`.
 pub fn grammars() -> Vec<(String, String)> {
-    grammars_in(DIR).into_iter().filter(|(n, _)| n == "json-rfc" || n == "jsonc").collect()
+    grammars_in(&dir()).into_iter().filter(|(n, _)| n == "json-rfc" || n == "jsonc").collect()
 }
 
 /// The grammars in `dir`, by name: its `.bitlex` files.
@@ -460,9 +520,18 @@ pub struct Compiled {
     pub program: Words,
     pub native: Structure,
     pub parser: crate::native_cpu_stream::Parser,
+    /// The program's text, as the assembler read it.
+    pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
+}
+
+/// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
+pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
     // `RERAIL_STEP_TIMES`: each phase's time.
     let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
     let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
@@ -479,7 +548,7 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), crate::bitlex_masks::Shape::Auto).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
     phase("bitlex compile");
     let text = compiled.text();
@@ -492,7 +561,18 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
     phase("assemble and lower");
     let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
     phase("Cranelift (tier 1 and tier 2)");
-    Compiled { stmts, ids, program, native, parser }
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.
@@ -559,12 +639,15 @@ pub fn check_shape(name: &str, c: &Compiled) {
             assert_eq!(k + 1, c.parser.tier1.passes.len(), "{name}: tier 1's pass {k} has no block loop and is not the last");
             continue;
         }
-        let body = crate::clif_text::body_of(&pass.clif);
-        if body.is_empty() {
+        if !pass.block_loop {
             // No block loop (`native_cpu_block::bodiless_body`): the token loop is the pass's.
             continue;
         }
-        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches + pass.rare_branches;
+        let body: Vec<String> = crate::clif_text::hot_loop_until(&pass.clif, &pass.exits).into_iter().flat_map(|(_, l)| l).collect();
+        // Its back edge's branch, where it loops to itself; a body that goes on to the token
+        // loop over the final blocks jumps there instead (`PassShape::exits`).
+        let back_edge = usize::from(pass.exits.len() == 1);
+        let want = back_edge + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches + pass.rare_branches;
         assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test, its gates and its rare paths");
     }
     let heads = &c.parser.tier2.heads;
@@ -635,7 +718,6 @@ fn tier1_made(c: &Compiled) -> Vec<usize> {
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
-
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -647,75 +729,88 @@ pub fn check_ladder(
     for (name, source) in steps {
         let c = compile_step(name, source);
         check_shape(name, &c);
-        let mut lang = Lang::of(&c.stmts);
-        for (kind, texts) in samples {
-            lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
-        }
-        let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
-        let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
-        let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-        let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        let (made, lazy) = (tier1_made(&c), crate::native_cpu_block::lazy_code_bits(&c.native.block_programs[0]));
-        let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
-        docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
-        for (i, bytes) in docs.into_iter().enumerate() {
-            let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
-            let want = reference(&c, &bytes);
-            let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
-            let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
-            let compiled = c.parser.parse(&bytes).ok().map(as_ids);
-            let tier1 = c.parser.tier1.extract(&bytes);
-            if !tier1_agrees(&tier1, &run, &made, lazy) {
-                differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
-                break;
-            }
-            if interp != want || compiled != want {
-                let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
-                let fell = run.totals.iter().any(|&t| t != 0);
-                differ.push(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
-                break;
-            }
-            // The tape's bytes: the compiled code's, the interpreter's nodes through the tape's
-            // writer (`stream::image`), each extra's code flagged.
-            if let (Ok(image), Ok(nodes)) = (c.parser.image(&bytes), crate::stream::run(&c.program, &bytes, &run)) {
-                let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, &bytes);
-                if image != want {
-                    let at = image.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(image.len().min(want.len()));
-                    differ.push(format!("{}: the tape differs from the interpreter's at {}", show(), rerail_tape_format::place(&want, at)));
-                    break;
-                }
-            }
-            if let Some(d) = also(name, &c, &bytes, &want) {
-                differ.push(format!("{}:\n  {d}", show()));
-                break;
-            }
-            let bucket = if i < before { &mut sentences } else { &mut mutations };
-            bucket[usize::from(want.is_none())] += 1;
-            match &want {
-                Some(nodes) => {
-                    parsed += 1;
-                    with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
-                }
-                None => {
-                    fell += 1;
-                    if i < before {
-                        *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
-                    }
-                }
-            }
-        }
-        eprintln!(
-            "{name}: {} words. sentences: {} parsed, {} refused {reasons:?}. mutated: {} parsed, {} refused. {with_extras} parsed with extras",
-            c.native.structural.len(),
-            sentences[0],
-            sentences[1],
-            mutations[0],
-            mutations[1]
-        );
-        if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
-            differ.push(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
-        }
+        differ.extend(check_documents(name, &c, alphabet, samples, fixed, also));
     }
     differ
+}
+
+/// One step's documents (`check_ladder`'s, without the shape): the grammar's sentences, their
+/// mutations from `alphabet`, and `fixed`. The first difference, if any.
+pub fn check_documents(
+    name: &str,
+    c: &Compiled,
+    alphabet: &[u8],
+    samples: &[(&str, &[&str])],
+    fixed: &[&str],
+    also: &dyn Fn(&str, &Compiled, &[u8], &Option<Vec<IdNode>>) -> Option<String>,
+) -> Option<String> {
+    let mut lang = Lang::of(&c.stmts);
+    for (kind, texts) in samples {
+        lang.samples.insert((*kind).to_owned(), texts.iter().map(|t| t.as_bytes().to_vec()).collect());
+    }
+    let (mut parsed, mut fell, mut with_extras) = (0usize, 0usize, 0usize);
+    let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
+    let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+    let (made, lazy) = (tier1_made(c), crate::native_cpu_block::lazy_code_bits(&c.native.block_programs[0]));
+    let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(c, b).is_some(), alphabet);
+    docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
+    for (i, bytes) in docs.into_iter().enumerate() {
+        let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
+        let want = reference(c, &bytes);
+        let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
+        let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
+        let compiled = c.parser.parse(&bytes).ok().map(as_ids);
+        let tier1 = c.parser.tier1.extract(&bytes);
+        if !tier1_agrees(&tier1, &run, &made, lazy) {
+            if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
+                eprintln!("codes interp {:x?}\n      cpu    {:x?}\nstarts {:?}", run.codes, tier1.codes, run.positions.first());
+            }
+            return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
+        }
+        if interp != want || compiled != want {
+            let why = crate::stream::run(&c.program, &bytes, &run).err().map(|r| format!("word {}: {}", r.pc, r.why));
+            let fell = run.totals.iter().any(|&t| t != 0);
+            return Some(format!("{}:\n  reference {want:?}\n  interpreters {interp:?} ({why:?}, tier 1 falls back: {fell})\n  compiled {compiled:?}", show()));
+        }
+        // The tape's bytes: the compiled code's, the interpreter's nodes through the tape's
+        // writer (`stream::image`), each extra's code flagged.
+        if let (Ok(image), Ok(nodes)) = (c.parser.image(&bytes), crate::stream::run(&c.program, &bytes, &run)) {
+            let want = crate::stream::image(&nodes, &c.program.readings.extras, c.parser.tier2.widths_tag().1, &bytes);
+            if image != want {
+                let at = image.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(image.len().min(want.len()));
+                return Some(format!("{}: the tape differs from the interpreter's at {}", show(), rerail_tape_format::place(&want, at)));
+            }
+        }
+        if let Some(d) = also(name, c, &bytes, &want) {
+            return Some(format!("{}:\n  {d}", show()));
+        }
+        let bucket = if i < before { &mut sentences } else { &mut mutations };
+        bucket[usize::from(want.is_none())] += 1;
+        match &want {
+            Some(nodes) => {
+                parsed += 1;
+                with_extras += usize::from(nodes.iter().any(|n| extra_ids.contains(&n.0)));
+            }
+            None => {
+                fell += 1;
+                if i < before {
+                    *reasons.entry(refusal(c, &bytes)).or_default() += 1;
+                }
+            }
+        }
+    }
+    eprintln!(
+        "{name}: {} words. sentences: {} parsed, {} refused {reasons:?}. mutated: {} parsed, {} refused. {with_extras} parsed with extras",
+        c.native.structural.len(),
+        sentences[0],
+        sentences[1],
+        mutations[0],
+        mutations[1]
+    );
+    if parsed < 20 || fell < 10 || (!extra_ids.is_empty() && with_extras < 20) {
+        return Some(format!("{name}: {parsed} parsed, {fell} to tree-sitter: too few to test"));
+    }
+    None
 }
 

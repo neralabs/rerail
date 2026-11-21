@@ -6,9 +6,8 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-static ENABLED: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROFILE").is_some());
 pub(crate) fn enabled() -> bool {
-    *ENABLED
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some())
 }
 
 #[derive(Clone, Default)]
@@ -35,7 +34,7 @@ fn emit_to(writer: &mut impl Write, prefix: &str, value: Value) -> std::io::Resu
 pub(crate) struct Context(Option<Attribution>);
 impl Context {
     pub(crate) fn enter(rule: &str, clause: &str, path: Option<&str>) -> Self {
-        if !*ENABLED {
+        if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some()) {
             return Self(None);
         }
         Self(Some(CONTEXT.with(|context| {
@@ -68,7 +67,7 @@ struct ActiveSpan {
 }
 impl Span {
     pub fn start(phase: &'static str, name: &str) -> Self {
-        Self(if *ENABLED {
+        Self(if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some()) {
             Some(ActiveSpan {
                 context: CONTEXT.with(|context| context.borrow().clone()),
                 phase,

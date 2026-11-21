@@ -1,4 +1,4 @@
-"""Checks that ruff-air302-airflow3-moved-to-provider.moved.rr round-trips: regrouping the table by message gives
+"""Checks that ruff-air302-airflow3-moved-to-provider.moved.rerail round-trips: regrouping the table by message gives
 each clause's `old` list and message, in order."""
 import importlib.util, json, re
 spec = importlib.util.spec_from_file_location("gen", __file__.replace("check-", "gen-"))

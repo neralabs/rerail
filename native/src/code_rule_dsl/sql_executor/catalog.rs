@@ -25,44 +25,63 @@ const TABLES: &[&str] = &[
 
 /// A relation's role in its program: made by a SQL producer, read from outside, made natively, a
 /// lattice, or derived.
-fn kind(run: &session::Execution, name: &str) -> &'static str {
-    let program = &run.program;
+/// What the catalog reads of an execution's program's fields, read once.
+struct Roles {
+    inputs: BTreeSet<String>,
+    natives: BTreeSet<String>,
+    lattices: BTreeSet<String>,
+}
+
+impl Roles {
+    fn of(program: &Version) -> Roles {
+        Roles {
+            inputs: program.input_names().into_iter().collect(),
+            natives: ProgramFields::natives(program).into_keys().collect(),
+            lattices: ProgramFields::lattice(program).into_keys().collect(),
+        }
+    }
+}
+
+fn kind(run: &session::Execution, roles: &Roles, name: &str) -> &'static str {
     if run.producers.contains_key(name) {
         "sql"
-    } else if program.inputs.iter().any(|i| i == name) {
+    } else if roles.inputs.contains(name) {
         "input"
-    } else if program.natives.contains_key(name) {
+    } else if roles.natives.contains(name) {
         "native"
-    } else if program.lattice.contains_key(name) {
+    } else if roles.lattices.contains(name) {
         "lattice"
     } else {
         "derived"
     }
 }
 
-fn literal(l: &front::Literal) -> (&'static str, Option<&str>, bool, Option<String>) {
-    match l {
-        front::Literal::Atom(a) => ("atom", Some(a.rel.as_str()), a.neg, None),
-        front::Literal::Agg { op, atom, .. } => {
+fn literal<'v>(v: &'v Version, l: crate::code_rule_dsl::logic::program_image::LitRef<'_>) -> (&'static str, Option<&'v str>, bool, Option<String>) {
+    use crate::code_rule_dsl::logic::program_image::{AggRef, Lit};
+    match l.view() {
+        Lit::Atom(a) => ("atom", Some(v.rel_name(a.rel())), a.neg(), None),
+        Lit::Agg { op, atom, .. } => {
             let op = match op {
-                front::AggOp::Count => "count",
-                front::AggOp::Min => "min",
-                front::AggOp::Max => "max",
-                front::AggOp::Sum => "sum",
-                front::AggOp::Product => "rr_product",
-                front::AggOp::Join { .. } => "join",
+                AggRef::Count => "count",
+                AggRef::Min => "min",
+                AggRef::Max => "max",
+                AggRef::Sum => "sum",
+                AggRef::Product => "rr_product",
+                AggRef::Join { .. } => "join",
+                AggRef::Bounded { max: true, .. } => "max",
+                AggRef::Bounded { max: false, .. } => "min",
             };
-            ("aggregate", Some(atom.rel.as_str()), atom.neg, Some(op.into()))
+            ("aggregate", Some(v.rel_name(atom.rel())), atom.neg(), Some(op.into()))
         }
-        front::Literal::Cmp { .. } => ("compare", None, false, None),
-        front::Literal::Nearest { .. } => ("nearest", None, false, None),
-        front::Literal::Ast { .. } => ("ast", None, false, None),
+        Lit::Cmp { .. } => ("compare", None, false, None),
+        Lit::Nearest { .. } => ("nearest", None, false, None),
+        Lit::Ast { .. } => ("ast", None, false, None),
     }
 }
 
 /// The column names of a typed view: the `.decl` names, unique ignoring case, or `present` for a
 /// logically nullary relation's unit column.
-pub(super) fn view_columns(decl: &[(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)]) -> Vec<String> {
+pub(super) fn view_columns(decl: &[(String, String)]) -> Vec<String> {
     if decl.is_empty() {
         return vec!["present".into()];
     }
@@ -125,12 +144,15 @@ impl CodeRuleSqlExecutor {
         let mut rule_id = 0i64;
         for (e, run) in self.executions.iter().enumerate() {
             let program = &run.program;
+            let roles = Roles::of(program);
+            let nullary = ProgramFields::nullary(&**program);
             let steps = &run.emitted.program.steps;
-            for (name, decl) in &program.decls {
-                let kind = kind(run, name);
+            for name in &program.declared_names() {
+                let decl = program.columns_of(name).unwrap_or_default();
+                let kind = kind(run, &roles, name);
                 let stratum = steps.iter().filter(|s| &s.output == name).map(|s| s.stratum).min();
-                let columns = view_columns(decl);
-                let physical = if program.nullary.contains(name.as_str()) { 1 } else { decl.len() };
+                let columns = view_columns(&decl);
+                let physical = if nullary.contains(name.as_str()) { 1 } else { decl.len() };
                 let view = (width(db, name) == Some(physical)).then(|| format!("{PREFIX}rel_{name}"));
                 relation
                     .execute(rusqlite::params![
@@ -158,11 +180,11 @@ impl CodeRuleSqlExecutor {
                     }
                 }
             }
-            for (ord, r) in program.rules.iter().enumerate() {
-                rule.execute(rusqlite::params![rule_id, e as i64, ord as i64, r.head.rel.as_str(), r.to_string()]).map_err(error)?;
-                for (i, l) in r.body.iter().enumerate() {
-                    let (kind, rel, negated, aggregate) = literal(l);
-                    atom.execute(rusqlite::params![rule_id, i as i64, kind, rel, negated, aggregate, l.to_string()])
+            for (ord, r) in program.rules().enumerate() {
+                rule.execute(rusqlite::params![rule_id, e as i64, ord as i64, program.rel_name(r.head().rel()), program.show_rule(r)]).map_err(error)?;
+                for (i, l) in r.body().enumerate() {
+                    let (kind, rel, negated, aggregate) = literal(program, l);
+                    atom.execute(rusqlite::params![rule_id, i as i64, kind, rel, negated, aggregate, program.show_lit(r, l)])
                         .map_err(error)?;
                 }
                 rule_id += 1;

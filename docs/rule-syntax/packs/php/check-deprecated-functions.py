@@ -10,7 +10,7 @@ JSON = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", "packs", "php
 
 
 def main():
-    rows = re.findall(r'deprecated_fn\("([^"]*)"\)\.', open(os.path.join(HERE, RULE + ".facts.rr")).read())
+    rows = re.findall(r'deprecated_fn\("([^"]*)"\)\.', open(os.path.join(HERE, RULE + ".facts.rerail")).read())
     want = json.load(open(JSON))["clauses"][0]["forbid"]["ast"]["rule"]["has"]["resolves"]["import"]
     if rows == want:
         print(f"ok: {RULE}: {len(rows)} functions round-trip to the JSON's list")

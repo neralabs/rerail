@@ -735,7 +735,7 @@ pub struct BlockRun {
 
 impl BlockRun {
     /// The run less the outputs in `made` (`BlockNative::records_made`), each emptied: the CPU's
-    /// record pass makes their positions (a token's last by its gap, decision 0452), and its
+    /// record pass makes their positions (a token's last by its gap, decision 0411), and its
     /// tier 1 no mask for them. Tier 1's runs are compared on the rest.
     pub fn without(&self, made: &[usize]) -> BlockRun {
         BlockRun {
@@ -808,7 +808,7 @@ impl BlockProgram {
         let records = self.records.as_ref().is_none_or(|r| {
             usize::from(r.starts) < self.extracts.len()
                 && usize::from(r.lasts) < self.extracts.len()
-                // The gaps' ends (decision 0452): the skip's output, and no end rules.
+                // The gaps' ends (decision 0411): the skip's output, and no end rules.
                 && r.gap.is_none_or(|g| usize::from(g) < self.outputs.len() && r.rules.is_empty() && r.skip.is_none())
                 && r.starts != r.lasts
                 && r.kinds.len() == 256
@@ -1050,7 +1050,7 @@ impl BlockProgram {
                 } else if let Some((r, gap)) =
                     self.records.as_ref().and_then(|r| r.gap.map(|g| (r, g)))
                 {
-                    // The lasts by the gaps (decision 0452): each the byte before the next
+                    // The lasts by the gaps (decision 0411): each the byte before the next
                     // start, less the skip's bytes there, as the CPU's record pass makes them.
                     positions[usize::from(r.lasts)] = crate::records::gap_lasts(
                         &outputs[usize::from(gap)],
@@ -1239,7 +1239,7 @@ impl BlockProgram {
                 BlockOp::Escaped(a) => carried(one(a), &first, 0u64, |x, _, c| carry::escaped(x, c)),
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
-                    carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
+                    carried(pairs, &first, 0u64, carry::fill)
                 }
                 // Last block to first, the carry zero at each file's last block.
                 BlockOp::BackFill(a, b) => {
@@ -1630,7 +1630,7 @@ pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
 /// Clear the bits past `len` bytes.
 pub fn mask_tail(words: &mut [u64], len: usize) {
     if let Some(last) = words.last_mut()
-        && len % 64 != 0
+        && !len.is_multiple_of(64)
     {
         *last &= (1u64 << (len % 64)) - 1;
     }
@@ -1844,7 +1844,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
         }
         // `block N recgap O` the skip's output, where the tokens' last bytes are the gaps'
-        // (decision 0452).
+        // (decision 0411).
         if let Some(g) = r.gap {
             let _ = writeln!(out, "  block {at} recgap {g}");
         }
@@ -1863,11 +1863,15 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
             // `block N recnext ROWS` each `next` rule's table's rows (a byte a first byte), then
-            // `block N recpairs W0 W1 W2 W3` each of its sets (`PairTable`).
+            // `block N recpairs W0 W1 W2 W3` each of its sets, and `block N recthird ABC` each
+            // of its triples (`PairTable`).
             for n in &r.nexts {
                 let _ = writeln!(out, "  block {at} recnext {}", hex(&n.row));
                 for set in &n.sets {
                     let _ = writeln!(out, "  block {at} recpairs {} {} {} {}", set[0], set[1], set[2], set[3]);
+                }
+                for t in &n.thirds {
+                    let _ = writeln!(out, "  block {at} recthird {}", hex(t));
                 }
             }
             // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
@@ -1891,10 +1895,17 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let last = a.last.map_or(String::new(), |o| format!(" last {o}"));
                     let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}", a.opener, a.closer, a.off);
                 }
-                // `block N recpart K START BYTES [last O]` each part of a region read in parts.
+                // `block N recpart K START BYTES [last O] [kind K]` each part of a region read in parts.
                 for p in &rd.parts {
                     let last = p.last.map_or(String::new(), |o| format!(" last {o}"));
-                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}", p.start, p.bytes);
+                    let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
+                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
+                }
+                if let Some(kind) = rd.content {
+                    let _ = writeln!(out, "  block {at} reccontent {k} {kind}");
+                }
+                for &(b, kind) in &rd.closers {
+                    let _ = writeln!(out, "  block {at} recclose {k} {b} {kind}");
                 }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
@@ -1904,9 +1915,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part] [first W0 W1 W2 W3]`: a reader's or a part's kind and
+        // marks by its start mask, and its row's first bytes.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}", t.o, t.kind, t.marks);
+            let first = if t.first == [0; 4] { String::new() } else { format!(" first {:x} {:x} {:x} {:x}", t.first[0], t.first[1], t.first[2], t.first[3]) };
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}{first}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {
@@ -1915,19 +1928,25 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
         }
+        // `block N reckindrows K`: the first bit telling a token mark's kind by its rows.
+        if let Some(k) = r.kind_rows {
+            let _ = writeln!(out, "  block {at} reckindrows {k}");
+        }
         // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
         }
-        // `block N reccheck R count|run O N [at K|after K]`: a token test of rule `R`'s tokens,
-        // refusing the file, or a bit of mark `K` (`CheckThen`).
+        // `block N reccheck R count|run|all O N [at K|after K|cut]`: a token test of rule `R`'s
+        // tokens, refusing the file, a bit of mark `K`, or the token's cut (`CheckThen`).
         for c in &r.checks {
             let then = match c.then {
                 crate::records::CheckThen::Escape => String::new(),
                 crate::records::CheckThen::At(k) => format!(" at {k}"),
                 crate::records::CheckThen::After(k) => format!(" after {k}"),
+                crate::records::CheckThen::Cut => " cut".to_string(),
             };
-            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+            let test = if c.count { "count" } else if c.all { "all" } else { "run" };
+            let _ = writeln!(out, "  block {at} reccheck {} {test} {} {}{then}", c.rule, c.o, c.least);
         }
         // `block N recchecked M`: a mask tier 2's local checks alone read.
         for m in &r.check_masks {
@@ -1936,6 +1955,21 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N rectested T`: the gap marks made by token tests alone.
         if r.tested_only != 0 {
             let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);
+        }
+        if r.alone != 0 {
+            let _ = writeln!(out, "  block {at} recalone {}", r.alone);
+        }
+        // `block N recread R`: the marks a token pattern's `without` reads (0430).
+        if r.read != 0 {
+            let _ = writeln!(out, "  block {at} recread {}", r.read);
+        }
+        // `block N recown O`: the gap marks an extra keeps of its own gap (0451).
+        if r.own != 0 {
+            let _ = writeln!(out, "  block {at} recown {}", r.own);
+        }
+        // `block N recblank K O`: gap mark `K` read from the blanks, by class output `O` (0430).
+        for &(k, o) in &r.blanks {
+            let _ = writeln!(out, "  block {at} recblank {k} {o}");
         }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {

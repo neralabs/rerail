@@ -15,6 +15,9 @@ impl RowData for Rows {
     fn value(&self, id: u32, _k: usize, c: usize) -> i64 {
         Rows::get(self, id, c)
     }
+    fn home(&self) -> Option<Home> {
+        Rows::home(self)
+    }
 }
 
 impl RowData for Vec<i64> {
@@ -62,14 +65,14 @@ mod tests {
     fn a_cpu_run_takes_anonymous_blocks() {
         use crate::code_rule_dsl::logic::plan::placement;
         install_block_device(placement::block_device);
-        let was = placement::set_binding(placement::Binding::Cpu);
+        let cpu = placement::set_binding(placement::Binding::Cpu);
         let r = in_chunk(|| {
             let mut r = Rows::new(2);
             // copy: not block data (a test's literal rows)
             r.extend_from_slice(&[1, 2, 3, 4]);
             r
         });
-        placement::set_binding(was);
+        drop(cpu);
         let facts: Arc<Facts> = r.in_block().expect("rows").facts;
         assert!(!facts.block.in_slab(), "a CPU run's block is anonymous");
     }

@@ -1,8 +1,8 @@
 # Suggesting rules
 
 A suggestion is worth making only when evidence from this repo shows the agent breaking the rule, or would break it, and when
-steering on it would make the code better. This page covers where that evidence comes from, how to judge a candidate, and how to
-show the shortlist.
+steering on it would make the code better. This page covers where that evidence comes from, how to judge a candidate, and what the
+shortlist carries into the approval list.
 
 ## Where the evidence comes from
 
@@ -15,7 +15,7 @@ corrections shown).
 | Field | What it holds | How to use it |
 |---|---|---|
 | `corrections[]` | Prompts the person wrote after the agent had done something, matching a correction phrase. Each has `text`, `families`, `standing` and `before` (the agent's last calls: `Edit src/a.ts`, `Bash git push …`) | `standing: true` ("never", "always", "use X not Y", "don't") states a rule. The others react to one turn, so most of them are not rules. `before` tells you which files or commands the correction is about, which gives the scope. |
-| `riskyCommands[]` | Force pushes, skipped hooks, hard resets, discarded changes, recursive deletes, publishes, piping to a shell, sudo. Each has a count and an example | Each is a candidate for a conversation rule. First check whether the repo approves of the command. An `rm -rf` of a cache in a cleanup script is routine; an `rm -rf` of `src` is not. |
+| `riskyCommands[]` | Force pushes, skipped hooks, hard resets, discarded changes, recursive deletes, publishes, piping to a shell, sudo. Each has a count and an example | Each is a candidate for a conversation rule, which is experimental: suggest one only while `rerail rules test` accepts a conversation draft (it refuses while `RERAIL_EXPERIMENTAL_CONVERSATION_RULES` is off). First check whether the repo approves of the command. An `rm -rf` of a cache in a cleanup script is routine; an `rm -rf` of `src` is not. |
 | `steers[]` | How often each rule steered here | This is not a source of new rules. A rule that steers often either catches a real habit or fights the repo. Run its pattern over the repo: if the existing code breaks it in hundreds of places, suggest Log or turning it off (see [Tune](../SKILL.md#tune)). |
 | `standards[]` | Files where the repo writes down its standards (CLAUDE.md, AGENTS.md, CONTRIBUTING.md, REVIEW.md, Cursor and Copilot instructions, linter and type-checker configs) | Read them. Every sentence such as "use X, not Y", "never import A from B", or "all DB access goes through `repositories/`" is a candidate. Linter configs tell you what the linter already enforces. |
 | `window` | Sessions per agent, prompts | When there are few sessions (fewer than about 5 corrections), say the evidence is thin. |
@@ -90,21 +90,15 @@ Score each one and keep the best five at most.
 
 ## The shortlist
 
-Show it exactly in this form. Quote the person's words at most 80 characters long, and give dates, not session ids.
+The shortlist is the at most five candidates you go on to write and test, best first. You don't show it as a list to pick
+from: the ones that pass are added in Log, and the person sees them in Suggest's approval list
+([SKILL.md, Suggest step 6](../SKILL.md#suggest)). For each candidate, keep what the approval list needs:
 
-```text
-Rules worth adding to <repo>, from <N> sessions and <standards files>.
-                   (or, with no sessions: from <standards files> and the code; Rerail has no sessions here yet)
-
-  1. <what it checks, one line>                                  High
-     Why    <"You corrected this 3 times, last: '<quote>' (Oct 12)" | "CLAUDE.md: '<quote>'" | "140 files use logger, 3 use console.log" | "#8335 review: '<quote>'">
-     Where  When I edit <files> | When I run <command>
-     Risk   <one line: "Existing code follows it: 2 places differ" | "Following it can't break code" | the weak dimension of a Medium>
-
-  2. …
-
-Which should I write? Numbers, "all", or tell me another.
-```
+- **From**: where it came from. Quote the person's words at most 80 characters long, and give dates, not session ids:
+  `You corrected this 3 times, last: '<quote>' (Oct 12)`, `CLAUDE.md: '<quote>'`, `140 files use logger, 3 use console.log`,
+  `#8335 review: '<quote>'`. With no sessions, the list's first line says where the rules came from instead:
+  `from <standards files> and the code; Rerail has no sessions here yet`.
+- **Its value**: High or Medium. A Medium candidate's weak dimension goes in its From row, after the evidence.
 
 If nothing passes the scoring, say so: "Nothing in this repo's sessions or standards makes a strong rule yet." Then ask the
 person's question from [The person](#the-person).

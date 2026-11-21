@@ -4,12 +4,12 @@ The 23 rules have 1,162 lines. They share six new library files, 695 lines in al
 
 | file | what |
 |---|---|
-| `lib/vue/elements.rr` | generated tables: HTML, SVG and MathML element names, and the SVG attributes with mixed case (`gen-vue-elements.py` writes it; `check-vue-elements.py` checks it against the plugin's JSON) |
-| `lib/vue/template.rr` | the template as vue-eslint-parser reads it: elements, attributes, directives with their arguments and modifiers, namespaces, `isCustomComponent` |
-| `lib/vue/code.rr` | the template's code (see "Harness" below): expressions, v-for aliases and lists, slot parameters, template variables and the names they bind, free names |
-| `lib/vue/component.rr` | the script: `<script setup>`, component objects (`getVueObjectType`), options and the names they declare (`iterateProperties`), computed getters, `setup()`, Vue API calls, script-setup macros and defineProps names |
-| `lib/vue/flow.rr` | whether a function body can complete normally (for return-in-computed-property) |
-| `lib/vue/mutation.rr` | `utils.findMutating`: from a node, up through member accesses, to an assignment, update, `delete`, array-mutator call or `Object.assign` |
+| `lib/vue/elements.rerail` | generated tables: HTML, SVG and MathML element names, and the SVG attributes with mixed case (`gen-vue-elements.py` writes it; `check-vue-elements.py` checks it against the plugin's JSON) |
+| `lib/vue/template.rerail` | the template as vue-eslint-parser reads it: elements, attributes, directives with their arguments and modifiers, namespaces, `isCustomComponent` |
+| `lib/vue/code.rerail` | the template's code (see "Harness" below): expressions, v-for aliases and lists, slot parameters, template variables and the names they bind, free names |
+| `lib/vue/component.rerail` | the script: `<script setup>`, component objects (`getVueObjectType`), options and the names they declare (`iterateProperties`), computed getters, `setup()`, Vue API calls, script-setup macros and defineProps names |
+| `lib/vue/flow.rerail` | whether a function body can complete normally (for return-in-computed-property) |
+| `lib/vue/mutation.rerail` | `utils.findMutating`: from a node, up through member accesses, to an assignment, update, `delete`, array-mutator call or `Object.assign` |
 
 ## Scores
 
@@ -78,7 +78,7 @@ These changes are in `tools/rrlab`, and the README's Vue paragraph now describes
   - "vue-statements": a v-on value;
   - "vue-params": v-slot, `#x`, slot-scope or scope;
   - "vue-for-alias" and "vue-for-source": a v-for's alias and its list.
-  `lib/vue/code.rr` documents the wrappers.
+  `lib/vue/code.rerail` documents the wrappers.
 - **`lower.py`.** "parsed" is now filled. A rule whose `.language` is not vue still gets the "not modelled"
   warning for it. A `.violation` message's `\"` and `\\` are unescaped. Before this, rrlab printed `\"` in
   messages; CV05 in the SQL pack had the same artefact.
@@ -92,7 +92,7 @@ only on `parsed`, `kind`, `field`, `child` and core's axes. Guest positions are 
 The review (ESLint 10.11 on the reviewer's cases in scratchpad/rev-vue/cases) found eight defects. Seven are fixed,
 and each fix was checked against ESLint on those cases:
 
-- **Component definers.** `component.rr` now has `vdefiner_callee`, as isGlobalOrImportedFromVue: a callee counts
+- **Component definers.** `component.rerail` now has `vdefiner_callee`, as isGlobalOrImportedFromVue: a callee counts
   unless it is a named import from another package, a function, class or catch binding, or
   `const { f } = require("other")`. `vfrom_vue` stays strict, for `vvue_call`.
 - **Macros.** `vmacro` counts a macro only as a top-level declarator's value or a top-level expression statement
@@ -104,12 +104,12 @@ and each fix was checked against ESLint on those cases:
 - **no-mutating-props.** Without an export or setup props, the template uses the component object exited last.
 - **no-ref-as-operand.** A variable that is later assigned a new ref (`b = ref(2)`) is skipped, as the plugin
   does.
-- **mutation.rr.** `Object.assign` needs a plain `.assign`, so `Object['assign']` is not counted. The `!` clause
+- **mutation.rerail.** `Object.assign` needs a plain `.assign`, so `Object['assign']` is not counted. The `!` clause
   of `vmut_strip` is gone: `estree_parent` stops at a non-null expression anyway.
 
 The eighth, no-child-content's column (b), is fixed since rrlab models regex captures as spans.
 
-Idioms: `vref_site` and `local()` are gone (names.rr resolves once now). `vvue_import_call` is defined directly,
+Idioms: `vref_site` and `local()` are gone (names.rerail resolves once now). `vvue_import_call` is defined directly,
 and `earlier_hit` uses `earlier`.
 
 Open, not confirmed: vue-eslint-parser tries a v-on value as an expression first, so `@click="function(){}"` is an

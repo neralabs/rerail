@@ -6,7 +6,7 @@ use napi::Result;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 pub type Key = u32;
 
@@ -27,19 +27,24 @@ struct Registry {
     keys: HashMap<String, Key>,
 }
 
-static REGISTRY: LazyLock<parking_lot::Mutex<Registry>> = LazyLock::new(|| {
-    parking_lot::Mutex::new(Registry {
-        values: vec![Arc::new(Contracts {
-            canonical: "[]".into(),
-            links: Vec::new(),
-            constructor: None,
-        })],
-        keys: HashMap::new(),
-    })
-});
+/// The shared object's registry (decision 0442): a key is its own object's.
+struct Contracted(parking_lot::Mutex<Registry>);
+
+impl Default for Contracted {
+    fn default() -> Self {
+        Contracted(parking_lot::Mutex::new(Registry {
+            values: vec![Arc::new(Contracts {
+                canonical: "[]".into(),
+                links: Vec::new(),
+                constructor: None,
+            })],
+            keys: HashMap::new(),
+        }))
+    }
+}
 
 pub fn get(key: Key) -> Arc<Contracts> {
-    Arc::clone(&REGISTRY.lock().values[key as usize])
+    crate::code_rule_dsl::logic::profile::with_shared::<Contracted, _>(|r| Arc::clone(&r.0.lock().values[key as usize]))
 }
 
 pub fn compile(
@@ -91,7 +96,8 @@ pub fn compile(
             by,
         });
     }
-    let mut registry = REGISTRY.lock();
+    let held = crate::code_rule_dsl::logic::profile::shared::<Contracted>();
+    let mut registry = held.0.lock();
     if let Some(key) = registry.keys.get(&canonical) {
         return Ok(*key);
     }

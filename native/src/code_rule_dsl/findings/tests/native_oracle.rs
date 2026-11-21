@@ -83,7 +83,7 @@ impl<'a> Native<'a> {
         let wall = Instant::now();
         let started = super::cpu_ns();
         let roots_before = matcher::roots_matched();
-        let compile_before = phase_clock::ANCHOR_COMPILE.load(Ordering::Relaxed);
+        let compile_before = phase_clock::clocks().anchor_compile.load(Ordering::Relaxed);
         let mut prepare_ns = 0;
         let file_plans: Vec<_> = self
             .compiled
@@ -218,7 +218,8 @@ impl<'a> Native<'a> {
             });
         }
         // The SQL compiled during this run (measured at its end: at the start it is always zero).
-        let compile_ns = phase_clock::ANCHOR_COMPILE
+        let compile_ns = phase_clock::clocks()
+            .anchor_compile
             .load(Ordering::Relaxed)
             .saturating_sub(compile_before);
         NativeRun {

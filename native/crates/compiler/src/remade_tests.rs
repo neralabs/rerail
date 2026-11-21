@@ -11,14 +11,14 @@ use crate::gating_tests::small;
 use crate::native_cpu_block;
 
 /// `aligned(_, 3)` makes `phase 3 r` (3 does not divide 64): read in the first pass by
-/// `aligned(d, 3)` and after the backward pass by `aligned(s, 3)`.
+/// `aligned(d, 3)` and after the backward pass by `aligned(ahead, 3)`.
 const ALIGNED_LATE: &str = "lexer t
 class d  = '0'..'9'
 class q  = '\"'
 class sp = ' '
-mask s  = back_fill(q, sp)
+mask ahead = fill(q, sp)
 mask a  = aligned(d, 3)
-mask b  = aligned(s, 3)
+mask b  = aligned(ahead, 3)
 escape \"x\" when a
 escape \"y\" when b
 ";
@@ -28,8 +28,8 @@ escape \"y\" when b
 const POSITION_LATE: &str = "lexer t
 class tick = '`'
 mask last = tick & ~next(tick)
-number end = back_fill(last, ~tick, position)
-number rem = end - position
+number ahead = fill(last, ~tick, position)
+number rem = ahead - position
 mask long = tick & at_least(rem, 3)
 escape \"long\" when long
 ";
@@ -53,7 +53,7 @@ fn files() -> Vec<Vec<u8>> {
                     x ^= x << 13;
                     x ^= x >> 7;
                     x ^= x << 17;
-                    [b'1', b'`', b'"', b' ', b'`', b'7'][(x % 6) as usize]
+                    b"1`\" `7"[(x % 6) as usize]
                 })
                 .collect();
             out.push(f);
@@ -107,7 +107,7 @@ fn remade_positions_payoff() {
 #[test]
 fn a_word_made_value_reads_made_operands() {
     use crate::block::BlockOp;
-    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::DIR)).expect("the ladder's JSON");
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
     let c = crate::ladder::compile_step("json-rfc", &source);
     let mut p = c.program.block_programs[0].clone();
     let prefix = p.ops.iter().position(|op| matches!(op, BlockOp::Prefix(..))).expect("a prefix");
@@ -117,7 +117,7 @@ fn a_word_made_value_reads_made_operands() {
     }
     let native = crate::block_native::BlockNative::lower(&p);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    // The outputs the record pass makes instead (the lasts, decision 0452) are not tier 1's.
+    // The outputs the record pass makes instead (the lasts, decision 0411) are not tier 1's.
     let made = native.cpu_unstored();
     let unit = br#"{"a": [1, -2.5e3, "x\u00e9y", true, null], "b": {"c": "\\\"d"}} "#;
     for len in [64usize, 65, 128, 181, 200, 300] {

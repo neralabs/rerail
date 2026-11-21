@@ -6,8 +6,8 @@ publish = false
 description = "Kotlin's Bitlex grammar, compiled to tier 1 and tier 2: tree-sitter-kotlin's tape, as the lean parser writes it."
 
 [features]
-# The compiler's test hooks, for a build with `--features test-hooks` (scripts/check/check-dev-features.py).
-test-hooks = ["rerail-compiler/test-hooks"]
+# The compiler's test hooks, for a build with `--features test-hooks` (scripts/check/check_dev_features.py).
+test-hooks = ["rerail-kotlin-lean/test-hooks", "rerail-tape-format/test-hooks", "rerail-compiler/test-hooks"]
 
 [dependencies]
 rerail-compiler = { path = "../compiler" }
@@ -19,3 +19,6 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-kotlin-parser = { path = ".", features = ["test-hooks"] }
+# Tier 2 as Rust, as the Bitlex compiler writes it (`tier2_rust`): every text the tests check is
+# read through it too.
+rerail-kotlin-aot = { path = "../kotlin_aot" }

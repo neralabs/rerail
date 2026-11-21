@@ -205,8 +205,7 @@ pub fn registrations() -> Vec<ParserImpl> {
 
 impl TreeParser for Simdjson {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
-        if !grammar.lang.embeds().is_empty()
-            || !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
+        if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;
         }
@@ -217,9 +216,14 @@ impl TreeParser for Simdjson {
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
                 Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
+            // A file simdjson refuses (a number past its range, nesting past 1,024) is read as MSVC's parser reads it
+            // (`fallback::Fallback`: the Bitlex parser, then tree-sitter-json past trailing commas), and one that
+            // refuses too goes to tree-sitter-json. Straight to tree-sitter-json, an exponent's `+` (`1e+21`), which
+            // its grammar refuses, was an error in a file that also held `-9223372036854778000`.
             Err(why) => {
-                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): tree-sitter-json"));
-                None
+                drop(span);
+                crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): the Bitlex parser, else tree-sitter-json"));
+                super::fallback::Fallback.parse(grammar, source, budget)
             }
         }
     }

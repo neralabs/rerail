@@ -164,8 +164,18 @@ pub enum StructuralOperation {
     Count { count: u16, up: bool, max: u16 },
     /// `CHECK`: a local check over the token's bytes (`Words::local_checks`, its index).
     Check { check: u16 },
-    /// `SETTLE`: the pending extras before mask `mask`'s first hold, settled.
-    SettleBefore { mask: u16 },
+    /// `SETTLE`: the pending extras before the first whose code has mark `mark`'s bit, settled.
+    SettleBefore { mark: u16 },
+    /// `SETTLE m=1`: where gap pattern `pattern` holds at the token (`Words::gap_patterns`, its
+    /// first entry), the extra pending last dropped.
+    DropLast { pattern: u16 },
+    /// `SETTLE m=2`, and `m=3+f` with flag `f` set: where gap pattern `pattern` holds at the
+    /// token, the extra pending last lost, made again by the next `TOKEN` after the token's
+    /// leaf, of no width (a mark's `loses`).
+    LoseLast { pattern: u16, flag: Option<u16> },
+    /// `SETTLE m=19`, and `m=20+f` with flag `f` set: where gap pattern `pattern` holds at the
+    /// token, the file refused (a mark's `refuses`).
+    RefuseIf { pattern: u16, flag: Option<u16> },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -223,7 +233,7 @@ impl StructuralOperation {
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
-            Self::Mark { mask, order, end, keep, .. } => (MARK, order | if end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, mask),
+            Self::Mark { mask, order, end, keep, .. } => (MARK, order | if end { crate::program::MARK_END } else { 0 } | if keep { MARK_KEEP } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -236,7 +246,10 @@ impl StructuralOperation {
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Check { check } => (crate::program::CHECK, 0, check),
-            Self::SettleBefore { mask } => (crate::program::SETTLE, 0, mask),
+            Self::SettleBefore { mark } => (crate::program::SETTLE, 0, mark),
+            Self::DropLast { pattern } => (crate::program::SETTLE, 1, pattern),
+            Self::LoseLast { pattern, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), pattern),
+            Self::RefuseIf { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_REFUSE, |f| crate::program::SETTLE_REFUSE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -367,16 +380,22 @@ pub struct Structure {
     /// Tier 2's rules (`Words::rules`): each rule's first place.
     /// Each keyword's node kind, by string (`Words::word_kinds`).
     pub word_kinds: Vec<(u16, u16)>,
-    /// The grammar's names of its kinds and fields (`Words::kind_names`, `Words::field_names`).
+    /// The grammar's names of its kinds and fields (`Words::names`).
     pub kind_names: Vec<(u16, String)>,
     pub field_names: Vec<(u16, String)>,
     /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// The marks done where each mark is taken (`Words::taken`), by order: 64 at most.
+    pub taken: Vec<u64>,
+    /// The gap patterns (`Words::gap_patterns`).
+    pub gap_patterns: Vec<crate::program::TokenMark>,
     /// The local checks (`Words::local_checks`).
     pub local_checks: Vec<crate::program::LocalCheck>,
     pub rules: Vec<u16>,
+    /// The grammar's names (`Words::names`).
+    pub names: crate::program::Names,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
@@ -476,11 +495,11 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
             MARK => StructuralOperation::Mark {
                 mask: operand,
-                order: mode % 32,
-                end: mode & 32 != 0,
+                order: (mode & crate::program::MARK_ORDER),
+                end: mode & crate::program::MARK_END != 0,
                 keep: mode & MARK_KEEP != 0,
-                word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s),
-                pattern: program.token_marks.iter().position(|m| m.order == mode % 32).map(|i| i as u16),
+                word: program.mark_words.iter().find(|&&(k, _)| k == (mode & crate::program::MARK_ORDER)).map(|&(_, s)| s),
+                pattern: program.token_marks.iter().position(|m| m.order == (mode & crate::program::MARK_ORDER)).map(|i| i as u16),
             },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
@@ -500,7 +519,10 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 },
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
-            crate::program::SETTLE => StructuralOperation::SettleBefore { mask: operand },
+            crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { pattern: operand },
+            crate::program::SETTLE if mode >= crate::program::SETTLE_REFUSE => StructuralOperation::RefuseIf { pattern: operand, flag: (mode > crate::program::SETTLE_REFUSE).then(|| u16::from(mode - crate::program::SETTLE_REFUSE - 1)) },
+            crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { pattern: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
+            crate::program::SETTLE => StructuralOperation::SettleBefore { mark: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
@@ -548,11 +570,14 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         switches: program.switches.clone(),
         readings: program.readings.clone(),
         rules: program.rules.clone(),
+        names: program.names.clone(),
         word_kinds: program.word_kinds.clone(),
-        kind_names: program.kind_names.clone(),
-        field_names: program.field_names.clone(),
+        kind_names: program.names.kinds.clone(),
+        field_names: program.names.fields.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        taken: (0..64u8).map(|k| program.taken(k)).collect(),
+        gap_patterns: program.gap_patterns.clone(),
         local_checks: program.local_checks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,

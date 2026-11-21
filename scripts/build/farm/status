@@ -30,7 +30,8 @@ def main(argv):
     else:
         print(f"configuration: {path}" if path else
               f"configuration: none ({os.path.join(farm.CONFIG, 'farm.json')} missing): no hosts, everything runs here")
-        print(f"limits: {cfg['min_free_gb']} GB free (the farm frees its data under it; used down to {cfg['floor_free_gb']}), {cfg['max_rtt_ms']} ms round trip, {cfg['min_mbps']} MB/s")
+        print(f"limits: {cfg['min_free_gb']} GB free (the farm frees its data under it; used down to {cfg['floor_free_gb']}); "
+              "a slow link or round trip only orders the hosts, it never refuses one")
         sock = socket.socket(socket.AF_UNIX)
         try:
             sock.connect(farm.state("mirror.sock"))
@@ -39,13 +40,21 @@ def main(argv):
             daemon = "not running (the first remote compile or test-remote starts it)"
         finally:
             sock.close()
+        local = os.statvfs(farm.HOME)
+        print(f"this Mac: {local.f_bavail * local.f_frsize / 1e9:.0f} GB free; under {cfg.get('local_min_free_gb', 200)} GB, "
+              "Rerail's least recently built builds go (free-local)")
         print(f"farm sccache: {'installed' if os.path.exists(farm.SCCACHE) else 'not installed (setup)'}; mirror daemon: {daemon}")
         for host, h in rows:
-            uses = "compiles" + (", tests" if host.get("tests", True) else "")
+            if farm.host_os(host) == "macos":
+                uses = "compiles" + (", tests" if host.get("tests", True) else "")
+            else:
+                parts = (["this Mac's compiles, in a container"] if host.get("mac_compiles", True) else []) + \
+                    ([f"tests as a {farm.host_os(host)} build"] if host.get("tests", True) else [])
+                uses = f"{farm.host_os(host)}: " + (", ".join(parts) or "unused")
             facts = ", ".join(f"{v} {unit}" for v, unit in ((h.get("rtt_ms"), "ms"), (h.get("mbps"), "MB/s through ssh"),
-                                                            (h.get("free_gb"), "GB free"), (h.get("load"), "load")) if v is not None)
-            if h.get("ok"):
-                facts += f"; {farm.spare(host):.0f} cores to spare"
+                                                            (h.get("free_gb"), "GB free"),
+                                                            (None if h.get("busy") is None else f"{h['busy']}%", "of its CPU busy"),
+                                                            (h.get("load"), "load average")) if v is not None)
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
             print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
             if h.get("arrival") and not farm.link_of(host):
@@ -54,6 +63,8 @@ def main(argv):
                 print(f"    short of disk: {h['short']}")
             if h.get("route"):
                 print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
+        print("A usable host takes commands however busy it is: test-remote sends to a free test slot, and\n"
+              "busy CPUs or a load over the cores only order the hosts. Never wait for a host to be idle.")
     sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)
 
 

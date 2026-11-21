@@ -1,5 +1,4 @@
-//! `lower_tree` on the version (decision 0281's path, step 6b): the program lowered for one dialect by passes over
-//! its image, as `lower_tree` lowers the tree. A membership of a kind or field in a set of them is a rule per member
+//! The program lowered for one dialect (decision 0281's path, step 6b), by passes over its image. A membership of a kind or field in a set of them is a rule per member
 //! (`Memberships`); then every string becomes its atom, by its column's domain (a name's atom, a kind's or a field's
 //! id), in rules (`Constants`), facts and kind sets (`FactsAndSets`).
 
@@ -14,8 +13,15 @@ use super::super::{Error, Result};
 use rustc_hash::FxHashMap as HashMap;
 use std::sync::Arc;
 
-/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms, as
-/// `lower_tree` finds them) and the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
+/// `v` lowered for `dialect` and read as the run reads it (`Lowered::of_placed`), with no preparation pass between:
+/// what a test or a tool that runs a program as written lowers. `intern` gives the name atoms of strings.
+pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<super::Lowered> {
+    let (v, domains, ops) = lower_version(v, dialect, intern)?;
+    Ok(super::Lowered::of_placed(super::super::body::Placed::whole(v), domains, ops, dialect))
+}
+
+/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms) and
+/// the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
 pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     let mut p = Pipeline::new("lower", v);
@@ -65,7 +71,7 @@ pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn 
 }
 
 /// A term as it is, for a rule written from `r`.
-fn as_is(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
+fn as_is(r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -73,7 +79,7 @@ fn as_is(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Branded(b) => T::Branded(b),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| as_is(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| as_is(r, a)).collect()),
     }
 }
 
@@ -85,7 +91,7 @@ fn membership<'v>(v: &Version, l: LitRef<'v>) -> Option<(Slot, Vec<TermRef<'v>>,
     }
     let args: Vec<TermRef<'v>> = args.collect();
     match args.as_slice() {
-        [TermRef::Var(x), TermRef::Call(set, items)] if v.text(*set) == SET => Some((*x, items.clone().collect(), b == 1)),
+        [TermRef::Var(x), TermRef::Call(set, items)] if v.text(*set) == SET => Some((*x, (*items).collect(), b == 1)),
         _ => None,
     }
 }
@@ -164,7 +170,7 @@ impl RulePass for Memberships {
             for p in body {
                 w = match p {
                     Piece::Lit(l) => w.lit(v, r, l),
-                    Piece::Cmp(x, op, item) => w.cmp(T::VarAtom(r.var(x)), op, as_is(v, r, item)),
+                    Piece::Cmp(x, op, item) => w.cmp(T::VarAtom(r.var(x)), op, as_is(r, item)),
                 };
             }
             w.finish()?;
@@ -245,7 +251,7 @@ impl Rw<'_, '_> {
                 let (ds, _) = functor_domains(self.v.text(f), args.len());
                 T::CallAtom(f, args.iter().zip(ds.into_iter().chain(std::iter::repeat(None))).map(|(&a, d)| self.lowered(a, d)).collect())
             }
-            t => as_is(self.v, self.r, t),
+            t => as_is(self.r, t),
         }
     }
     fn of(&self, t: TermRef<'_>) -> Option<Domain> {
@@ -276,7 +282,7 @@ impl Rw<'_, '_> {
                 TermRef::Call(g, items) if v.text(g) == SET => T::CallAtom(g, items.map(|i| self.lowered(i, Some(d))).collect()),
                 one => self.lowered(one, Some(d)),
             };
-            return (T::Call("in", vec![as_is(v, self.r, *x), set]), as_is(v, self.r, r));
+            return (T::Call("in", vec![as_is(self.r, *x), set]), as_is(self.r, r));
         }
         let (dl, dr) = (self.of(r), self.of(l));
         (self.lowered(l, dl), self.lowered(r, dr))
@@ -296,11 +302,10 @@ impl Rewrite for Rw<'_, '_> {
                 Some(self.lowered(t, d))
             }
             Site::Cmp(l) => {
-                if let Some((n, right)) = self.right.take() {
-                    if n == l.node() {
+                if let Some((n, right)) = self.right.take()
+                    && n == l.node() {
                         return Some(right);
                     }
-                }
                 let Lit::Cmp { l: lt, op, r: rt } = l.view() else { return None };
                 let (left, right) = self.cmp(lt, op, rt);
                 self.right = Some((l.node(), right));
@@ -349,7 +354,7 @@ impl ProgramPass for FactsAndSets<'_> {
         }
         let b = w.on()?;
         for (rel, rows) in facts {
-            b.set_fact_cells(&rel, rows);
+            b.fields().set_fact_cells(&rel, rows);
         }
         let rows = b.about_rows("kindset_kind");
         if rows.is_empty() {
@@ -373,12 +378,12 @@ impl ProgramPass for FactsAndSets<'_> {
             }
             let mut row = row;
             if let Some(Cell::Str(a)) = row.get(3).copied() {
-                let id = self.k.of(&b.text(a).to_owned(), Domain::Kind).map_err(|e| e.to_string())?;
+                let id = self.k.of(b.text(a), Domain::Kind).map_err(|e| e.to_string())?;
                 row[3] = Cell::Str(b.atom(&id.to_string()));
             }
             out.push(row);
         }
-        b.set_about_rows("kindset_kind", out);
+        b.fields().set_about_rows("kindset_kind", out);
         Ok(())
     }
 }

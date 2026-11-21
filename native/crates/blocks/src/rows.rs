@@ -461,6 +461,8 @@ mod tests {
             next.rows.reserve(&block, step * n as u64 / 8);
         }
         fill(next, 3);
+        // A 64 KiB margin for the descriptor. Read as `(used + 64) << 10` it was a thousand times the block, and held
+        // of any growth.
         assert!(block.used() < used + (64 << 10), "{} bytes used after, {used} before", block.used());
         for i in 0..n {
             assert_eq!((next.rows.get(i, 0), next.rows.get(i, 1)), (i64::from(i), 3 * i64::from(i)), "row {i}");

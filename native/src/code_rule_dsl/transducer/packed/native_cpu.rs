@@ -24,7 +24,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 pub struct DemandZeroRegion<T> {
     pointer: NonNull<T>,
@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())
@@ -359,8 +359,8 @@ unsafe impl Sync for CompiledStraightLine {}
 
 // A wave's programs (its labels' and roots') fit: past this the oldest key goes.
 const CPU_JIT_CACHE_LIMIT: usize = 4096;
-static CPU_JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Arc<CompiledStraightLine>>>> =
-    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+#[derive(Default)]
+struct CpuPrograms(Mutex<BTreeMap<String, Arc<CompiledStraightLine>>>);
 
 impl CompiledStraightLine {
     pub fn execute(&self, context: &mut NativeTaskContext) {
@@ -462,7 +462,7 @@ fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::
     };
     let last = function.ins().iadd_imm(high, -1);
     let (a, b) = (record(function, low), record(function, last));
-    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    const _: () = assert!(mem::size_of::<PendingRecord>().is_multiple_of(4));
     for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
         let x = function.ins().load(types::I32, flags, a, 4 * word);
         let y = function.ins().load(types::I32, flags, b, 4 * word);
@@ -543,10 +543,12 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
     if !native_cpu_output::lowered(native) {
         return Err(Error::UnsupportedBackend);
     }
-    let mut builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
-    // One arena, so a call between the module's functions (the cold reads, the scheduler) stays in a `bl`'s reach
-    // (±128 MiB on aarch64) however far apart other allocations put separately allocated code.
-    builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).unwrap_or_else(|e| compile_failed("the JIT's arena", e))));
+    // Its code in one reservation (`rerail_clif::jit::builder`): the reads' calls are `bl`s. The browser's stand-in
+    // (`wasm/cranelift-jit`) builds no module.
+    #[cfg(not(target_family = "wasm"))]
+    let builder = rerail_clif::jit::builder().unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    #[cfg(target_family = "wasm")]
+    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     // The tape's reads (decision 0310): declared once, the cold ones defined; every function's pass inlines the hot.
     super::native_cpu_codegen::define_reads(&mut module).unwrap_or_else(|e| compile_failed("the tape's reads", e));
@@ -2527,14 +2529,15 @@ pub(super) fn batch_key(programs: &[Program]) -> String {
 
 /// Whether every one of `programs` is compiled (`compile_cached`), without compiling any.
 pub(super) fn compiled(programs: &[Program]) -> Result<bool, Error> {
-    let cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>();
+    let cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     Ok(programs.iter().all(|program| cache.contains_key(&cache_key(program))))
 }
 
 pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLine>, Error> {
     crate::code_rule_dsl::prof::count("jit.programs", 1);
     let key = crate::code_rule_dsl::prof::time("jit.key", || cache_key(program));
-    if let Some(compiled) = CPU_JIT_CACHE
+    if let Some(compiled) = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>().0
         .lock()
         .map_err(|_| Error::BackendFailure)?
         .get(&key)
@@ -2545,7 +2548,8 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
     crate::code_rule_dsl::prof::count("jit.misses", 1);
     let native = crate::code_rule_dsl::prof::time("jit.lower", || super::native_ir::lower(program)).unwrap_or_else(|e| compile_failed("the program's lowering", e));
     let compiled = Arc::new(crate::code_rule_dsl::prof::time("jit.straight_line", || compile_straight_line(&native))?);
-    let mut cache = CPU_JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<CpuPrograms>();
+    let mut cache = held_.0.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(existing) = cache.get(&key) {
         return Ok(Arc::clone(existing));
     }
@@ -2597,7 +2601,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
@@ -2670,10 +2674,12 @@ fn execute_batch_packed_once(
     }
     // A cold process compiles each program once (06 S7: 71 programs, 0.3 s); they compile in
     // parallel.
-    let compiled = crate::code_rule_dsl::prof::time("jit.compile", || programs
-        .par_iter()
-        .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
-        .collect::<Result<Vec<_>, Error>>())?;
+    let compiled = crate::code_rule_dsl::prof::time("jit.compile", crate::code_rule_dsl::logic::profile::on_cores(|| {
+        || programs
+            .par_iter()
+            .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
+            .collect::<Result<Vec<_>, Error>>()
+    }))?;
     let allocation_started = std::time::Instant::now();
     let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");
     let mut pending = DemandZeroRegion::<PendingRecord>::new(totals.pending as usize)?;
@@ -2905,7 +2911,7 @@ fn execute_batch_packed_once(
             return Err(Error::BackendFailure);
         }
     }
-    let task_outputs = (|| {
+    let task_outputs = crate::code_rule_dsl::logic::profile::on_cores(|| {
         spans
             .into_par_iter()
             .map(|span| span.iter_mut().map(|(program, context)| {
@@ -2975,7 +2981,7 @@ fn execute_batch_packed_once(
                 })
             }).collect::<Result<Vec<_>, Error>>())
             .collect::<Result<Vec<Vec<_>>, Error>>()
-    })()?
+    })?
     .into_iter()
     .flatten()
     .collect::<Vec<_>>();

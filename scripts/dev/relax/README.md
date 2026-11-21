@@ -67,6 +67,7 @@ Don't set `RELAX_CACHE_DIR`: it turns sharing off.
 | `~/.local/share/rerail-relax/v/<version>/` | One patched source tree and its binary per version, never changed once built. |
 | `~/.local/share/rerail-relax/src` | A link to the installed version's tree (`RELAX_STD` points into it). |
 | `~/.local/share/rerail-relax/bin/relax` | The installed binary. |
+| `~/.local/share/rerail-relax/bin/relax-linux` | The same version for the farm's aarch64 Linux hosts, built here with `scripts/build/farm/cargo-linux` once its sysroot is copied (`linux-sysroot HOST`); `live-test-remote` sends it to a Linux host. |
 
 A version is the pinned upstream commit plus a hash of both patches, for example
 `5b2d68c26a51-8959825cbeab`. The script checks out the commit with `git worktree add`, applies
@@ -175,6 +176,78 @@ Relax's `compiler/tests/cast_open_slice_referent.rs` covers it. The 46 of Relax'
 cast to a reference, pointer or smart pointer, and that rustc compiles, print the same `| ` lines
 as `rustc --test` (`t2.rs`, which spins on purpose, was left out).
 
+### 7. A registry crate's build script gets the mount (`RELAX_SHARE`)
+
+Under `RELAX_SHARE` every engine test that builds on the JIT failed before compiling the engine:
+`cranelift-assembler-x64`'s build script could not load `cranelift_assembler_x64_meta` ("No such
+file or directory", on a path that exists). The root `Cargo.toml` patches that meta crate in from
+`native/vendor`, so its source lies in the mount, at a virtual path. The assembler crate itself is
+the registry's, on disk, and Relax handed the mount table (`RELAX_VFS`) only to a script whose own
+package is virtual. The script's run then read the meta crate's virtual path with nothing serving
+it (Relax prints virtual paths in their disk spelling, so the error showed the real one). The
+fork gives every build script the mount table while one is active. A script on disk still gets no
+`RELAX_WORKSPACE` (that broke rustix's build script: its relative paths resolved against it), and
+the mount table is no part of a script's rerun key.
+
+### 8. The SHA-512 instructions in `asm!`
+
+`sha2` 0.10 with its `asm` feature (which `rerail-tape-format` turns on for aarch64) writes
+`sha512h`, `sha512h2`, `sha512su0` and `sha512su1` in `asm!`. Relax's assembler lacked them, so
+any test that hashes with SHA-512 (ed25519 signatures: `shared_signing_library_verifies_an_existing_empty_allowlist`)
+failed with "unsupported instruction `sha512h`". The fork encodes and decodes them;
+`backend/src/asm/tests_arm64.rs` checks the words against clang's.
+
+### 9. `std::os::linux::fs::MetadataExt`
+
+`gix-discover` reads it on Linux. A std item, but its own commit after the others rather than in
+`std.patch`: that patch is the fork's first commit, and changing it would rewrite the pushed
+branch.
+
+### 10. Relax runs on aarch64 Linux (the farm's DGX Sparks)
+
+Upstream's Linux support was x86_64 only. On an aarch64 Linux host:
+- the JIT reads its thread slot through `tpidr_el0`, as on Android;
+- the machine's cfg set and triple are `aarch64-unknown-linux-gnu` (a build script was handed
+  `TARGET=x86_64-unknown-linux-gnu`, and `cc` looked for `x86_64-linux-gnu-gcc`);
+- profiling, stack walks and thread pausing take Android arm64's path, where the x86_64 Linux
+  code reads x86 registers;
+- a versioned system library (`libstdc++.so.6`) is looked for in the machine's own multiarch
+  folders;
+- Relax restarts itself once with `GLIBC_TUNABLES=glibc.rtld.optional_static_tls=262144`. The
+  engine's native library bundles jemalloc and mimalloc, whose initial-exec TLS did not fit the
+  512 bytes glibc keeps for a library loaded late ("cannot allocate memory in static TLS block").
+
+Measured on a Spark (`cross_file_rows_are_memoised_per_import_component`): a second plain run, 6 s;
+`live-test-remote` in the farm's new Relax home there, first verdict 108 s after the start, then a
+body edit saved here patched in 0.36 s, its verdict 2.6 s after the save.
+
+### 11. An optimized build no longer leaves closures out
+
+An O3 build of a test printed that it had left out functions (one was a `tikv_jemallocator`
+closure), ending "Relax bug, report it"; the tests still passed, on their O0 code. Traces
+(`RELAX_O3_TRACE`, `RELAX_AHEAD_TRACE`) showed the closures refused as "closure parent body
+differs": the closure's lowering ahead is kept only for the very body (`Arc`) of its parent it was
+made from, and a parent's body could be lowered more than once in one epoch (once ahead, once by
+a take), each a new `Arc`. Now the first body registered for a parent in an epoch is the one
+(`canon_bodies` in `jit.rs`): a closure made ahead and a unit's `put_body` both take it. And an O3
+snapshot's lowering drains the owner's pending constants before it tries again
+(`lower_ahead_drained`), since the owner drains them only after it replies; this half is reasoned
+from the code, as the "item not ready" case never showed in 20 runs here.
+
+Measured on a Spark (`plan::corpus::tests`): before, 19 left out in 12 runs and 41 refused takes
+in one traced run; after, none left out in 8 runs and no refused take.
+
+### 12. A failed test's panic is shown, as libtest shows it
+
+A test that failed on an assert or a `panic!` had an empty section under `failures:`. libtest
+shows the test's captured output there, where std's panic hook printed `thread 'NAME' panicked
+at FILE:LINE:COL:` and the message (an `assert_eq!`'s left and right). Relax captures no output,
+and its runtime reports the panic as a JSON `report:` line, so agents had their tests print the
+difference themselves before failing. The harness now writes libtest's text from the panic's
+payload and the location the panic hook records beside it (`std::panic::record_location`). The
+same section reaches `live-test-remote`, which now prints each failure's section whole (it
+showed only the lines naming a panic).
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every
@@ -276,3 +349,8 @@ These must hold. A change to the fork, the patches or the commands that breaks o
   the farm's own prune keeps the disk free.
 - Relax checks only the functions a test reaches. A variant that a test never calls compiles
   "fine" under Relax.
+- Relax's ahead type checks (bodies checked off the main thread before a test reaches them) can
+  fill its type interner (`relax: type interner full`, 2^26 types) on code rustc accepts: since
+  0276's term writes in `logic/rr/lower.rs` (2026-11-19), the engine's runs stop so, at random
+  items. `RELAX_TYCK_AHEAD=0` checks only the bodies a run reaches, and those runs pass. Which
+  body explodes is not found yet; cargo is the check for code no test reaches.

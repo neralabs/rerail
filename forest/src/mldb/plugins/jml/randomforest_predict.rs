@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use crate::bucket::{BucketList, CellValue};
 use crate::compute_kernel_grid::ComputeKernelArgument;
-use crate::compute_kernel_metal::{alloc_uninitialized_array_sync, transfer_to_device_immutable, MetalComputeEvent, MetalComputeQueue};
+use crate::device::{alloc_uninitialized_array_sync, transfer_to_device_immutable, ComputeEvent, ComputeQueue};
 use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace};
 use crate::jml::committee::Committee;
 use crate::jml::decision_tree::DecisionTree;
@@ -98,7 +98,7 @@ impl HostForest {
             let p = self.committee.predict(&|tree| tree.predict_buckets(&|f| rows.columns[self.index[f]].get(r as u32)));
             [p[0], p[1]]
         };
-        Ok(if rows.num_rows < 256 { (0..rows.num_rows).map(one).collect() } else { (0..rows.num_rows).into_par_iter().map(one).collect() })
+        Ok(if rows.num_rows < 256 { (0..rows.num_rows).map(one).collect() } else { rerail_context::on_cores(|| (0..rows.num_rows).into_par_iter().map(one).collect()) })
     }
 }
 
@@ -314,12 +314,12 @@ pub fn lanes_per_row(num_rows: usize, num_trees: usize) -> u32 {
 /// and the predictions' buffers are kept from call to call (grown when a batch needs more), so a call allocates
 /// nothing on the device: it writes the rows into the kept buffer, dispatches, waits and reads the predictions.
 pub struct DeviceForest {
-    nodes: metal::Buffer,
-    roots: metal::Buffer,
-    weights: metal::Buffer,
-    leaves: metal::Buffer,
-    subsets: metal::Buffer,
-    forest_tree_start: metal::Buffer,
+    nodes: crate::device::Buffer,
+    roots: crate::device::Buffer,
+    weights: crate::device::Buffer,
+    leaves: crate::device::Buffer,
+    subsets: crate::device::Buffer,
+    forest_tree_start: crate::device::Buffer,
     num_forests: u32,
     /// The most trees a forest has (the lanes a prediction takes).
     max_trees: u32,
@@ -334,22 +334,22 @@ pub struct DeviceForest {
 /// (items, lanes a row, column stride): a call whose batch shape was seen before skips the grid's solve.
 #[derive(Default)]
 struct Scratch {
-    data: Option<(metal::Buffer, usize)>,
-    out: Option<(metal::Buffer, usize)>,
-    queue: Option<MetalComputeQueue>,
+    data: Option<(crate::device::Buffer, usize)>,
+    out: Option<(crate::device::Buffer, usize)>,
+    queue: Option<ComputeQueue>,
     plans: HashMap<(usize, u32, usize), crate::compute_kernel_grid::GridLaunchPlan>,
     /// `predict_values`: rowBuckets' plans by (rows, stride), and the columns' descriptions, numbers, codes and
     /// code tables.
     row_plans: HashMap<(usize, usize), crate::compute_kernel_grid::GridLaunchPlan>,
-    columns: Option<(metal::Buffer, usize)>,
-    numbers: Option<(metal::Buffer, usize)>,
-    codes: Option<(metal::Buffer, usize)>,
-    tables: Option<(metal::Buffer, usize)>,
+    columns: Option<(crate::device::Buffer, usize)>,
+    numbers: Option<(crate::device::Buffer, usize)>,
+    codes: Option<(crate::device::Buffer, usize)>,
+    tables: Option<(crate::device::Buffer, usize)>,
     /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on the process's waiting queue (`gpu::shared`):
     /// a command buffer waiting on an event holds back the ones its queue commits after it.
     armed: Option<Armed>,
-    armed_queue: Option<MetalComputeQueue>,
-    event: Option<(metal::SharedEvent, u64)>,
+    armed_queue: Option<ComputeQueue>,
+    event: Option<(crate::device::SharedEvent, u64)>,
 }
 
 /// A prediction of values encoded and committed before its rows are known (`predict_values`): its command buffer
@@ -367,17 +367,17 @@ struct Armed {
     identity: bool,
     bufs: ArmedBuffers,
     value: u64,
-    pending: MetalComputeEvent,
+    pending: ComputeEvent,
 }
 
 /// An armed prediction's own buffers (none shared with the calls that are not armed).
 struct ArmedBuffers {
-    columns: metal::Buffer,
-    numbers: metal::Buffer,
-    codes: metal::Buffer,
-    tables: metal::Buffer,
-    data: metal::Buffer,
-    out: metal::Buffer,
+    columns: crate::device::Buffer,
+    numbers: crate::device::Buffer,
+    codes: crate::device::Buffer,
+    tables: crate::device::Buffer,
+    data: crate::device::Buffer,
+    out: crate::device::Buffer,
 }
 
 /// A column of rows to predict (`DeviceForest::predict_columns_timed`).
@@ -477,7 +477,7 @@ impl BucketRules {
 /// The bucket rules on the device (`DeviceForest::predict_values`).
 pub struct DeviceBucketizer {
     columns: Vec<BucketizerColumn>,
-    split_keys: metal::Buffer,
+    split_keys: crate::device::Buffer,
 }
 
 impl DeviceBucketizer {
@@ -494,7 +494,7 @@ impl DeviceBucketizer {
 }
 
 /// A kept buffer of at least `n` elements of `T` (`slot`'s when it is big enough, else a new one, twice the size).
-fn kept<T>(device: &metal::DeviceRef, slot: &mut Option<(metal::Buffer, usize)>, n: usize) -> metal::Buffer {
+fn kept<T>(device: &crate::device::DeviceRef, slot: &mut Option<(crate::device::Buffer, usize)>, n: usize) -> crate::device::Buffer {
     match slot {
         Some((b, cap)) if *cap >= n => b.clone(),
         _ => {
@@ -811,7 +811,7 @@ impl DeviceForest {
         let d_numbers = kept::<u64>(device, &mut scratch.numbers, num_numbers.max(1));
         let d_codes = kept::<u32>(device, &mut scratch.codes, num_codes.max(1));
         let d_tables = kept::<u32>(device, &mut scratch.tables, num_table.max(1));
-        let view = |buf: &metal::Buffer, n: usize| unsafe { std::slice::from_raw_parts_mut(buf.contents().cast::<u32>(), n) };
+        let view = |buf: &crate::device::Buffer, n: usize| unsafe { std::slice::from_raw_parts_mut(buf.contents().cast::<u32>(), n) };
         let desc = view(&d_columns, columns.len() * ROW_BUCKET_WORDS);
         let numbers = unsafe { std::slice::from_raw_parts_mut(d_numbers.contents().cast::<f64>(), num_numbers) };
         let codes_out = view(&d_codes, num_codes);
@@ -852,7 +852,7 @@ impl DeviceForest {
         }
         let d_data = kept::<u32>(device, &mut scratch.data, stride * columns.len() + 1);
         let k = kernel("rowBuckets")?;
-        let buffers: [(&str, &metal::BufferRef); 6] =
+        let buffers: [(&str, &crate::device::BufferRef); 6] =
             [("columns", &d_columns), ("numbers", &d_numbers), ("codes", &d_codes), ("splitKeys", &b.split_keys), ("codeTables", &d_tables), ("bucketDataOut", &d_data)];
         let key = (num_rows, stride);
         if !scratch.row_plans.contains_key(&key) {
@@ -865,7 +865,7 @@ impl DeviceForest {
         }
         {
             let Scratch { queue, row_plans: plans, .. } = &mut *scratch;
-            let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
+            let queue = queue.get_or_insert_with(|| ComputeQueue::new(&shared.queue));
             let mut ctx = queue.new_bind_context(k.function);
             k.launch_plan(&plans[&key], &buffers, &mut ctx)?;
         }
@@ -874,12 +874,12 @@ impl DeviceForest {
 
     /// Predicts the rows whose bucket columns are (or will be, earlier in the queue's command buffer) in `d_data`
     /// at `stride` words a column, and commits the command buffer.
-    fn launch(&self, scratch: &mut Scratch, d_data: &metal::BufferRef, num_rows: usize, stride: usize) -> Result<(Vec<[f32; 2]>, f64), String> {
+    fn launch(&self, scratch: &mut Scratch, d_data: &crate::device::BufferRef, num_rows: usize, stride: usize) -> Result<(Vec<[f32; 2]>, f64), String> {
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let items = num_rows * self.num_forests as usize;
         let Scratch { queue, plans, out, .. } = scratch;
         let d_out = kept::<f32>(&shared.device, out, items * 2);
-        let queue = queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.queue));
+        let queue = queue.get_or_insert_with(|| ComputeQueue::new(&shared.queue));
         self.encode_forest(plans, queue, d_data, &d_out, num_rows, stride)?;
         let event = queue.flush();
         event.await_()?;
@@ -896,9 +896,9 @@ impl DeviceForest {
     fn encode_forest(
         &self,
         plans: &mut HashMap<(usize, u32, usize), crate::compute_kernel_grid::GridLaunchPlan>,
-        queue: &mut MetalComputeQueue,
-        d_data: &metal::BufferRef,
-        d_out: &metal::BufferRef,
+        queue: &mut ComputeQueue,
+        d_data: &crate::device::BufferRef,
+        d_out: &crate::device::BufferRef,
         num_rows: usize,
         stride: usize,
     ) -> Result<(), String> {
@@ -906,7 +906,7 @@ impl DeviceForest {
         let items = num_rows * self.num_forests as usize;
         let k = kernel("predictForest")?;
         let lanes = lanes_per_row(items, self.max_trees as usize);
-        let buffers: [(&str, &metal::BufferRef); 8] = [
+        let buffers: [(&str, &crate::device::BufferRef); 8] = [
             ("bucketData", d_data),
             ("nodes", &self.nodes),
             ("subsets", &self.subsets),
@@ -988,7 +988,7 @@ impl DeviceForest {
             (e.clone(), *v)
         };
         let k = kernel("rowBuckets")?;
-        let buffers: [(&str, &metal::BufferRef); 6] =
+        let buffers: [(&str, &crate::device::BufferRef); 6] =
             [("columns", &bufs.columns), ("numbers", &bufs.numbers), ("codes", &bufs.codes), ("splitKeys", &b.split_keys), ("codeTables", &bufs.tables), ("bucketDataOut", &bufs.data)];
         let key = (rows, stride);
         if !scratch.row_plans.contains_key(&key) {
@@ -1000,9 +1000,9 @@ impl DeviceForest {
             scratch.row_plans.insert(key, k.plan(&named, &[(categorical.len() * stride) as u32])?);
         }
         let Scratch { armed_queue, row_plans, plans, .. } = scratch;
-        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.waiting));
+        let queue = armed_queue.get_or_insert_with(|| ComputeQueue::new(&shared.waiting));
         // First in the command buffer, before any encoder: the device waits here for the call's rows.
-        queue.command_buffer.encode_wait_for_event(&event, value);
+        queue.wait_for_event(&event, value);
         {
             let mut ctx = queue.new_bind_context(k.function);
             k.launch_plan(&row_plans[&key], &buffers, &mut ctx)?;
@@ -1227,9 +1227,9 @@ mod tests {
         for i in 0..n {
             let r = &real[(h(i, seed) % real.len() as u64) as usize];
             let lane = (h(i, seed + 1) % 4) as usize;
-            let forms = if h(i, seed + 2) % 3 == 0 { r.forms.clone() } else { format!("form{}", h(i, seed + 3) % 300) };
+            let forms = if h(i, seed + 2).is_multiple_of(3) { r.forms.clone() } else { format!("form{}", h(i, seed + 3) % 300) };
             let units = (r.units.max(1.0) * 2f64.powi((h(i, seed + 4) % 9) as i32 - 4)).round();
-            let cold = h(i, seed + 5) % 50 == 0;
+            let cold = h(i, seed + 5).is_multiple_of(50);
             let noise = 1.0 + (h(i, seed + 6) % 1000) as f64 / 2000.0;
             let wall = modelled_wall(&forms, lane, units, r.load, cold, noise);
             let cpu_wall = modelled_wall(&forms, 0, units, r.load, false, 1.25);
@@ -1259,9 +1259,9 @@ mod tests {
 
     /// `timed`, with the GPU seconds of the forest kernels' command buffers the run awaited.
     fn timed_gpu<T>(f: impl FnOnce() -> T) -> (T, f64, f64, f64) {
-        let g = crate::compute_kernel_metal::gpu_seconds_awaited();
+        let g = crate::device::gpu_seconds_awaited();
         let (r, w, c) = timed(f);
-        (r, w, c, crate::compute_kernel_metal::gpu_seconds_awaited() - g)
+        (r, w, c, crate::device::gpu_seconds_awaited() - g)
     }
 
     fn train_bench(what: &str, cols: &[Vec<CellValue>], labels: &[f32], config: &RandomForestProcedureConfig) -> (Arc<DatasetFeatureSpace>, Forest) {
@@ -1531,8 +1531,8 @@ mod tests {
         train_forest(&training_data(fs_class.clone(), &s.train_labels, None, None).unwrap(), &RandomForestProcedureConfig { feature_vector_samplings: 1, feature_samplings: 2, ..Default::default() }).unwrap();
         let nt = s.test.len();
         // The rows a calibrated model trains on (80% of the training rows) and calibrates on (the other 20%).
-        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 != 0).collect();
-        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13) % 5 == 0).collect();
+        let fit: Vec<usize> = (0..s.train.len()).filter(|&i| !h(i, 13).is_multiple_of(5)).collect();
+        let cal: Vec<usize> = (0..s.train.len()).filter(|&i| h(i, 13).is_multiple_of(5)).collect();
         let pick = |cols: &[(String, Vec<CellValue>)], rows: &[usize]| -> Vec<Vec<CellValue>> { cols.iter().map(|(_, c)| rows.iter().map(|&i| c[i].clone()).collect()).collect() };
         let fit_cols = named(pick(&train_cols, &fit));
         let cal_cols: Vec<Vec<CellValue>> = pick(&train_cols, &cal);
@@ -1619,7 +1619,7 @@ mod tests {
                         (DeviceForest::new_many(&flats.iter().collect::<Vec<_>>()).unwrap(), nodes)
                     });
                     // The probabilities "above threshold k", per row, for a set of rows (bucketized on the device).
-                    let bucketizer = DeviceBucketizer::new(&fs).unwrap();
+                    let bucketizer = DeviceBucketizer::new(fs).unwrap();
                     let probs = |cols: &[ColumnData]| -> (Vec<Vec<f64>>, f64) {
                         let (p, gpu) = forests.predict_values_timed(&bucketizer, cols).unwrap();
                         (p.chunks(k - 1).map(|r| r.iter().map(|p| p[1] as f64).collect()).collect(), gpu)
@@ -1650,7 +1650,7 @@ mod tests {
                     eprintln!("RESULT {} rerail-{kind}-k{k} kbucket depth {depth}: train {:.0} ms wall {:.0} ms CPU {:.0} ms GPU; {nodes} nodes; predict {nt} {:.1} ms wall {:.1} ms CPU {:.2} ms GPU; expected rmse {rmse_e:.4} r2 {r2_e:.4}; least squares rmse {rmse_l:.4} r2 {r2_l:.4}",
                         s.name, w * 1e3, c * 1e3, tg * 1e3, pw * 1e3, pc * 1e3, gpu * 1e3);
                     if depth == 20 && !subsets && k == 8 && want("batch") {
-                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), &fs, &forests, &test_cols);
+                        batch_timings(&format!("{} kbucket k{k} depth {depth}", s.name), fs, &forests, &test_cols);
                     }
                 }
             }
@@ -1680,7 +1680,7 @@ mod tests {
             run_suite(&Suite { name: format!("synthetic{n}"), train, test, train_labels, test_labels, train_targets, test_targets });
         }
         if data.split(',').any(|d| d == "real") {
-            let (train, test): (Vec<(usize, &Job)>, Vec<(usize, &Job)>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
+            let (train, test): (Vec<_>, Vec<_>) = real.iter().enumerate().partition(|(i, _)| h(*i, 11) % 10 < 7);
             let train: Vec<Job> = train.into_iter().map(|(_, j)| j.clone()).collect();
             let test: Vec<Job> = test.into_iter().map(|(_, j)| j.clone()).collect();
             let label = |j: &Job| (j.wall > j.estimate) as u8 as f32;
@@ -1855,7 +1855,7 @@ mod tests {
             f.predict(&rows).unwrap();
         }
         let n = 300;
-        let thread_cpu = || { let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 }; unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) }; ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9 };
+        let thread_cpu = rerail_gpu::thread_cpu_seconds;
         let wait = std::env::var("WAIT").unwrap_or("wait".into());
         let mut t = [(0.0f64, 0.0f64); 8];
         let mut tt = [0.0f64; 8];
@@ -1880,7 +1880,7 @@ mod tests {
             }
             let d_out = kept::<f32>(&shared.device, &mut scratch.out, 2);
             phase(0, &mut t);
-            let mut queue = MetalComputeQueue::new(&shared.queue);
+            let mut queue = ComputeQueue::new(&shared.queue);
             phase(1, &mut t);
             let k = kernel("predictForest").unwrap();
             let mut ctx = queue.new_bind_context(k.function);
@@ -1898,8 +1898,8 @@ mod tests {
             phase(5, &mut t);
             match wait.as_str() {
                 // Spinning on the status: the thread's CPU while the GPU works, no wake-up.
-                "spin" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::hint::spin_loop() },
-                "yield" => while !matches!(event.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error) { std::thread::yield_now() },
+                "spin" => while !event.is_complete() { std::hint::spin_loop() },
+                "yield" => while !event.is_complete() { std::thread::yield_now() },
                 _ => event.await_().unwrap(),
             }
             phase(6, &mut t);

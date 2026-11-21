@@ -1,7 +1,7 @@
 # 0406: Errors in one vector round the loop
 
 Status: decided (the user, 2026-11-18: "deal with this", the per-block mask of the UTF-8
-error that 0405 left). Follows 0347, 0454 (its rejected item 2) and 0405.
+error that 0405 left). Follows 0347, 0402 (its rejected item 2) and 0405.
 
 ## Intro
 
@@ -10,7 +10,7 @@ with the bit weights, four `addp`s and a `mov`, about 9 instructions. Its word w
 into the totals' running word, the file's flag. simdjson ORs its error bytes into one vector
 register (`error`) and tests it once, at the end.
 
-0454 had built the flag (page 39's item 2, kept as a patch) but found it fired on no grammar
+0402 had built the flag (page 39's item 2, kept as a patch) but found it fired on no grammar
 here. A flag needs totals that no one reads by their rows (0347's `rowless_totals`), and those
 were defined only where the CPU's token loop runs, which `14-json`'s tier 1 does not.
 
@@ -33,7 +33,7 @@ A stored total had been stored where made, then loaded back at the block's end. 
 would stay live to the end, three words in `14-json`, and the loop's bound spilled. One that the
 edge part makes again (`fixed`) keeps the end's fold, which takes the edge part's word.
 
-**3. The flag** (0454's patch, ported).
+**3. The flag** (0402's patch, ported).
 
 - A rowless total's tree of `or`s, and `and`s with a value all ones in a full block, is made as
   one word nonzero where any bit is.

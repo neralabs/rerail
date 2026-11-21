@@ -97,6 +97,40 @@
     }
 
     #[test]
+    fn a_utility_holding_a_gap_test_is_remembered_whatever_the_captures() {
+        const NAMES: usize = 40;
+        let names = (0..NAMES)
+            .map(|index| format!("a{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!("({names}) = 1\n");
+        // The tuple's `,` is a token the tape implies, so `has {regex: "^,$"}` is a gap test; it
+        // reads the tree alone, so the utility's verdict at the assignment does not depend on `$N`.
+        let compiled = compile_document_with(
+            clause_document(json!({ "id": "c", "violation": violation(), "forbid": { "ast": {
+                "language": "python",
+                "rule": { "kind": "identifier", "pattern": "$N",
+                          "inside": { "stopBy": "end", "matches": "tuple-target" } },
+                "utils": { "tuple-target": { "kind": "assignment", "has": {
+                    "stopBy": "neighbor", "kind": "tuple_pattern",
+                    "has": { "stopBy": "neighbor", "regex": "^,$" } } } },
+            } } })),
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        reset_remembered_peak();
+        let result = evaluate_file(&compiled, "python", "a.py", &source);
+        assert_violations(&result, NAMES);
+        // One verdict, at the assignment, for every name; keyed by `$N` too, each name would
+        // remember its own.
+        assert!(
+            remembered_peak() == 1,
+            "{} verdicts remembered for {NAMES} names",
+            remembered_peak()
+        );
+    }
+
+    #[test]
     fn a_remembered_verdict_over_a_parsed_tree_replays_its_sibling_probes() {
         let file = tape_file("x: \"List[int, str]\"\n", GrammarDialect::Python);
         let compiled = compile_document_with(

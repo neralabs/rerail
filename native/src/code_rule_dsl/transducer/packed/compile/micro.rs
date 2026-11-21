@@ -7,7 +7,7 @@
 //! from one start with a few frames on a stack: a frame is a forked path, or a move's remaining
 //! candidates (children, descendants, following siblings), so the stack grows with the program's
 //! nesting, not with a node's fan-out. On Metal it is one thread per (pass, start), with no task
-//! list built on the host (`label_micro` in `metal_label_passes.metal`, the same walk).
+//! list built on the host (`label_micro` in `label_passes.uglykl`, the same walk).
 //!
 //! The walk's outputs are the interpreter's, as a label reads them: a roots label is the starts that
 //! emit (the walk stops at the first), a targets label every node captured on a path that emits. A
@@ -503,8 +503,8 @@ impl Micro {
     ) -> Result<(), Overflow> {
         self.walk(tape, tape.transducer_labels(), texts, start, ROOT_CAPTURES, frames, &mut |state: &State, label| {
             let mut captures = [(0_u16, NONE); ROOT_CAPTURES];
-            for at in 0..usize::from(state.captured) {
-                captures[at] = (state.labels[at], state.captures[at]);
+            for (at, slot) in captures.iter_mut().enumerate().take(usize::from(state.captured)) {
+                *slot = (state.labels[at], state.captures[at]);
             }
             out.push(RootRecord { start, label, captured: state.captured, captures });
             false
@@ -562,7 +562,7 @@ impl Micro {
         };
         let mut steps = 0_u32;
         let mut fired = 0_u64;
-        let limit = self::steps(tape.transducer_len() as usize, self.words.len());
+        let limit = self::steps(tape.transducer_len(), self.words.len());
         loop {
             // The path from `state` until it ends.
             loop {

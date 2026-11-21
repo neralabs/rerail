@@ -33,7 +33,7 @@
 //! (home, key), each in the first free slot from its home. So the slots are a function of the set of keys, not of
 //! the order the definitions appear in, and adding one moves at most a granule it clashes with. Slot 0 is the
 //! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and tokens, which are
-//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rr's source, lines,
+//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rerail's source, lines,
 //! comments and matches made beside the projection), a slot range for each kind.
 //!
 //! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` positions (4 M), each `ExtraSpan`
@@ -54,6 +54,8 @@ use std::sync::Arc;
 
 pub(super) const SLOT_BITS: u32 = rerail_clif::ids::SLOT_BITS;
 pub const INDEX_BITS: u32 = rerail_clif::ids::INDEX_BITS;
+// A kept column splits a node id at its granule (decision 0456 K2): the bit is this one.
+const _: () = assert!(INDEX_BITS == rerail_blocks::packed::ID_SPLIT, "a kept id column splits at the granule's index bits");
 /// Indexes in one slot.
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
@@ -71,7 +73,7 @@ const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 
-/// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
+/// The kinds of `Extra`'s spans (core.rerail's `span`s made beside the projection: `super::Extra::document`), each in slots
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtraSpan {
@@ -171,8 +173,7 @@ fn is_container_owner(kind: &str) -> bool {
 /// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
 /// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
 pub fn kind_flags(kind: &str) -> u8 {
-    u8::from(is_def(kind)) * DEF | u8::from(is_wrapper(kind)) * WRAPPER | u8::from(is_body(kind)) * BODY
-        | u8::from(is_container_owner(kind)) * OWNER
+    (u8::from(is_def(kind)) * DEF) | (u8::from(is_wrapper(kind)) * WRAPPER) | (u8::from(is_body(kind)) * BODY) | (u8::from(is_container_owner(kind)) * OWNER)
 }
 pub const DEF: u8 = 1;
 pub const WRAPPER: u8 = 2;
@@ -315,12 +316,11 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
                 start[l] = Some(Start::Stmt);
             }
             // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is(l, WRAPPER) {
-                if let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
+            if start[l].is_some() && is(l, WRAPPER)
+                && let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
                 }
-            }
             if claimed[l] {
                 start[l] = None;
             }
@@ -356,7 +356,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
 fn name(p: &Projected, dialect: &Dialect, of: &[u32], up: &[u32], starts: &[u32], g: usize) -> String {
     let f = &*p.facts;
     let l = starts[g];
-    let id = p.node(l as u32);
+    let id = p.node(l);
     let kind = dialect.name(f, id);
     // A wrapper is named by its definition, or by the declaration it exports.
     let inner = |want: fn(&str) -> bool| f.children(id).iter().copied().find(|&c| f.named(c) && want(dialect.name(f, c)));
@@ -611,7 +611,6 @@ struct Kid {
 }
 
 // SAFETY: `#[repr(C)]`, three `u32`s: every byte a named field, no address.
-#[cfg(target_os = "macos")]
 unsafe impl rerail_blocks::Pod for Kid {}
 
 impl Table {
@@ -684,7 +683,7 @@ impl Table {
         let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
-        let table = Table {
+        Table {
             starts: placed(b, &starts),
             ends: placed(b, &ends),
             parents: placed(b, &parents),
@@ -701,14 +700,13 @@ impl Table {
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
             jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
-        };
-        table.describe(r);
-        table
+        }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
-    /// written once find them.
-    fn describe(&self, r: &Ranks) {
+    /// written once find them: the table the projection keeps (`DefIds`), as it is built. A table numbered again (a
+    /// reference, a census) is not described: dropped, it would leave the runs at columns that are gone.
+    pub(super) fn describe(&self, r: &Ranks) {
         use rerail_clif::ids::Run;
         let d = r.desc_mut();
         let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };

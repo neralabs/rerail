@@ -33,6 +33,9 @@ export interface Migration {
   up(database: RerailDatabase): void;
 }
 
+/** The step that keeps each rule provenance once; `rule-provenance-move.ts` moves what audits held before it. */
+export const RULE_PROVENANCE_STEP = "audit-rule-provenance-once";
+
 /**
  * The first schema version with a migration path. Files stamped 1 come from releases before it: 0.1.0-next.1 (main
  * before the migration path) wrote the baseline's shape without `schema_migrations`, and such a file is adopted at the
@@ -125,6 +128,137 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
     },
   },
+  {
+    // An audit names its rule provenance in `audit_rule_provenances`, which keeps each distinct one once, instead of
+    // holding a copy in `rule_provenance_json` (221 KB for 767 rules, written again by every audited edit). Steps run
+    // before the DDL, so the table is created here as this step introduced it; then the column. The audits a file
+    // holds keep their provenance inline, where the audit store reads it, until the daemon moves it in short
+    // transactions (`rule-provenance-move.ts`): moving it here would hold the open's write lock for the whole history
+    // (about 10 s for 4,000 audits), and other writers fail once they have waited 5 s. No floor, by choice: builds at
+    // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
+    // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
+    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no
+    // provenance. The step records the last audit the file holds (`audit_rule_provenance_step`): the move takes the
+    // audits up to that one, in the order they were recorded, whatever the clock read when each began. An older build
+    // never reads that table.
+    id: RULE_PROVENANCE_STEP,
+    up(database) {
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
+      for (const statement of AUDIT_RULE_PROVENANCES_TABLE) database.run(sql.raw(statement));
+      addColumn(database, "audits", "rule_provenance_id", "integer");
+      database.run(sql.raw("INSERT INTO audit_rule_provenance_step (last_audit_id) SELECT audit_id FROM audits ORDER BY rowid DESC LIMIT 1"));
+    },
+  },
+  {
+    // A repository's `merge_assist`, off by default: only a person turns Merge Assist on. No floor: an older build
+    // never reads the column, and its inserts take the default. Its tables need no step; the DDL creates them.
+    id: "repositories-merge-assist",
+    up(database) {
+      addColumn(database, "repositories", "merge_assist", "integer DEFAULT false NOT NULL");
+    },
+  },
+  {
+    // A rule setting's `origin`: `lint-config` for one the repository's lint config gave (set-up, `rerail packs
+    // calibrate`), null for a person's or an agent's, which calibrating leaves alone. No floor: an older build never
+    // reads the column. Its writes name only the columns it knows, so a row it inserts has no origin, and its upsert
+    // of an existing row keeps the row's origin: a calibrated row an older build's dashboard changed still reads as
+    // calibrated, and the next calibration may replace that change. Its delete takes the origin with the row.
+    id: "rule-settings-origin",
+    up(database) {
+      addColumn(database, "rule_settings", "origin", "text");
+    },
+  },
+  {
+    // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
+    // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
+    // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`). No
+    // floor: an older build never reads the column, its inserts take the default, and it creates a trigger only when
+    // the trigger is missing, so it keeps these.
+    id: "audits-origin",
+    up(database) {
+      for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
+        database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
+      addColumn(database, "audits", "origin", `text DEFAULT 'ongoing' NOT NULL CONSTRAINT "audits_origin" CHECK("audits"."origin" IN ('ongoing', 'scan'))`);
+      markRecordedScans(database);
+    },
+  },
+  {
+    // A rule's `title`, of either kind, which the dashboard shows. No floor: an older build never reads the column; its
+    // inserts leave it null, and its updates of a row keep the title the row had.
+    id: "rules-title",
+    up(database) {
+      addColumn(database, "rules", "title", "text");
+    },
+  },
+  {
+    id: "analysis-scope-release-retry",
+    up(database) {
+      addColumn(database, "analysis_scope_releases", "next_attempt_at", "integer DEFAULT 0 NOT NULL");
+    },
+  },
+  {
+    id: "analysis-scope-probe-failures",
+    up(database) {
+      addColumn(database, "analysis_scope_release_probes", "attempts", "integer DEFAULT 0 NOT NULL");
+      addColumn(database, "analysis_scope_release_probes", "last_error", "text");
+    },
+  },
+];
+
+/**
+ * `audits-origin`: marks the scans a file recorded before audits had an origin, and removes what was derived from them
+ * (`SCAN_HISTORY_REPAIR`). Those are the audits its scan requests name (`audit_ids_json`) and the one each checkout's
+ * `repository_audits` row names now. That row keeps one audit id: a scan request finished later, or a retry of an
+ * interrupted or failed first repository audit, replaced it, and the first audit it named stays `ongoing`. Nothing
+ * else tells such an audit apart: an ongoing audit of the repository scope looks the same.
+ */
+function markRecordedScans(database: RerailDatabase): void {
+  const tables = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`).map(row => row.name));
+  if (!tables.has("audits")) return;
+  if (tables.has("audit_requests")) database.run(sql.raw(MARK_REQUESTED_SCANS));
+  if (tables.has("repository_audits")) database.run(sql.raw(MARK_REPOSITORY_AUDIT_SCANS));
+  if (tables.has("audit_violations")) for (const statement of SCAN_HISTORY_REPAIR) database.run(sql.raw(statement));
+}
+
+/** `audits-origin`: the audits `rerail scan --session` (an audit request) recorded are scans. */
+const MARK_REQUESTED_SCANS = `UPDATE audits SET origin = 'scan' WHERE audit_id IN (
+    SELECT requested.value FROM audit_requests request, json_each(request.audit_ids_json) requested)`;
+
+/** `audits-origin`: the first repository audit each checkout's row still names is a scan. */
+const MARK_REPOSITORY_AUDIT_SCANS = `UPDATE audits SET origin = 'scan'
+    WHERE audit_id IN (SELECT audit_id FROM repository_audits WHERE audit_id IS NOT NULL)`;
+
+/**
+ * `audits-origin`'s repair: the derived rows of the audits it marked scans go, and the rollup rows of their violations
+ * are recomputed from the sightings left (or dropped). It recomputes them itself: the rollup triggers are missing when
+ * this open's `audit-history-derived-tables` filled the tables.
+ */
+const SCAN_HISTORY_REPAIR: readonly string[] = [
+  `CREATE TEMP TABLE scan_violation_keys AS
+    SELECT DISTINCT violation.session_id, violation.rule_id, violation.violation_key
+    FROM audits audit JOIN audit_violations violation ON violation.audit_id = audit.audit_id
+    WHERE audit.origin = 'scan' AND violation.rule_id IS NOT NULL`,
+  "DELETE FROM audit_violations WHERE audit_id IN (SELECT audit_id FROM audits WHERE origin = 'scan')",
+  "DELETE FROM audit_rule_set_uses WHERE audit_id IN (SELECT audit_id FROM audits WHERE origin = 'scan')",
+  `DELETE FROM rule_violation_rollup
+    WHERE (session_id, rule_id, violation_key) IN (SELECT session_id, rule_id, violation_key FROM temp.scan_violation_keys)`,
+  `INSERT INTO rule_violation_rollup (session_id, rule_id, violation_key, last_seen_at, last_logged_at)
+    SELECT kept.session_id, kept.rule_id, kept.violation_key, max(kept.started_at), max(CASE WHEN kept.logged = 1 THEN kept.started_at END)
+    FROM temp.scan_violation_keys scanned
+    JOIN audit_violations kept
+      ON kept.session_id = scanned.session_id AND kept.rule_id = scanned.rule_id AND kept.violation_key = scanned.violation_key
+    GROUP BY kept.session_id, kept.rule_id, kept.violation_key`,
+  "DROP TABLE temp.scan_violation_keys",
+];
+
+/**
+ * `audit_rule_provenances` and its digest index, and `audit_rule_provenance_step`, as `audit-rule-provenance-once`
+ * introduced them.
+ */
+const AUDIT_RULE_PROVENANCES_TABLE: readonly string[] = [
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenances` (\n\t`provenance_id` integer PRIMARY KEY NOT NULL,\n\t`digest` text NOT NULL,\n\t`rule_provenance_json` text NOT NULL,\n\tCONSTRAINT \"audit_rule_provenances_json\" CHECK(json_type(\"audit_rule_provenances\".\"rule_provenance_json\") = 'array')\n)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS `audit_rule_provenances_digest_unique` ON `audit_rule_provenances` (`digest`)",
+  "CREATE TABLE IF NOT EXISTS `audit_rule_provenance_step` (\n\t`last_audit_id` text PRIMARY KEY NOT NULL\n)",
 ];
 
 /**

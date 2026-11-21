@@ -1,0 +1,173 @@
+// Block programs' interpreter (block_program.rs), in UKL (decision 0440 step C; was block_program.metal): a batch of
+// files, each under its own program, in one launch (decision 0066). Each lane owns BW / 8 consecutive bytes of a file
+// (BW = 16, 32 or 64: one compile each) and its BW-bit word of every value, so a group of 32 lanes works on 32 words
+// at once. A group's values are slots of lane words in its worker's scratch, in device memory (decision 0034). Each
+// step runs once; a carried step resolves its carry by look-back (`look_back`, `halo_exchange`) before the next.
+// Compiled after `block_common.uglykl`.
+
+// An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0 eq, 1 const, 2 not,
+// 3 and, 4 or, 5 xor, 6 andnot, 7 plane, 11 the byte before's plane), operands a and b, and an immediate (eq's byte;
+// const's pattern as b = low half, imm = high half; plane's bit), and the carried operations 8 prev (imm the
+// distance), 9 toggle, 10 escaped, 12 fill (imm its ends), each with its index among the program's carried steps in
+// b; 13 within (imm its delay); 15 phase (a = k | r << 8, its period's bits as b, imm); 16 position.
+typedef struct BlockStep { uint32_t op, a, b, imm; } BlockStep;
+// A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts (output indices,
+// at `outs[ext0..]`, each with its output's delay in the top byte).
+typedef struct ProgramRow { uint32_t step0, steps, out0, outs, ext0, exts, pad0, pad1; } ProgramRow;
+// A launch's parameters: the batch's groups, the polls after the first, the most steps of any program.
+typedef struct BatchP { uint32_t groups, spins, most, pad; } BatchP;
+UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)
+
+// Group g of file f (lane l): every step of its program, then its outputs and extracts. False when a look-back has
+// to wait for another launch.
+UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL const ProgramRow* programs,
+                               UKL_GLOBAL const BlockStep* steps, UKL_GLOBAL const uint32_t* outs, UKL_GLOBAL BM* slots, UKL_GLOBAL BM* out,
+                               UKL_GLOBAL uint32_t* states, UKL_GLOBAL uint32_t* halos, UKL_GLOBAL uint32_t* ext_states,
+                               UKL_GLOBAL uint32_t* positions, UKL_GLOBAL uint32_t* counts __UKL_PARAMS)
+{
+    ProgramRow pr = programs[f.program];
+    uint32_t chunks = (uint32_t)BW / 16u;
+    uint32_t W = (uint32_t)BW;
+    uint32_t gl = g * 32u + l;
+    uint32_t lanes = f.groups * 32u;
+    for (uint32_t at = 0u; at < pr.steps; at++) {
+        BlockStep s = steps[pr.step0 + at];
+        // Operands are earlier values. Steps without one hold other things in a and b (const's pattern), so the
+        // reads are clamped to slots already defined.
+        BM a = slots[ukl_min(s.a, at) * 32u + l];
+        BM b = slots[ukl_min(s.b, at) * 32u + l];
+        UKL_GLOBAL uint32_t* state = states + f.state_base + s.b * f.groups;
+        BM v = BMC(0);
+        // The step is the group's: every lane takes the same case, as the SIMD-group operations in it need.
+        switch (s.op) {
+            case 0u: v = eq_file(bytes, f, gl * chunks, s.imm * 0x01010101u); break;
+            case 1u: v = pattern((uint64_t)s.b | ((uint64_t)s.imm << 32), gl); break;
+            case 2u: v = BMC(~a); break;
+            case 3u: v = BMC(a & b); break;
+            case 4u: v = BMC(a | b); break;
+            case 5u: v = BMC(a ^ b); break;
+            case 6u: v = BMC(a & ~b); break;
+            case 7u: v = plane_file(bytes, f, gl * chunks, s.imm); break;
+            case 11u: v = BMC((plane_file(bytes, f, gl * chunks, s.imm) << 1) | BMC((file_byte_before(bytes, f, gl * chunks) >> s.imm) & 1u)); break;
+            case 8u: {
+                uint64_t h = 0ul;
+                if (!halo_exchange(halos + f.halo_base + s.b * f.groups * 3u, g, l, halo_last(a __UKL_ARGS), spins, &h __UKL_ARGS)) return false;
+                v = apply_prev(a, s.imm, halo_before(a, l, h __UKL_ARGS));
+                break;
+            }
+            case 9u: {
+                uint32_t t = summary_toggle(a);
+                uint32_t cin = 0u;
+                if (!look_back(state, g, l, t | ((1u ^ t) << 1), spins, &cin __UKL_ARGS)) return false;
+                v = apply_toggle(a, cin);
+                break;
+            }
+            case 10u: {
+                uint32_t o0 = 0u, o1 = 0u, cin = 0u;
+                BM f0 = escaped(a, BMC(0), &o0), f1 = escaped(a, BMC(1), &o1);
+                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), spins, &cin __UKL_ARGS)) return false;
+                v = SEL(f0, f1, cin != 0u);
+                break;
+            }
+            case 12u: {
+                // `fill`: its ends are in imm (b is the carry's index).
+                BM e = slots[ukl_min(s.imm, at) * 32u + l];
+                uint32_t o0 = 0u, o1 = 0u, cin = 0u;
+                BM f0 = fill_word(a, e, BMC(0), &o0), f1 = fill_word(a, e, BMC(1), &o1);
+                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), spins, &cin __UKL_ARGS)) return false;
+                v = SEL(f0, f1, cin != 0u);
+                break;
+            }
+            case 13u: v = BMC(within_lane(f.len + s.imm, gl * W) & ~within_lane(s.imm, gl * W)); break;
+            // `early`: a file's first bits read ahead, in the word.
+            case 14u: v = BMC(a >> s.imm); break;
+            case 15u: {
+                // `phase`: k and r in a, the period's bits in b and imm.
+                uint32_t k = s.a & 0xffu, r = s.a >> 8;
+                v = BMC(((uint64_t)s.b | ((uint64_t)s.imm << 32)) << ((r + k - (gl * W) % k) % k));
+                break;
+            }
+            case 16u: {
+                // `position j`: bit j of each byte's place in its file; below 6 its pattern in b and imm.
+                uint32_t j = s.a;
+                v = j < 6u ? BMC(((uint64_t)s.b | ((uint64_t)s.imm << 32)) >> ((uint64_t)(gl * W) & 63ul)) : BMC(BMC(0) - BMC(((gl * W) >> j) & 1u));
+                break;
+            }
+            case 17u: v = BMC(a >> s.imm); break;
+            case 18u: {
+                // `prefix n w`: n in a, w in b and imm; the low n bits of the file's first word where its first n bytes
+                // are w's (Q215: a file's start read ahead).
+                B4 c = load16(bytes, f, 0u);
+                uint64_t first = (uint64_t)c.x | ((uint64_t)c.y << 32);
+                uint64_t cut = s.a >= 8u ? ~(uint64_t)0 : ((uint64_t)1 << (8u * s.a)) - 1u;
+                v = (gl == 0u && f.len >= s.a && (first & cut) == ((uint64_t)s.b | ((uint64_t)s.imm << 32))) ? BMC(((uint64_t)1 << s.a) - 1u) : BMC(0);
+                break;
+            }
+            default: break;
+        }
+        slots[at * 32u + l] = v;
+    }
+    // The sinks: each output at its delay (its value and delay in `outs`), then each counted output: its output, its
+    // extract (0xff: a total only), its delay.
+    for (uint32_t k = 0u; k < pr.outs; k++) {
+        uint32_t x = outs[pr.out0 + k];
+        write_output(out, f.out_base + k * lanes, gl, f.len, x >> 24, slots[(x & 0xffffffu) * 32u + l]);
+    }
+    uint32_t capacity = ukl_max(f.len, 1u);
+    for (uint32_t c = 0u; c < pr.exts; c++) {
+        uint32_t x = outs[pr.ext0 + c];
+        uint32_t e = (x >> 16) & 0xffu;
+        BM v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * 32u + l];
+        if (!count_sink(v, gl, g, l, f.groups, f.len, x >> 24, ext_states + f.ext_base + c * f.groups, positions + f.pos_base + e * capacity,
+                        capacity, e != 0xffu, counts + f.tot_base + c, spins * 64u __UKL_ARGS))
+            return false;
+    }
+    return true;
+}
+
+// Persistent workers (decision 0027): each takes group numbers in launch order and interprets its file's program
+// over the group, reading the file in its slab (decision 0067). A threadgroup is a worker: one group of 32 lanes.
+DEFINE_KERNEL2(block, block_batch,
+               ROBUFFER, uint32_t,   s0,         "[slab]",
+               RWBUFFER, BM,         out,        "[outputs]",
+               ROBUFFER, FileRow,    files,      "[files]",
+               ROBUFFER, uint32_t,   group_file, "[groups]",
+               RWBUFFER, uint32_t,   states,     "[states]",
+               RWBUFFER, uint32_t,   halos,      "[halos]",
+               RWBUFFER, uint32_t,   ext_states, "[ext_states]",
+               RWBUFFER, uint32_t,   positions,  "[positions]",
+               RWBUFFER, uint32_t,   counts,     "[counts]",
+               RWBUFFER, uint32_t,   tickets,    "[2]",
+               RWBUFFER, uint32_t,   done,       "[groups]",
+               ROBUFFER, ProgramRow, programs,   "[programs]",
+               ROBUFFER, BlockStep,  steps,      "[steps]",
+               ROBUFFER, uint32_t,   outs,       "[outs]",
+               RWBUFFER, BM,         scratch,    "[workers * most * 32]",
+               ROBUFFER, uint32_t,   s1,         "[slab]",
+               ROBUFFER, uint32_t,   s2,         "[slab]",
+               ROBUFFER, uint32_t,   s3,         "[slab]",
+               ARGS,     BatchP,     p,          ,
+               TGID0,    uint32_t,   w,          ,
+               LANE,     uint32_t,   l,          )
+{
+    UKL_GLOBAL BM* slots = scratch + (uint64_t)w * p.most * 32u;
+    for (uint32_t round = 0u; round < p.groups; round++) {
+        // Lane 0 takes the ticket and reads whether its group is done, and the group takes both from it: lanes need
+        // not run in lockstep (the CPU's threads, CUDA's), and a lane that read `done` after lane 0 had finished the
+        // group would skip it.
+        uint32_t ticket = 0u;
+        if (l == 0u) {
+            ticket = ukl_atomic_add(&tickets[0], 1u);
+            if (ticket < p.groups && done[ticket] != 0u) ticket |= 0x80000000u;
+        }
+        uint32_t taken = ukl_sg_shuffle(ticket, 0u __UKL_ARGS);
+        uint32_t t = taken & 0x7fffffffu;
+        if (t >= p.groups) return;
+        if ((taken >> 31) != 0u) continue;
+        FileRow f = files[group_file[t]];
+        Bytes bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;
+        bool ok = interpret_file(bytes, f, t - f.group0, l, p.spins, programs, steps, outs, slots, out, states, halos, ext_states, positions, counts __UKL_ARGS);
+        if (l == 0u && ok) done[t] = 1u;
+        if (l == 0u && !ok) ukl_atomic_add(&tickets[1], 1u);
+    }
+}

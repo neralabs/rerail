@@ -1,0 +1,41 @@
+#!/bin/sh
+# cargo-linux ARGS...: cargo for aarch64-unknown-linux-gnu, from this Mac (the farm's Linux hosts'
+# system: Ubuntu 24.04 on aarch64). Rust's own code compiles with the pinned toolchain's std for the
+# target; C and C++ (build scripts' cc) with Apple's clang for the target; everything links with
+# rustup's lld, against the sysroot `linux-sysroot HOST` copied from a host, so a binary built
+# here links the very glibc and libstdc++ the hosts run. The build goes to the target directory's
+# `aarch64-unknown-linux-gnu/` (cargo's own place for another target), beside this Mac's builds.
+#
+#   scripts/build/farm/cargo-linux build --bin rerail-engine
+#   scripts/build/farm/cargo-linux test --lib --no-run
+set -eu
+sysroot=$HOME/Library/Caches/rerail-farm/sysroot/aarch64-unknown-linux-gnu
+[ -e "$sysroot/lib/aarch64-linux-gnu/libc.so.6" ] || { echo "cargo-linux: no sysroot at $sysroot: scripts/build/farm/linux-sysroot HOST copies one" >&2; exit 1; }
+here=$(cd "$(dirname "$0")" && pwd)
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
+rustup target list --installed --toolchain "$toolchain" | grep -qx aarch64-unknown-linux-gnu ||
+  rustup target add aarch64-unknown-linux-gnu --toolchain "$toolchain" >&2
+lld=$(rustc +"$toolchain" --print sysroot)/lib/rustlib/aarch64-apple-darwin/bin/gcc-ld/ld.lld
+ar=/opt/homebrew/opt/llvm/bin/llvm-ar
+[ -x "$ar" ] || { echo "cargo-linux: needs llvm-ar ($ar: brew install llvm)" >&2; exit 1; }
+# The compiler drivers, made once beside the sysroot.
+bin=$sysroot.bin
+mkdir -p "$bin"
+for d in clang clang++; do
+  cat > "$bin/$d.tmp" <<EOS
+#!/bin/sh
+exec xcrun $d --target=aarch64-unknown-linux-gnu --sysroot=$sysroot --ld-path=$lld "\$@"
+EOS
+  chmod +x "$bin/$d.tmp" && mv "$bin/$d.tmp" "$bin/$d"
+done
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$bin/clang"
+export CC_aarch64_unknown_linux_gnu="$bin/clang" CXX_aarch64_unknown_linux_gnu="$bin/clang++" AR_aarch64_unknown_linux_gnu="$ar"
+# cargo's own `--target` unless given; after the subcommand (and nextest's `run`).
+case "${1:-}" in
+  nextest) sub="$1 $2"; shift 2 ;;
+  *) sub="$1"; shift ;;
+esac
+case " $* " in
+  *" --target "*|*" --target="*) exec cargo +"$toolchain" $sub "$@" ;;
+  *) exec cargo +"$toolchain" $sub --target aarch64-unknown-linux-gnu "$@" ;;
+esac

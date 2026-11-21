@@ -73,7 +73,10 @@ pub fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
                 return finished(&input, frame).map(|()| out);
             }
             if input.pos == frame.len() && output.pos() < output.capacity() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated zstd frame"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated zstd frame",
+                ));
             }
         }
     })
@@ -92,11 +95,17 @@ pub fn decompress_into(frame: &[u8], out: &mut [u8]) -> io::Result<()> {
                 return if output.pos() == output.capacity() {
                     Ok(())
                 } else {
-                    Err(io::Error::new(io::ErrorKind::InvalidData, "frame is shorter than its slot"))
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "frame is shorter than its slot",
+                    ))
                 };
             }
             if full || input.pos == frame.len() && output.pos() < output.capacity() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "frame does not fit its slot"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "frame does not fit its slot",
+                ));
             }
         }
     })
@@ -112,7 +121,10 @@ pub fn decompress_head(frame: &[u8], n: usize) -> io::Result<Vec<u8>> {
             let before = (input.pos, output.pos());
             let hint = decoder.run(&mut input, &mut output)?;
             if output.pos() < n && (hint == 0 || (input.pos, output.pos()) == before) {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "frame is shorter than the head"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "frame is shorter than the head",
+                ));
             }
         }
         Ok(out)
@@ -133,7 +145,10 @@ pub fn decompress_chunks(frame: &[u8], mut each: impl FnMut(&[u8])) -> io::Resul
                 return finished(&input, frame);
             }
             if written == 0 && input.pos == frame.len() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated zstd frame"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated zstd frame",
+                ));
             }
         }
     })
@@ -143,7 +158,10 @@ fn finished(input: &InBuffer<'_>, frame: &[u8]) -> io::Result<()> {
     if input.pos == frame.len() {
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidData, "bytes after the zstd frame"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bytes after the zstd frame",
+        ))
     }
 }
 

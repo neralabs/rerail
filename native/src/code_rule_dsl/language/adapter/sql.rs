@@ -19,10 +19,13 @@ use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::matcher::arguments_sql::{SQL_CALL_KINDS, SqlArguments as _};
-use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, Unresolved, file_index};
+use crate::code_rule_dsl::matcher::{
+    Arguments, Passed, ScopeName, SemanticText, Unresolved, file_index,
+};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
@@ -39,7 +42,6 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
-use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
 
 /// SQL's family: SQLFluff's semantics.
 pub struct Sql;
@@ -94,10 +96,12 @@ impl Adapter for Sql {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.get::<crate::code_rule_dsl::suppress::sqlfluff::Suppressions>().is_some_and(|references| {
-            let index = file_index(|| SqlfluffIndex::read(&root(node), source, lines));
-            index.suppresses(references, lines.line(at) + 1)
-        })
+        suppress
+            .get::<crate::code_rule_dsl::suppress::sqlfluff::Suppressions>()
+            .is_some_and(|references| {
+                let index = file_index(|| SqlfluffIndex::read(&root(node), source, lines));
+                index.suppresses(references, lines.line(at) + 1)
+            })
     }
 }
 
@@ -377,7 +381,7 @@ impl ValueRules for Sql {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned().into())
+        Value::Str(text.to_owned())
     }
 
     /// A JSON integer is an integer literal's value.

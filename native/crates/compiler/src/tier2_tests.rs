@@ -13,9 +13,6 @@ use crate::{native_ir, rir_asm, stream};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// JSON's grammars.
-const DIR: &str = crate::ladder::DIR;
-
 /// A kind or field id per name, in order of first use, as a grammar would number them.
 #[derive(Default)]
 struct Ids(RefCell<HashMap<String, u16>>);
@@ -178,7 +175,8 @@ fn tier2_writes_format_16_by_the_ops() {
             long += usize::from(t.len() > 1024);
         }
     }
-    assert!(written >= 40 && long >= 3, "{written} documents, {long} past a block");
+    // 29 with the three steps, 3 past a block (decision 0422).
+    assert!(written >= 25 && long >= 3, "{written} documents, {long} past a block");
 }
 
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
@@ -279,7 +277,7 @@ fn a_numbers_check_runs_over_its_tokens_bytes() {
         }
         i == s.len()
     }
-    let source = std::fs::read_to_string(format!("{DIR}/json-rfc.bitlex")).expect("JSON's grammar");
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("JSON's grammar");
     let c = crate::ladder::compile_step("json-rfc", &source);
     assert!(c.program.local_checks.iter().any(|k| k.token), "no token's check:\n{:?}", c.program.local_checks);
     let block = &c.program.block_programs[0];
@@ -354,7 +352,7 @@ fn a_unicode_escapes_checks_run_at_its_u() {
         }
         !want_low
     }
-    let source = std::fs::read_to_string(format!("{DIR}/json-rfc.bitlex")).expect("JSON's grammar");
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("JSON's grammar");
     let c = crate::ladder::compile_step("json-rfc", &source);
     // One token's check past its token (the hex digits and both lone halves, merged), and no
     // mask's. The lone low reads the six bytes before its escape and the tokens' ends there
@@ -406,8 +404,8 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
 }
 
-/// Decision 0452, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
-/// their last bytes, and on every grammar whose tokens do, the lasts and codes are the old
+/// Decision 0411, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
+/// their last bytes, and on every ladder step whose tokens do, the lasts and codes are the old
 /// extract's. JSONC's comments among them: those ending in spaces, at a token, at the file's
 /// end, and those the fallback takes (a comment opened inside another, a quote inside one).
 #[test]
@@ -548,7 +546,7 @@ fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
     }
 }
 
-/// Decisions 0454, 0404 and 0405: JSON's UTF-8 rules of two bytes are byte-pair lookups on the
+/// Decisions 0402, 0404 and 0405: JSON's UTF-8 rules of two bytes are byte-pair lookups on the
 /// CPU, as simdjson's (`native_cpu_pairs`): the eight ORed in the check seven boxes of one pair
 /// (simdjson's bits: `f4..ff` before `9x..bx` one, `f0` and `f5..ff` before `8x` one),
 /// `TWO_CONTS` another, on the same two tables, this byte's a table of high nibbles (one lookup). The CPU's tier 1 still
@@ -604,7 +602,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
 /// and inside a string.
 #[test]
 fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
-    let source = std::fs::read_to_string(format!("{DIR}/json-rfc.bitlex")).expect("json-rfc");
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("json-rfc");
     let at = source.find("error \"invalid UTF-8\"").expect("the check");
     let end = at + source[at..].find("\nerror ").expect("the next error");
     // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.
@@ -669,7 +667,7 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
     assert!(checked > 30, "{checked} masks");
 }
 
-/// Decision 0493: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
+/// Decision 0529: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
 /// too: the interpreter's always, the compiled tier 1's where it stores them (JSON's forms). A token loop's tier 1
 /// (`.rr`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
 #[test]

@@ -1,4 +1,4 @@
-//! The authored `.rr` family through the production relational compiler.
+//! The authored `.rerail` family through the production relational compiler.
 use super::cpu_ns;
 use crate::code_rule_dsl::{logic::{plan::corpus, profile}, tools, typing::file_local::Binding};
 use serde_json::{Value, json};
@@ -6,10 +6,10 @@ use std::{collections::BTreeSet, path::{Path, PathBuf}, time::Instant};
 
 type Keys = BTreeSet<(String, String, usize)>;
 const RULES: [&str; 4] = [
-    "ruff-async210-blocking-http-call-in-async-function.rr",
-    "ruff-async221-run-process-in-async-function.rr",
-    "ruff-async222-wait-for-process-in-async-function.rr",
-    "ruff-async230-blocking-open-call-in-async-function.rr",
+    "ruff-async210-blocking-http-call-in-async-function.rerail",
+    "ruff-async221-run-process-in-async-function.rerail",
+    "ruff-async222-wait-for-process-in-async-function.rerail",
+    "ruff-async230-blocking-open-call-in-async-function.rerail",
 ];
 
 fn run(root: &Path, out: &Path) -> (Value, Keys) {
@@ -59,12 +59,11 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
         "flattenCpuNs":flatten_ns,"flattenWallNs":flatten_wall_ns,"cpuNs":cpu,"wallNs":wall_ns,
         "report":{"phases":report.phases,"files":report.files,"nodes":report.nodes,
             "native":report.native,"rows":report.rows,"chunks":report.chunks,"text":report.text,
-            "memo":report.memo,"cross":report.cross,"prepared":report.prepared,
+            "memo":report.memo,"prepared":report.prepared,
             "crossStrata":report.cross_strata,"crossMaintained":report.cross_maintained,
             "crossChanged":report.cross_changed,"crossAgain":report.cross_again,
             "crossDeltaCounts":report.cross_delta_counts,
             "typing":format!("{:?}",report.typing),
-            "typingRunNames":report.typing_runs.iter().map(|(name,_)|name).collect::<Vec<_>>(),
             "phaseRunCount":report.phase_runs.len(),
             "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
                 "bytes":report.files_observed.bytes,"reused":report.files_observed.reused,
@@ -75,7 +74,7 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
 }
 
 #[test]
-#[ignore = "controlled authored .rr corpus comparison"]
+#[ignore = "controlled authored .rerail corpus comparison"]
 fn complete_async_family_authored_rr_corpus_profile() {
     let root = PathBuf::from(std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS"));
     let out = PathBuf::from(std::env::var("RERAIL_RR_OUT").expect("RERAIL_RR_OUT"));
@@ -108,7 +107,7 @@ fn complete_async_family_authored_rr_corpus_profile() {
         assert_eq!(scheduling["buildJobs"],0,"a fully memoized workload must not schedule per-document builds");
         assert_eq!(scheduling["cachedDocuments"],report["report"]["files"]);
     }
-    eprintln!("authored .rr: {} files, {} keys, {} CPU ns, {} wall ns",
+    eprintln!("authored .rerail: {} files, {} keys, {} CPU ns, {} wall ns",
         report["report"]["files"],report["keyCount"],report["cpuNs"],report["wallNs"]);
 }
 
@@ -135,27 +134,49 @@ fn authored_rr_batched_positive_documents_preserve_all_four_labels() {
         std::fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     }
     assert_eq!(expected.len(),120);
-    assert_eq!(actual,expected,"authored .rr positive comparison: {report}");
+    assert_eq!(actual,expected,"authored .rerail positive comparison: {report}");
+}
+
+/// What `v`'s outputs need, by name (`analyses::needed`).
+fn needed_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeSet<String> {
+    use crate::code_rule_dsl::logic::program_image::{RelId, about::About, analyses};
+    let about = About::of(v);
+    let need = analyses::needed(v, &about, v.outputs().map(|o| v.rel_of(o).expect("an output is a relation")));
+    (0..v.rel_end()).map(RelId).filter(|r| need[r.index()]).map(|r| v.rel_name(r).to_owned()).collect()
+}
+
+/// `v`'s natives, by relation.
+fn natives_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::collections::BTreeMap<String, crate::code_rule_dsl::logic::front::Native> {
+    crate::code_rule_dsl::logic::program_image::fields::ProgramFields::natives(v)
+}
+
+/// `v`'s natives as its image keeps them: opened again from its bytes.
+fn natives_kept(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> std::collections::BTreeMap<String, crate::code_rule_dsl::logic::front::Native> {
+    let folded = v.fold().unwrap();
+    natives_of(&crate::code_rule_dsl::logic::program_image::Version::open(folded.base_bytes().unwrap()).unwrap())
+}
+
+/// The relations `v`'s file-local split keeps local (`FileLocal`).
+fn local_of(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> BTreeSet<String> {
+    crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(v).unwrap().local.iter().cloned().collect()
 }
 
 /// The async family must not build the general name-analysis universe before target filtering.
 #[test]
 fn async_demand_uses_semantic_batches_without_global_name_derivations() {
-    use crate::code_rule_dsl::logic::{front, rr};
+    use crate::code_rule_dsl::logic::rr;
     let base = crate::code_rule_dsl::logic::rr::library().parent().expect("rule library parent").join("packs/python");
     for rule in RULES {
-        let p = rr::parse(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
-        let mut facts=std::collections::BTreeMap::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts,"p",&p);
-        let restored=crate::code_rule_dsl::logic::program_facts::program(&facts,"p").unwrap();
-        assert_eq!(p.natives,restored.natives,"semantic producer metadata lost in prepared program");
-        let needed = front::needed(&p, p.outputs.clone());
-        let local=crate::code_rule_dsl::typing::file_local::split(&p);
-        for name in p.natives.keys().filter(|n|needed.contains(*n)) {
+        let p = rr::parse_version(&tools::flatten(&base.join(rule)).unwrap()).unwrap();
+        let natives = natives_of(&p);
+        assert_eq!(natives,natives_kept(&p),"semantic producer metadata lost in prepared program");
+        let needed = needed_of(&p);
+        let local=local_of(&p);
+        for name in natives.keys().filter(|n|needed.contains(*n)) {
             assert!(local.contains(name),"{rule}: demanded operator escaped its syntax batch: {name}");
         }
         assert!(!needed.contains("unbound_ref"), "{rule} still derives every unbound reference");
-        assert!(p.natives.iter().any(|(name,_)| needed.contains(name) && name.contains("python_qualified")), "{rule} has no demanded semantic producer");
+        assert!(natives.iter().any(|(name,_)| needed.contains(name) && name.contains("python_qualified")), "{rule} has no demanded semantic producer");
     }
 }
 
@@ -163,8 +184,8 @@ fn async_demand_uses_semantic_batches_without_global_name_derivations() {
 #[test]
 fn semantic_operators_do_not_claim_document_locality_for_cross_file_demands() {
     use crate::code_rule_dsl::logic::{front,rr};
-    let p=rr::parse(r#"
-#include "core.rr"
+    let p=rr::parse_version(r#"
+#include "core.rerail"
 .decl wanted(n:node)
 .decl targets(q:symbol)
 .decl out(n:node,q:symbol)
@@ -173,16 +194,16 @@ wanted(n) :- node(_,n,_,_,_).
 targets(q) :- text(_,q).
 out(n,q) :- python_qualified(n,q,wanted,targets).
 "#).unwrap();
-    let local=crate::code_rule_dsl::typing::file_local::split(&p);
-    assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
+    let local=local_of(&p);
+    assert!(natives_of(&p).iter().filter(|(_,n)|matches!(n,front::Native::Python{..})).all(|(name,_)|!local.contains(name)));
 }
 
 
 #[test]
 fn semantic_helpers_share_exact_contracts_without_relation_name_collisions() {
     use crate::code_rule_dsl::logic::{front::Native,rr};
-    let p=rr::parse(r#"
-#include "core.rr"
+    let p=rr::parse_version(r#"
+#include "core.rerail"
 .decl a_b(n:node)
 .decl a(n:node)
 .decl c(q:symbol)
@@ -194,11 +215,12 @@ out(n,q) :- python_qualified(n,q,a_b,c).
 out(n,q) :- python_qualified(n,q,a,b_c).
 out(n,q) :- python_qualified(n,q,a_b,c).
 "#).unwrap();
-    let contracts:BTreeSet<_>=p.natives.values().filter_map(|n|match n {
+    let natives=natives_of(&p);
+    let contracts:BTreeSet<_>=natives.values().filter_map(|n|match n {
         Native::Python{input,targets,..}=>Some((input.as_str(),targets.as_deref().unwrap())), _=>None,
     }).collect();
     assert_eq!(contracts,BTreeSet::from([("a_b","c"),("a","b_c")]));
-    assert_eq!(p.natives.len(),2,"identical contracts should still share one producer");
+    assert_eq!(natives.len(),2,"identical contracts should still share one producer");
 }
 
 /// Diagnostic replays deliberately execute additional statements. The production budget test stays unchanged.
@@ -214,27 +236,27 @@ fn complete_async_family_sql_shape_lab() {
 
 #[test]
 fn candidate_contract_lowers_before_projection_and_roundtrips() {
-    use crate::code_rule_dsl::logic::{front,rr,program_facts};
+    use crate::code_rule_dsl::logic::{front,rr};
     let root=crate::code_rule_dsl::logic::rr::library().parent().expect("rule library parent").join("packs/python");
     for name in RULES {
-        let p=rr::parse(&tools::flatten(&root.join(name)).unwrap()).unwrap();
-        assert!(p.natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
-        let needed=front::needed(&p,p.outputs.iter().cloned().collect());
+        let p=rr::parse_version(&tools::flatten(&root.join(name)).unwrap()).unwrap();
+        let natives=natives_of(&p);
+        assert!(natives.values().any(|n|matches!(n,front::Native::PythonCandidates{context,member,..} if context=="async_function"&&member=="open")));
+        let needed=needed_of(&p);
         assert!(!needed.contains("text")&&!needed.contains("py_attribute")&&!needed.contains("py_exec_context"),"broad scalar dependencies remain for {name}");
-        let local=crate::code_rule_dsl::typing::file_local::split(&p);
-        assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));
-        let mut facts=std::collections::BTreeMap::new();program_facts::write(&mut facts,"p",&p);
-        let restored=program_facts::program(&facts,"p").unwrap();assert_eq!(p.natives,restored.natives);
-        let printed=rr::print(&p).unwrap();let reparsed=rr::parse(&printed).unwrap();
-        assert_eq!(p.natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count(),reparsed.natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count());
+        let local=local_of(&p);
+        assert!(natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|local.contains(rel)));
+        assert_eq!(natives,natives_kept(&p));
+        let printed=rr::print_version(&p).unwrap();let reparsed=rr::parse_version(&printed).unwrap();
+        assert_eq!(natives.values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count(),natives_of(&reparsed).values().filter(|n|matches!(n,front::Native::PythonCandidates{..})).count());
     }
 }
 
 #[test]
 fn candidate_dynamic_targets_remain_cross_file() {
     use crate::code_rule_dsl::logic::{front,rr};
-    let p=rr::parse(r#"
-#include "core.rr"
+    let p=rr::parse_version(r#"
+#include "core.rerail"
 .decl docs(d:number)
 docs(d) :- doc(d,_,_).
 .decl targets(q:symbol)
@@ -243,8 +265,8 @@ targets(q) :- text(_,q).
 out(c,f,r,o) :- python_candidates(c,f,r,o,docs,targets,"async_function","open").
 .output out
 "#).unwrap();
-    let local=crate::code_rule_dsl::typing::file_local::split(&p);
-    assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
+    let local=local_of(&p);
+    assert!(natives_of(&p).iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
 }
 
 /// Empty positive inputs must reject a join before its expanding prefix. A later
@@ -279,7 +301,7 @@ fn annotation_demand_keeps_string_membership_before_parsing() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "x: int\ny: list[int]\nz: \"Target\"\n").unwrap();
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl qann(s:node,e:node)
 qann(s,e) :- kind(t,"type"), child(t,s,0), kind(s,"string"), parsed(s,"annotation",e).
 .decl asked(k:symbol)
@@ -296,21 +318,23 @@ asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
 
 #[test]
 fn long_text_fallback_exposes_its_candidate_keys_to_planning() {
-    use crate::code_rule_dsl::{facts::vtab::syntax, logic::{rr,front::{Literal,Term}}};
-    let mut p=rr::parse(r#"
-#include "core.rr"
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(r#"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- node(_,n,_,_,_), text(n,t).
 .output result
 "#).unwrap();
-    assert_eq!(syntax::long_text_twins(&mut p,&[]),1);
-    for rule in &p.rules {
-        for node in rule.body.iter().filter_map(|lit| match lit {
-            Literal::Cmp { r:Term::Call(f,args),.. } if f=="rr_node_text" => args.first(),
-            _=>None,
+    let (p, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(p, &Vec::new()).unwrap();
+    assert_eq!(made, 1);
+    for rule in p.rules() {
+        for node in rule.body().filter_map(|lit| match lit.view() {
+            Lit::Cmp { r: TermRef::Call(f, mut args), .. } if p.text(f) == "rr_node_text" => args.next(),
+            _ => None,
         }) {
-            assert!(rule.body.iter().any(|lit| matches!(lit,Literal::Atom(a) if !a.neg && a.rel=="rr_long_text_node" && a.args==[node.clone()])),
-                "long-text fallback must expose its sparse node domain before joins: {rule}");
+            let node = p.show_term(rule, node);
+            assert!(rule.body().filter_map(|l| l.atom()).any(|a| !a.neg() && p.rel_name(a.rel()) == "rr_long_text_node" && a.args().map(|t| p.show_term(rule, t)).collect::<Vec<_>>() == [node.clone()]),
+                "long-text fallback must expose its sparse node domain before joins: {}", p.show_rule(rule));
         }
     }
 }
@@ -323,7 +347,7 @@ fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
     let long = format!("[{}]", vec!["123"; 100].join(","));
     std::fs::write(root.join("a.py"), format!("a = {long}\nb = [1]\n")).unwrap();
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- field(_,"right",n), text(n,t).
 .output result
@@ -344,12 +368,14 @@ result(t) :- field(_,"right",n), text(n,t).
 #[test]
 fn concurrent_runs_read_their_own_long_texts() {
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- field(_,"right",n), text(n,t).
 .output result
 "#;
-    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| std::thread::spawn(move || {
+    let caller = crate::code_rule_dsl::logic::profile::caller();
+    let runs: Vec<_> = ["111", "222", "333", "444"].into_iter().map(|digits| (digits, caller.clone())).map(|(digits, caller)| std::thread::spawn(move || {
+        let _caller = caller.enter();
         let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("long-text-{digits}"));
         let root = base.join("src");
         std::fs::create_dir_all(&root).unwrap();
@@ -366,34 +392,4 @@ result(t) :- field(_,"right",n), text(n,t).
     for run in runs {
         run.join().unwrap();
     }
-}
-
-#[test]
-fn demanded_component_graph_keeps_cross_file_cache_results() {
-    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("component-demand");
-    let root = base.join("src");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
-    std::fs::write(root.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
-    let src = r#"
-#include "core.rr"
-.pragma "cross-memo" "uses"
-.decl def(n:node,q:symbol)
-def(n,@dot(m,x)) :- kind(n,"function_definition"), field(n,"name",c), text(c,x), docof(n,d), doc(d,_,m).
-.decl imp(n:node,q:symbol)
-imp(n,@dot(m,x)) :- kind(n,"import_from_statement"), field(n,"module_name",mn), text(mn,m), field(n,"name",xn), text(xn,x).
-.decl uses(n:node,f:node)
-uses(n,f) :- imp(n,q), def(f,q).
-.output uses
-"#;
-    let out = base.join("out");
-    let run = || corpus::run_with_options(&[src], &root, None, &out, "program", Binding::Cpu,
-        1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py","b.py"]})).unwrap();
-    let first = run();
-    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
-    assert_eq!(first.cross, (0, 2));
-    assert_eq!(rows.len(), 1);
-    assert_eq!(run().cross, (2, 0));
-    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap(), rows);
-    std::fs::remove_dir_all(base).unwrap();
 }

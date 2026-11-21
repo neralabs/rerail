@@ -1,5 +1,5 @@
-//! Row programs on Metal (decision 0095 §2, §3, §6): `scan` as `count` and `scatter` over a
-//! relation held in the stratified 16-bit layout.
+//! Row programs on the device (decision 0095 §2, §3, §6): `scan` as `count` and `scatter` over a
+//! relation held in the stratified 16-bit layout, in UKL (decision 0440 step C) on any backend.
 //!
 //! **The layout.** The rows are grouped by their lead column's chunk, its high part (`v >> 16`):
 //! a group carries its chunk once, and each row its own 16 low bits. Every other column is kept as
@@ -12,13 +12,13 @@
 //!
 //! **The kernels**, generated from the row program (one generator, not one per case):
 //! - `rows_count`: each thread a row, its predicate a straight-line expression of the program's
-//!   operations; the tile's passing rows summed by `simd_sum` into its count;
-//! - `rows_scan`: the counts' exclusive prefix sum, one threadgroup, each thread a run of tiles;
+//!   operations; the tile's passing rows summed by a SIMD group sum into its count;
+//! - the counts' exclusive prefix sum: the UKL library's scan (`rerail_accel::gpu::join::Scan`);
 //! - `rows_scatter`: the predicate again, each passing row written at its tile's offset plus its
-//!   rank (`simd_prefix_exclusive_sum`). The output is in order, with no atomic append.
+//!   rank (a SIMD group's exclusive sum). The output is in order, with no atomic append.
 //!
 //! **16-bit comparisons.** Two `Low16` columns of a row share its chunk, so they compare as
-//! `ushort`s. A `Low16` column against a parameter compares the chunk first (one value per
+//! `uint16_t`s. A `Low16` column against a parameter compares the chunk first (one value per
 //! threadgroup) and the low bits only when the chunks are equal. `@doc(x)` of a `Low16` column is
 //! the chunk's: `high >> 16`, the same for the whole tile.
 //!
@@ -30,8 +30,8 @@ use super::metal_sort::Held;
 pub use rerail_accel::gpu::tile::{Form, Resident};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use rerail_accel::gpu::tile::{Joined, tile_join};
-use super::metal_backend::launch::{commit_checked, gpu_seconds};
-use super::metal_parallel::encode;
+use rerail_accel::gpu::join::{Pass, Scan, pipeline};
+use rerail_device::device::Buffer;
 use std::fmt::Write as _;
 
 /// A row program's input column: a gathered column, or the document of one (`x >> 32`).
@@ -42,13 +42,13 @@ pub enum Input {
 }
 
 
-/// A scan's result: the host rows that pass, in order, and the command buffer's GPU time.
+/// A scan's result: the host rows that pass, in order, and the submission's device time.
 pub struct Scanned {
     pub rows: Vec<u32>,
     pub gpu_seconds: f64,
 }
 
-/// The MSL of a row program's predicate over `inputs` (program column `k` is `inputs[k]`), for
+/// The UKL of a row program's predicate over `inputs` (program column `k` is `inputs[k]`), for
 /// the columns' forms: the body of `pass`, one `bool` per operation.
 pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Input], forms: &[Form]) -> Result<String, Error> {
     let shape = program.rows.ok_or(Error::UnsupportedBackend)?;
@@ -58,8 +58,8 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
     let low16 = |input: Input| matches!(input, Input::Col(g) if forms[g] == Form::Low16);
     // A gathered column's full value.
     let full = |g: usize| match forms[g] {
-        Form::Low16 => format!("((high << 16) | long(c{g}[row]))"),
-        Form::I32 => format!("long(c{g}[row])"),
+        Form::Low16 => format!("((high << 16) | (int64_t)c{g}[row])"),
+        Form::I32 => format!("(int64_t)c{g}[row]"),
         _ => format!("c{g}[row]"),
     };
     let value = |input: Input| match input {
@@ -68,8 +68,8 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
         Input::Doc(g) => format!("({} >> 32)", full(g)),
     };
     let lane = |v: String, width: u8| match width {
-        16 => format!("long(short({v}))"),
-        32 => format!("long(int({v}))"),
+        16 => format!("(int64_t)(int16_t)({v})"),
+        32 => format!("(int64_t)(int32_t)({v})"),
         _ => v,
     };
     let sym = |op: CmpOp| match op {
@@ -93,7 +93,7 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
                     Rhs::Param(p) if width == 64 && low16(a) => {
                         let Input::Col(g) = a else { unreachable!("a low16 column") };
                         let p = 3 * usize::from(p);
-                        let (h, l) = (format!("params[{}]", p + 1), format!("ushort(params[{}])", p + 2));
+                        let (h, l) = (format!("params[{}]", p + 1), format!("(uint16_t)params[{}]", p + 2));
                         let lo = format!("c{g}[row]");
                         match op {
                             CmpOp::Eq => format!("(high == {h} && {lo} == {l})"),
@@ -122,113 +122,105 @@ pub(in crate::code_rule_dsl) fn predicate(program: &BlockProgram, inputs: &[Inpu
     Ok(body)
 }
 
-/// The three kernels of a row program over a resident relation's forms.
+/// The two kernels of a row program over a resident relation's forms (the scan between them is the library's).
 fn source(body: &str, forms: &[Form]) -> String {
     let ty = |f: Form| match f {
-        Form::Low16 => "ushort",
-        Form::I32 => "int",
-        Form::I64 => "long",
+        Form::Low16 => "uint16_t",
+        Form::I32 => "int32_t",
+        Form::I64 => "int64_t",
     };
-    let cols: String = forms.iter().enumerate().map(|(g, &f)| format!(", device const {}* c{g}", ty(f))).collect();
+    let cols: String = forms.iter().enumerate().map(|(g, &f)| format!(", UKL_GLOBAL const {}* c{g}", ty(f))).collect();
     let args: String = (0..forms.len()).map(|g| format!(", c{g}")).collect();
-    let bufs: String = forms.iter().enumerate().map(|(g, &f)| format!(", device const {}* c{g} [[buffer({})]]", ty(f), 3 + g)).collect();
-    let n = 3 + forms.len();
+    let rows: String = forms.iter().enumerate().map(|(g, &f)| format!("               ROBUFFER, {}, c{g}, \"[rows]\",\n", ty(f))).collect();
+    let common = rerail_accel::gpu::join::COMMON;
     format!(
-        r#"#include <metal_stdlib>
-using namespace metal;
-struct Tile {{ uint group; uint start; uint count; uint pad; }};
+        r#"{common}
+typedef struct Tile {{ uint32_t group; uint32_t start; uint32_t count; uint32_t pad; }} Tile;
 
-static inline bool pass(uint row, long high, constant long* params{cols}) {{
+UKL_INLINE bool pass(uint32_t row, int64_t high, UKL_GLOBAL const int64_t* params{cols}) {{
 {body}}}
 
-kernel void rows_count(device const Tile* tiles [[buffer(0)]], device const long* highs [[buffer(1)]], constant long* params [[buffer(2)]]{bufs},
-                       device uint* counts [[buffer({n})]],
-                       uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
-                       uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {{
-    Tile tile = tiles[tg];
-    bool p = t < tile.count && pass(tile.start + t, highs[tile.group], params{args});
-    uint n = simd_sum(uint(p));
-    threadgroup uint part[8];
-    if (lane == 0) part[sg] = n;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (t == 0) {{
-        uint s = 0;
-        for (uint k = 0; k < 8; k++) s += part[k];
-        counts[tg] = s;
-    }}
+// Each tile's passing rows.
+DEFINE_KERNEL2(rows, rows_count,
+               ROBUFFER, Tile, tiles, "[tiles]",
+               ROBUFFER, int64_t, highs, "[groups]",
+               ROBUFFER, int64_t, params, "[3 * params + 1]",
+{rows}               RWBUFFER, uint32_t, counts, "[tiles]",
+               SHARED, uint32_t, part, JOIN_SGS,
+               TGID0, uint32_t, tg, ,
+               LID0, uint32_t, t, ,
+               LANE, uint32_t, lane, )
+{{
+  Tile tile = tiles[tg];
+  bool p = t < tile.count && pass(tile.start + t, highs[tile.group], params{args});
+  uint32_t total = 0u;
+  join_tg_prefix((uint32_t)p, t, lane, part, &total __UKL_ARGS);
+  if (t == 0u) counts[tg] = total;
 }}
 
-kernel void rows_scan(device const uint* counts [[buffer(0)]], device uint* offsets [[buffer(1)]], constant uint* n [[buffer(2)]],
-                      uint t [[thread_index_in_threadgroup]]) {{
-    uint per = (n[0] + 255) / 256;
-    uint lo = min(n[0], t * per), hi = min(n[0], lo + per);
-    uint s = 0;
-    for (uint k = lo; k < hi; k++) s += counts[k];
-    threadgroup uint part[256];
-    part[t] = s;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint base = 0;
-    for (uint k = 0; k < t; k++) base += part[k];
-    for (uint k = lo; k < hi; k++) {{ offsets[k] = base; base += counts[k]; }}
-    if (t == 255) offsets[n[0]] = base;
+// Each tile's passing rows at its offset, in order.
+DEFINE_KERNEL2(rows, rows_scatter,
+               ROBUFFER, Tile, tiles, "[tiles]",
+               ROBUFFER, int64_t, highs, "[groups]",
+               ROBUFFER, int64_t, params, "[3 * params + 1]",
+{rows}               ROBUFFER, uint32_t, offsets, "[tiles + 1]",
+               ROBUFFER, uint32_t, perm, "[rows]",
+               RWBUFFER, uint32_t, out, "[rows]",
+               SHARED, uint32_t, part, JOIN_SGS,
+               TGID0, uint32_t, tg, ,
+               LID0, uint32_t, t, ,
+               LANE, uint32_t, lane, )
+{{
+  Tile tile = tiles[tg];
+  bool p = t < tile.count && pass(tile.start + t, highs[tile.group], params{args});
+  uint32_t total = 0u;
+  uint32_t rank = join_tg_prefix((uint32_t)p, t, lane, part, &total __UKL_ARGS);
+  if (p) out[offsets[tg] + rank] = perm[tile.start + t];
 }}
-
-kernel void rows_scatter(device const Tile* tiles [[buffer(0)]], device const long* highs [[buffer(1)]], constant long* params [[buffer(2)]]{bufs},
-                         device const uint* offsets [[buffer({n})]], device const uint* perm [[buffer({n1})]], device uint* out [[buffer({n2})]],
-                         uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
-                         uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {{
-    Tile tile = tiles[tg];
-    bool p = t < tile.count && pass(tile.start + t, highs[tile.group], params{args});
-    uint rank = simd_prefix_exclusive_sum(uint(p));
-    threadgroup uint part[8];
-    if (lane == 31) part[sg] = rank + uint(p);
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint base = offsets[tg];
-    for (uint k = 0; k < sg; k++) base += part[k];
-    if (p) out[base + rank] = perm[tile.start + t];
-}}
-"#,
-        n1 = n + 1,
-        n2 = n + 2
+"#
     )
 }
 
-/// Runs a row program over a resident relation: count, scan and scatter in one command buffer.
+/// Runs a row program over a resident relation: count, scan and scatter in one submission.
 /// `params` are the program's parameters; each goes to the device as itself, its chunk and its
 /// low bits.
 pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, params: &[i64]) -> Result<Scanned, Error> {
-    super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    super::metal_sort::ready()?;
     // The launch budget every submission is checked against.
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let body = predicate(program, inputs, &resident.forms)?;
     let src = source(&body, &resident.forms);
-    let count = super::metal_backend::pipeline_named(&src, "rows_count")?;
-    let prefix = super::metal_backend::pipeline_named(&src, "rows_scan")?;
-    let scatter = super::metal_backend::pipeline_named(&src, "rows_scatter")?;
+    // One variant per program's source: the predicate is the program's.
+    let count = pipeline(&src, "rows_count", || src.clone()).map_err(device_err)?;
+    let scatter = pipeline(&src, "rows_scatter", || src.clone()).map_err(device_err)?;
     let wide: Vec<i64> = params.iter().flat_map(|&p| [p, p >> 16, p & 0xffff]).chain([0]).collect();
     let params = Held::of(wide.iter().copied()).map_err(device_err)?;
     let tiles = resident.tile_count;
     let counts = Held::new(4 * tiles).map_err(device_err)?;
     let offsets = Held::new(4 * (tiles + 1)).map_err(device_err)?;
-    let n = Held::of([tiles as u32].into_iter()).map_err(device_err)?;
+    // This thread's scratch: the submission is awaited here.
+    let prefix = Scan::new(tiles).map_err(device_err)?;
     // The outputs are at most the rows.
     let out = Held::new(4 * resident.rows).map_err(device_err)?;
-    let queue = super::metal_sort::queue()?;
-    let command = queue.new_command_buffer();
-    let mut inputs: Vec<&metal::BufferRef> = vec![&resident.tiles.buffer, &resident.highs.buffer, &params.buffer];
-    inputs.extend(resident.columns.iter().map(|b| &*b.buffer));
+    let pass = Pass::new().map_err(device_err)?;
+    let mut inputs: Vec<&Buffer> = vec![&resident.tiles.buffer, &resident.highs.buffer, &params.buffer];
+    inputs.extend(resident.columns.iter().map(|b| &b.buffer));
     if tiles > 0 {
         let mut with_counts = inputs.clone();
         with_counts.push(&counts.buffer);
-        encode(command, &count, "rows_count", &with_counts, &[], tiles, None);
-        encode(command, &prefix, "rows_scan", &[&counts.buffer, &offsets.buffer, &n.buffer], &[], 1, None);
+        pass.run(&count, &with_counts, &[], &[], tiles);
+        prefix.encode_into(&pass, &counts.buffer, &offsets.buffer).map_err(device_err)?;
         let mut with_out = inputs;
-        with_out.extend([&*offsets.buffer, &*resident.perm.buffer, &*out.buffer]);
-        encode(command, &scatter, "rows_scatter", &with_out, &[], tiles, None);
+        with_out.extend([&offsets.buffer, &resident.perm.buffer, &out.buffer]);
+        pass.run(&scatter, &with_out, &[], &[], tiles);
+    } else {
+        // SAFETY: the total's word, read after the submission; with no tiles nothing writes it.
+        unsafe { *offsets.buffer.contents().cast::<u32>() = 0 };
     }
-    commit_checked(command)?;
-    command.wait_until_completed();
-    let gpu = gpu_seconds(command);
+    let (gpu, ok) = pass.commit().map_err(device_err)?.wait_ok();
+    if !ok {
+        return Err(Error::BackendFailure);
+    }
     // SAFETY: the buffers hold `tiles + 1` and `rows` words, written by the kernels and read
     // after the command buffer completed.
     let total = unsafe { *offsets.buffer.contents().cast::<u32>().add(tiles) } as usize;
@@ -236,7 +228,7 @@ pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, param
     Ok(Scanned { rows, gpu_seconds: gpu })
 }
 
-/// A failure of the one Metal manager (`rerail_accel::gpu`), in the backend's terms.
+/// A failure of the one device manager (`rerail_accel::gpu`), in the backend's terms.
 fn device_err(_: String) -> Error {
     Error::BackendFailure
 }

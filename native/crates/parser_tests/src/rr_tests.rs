@@ -1,9 +1,9 @@
-//! `.rr`'s grammar (`rr_parser/rr.bitlex`, docs/parser-generators/24-rr-and-bitlex-plan.md §3), parsed with no Rust
+//! `.rerail`'s grammar (`rr_parser/rr.bitlex`, docs/parser-generators/24-rr-and-bitlex-plan.md §3), parsed with no Rust
 //! between the bytes and the nodes.
 //!
 //! It is checked as JSON's grammars are (`ladder::check_ladder`): the reference evaluator, the interpreters and
 //! Cranelift give the same nodes on every document, and it has the compiler's shape. And each document it parses is
-//! parsed by the engine's own `.rr` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node
+//! parsed by the engine's own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node
 //! (kind, field, span, size), and the engine's must have no `ERROR`. Its kinds and fields are named as the engine's
 //! tape names them (`rerail_rr_syntax::tape`).
 //!
@@ -17,13 +17,13 @@ fn grammar() -> Vec<(String, String)> {
     vec![("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned())]
 }
 
-/// The bytes a mutation writes: `.rr`'s punctuation, quotes, comment openers and words.
+/// The bytes a mutation writes: `.rerail`'s punctuation, quotes, comment openers and words.
 const ALPHABET: &[u8] = b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\";
 
 /// Sample texts of the token kinds the grammar names, with the edge cases of each.
 const SAMPLES: &[(&str, &[&str])] = &[(
     "string",
-    &["\"a\"", "\"\"", "\"x/y.rr\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
+    &["\"a\"", "\"\"", "\"x/y.rerail\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
 ), (
     "comment",
     &["// c", "//", "// a, (1) é\r", "//// x", "// #include \"y\"", "// /* x", "// \"x", "/* c */", "/**/", "/*/", "/* a\n b */", "/* // \" ` */", "/*** x **/"],
@@ -220,7 +220,7 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\" 1}", "never"),
     (".policy {\"a\": tru}", "never"),
     (".policy /* c */ {\"a\": 1}", "never"),
-    // The other directives: all of `.rr`.
+    // The other directives: all of `.rerail`.
     (".type t = /* c */ a\n.input r(IO=x /* d */, f=\"y\")\n.functor f(x: number): symbol stateful // e\n.edit e(a: node)\n.pragma \"a\" \"b\"\n.lattice l<> { A -> @f, B -> 1 + x }\n.input a, b(x)\n.output c", "parses"),
     // An empty raw text: no leaf, and its field on the node made last.
     (".type t\n.input r()\n.decl x(a: t)", "parses"),
@@ -261,8 +261,10 @@ const CASES: &[(&str, &str)] = &[
     (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "parses"),
     (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
-    // The same, without what goes to the engine (`TO_THE_ENGINE`).
+    (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "parses"),
+    // The same, short of what goes to the engine (`TO_THE_ENGINE`).
     (".scope 1.2\n.mode 1.2\nr(x) :- x = 1.2.", "parses"),
+    ("r(x) :- x = 12345678901234567890, y = 1.5.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 123456789012345678, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
     (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "parses"),
     (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "parses"),
@@ -279,13 +281,17 @@ const CASES: &[(&str, &str)] = &[
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "parses"),
     // A rule file's tests (decision 0130): a fixture set, a test that uses it, with `exactly`, its
     // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
-    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rr\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "parses"),
+    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rerail\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "parses"),
     (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "parses"),
     // Blocks do not nest; a `.end` outside a block; a block with no `.end`.
     (".test a\n.test b\n.end\n.end", "never"),
     (".fixtures a\n.fixtures b\n.end\n.end", "never"),
     ("r(x).\n.end", "never"),
     (".test a\nr(x).", "never"),
+    // `.input` with no relation, before an `#include` (`io_bare`'s `hash_word`, a keyword's
+    // token), a comment between: the engine refuses it, so every step does.
+    (".input #include \"a\"", "never"),
+    (". /* a\n b */input // c\n#include \"a\"", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -327,7 +333,7 @@ fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
 /// The engine's tree against the grammar's, for a document the grammar parses.
 fn against_the_engine(_: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
     let nodes = want.as_ref()?;
-    // A `.rr` file is text: the engine reads only UTF-8.
+    // A `.rerail` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
     let (theirs, error) = engine(src);
     let ours = named(c, nodes);
@@ -354,15 +360,10 @@ fn rr_parses_as_the_reference_and_the_engine() {
     assert!(differ.is_empty(), "{} documents differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Cases the grammar sends to the engine, and the escape that sends it: a float's
-/// second `.` (`1.2.3`, a chain no file has: no float's `.` waits on the one before it) and a
-/// number of 19 digits or more, its fraction or leading zeros aside (the engine checks its i64).
-/// The engine's tape is the file's either way (docs/parser-generators/39, "A float's dot read
-/// as simdjson reads one" and "A number's 19 digits checked at its token").
-const TO_THE_ENGINE: &[(&str, &str)] = &[
-    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "escape: a float's `.` after a fraction"),
-    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "escape: a number of 19 digits or more"),
-];
+/// Cases the grammar sends to the engine, and the escape that sends it: an integer of 19 digits or more, its leading
+/// zeros aside (the engine checks its i64). A float's chain of dots (`1.2.3`) and a float's digits, however many, are
+/// read in tier 1, as a lexer reads them (decision 0400, Q40). The engine's tape is the file's either way.
+const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 12345678901234567890, y = 1.5.", "escape: a number of 19 digits or more")];
 
 /// Each case marked `parses` parses, and the engine's tree has no `ERROR`; a case sent to the engine
 /// (`TO_THE_ENGINE`) is refused by its escape alone.
@@ -427,7 +428,7 @@ fn a_reading_is_checked() {
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
     let c = rerail_compiler::ladder::compile_step("rr", &source);
-    assert_eq!(c.program.readings.maps.len(), 3);
+    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
@@ -484,7 +485,7 @@ fn rr_look() {
     }
 }
 
-/// Every `.rr` file of the repository through the grammar's compiled path, against the engine's tree: the files it parses as the engine does,
+/// Every `.rerail` file of the repository through the grammar's compiled path, against the engine's tree: the files it parses as the engine does,
 /// those it parses differently or the engine refuses (each a bug), and those it sends to the
 /// engine, by the reference's reason. Run by name.
 #[test]
@@ -492,7 +493,7 @@ fn rr_look() {
 fn rr_corpus() {
     let (name, source) = grammar().remove(0);
     let c = rerail_compiler::ladder::compile_step(&name, &source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
@@ -502,7 +503,7 @@ fn rr_corpus() {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.push(p);
             }
         }
