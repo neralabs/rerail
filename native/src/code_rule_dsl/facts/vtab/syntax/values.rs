@@ -400,6 +400,45 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         !self.has_parts() && self.base.lookup_read(column, value, columns, each)
     }
+    /// The base's order over several columns (`within`'s pair): without it a chunk's probe of both columns took the
+    /// lead column's rows and filtered them, making every ancestor's row of each node it tested.
+    fn composite(&self) -> bool {
+        self.base.composite()
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.base.estimated_matches_all(columns)
+    }
+    /// The base's rows of the values; with values admitted, the lead column's rows (the base's and the parts', as
+    /// `lookup` gives them) that hold every value.
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        if !self.has_parts() {
+            return self.base.lookup_all(equal);
+        }
+        let &(c, v) = equal.first()?;
+        let rows = self.lookup(c, &[v])?;
+        Some(rows.into_iter().filter(|&r| equal.iter().all(|&(c, v)| self.value(r, c) == v)).collect())
+    }
+    /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
+    /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
+    /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let base = self.base.holds(equal)?;
+        if base || !self.has_parts() {
+            return Some(base);
+        }
+        let &(_, v) = equal.iter().min_by_key(|e| e.0)?;
+        let mut held = Some(false);
+        self.parts(|p| {
+            p.of(v, &mut |part| {
+                held = match (held, part.src.holds(equal)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                };
+            })
+        });
+        held
+    }
     fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
         // The base's walk, then each part's rows of the keys (a value's rows are few: read whole where its source has
         // no walk). Made on lookup, the values' rows are made as looked up, never walked (`for_rows_in`).

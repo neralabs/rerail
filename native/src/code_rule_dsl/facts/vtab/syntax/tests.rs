@@ -665,6 +665,24 @@ fn within_with_both_given_is_an_interval_test() {
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
         }
     }
+    // As a chunk binds it (`values::Layered`, every source of a chunk's run): the same test, no row made.
+    {
+        let within = Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree));
+        let layered = super::values::Layered::new("within", Arc::clone(&within) as Arc<dyn Source>, Default::default());
+        for n in (0..nodes).step_by(97) {
+            for a in (0..nodes).step_by(13) {
+                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                assert_eq!(layered.holds(&eq), within.holds(&eq), "layered: node rows {n} below {a}");
+            }
+        }
+        assert!(within.made_rows() == 0, "layered: the test made no row");
+        // Probed by both columns at once, as the base is: the step's index is composite, which asks the test.
+        assert!(layered.composite(), "layered: both columns at once");
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            assert_eq!(layered.lookup_all(&eq), within.lookup_all(&eq), "layered: {n} below {a}");
+        }
+    }
 }
 
 /// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
@@ -1923,6 +1941,120 @@ fn an_axis_counts_its_rows_without_its_solve() {
         assert!(source.is_solved(), "{name}: solved by the scan");
         assert_eq!(source.len(), len, "{name}");
     }
+}
+
+/// A solved axis probed by `n` reads each row's values off its solve as it finds them (`lookup_read`): the rows and
+/// values `lookup` and `value` give, for every node, with no list of rows made. Unsolved, it gives nothing, and the
+/// probe takes `lookup`'s rows made per lookup.
+#[test]
+fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-read")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let id = batch.id(nodes / 2);
+        assert!(!source.lookup_read(0, id, &[0, 1], &mut |_, _| panic!("{name}: read before its solve")), "{name}: unsolved, nothing read");
+        let _ = (0..source.len()).count();
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}");
+        let mut read_rows = 0;
+        for r in 0..nodes {
+            let n = batch.id(r);
+            let want: Vec<(usize, i64, i64)> = source.lookup(0, &[n]).unwrap().into_iter().map(|row| (row, source.value(row, 0), source.value(row, 1))).collect();
+            let mut got = Vec::new();
+            assert!(source.lookup_read(0, n, &[1, 0], &mut |row, v| got.push((row, v[1], v[0]))), "{name}");
+            assert_eq!(got, want, "{name}: node row {r}");
+            read_rows += got.len();
+        }
+        assert!(read_rows > 0, "{name}: some node has a member ancestor");
+        assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");
+    }
+}
+
+/// A measurement (t50, `wstart`'s nearest step at ~375 ns a probe): ns per call of a solved axis's probe by `n`, by
+/// its parts, over every node of a few documents.
+#[test]
+#[ignore]
+fn an_axis_probes_cost() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-cost")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(8).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let source = within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu);
+    let _ = source.value(0, 0);
+    let ids: Vec<i64> = (0..nodes).map(|r| batch.id(r)).collect();
+    let reps = (2_000_000 / nodes.max(1)).max(1);
+    let time = |what: &str, f: &mut dyn FnMut(i64) -> i64| {
+        let t = std::time::Instant::now();
+        let mut sum = 0i64;
+        for _ in 0..reps {
+            for &n in &ids {
+                sum = sum.wrapping_add(f(n));
+            }
+        }
+        let ns = t.elapsed().as_nanos() as f64 / (reps * ids.len()) as f64;
+        eprintln!("{what:<40} {ns:7.1} ns a probe ({} probes, sum {sum})", reps * ids.len());
+    };
+    time("Batch::node", &mut |n| batch.node(n).map_or(0, |(d, l)| d as i64 + i64::from(l)));
+    time("Within::lookup, then value", &mut |n| source.lookup(0, &[n]).unwrap().into_iter().map(|r| source.value(r, 1)).sum());
+    time("Within::lookup_read", &mut |n| {
+        let mut s = 0;
+        source.lookup_read(0, n, &[1], &mut |_, v| s += v[0]);
+        s
+    });
+    // The same probes through the set engine's join: a table of (node, repetition) probing the axis held as an input,
+    // against the same join without the axis.
+    use crate::code_rule_dsl::logic::native::{self as native, component as c};
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
+    let db = rusqlite::Connection::open(path).unwrap();
+    native::register(&db).unwrap();
+    c::hold_source(&db, "ax", Arc::new(source), b"ii".to_vec());
+    db.execute_batch("CREATE TABLE probes(c0, c1); BEGIN").unwrap();
+    {
+        let mut ins = db.prepare("INSERT INTO probes VALUES (?1, ?2)").unwrap();
+        for k in 0..reps as i64 {
+            for &n in &ids {
+                ins.execute([n, k]).unwrap();
+            }
+        }
+    }
+    db.execute_batch("COMMIT").unwrap();
+    let probes = format!("t:b:{}:{}:ii", hex("probes"), hex("c0, c1"));
+    let joined = |name: &str, body: &str| {
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let _ = c::run(&db, name, 0).unwrap();
+        c::close(&db, name).unwrap();
+        c::open_spec(&db, &c::spec::ComponentSpec::parse(&format!("name {name}\nrel {name}_out i empty\nnowrite\nseed 0 {}", hex(body))).unwrap()).unwrap();
+        let t = std::time::Instant::now();
+        let report = c::run(&db, name, 0).unwrap();
+        let s = t.elapsed().as_secs_f64();
+        c::close(&db, name).unwrap();
+        (s, report)
+    };
+    let (plain, _) = joined("plain", &format!("pos {probes} v0 v2\nhead v0"));
+    let (axis, report) = joined("axis", &format!("pos {probes} v0 v2\npos r:{} v0 v1\nhead v1", hex("ax")));
+    let n = (reps * ids.len()) as f64;
+    eprintln!("join: scan alone {:.1} ns a row, with the axis's probe {:.1} ns a row: the probe {:.1} ns ({report})", plain * 1e9 / n, axis * 1e9 / n, (axis - plain) * 1e9 / n);
 }
 
 /// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two

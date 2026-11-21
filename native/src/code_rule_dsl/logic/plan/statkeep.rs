@@ -173,6 +173,31 @@ pub(in crate::code_rule_dsl) struct RelStats {
 }
 
 /// The document a row's first column names: as `syntax::measured` reads it.
+/// The rows `RelStats::documents_scanned` counts at once, about 48 bytes each while counted: past it, a window ends
+/// where the document of its last row does.
+const WINDOW: usize = 1 << 20;
+
+/// The end of the window of `source`'s rows from `lo`: `window` rows on, then on to the end of the last one's document
+/// (a row's document is its first column's, as `count` reads it).
+fn window_end(source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, n: usize, window: usize) -> usize {
+    let hi = (lo + window).min(n);
+    if hi == n {
+        return n;
+    }
+    let mut first = [0i64];
+    source.row_at(hi - 1, &[0], &mut first);
+    let last = document_of(first[0]);
+    let mut end = n;
+    source.for_rows_in(hi..n, &[0], &mut |r, row| {
+        if document_of(row[0]) == last {
+            return true;
+        }
+        end = r;
+        false
+    });
+    end
+}
+
 fn doc32(first: i64) -> i64 {
     first >> 32
 }
@@ -274,24 +299,57 @@ impl RelStats {
     /// document by document) rather than a row at a time, which a view answers by a rank and a select (Q183): a
     /// base relation counted off the corpus batch, cold (decision 0458).
     pub(in crate::code_rule_dsl) fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
+        self.documents_scanned_in(source, from, sign, WINDOW);
+    }
+
+    /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
+    fn documents_scanned_in(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64, window: usize) {
         debug_assert_eq!(from.len(), self.cols.len());
         let (n, width) = (source.len(), source.columns().len());
-        self.count(
-            n,
-            width,
-            &mut |c, each| {
-                let mut next = 0;
-                source.for_rows(&[c], &mut |r, row| {
-                    debug_assert_eq!(r, next, "a source's walk reads its rows in order");
-                    next = r + 1;
-                    each(r, row[0]);
-                });
-                debug_assert_eq!(next, n, "a source's walk reads every row");
-            },
-            sign,
-            None,
-            Some(from),
-        )
+        if n <= window {
+            self.count(
+                n,
+                width,
+                &mut |c, each| {
+                    let mut next = 0;
+                    source.for_rows(&[c], &mut |r, row| {
+                        debug_assert_eq!(r, next, "a source's walk reads its rows in order");
+                        next = r + 1;
+                        each(r, row[0]);
+                    });
+                    debug_assert_eq!(next, n, "a source's walk reads every row");
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            return;
+        }
+        // Whole documents at a time: `count` lists each row's document and value (about 48 bytes a row), and its
+        // counts add over whole documents (as a patch's documents in and out do), so a window of rows that ends where
+        // a document does is counted alone. `node` listed whole was 509 MB of a 1,000-file run.
+        let mut lo = 0;
+        while lo < n {
+            let hi = window_end(source, lo, n, window);
+            self.count(
+                hi - lo,
+                width,
+                &mut |c, each| {
+                    let mut next = lo;
+                    source.for_rows_in(lo..hi, &[c], &mut |r, row| {
+                        debug_assert_eq!(r, next, "a source's walk reads its rows in order");
+                        next = r + 1;
+                        each(r - lo, row[0]);
+                        true
+                    });
+                    debug_assert_eq!(next, hi, "a source's walk reads every row of the window");
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            lo = hi;
+        }
     }
 
     fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
@@ -830,6 +888,13 @@ pub mod tests {
         scanned.documents_scanned(&source(&docs[4]), &from, -1);
         scanned.documents_scanned(&source(&doc(5, 90, 1)), &from, 1);
         assert_eq!(scanned, fresh);
+        // Counted in windows that end where a document does (a large relation's, bounding the count's lists): the
+        // same counts, at a window shorter than a document and at one of several.
+        for window in [7, 100, 1000] {
+            let mut windowed = RelStats::new(names());
+            windowed.documents_scanned_in(&source(&all), &from, 1, window);
+            assert_eq!(windowed, flat, "window {window}");
+        }
     }
 
     #[test]

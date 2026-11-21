@@ -85,6 +85,10 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
     "RERAIL_NODE_IDS",
+    // The `.rr` lowering's shapes left as written: a bounded aggregate as an as-of fold (decision 0511), the first of
+    // a group as a lattice relation (decision 0515).
+    "RERAIL_ASOF",
+    "RERAIL_FIRST",
     // Identical relations merged (`combining::same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
     // The `.rerail` lowering's rewrites, `=off` to leave the rules as written: a min or max bounded by its probe
@@ -9236,6 +9240,21 @@ fn run_observed_within(
                 }),
                 _ => None,
             };
+            // Not kept: a source whose rows are made on lookup answers them from its structure (`Source::statistics`:
+            // `within`'s, from the tree), with no row made. Counted, `within`'s rows were every node's containers, 1.1 GB
+            // allocated on 1,000 files and past 16 GB on 3,089: the count's lists are 48 bytes a row, over a relation
+            // `len` had made whole. Not kept for the next run: it is read again from the structure, as cheaply.
+            if counted.is_none()
+                && let Some(known) = source.statistics()
+            {
+                let by_name: HashMap<&str, &Stat> = known.iter().map(|m| (m.0.as_str(), m)).collect();
+                if let Some(batch) = &corpus_batch {
+                    batch.give_distinct(rel, columns.iter().map(|c| by_name.get(c.as_str()).and_then(|m| usize::try_from(m.2).ok())).collect());
+                }
+                let rows = known.first().map_or(0, |m| m.1);
+                let st = columns.iter().map(|c| by_name.get(c.as_str()).map_or_else(|| (c.clone(), rows, rows, rows, rows), |m| (*m).clone())).collect();
+                return (st, "the source's own, from its structure (no row made)", None);
+            }
             let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
@@ -9398,6 +9417,8 @@ fn run_observed_within(
             let bytes = |c: &Count| match () {
                 () if c.kept.is_some() => 0,
                 () if semijoin.contains(&c.rel) => held_nodes.len() * ROW_BYTES,
+                // Answered by the source from its structure (`base_counted`): no row is listed, and `len` would make them.
+                () if c.source.statistics().is_some() => 0,
                 () => c.source.len() * ROW_BYTES,
             };
             let mut counted: Vec<Counted> = Vec::with_capacity(counts.len());
@@ -10082,7 +10103,11 @@ fn run_observed_within(
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
                     let inputs_done = match (&was_kept, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &digest_only)),
+                        (Some(was), true) => {
+                            let written = retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &digest_only);
+                            crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::CrossInputs);
+                            Some(written)
+                        }
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.

@@ -12080,9 +12080,12 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // the dependency order's. Only strata run natively make waves (SQL launches nothing), so a run all in SQL keeps
     // the dependency order, and T's plans in it.
     // `by_level` reorders them: its own copy, the version's kept as it is.
+    // A maintained run keeps the strata as the version has them (its kept rows and their levels are by stratum).
+    let sccs = if hooks.maintain.is_none() && model.inputs.native.contains("program") { climb_ends(&p0, sccs.to_vec(), &deps) } else { sccs.to_vec() };
     // The ordering edges hold for the whole run: a stratum that asks suspends (decision 0114 §3), and a stratum is
-    // run meanwhile only where it does not depend on one asking (`issue::Board`, the waiting checks).
-    let (sccs, ordered) = requests_first(sccs.to_vec(), &deps, &f0);
+    // run meanwhile only where it does not depend on one asking (`issue::Board`, the waiting checks). After the
+    // climb's ends are joined: a stratum moved into its walk's is in a request's cone with it or outside with it.
+    let (sccs, ordered) = requests_first(sccs, &deps, &f0);
     let deps = ordered.unwrap_or(deps);
     let (sccs, level_of) = by_level(sccs, &deps, model.inputs.native.contains("program"));
     // Each relation's rules, as keys of the program's version (its rule `k` is the program's rule `k`), in the
@@ -13546,6 +13549,114 @@ fn off_thread(e: &Error) -> bool {
 /// The strata in order of their levels (stable; with `sort`), and each one's level: one more than the deepest level of a stratum
 /// it depends on (`deps`: reads, requests answered, a native operator's inputs). A level's strata do not depend on
 /// each other, so it is a device wave (decision 0095 §5).
+/// The climb's ends (decision 0561): a stratum whose rules each read a keyed walk's rows once, positively, and
+/// otherwise only relations made before the walk (`look` and `miss` over `walk`) joins the walk's stratum, where the
+/// walk's run answers it at each row as the climb makes it (`closure::keyed`), so the walk's rows are not read again
+/// by a join of their own. `RERAIL_CLIMB_ENDS=off` keeps the strata apart.
+fn climb_ends(p: &body::Placed, sccs: Vec<BTreeSet<String>>, deps: &super::front::Edges) -> Vec<BTreeSet<String>> {
+    if std::env::var("RERAIL_CLIMB_ENDS").is_ok_and(|v| v == "off") {
+        return sccs;
+    }
+    let mut rules: HashMap<&str, Vec<usize>> = HashMap::new();
+    for k in 0..p.len() {
+        rules.entry(p.v.rel_name(p.rule(k).head().rel())).or_default().push(k);
+    }
+    let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
+    let only = |scc: &BTreeSet<String>| (scc.len() == 1).then(|| scc.iter().next().expect("one").clone());
+    let mut into: Vec<Option<usize>> = vec![None; sccs.len()];
+    for j in 0..sccs.len() {
+        let Some(w) = only(&sccs[j]) else { continue };
+        if into[j].is_some() || !rules.get(w.as_str()).is_some_and(|ks| keyed_walk(p, &w, ks)) {
+            continue;
+        }
+        for i in j + 1..sccs.len() {
+            let Some(t) = only(&sccs[i]) else { continue };
+            let Some(d) = deps.get(&t) else { continue };
+            let reads = d.contains(&(w.clone(), false)) && !d.contains(&(w.clone(), true)) && !d.iter().any(|(r, _)| *r == t);
+            let before = d.iter().all(|(r, _)| *r == w || at.get(r.as_str()).is_none_or(|&s| s < j));
+            if into[i].is_none() && reads && before && rules.get(t.as_str()).is_some_and(|ks| ks.iter().all(|&k| reads_once(p, k, &w))) {
+                into[i] = Some(j);
+            }
+        }
+    }
+    if into.iter().all(Option::is_none) {
+        return sccs;
+    }
+    let mut out = sccs.clone();
+    for (i, to) in into.iter().enumerate() {
+        if let Some(j) = *to {
+            let moved = sccs[i].clone();
+            out[j].extend(moved);
+        }
+    }
+    out.into_iter().enumerate().filter(|(i, _)| into[*i].is_none()).map(|(_, s)| s).collect()
+}
+
+/// Whether rule `k` reads relation `w` once, as a positive atom of its own (not an aggregate's).
+fn reads_once(p: &body::Placed, k: usize, w: &str) -> bool {
+    let r = p.rule(k);
+    let mut n = 0;
+    for l in r.body() {
+        match l.view() {
+            Lit::Atom(a) if p.v.rel_name(a.rel()) == w => {
+                if a.neg() {
+                    return false;
+                }
+                n += 1;
+            }
+            Lit::Agg { atom, .. } if p.v.rel_name(atom.rel()) == w => return false,
+            _ => {}
+        }
+    }
+    n == 1
+}
+
+/// Whether relation `w`'s rules (`ks`) are a keyed walk (decision 0570) as written: each recursive rule reads `w`
+/// once and makes the row it read with one column replaced, and at least one reads another of the row's columns
+/// elsewhere in its body (`!bound_in(s, x)`). The engine's `closure::recognize` decides the form; this is its shape in
+/// the rules, so that a plain closure's readers stay apart.
+fn keyed_walk(p: &body::Placed, w: &str, ks: &[usize]) -> bool {
+    let vars = |t: TermRef<'_>, out: &mut Vec<VarSlot>| {
+        if let Some(s) = t.var() {
+            out.push(s);
+        }
+    };
+    let mut keyed = false;
+    let mut recursive = false;
+    for &k in ks {
+        let r = p.rule(k);
+        let own: Vec<AtomRef<'_>> = r.body().filter_map(|l| match l.view() { Lit::Atom(a) if p.v.rel_name(a.rel()) == w => Some(a), _ => None }).collect();
+        if own.is_empty() {
+            continue;
+        }
+        recursive = true;
+        let [a] = own[..] else { return false };
+        if a.neg() {
+            return false;
+        }
+        let (head, row): (Vec<_>, Vec<_>) = (r.head().args().map(TermRef::var).collect(), a.args().map(TermRef::var).collect());
+        if head.len() != row.len() || head.iter().chain(&row).any(Option::is_none) {
+            return false;
+        }
+        let moved: Vec<usize> = (0..row.len()).filter(|&c| head[c] != row[c]).collect();
+        let [c] = moved[..] else { return false };
+        let others: Vec<VarSlot> = (0..row.len()).filter(|&o| o != c).filter_map(|o| row[o]).collect();
+        let mut used = Vec::new();
+        for l in r.body() {
+            match l.view() {
+                Lit::Atom(b) if b.node() != a.node() => b.args().for_each(|t| vars(t, &mut used)),
+                Lit::Cmp { l, r, .. } => {
+                    vars(l, &mut used);
+                    vars(r, &mut used);
+                }
+                _ => {}
+            }
+        }
+        keyed |= used.iter().any(|s| others.contains(s));
+    }
+    recursive && keyed
+}
+
 /// The strata with each request that produces an input first (decision 0431 §8): its answers grow the run's bound
 /// sources (a tape value's rows are a part of each, `syntax::values::Layered`), so a stratum that scans a source
 /// sees them only after the request has answered. A shown guest's nodes (one in the run's own language, its copies
