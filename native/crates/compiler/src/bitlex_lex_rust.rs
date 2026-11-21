@@ -101,6 +101,23 @@ impl Known {
     }
 }
 
+/// A fill made of the regions that the token loop keeps, as the lean lexer keeps "a `;` since
+/// the last token" (`fill(S, E)`, `S` a mask `X` or `prev(X)`, each the same over each part of a
+/// token): its value and `X`'s at each token's last byte (`fill_I`, `xl_I`), from which the loop
+/// knows it over the gap after (`fgap_I`) and at the byte before the next token (`fs_I`, `xs_I`).
+struct LoopFill {
+    /// The mask's name, where it is one; its expression's key.
+    name: Option<String>,
+    key: String,
+    shown: String,
+    prev: bool,
+    x: Expr,
+    /// `X` over the skipped bytes, as stage 1's (none: it holds at none of them).
+    xg: Option<String>,
+    /// Each row's code for `fill_I` and `xl_I` after its token.
+    rows: Vec<(usize, String, String)>,
+}
+
 /// A region token's last byte `l`, as one of its closers leaves it: the closer's first byte `c`
 /// is `ext` bytes before `l` (`-1`: the closer is after the token, `outside`), the walk hides `h`
 /// bytes from `c` (none for `outside`), and `closer` holds at `c`; the `body` bytes before `c`
@@ -326,6 +343,68 @@ type ByteMemo = HashMap<String, Cubes>;
 /// them needs at each offset all of them name.
 const CUBES: usize = 16;
 
+/// Whether `text` reads the variable `var` (not one whose name it starts).
+fn uses(text: &str, var: &str) -> bool {
+    text.match_indices(var).any(|(i, _)| {
+        let before = text[..i].chars().next_back().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        let after = text[i + var.len()..].chars().next().is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        before && after
+    })
+}
+
+/// Whether `e` reads fill `i` the loop keeps.
+fn contains_fill(g: &Gen, e: &Expr, i: usize) -> bool {
+    if g.fill_of(e) == Some(i) {
+        return true;
+    }
+    match e {
+        Expr::Name(n) => g.regional.contains(n) && g.defs.get(n).is_some_and(|d| contains_fill(g, d, i)),
+        Expr::Not(a) => contains_fill(g, a, i),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => contains_fill(g, a, i) || contains_fill(g, b, i),
+        _ => false,
+    }
+}
+
+/// `e` with fill `i` the loop keeps as `to`.
+fn subst_fill(g: &Gen, e: &Expr, i: usize, to: &Expr) -> Expr {
+    if g.fill_of(e) == Some(i) {
+        return to.clone();
+    }
+    match e {
+        Expr::Name(n) if g.regional.contains(n) => match g.defs.get(n) {
+            Some(d) if contains_fill(g, d, i) => subst_fill(g, d, i, to),
+            _ => e.clone(),
+        },
+        Expr::Not(a) => Expr::Not(Box::new(subst_fill(g, a, i, to))),
+        Expr::And(a, b) => Expr::And(Box::new(subst_fill(g, a, i, to)), Box::new(subst_fill(g, b, i, to))),
+        Expr::Or(a, b) => Expr::Or(Box::new(subst_fill(g, a, i, to)), Box::new(subst_fill(g, b, i, to))),
+        Expr::Xor(a, b) => Expr::Xor(Box::new(subst_fill(g, a, i, to)), Box::new(subst_fill(g, b, i, to))),
+        _ => e.clone(),
+    }
+}
+
+/// The fills in `e` (not inside another call's arguments but a fill's own).
+fn fills_in(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::Call(f, args) => {
+            if f == "fill" {
+                out.push(e.clone());
+            }
+            for a in args {
+                if let Arg::E(a) = a {
+                    fills_in(a, out);
+                }
+            }
+        }
+        Expr::Not(a) => fills_in(a, out),
+        Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => {
+            fills_in(a, out);
+            fills_in(b, out);
+        }
+        _ => {}
+    }
+}
+
 fn widen(v: Cubes) -> Cubes {
     if v.len() <= CUBES {
         return v;
@@ -385,6 +464,11 @@ struct Gen<'a> {
     spans: Vec<Span>,
     /// The bytes the loop skips between tokens: no token starts at one.
     skipped: [bool; 256],
+    /// The fills the loop keeps (`LoopFill`).
+    fills: Vec<LoopFill>,
+    /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
+    start_checks: Vec<(String, String)>,
+    end_checks: Vec<(String, usize)>,
 }
 
 impl Gen<'_> {
@@ -804,10 +888,17 @@ impl Gen<'_> {
     /// expression there. `None`: `e` reads a region's mask elsewhere than at `s`.
     fn at_start(&mut self, e: &Expr) -> Result<Option<String>, String> {
         if !self.regional(e) {
-            // A start is never a skipped byte.
+            // A start is never a skipped byte: a mask at none of the others is none there, one
+            // at every one of them is every start.
             let at = self.bytes_at(e, 0, &mut HashMap::new());
             if (0..256).all(|i| self.skipped[i] || !at[i]) {
                 return Ok(Some("false".to_owned()));
+            }
+            if self.skipped.iter().any(|&b| b)
+                && let Some(x) = self.exact_bytes(e)
+                && (0..256).all(|i| self.skipped[i] || x[i])
+            {
+                return Ok(Some("true".to_owned()));
             }
             return Ok(Some(format!("bit(&{}, s)", self.val(e)?)));
         }
@@ -841,11 +932,16 @@ impl Gen<'_> {
                 }
             }
             Expr::Empty => Some("false".to_owned()),
-            Expr::Not(a) => self.at_start(a)?.map(|a| match a.as_str() {
-                "false" => "true".to_owned(),
-                "true" => "false".to_owned(),
-                _ => format!("!({a})"),
-            }),
+            Expr::Not(a) => {
+                let n = opens.len();
+                self.at_start(a)?.map(|a| match a.as_str() {
+                    "false" => "true".to_owned(),
+                    "true" => "false".to_owned(),
+                    // No region opens here.
+                    _ if regions_of(&a).is_some_and(|r| (0..n).all(|k| r.contains(&k))) => "open == usize::MAX".to_owned(),
+                    _ => format!("!({a})"),
+                })
+            }
             Expr::And(a, b) => match (self.at_start(a)?, self.at_start(b)?) {
                 (Some(a), _) | (_, Some(a)) if a == "false" => Some(a),
                 (Some(a), Some(t)) | (Some(t), Some(a)) if t == "true" => Some(a),
@@ -867,8 +963,265 @@ impl Gen<'_> {
                 (Some(a), Some(b)) => Some(format!("({a} != {b})")),
                 _ => None,
             },
+            // A fill the loop keeps, or its `X`, at the byte before.
+            Expr::Call(f, args) if f == "prev" && args.len() == 1 => match &args[0] {
+                Arg::E(a) => match self.fill_of(a) {
+                    Some(i) => Some(format!("fs_{i}")),
+                    None => self.fill_x_of(a).map(|i| format!("xs_{i}")),
+                },
+                _ => None,
+            },
             Expr::Call(..) | Expr::Test { .. } => None,
         })
+    }
+
+    /// The fill the loop keeps that `e` is (its name, or its expression).
+    fn fill_of(&self, e: &Expr) -> Option<usize> {
+        match e {
+            Expr::Name(n) => self.fills.iter().position(|f| f.name.as_deref() == Some(n.as_str())),
+            Expr::Call(f, _) if f == "fill" => {
+                let key = format!("{e:?}");
+                self.fills.iter().position(|f| f.key == key)
+            }
+            _ => None,
+        }
+    }
+
+    /// The fill the loop keeps of `prev(X)` whose `X` is `e`.
+    fn fill_x_of(&self, e: &Expr) -> Option<usize> {
+        let key = format!("{e:?}");
+        self.fills.iter().position(|f| f.prev && format!("{:?}", f.x) == key)
+    }
+
+    /// Whether `e` is a fill the loop keeps, or one or its `X` a byte before.
+    fn loop_read(&self, e: &Expr) -> bool {
+        self.fill_of(e).is_some()
+            || matches!(e, Expr::Call(f, args) if f == "prev" && args.len() == 1 && matches!(&args[0], Arg::E(a) if self.fill_of(a).is_some() || self.fill_x_of(a).is_some()))
+    }
+
+    /// `e` with the fills the loop keeps (and their reads a byte before) as every byte: for the
+    /// bytes it may hold at.
+    fn fills_as_all(&self, e: &Expr) -> Expr {
+        if self.loop_read(e) {
+            return Expr::Not(Box::new(Expr::Empty));
+        }
+        match e {
+            Expr::Name(n) if self.regional.contains(n) => match self.defs.get(n) {
+                Some(d) if self.reads_fill(d) => self.fills_as_all(d),
+                _ => e.clone(),
+            },
+            Expr::Not(a) => Expr::Not(Box::new(self.fills_as_all(a))),
+            Expr::And(a, b) => Expr::And(Box::new(self.fills_as_all(a)), Box::new(self.fills_as_all(b))),
+            Expr::Or(a, b) => Expr::Or(Box::new(self.fills_as_all(a)), Box::new(self.fills_as_all(b))),
+            Expr::Xor(a, b) => Expr::Xor(Box::new(self.fills_as_all(a)), Box::new(self.fills_as_all(b))),
+            _ => e.clone(),
+        }
+    }
+
+    /// Whether `e` reads a fill the loop keeps.
+    fn reads_fill(&self, e: &Expr) -> bool {
+        if self.loop_read(e) {
+            return true;
+        }
+        match e {
+            Expr::Name(n) => self.regional.contains(n) && self.defs.get(n).is_some_and(|d| self.reads_fill(d)),
+            Expr::Not(a) => self.reads_fill(a),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.reads_fill(a) || self.reads_fill(b),
+            _ => false,
+        }
+    }
+
+    /// `e` over the gap before a token (`at` to `s - 1`) as code, where it is of stage 1 but for
+    /// fills the loop keeps the same over the gap (`fgap_I`), each tested as both. Notes the
+    /// `fgap_I` it reads in `used`.
+    fn gap_code(&mut self, e: &Expr, used: &mut std::collections::BTreeSet<usize>) -> Result<Option<String>, String> {
+        if matches!(e, Expr::Empty) {
+            return Ok(Some("false".to_owned()));
+        }
+        if !self.regional(e) {
+            return Ok(Some(format!("any_in(&{}, at, s - 1)", self.val(e)?)));
+        }
+        let Some(i) = (0..self.fills.len()).find(|&i| self.fills[i].xg.is_none() && contains_fill(self, e, i)) else { return Ok(None) };
+        let (one, none) = (simplify_all(subst_fill(self, e, i, &Expr::Not(Box::new(Expr::Empty)))), simplify_all(subst_fill(self, e, i, &Expr::Empty)));
+        let (Some(a), Some(b)) = (self.gap_code(&one, used)?, self.gap_code(&none, used)?) else { return Ok(None) };
+        used.insert(i);
+        let f = Known::Test(format!("fgap_{i}"));
+        let k = |c: String| if c == "false" { Known::No } else { Known::Test(c) };
+        Ok(Some(f.clone().and(k(a)).or(f.not().and(k(b))).code()))
+    }
+
+    /// The bytes `e` holds at exactly (a class, or masks of classes), where it is so.
+    fn exact_bytes(&self, e: &Expr) -> Option<[bool; 256]> {
+        match e {
+            Expr::Empty => Some([false; 256]),
+            Expr::Name(n) => match self.class_bytes.get(n) {
+                Some(b) => Some(*b),
+                None if !self.regional.contains(n) => self.defs.get(n).and_then(|d| self.exact_bytes(d)),
+                None => None,
+            },
+            Expr::Not(a) => self.exact_bytes(a).map(|b| b.map(|x| !x)),
+            Expr::And(a, b) => {
+                let (x, y) = (self.exact_bytes(a)?, self.exact_bytes(b)?);
+                Some(std::array::from_fn(|i| x[i] && y[i]))
+            }
+            Expr::Or(a, b) => {
+                let (x, y) = (self.exact_bytes(a)?, self.exact_bytes(b)?);
+                Some(std::array::from_fn(|i| x[i] || y[i]))
+            }
+            _ => None,
+        }
+    }
+
+    /// What a mask of stage 1 is at the bytes `at` of a token: none where it holds at none of
+    /// them, every one where it holds exactly at all of them, else `test`.
+    fn known_over(&self, e: &Expr, at: &[bool; 256], test: impl FnOnce() -> Option<String>) -> Option<Known> {
+        let b = self.bytes_at(e, 0, &mut HashMap::new());
+        if !(0..256).any(|i| at[i] && b[i]) {
+            return Some(Known::No);
+        }
+        if let Some(x) = self.exact_bytes(e)
+            && (0..256).all(|i| !at[i] || x[i])
+        {
+            return Some(Known::Yes);
+        }
+        test().map(Known::Test)
+    }
+
+    /// The fills made of the regions the loop can keep (`LoopFill`): `fill(X, E)` or
+    /// `fill(prev(X), E)`, where `X` holds in no region and `E` in none after its start, `E`
+    /// at no skipped byte, and each is the same over a token of code's bytes after its start.
+    fn find_loop_fills(&mut self, rows: &[(usize, &Stmt)], exprs: &[(Option<String>, Expr)]) -> Result<(), String> {
+        let n = self.opens.as_ref().map_or(0, Vec::len);
+        let mut seen: Vec<String> = Vec::new();
+        for (name, e) in exprs {
+            let Expr::Call(f, args) = e else { continue };
+            let key = format!("{e:?}");
+            if f != "fill" || seen.contains(&key) || !self.regional(e) {
+                continue;
+            }
+            seen.push(key.clone());
+            let [Arg::E(start), Arg::E(stop)] = args.as_slice() else { continue };
+            let (prev, x) = match start {
+                Expr::Call(p, pa) if p == "prev" && pa.len() == 1 => match &pa[0] {
+                    Arg::E(a) => (true, a.clone()),
+                    _ => continue,
+                },
+                a => (false, a.clone()),
+            };
+            let (Some(x0), Some(e0)) = (self.in_region(&x, None, 0), self.in_region(stop, None, 0)) else { continue };
+            if self.regional(&x0) || self.regional(&e0) {
+                continue;
+            }
+            let skipped = self.skipped;
+            let Some(xg) = self.in_region_of(&x, None, 0, &skipped, &mut HashMap::new()) else { continue };
+            if self.regional(&xg) {
+                continue;
+            }
+            let eb = self.bytes_at(&e0, 0, &mut HashMap::new());
+            if (0..256).any(|i| eb[i] && skipped[i]) {
+                continue;
+            }
+            let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
+            if !(0..n).all(|k| (0..3).all(|part| none(self.in_region(&x, Some(k), part))) && (1..3).all(|part| none(self.in_region(stop, Some(k), part)))) {
+                continue;
+            }
+            let i = self.fills.len();
+            let (xv, ev) = (if matches!(x0, Expr::Empty) { None } else { Some(self.val(&x0)?) }, if matches!(e0, Expr::Empty) { None } else { Some(self.val(&e0)?) });
+            let xb = self.bytes_at(&x0, 0, &mut HashMap::new());
+            let s_at = |xs: Known| if prev { Known::Test(format!("xs_{i}")) } else { xs };
+            let carry = Known::Test(format!("fs_{i}"));
+            let mut codes = Vec::new();
+            let mut ok = true;
+            for (row, st) in rows {
+                let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
+                if matches!(rule, Some(TokenRule::Inside(..))) {
+                    continue;
+                }
+                // A start is never a skipped byte.
+                let sb = self.bytes_at(start, 0, &mut HashMap::new());
+                let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && !self.skipped[i]);
+                let regions: Vec<(Known, usize)> = match rule {
+                    Some(TokenRule::Read(rs)) => rs.iter().filter_map(|r| self.kinds.iter().position(|q| q.kind == r.kind).map(|k| (if rs.len() > 1 { Known::Test(format!("open == {k}")) } else { Known::Yes }, k))).collect(),
+                    Some(TokenRule::ReadParts(rs, _)) => match Self::row_region(start, rs).and_then(|r| self.kinds.iter().position(|q| q.kind == r.kind)) {
+                        Some(k) => vec![(Known::Yes, k)],
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    },
+                    _ => Vec::new(),
+                };
+                let (fl, xl) = if !regions.is_empty() {
+                    // A region token: `X` at none of its bytes, `E` at its start only.
+                    let mut v = Known::No;
+                    for (cond, k) in regions {
+                        // At its opener's byte.
+                        let ob = self.bytes_at(&self.kinds[k].opener.clone(), 0, &mut HashMap::new());
+                        let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && ob[i]);
+                        let Some(es) = self.in_region(stop, Some(k), 0) else {
+                            ok = false;
+                            break;
+                        };
+                        let es = if self.regional(&es) {
+                            None
+                        } else {
+                            let ev = if matches!(es, Expr::Empty) { String::new() } else { self.val(&es)? };
+                            self.known_over(&es, &sb, || Some(format!("bit(&{ev}, s)")))
+                        };
+                        let Some(es) = es else {
+                            ok = false;
+                            break;
+                        };
+                        v = v.or(cond.and(s_at(Known::No).or(es.not().and(carry.clone()))));
+                    }
+                    (v, Known::No)
+                } else {
+                    // A token of code: `X` and `E` stage 1's over its bytes.
+                    let tb = self.row_tail_bytes(kind, rule, last);
+                    let has_tail = (0..256).any(|i| tb[i]);
+                    let bit = |v: &Option<String>, at: &str| v.as_ref().map(|v| format!("bit(&{v}, {at})"));
+                    let (Some(es), Some(xs)) = (self.known_over(&e0, &sb, || bit(&ev, "s")), self.known_over(&x0, &sb, || bit(&xv, "s"))) else {
+                        ok = false;
+                        break;
+                    };
+                    let fs = s_at(xs.clone()).or(es.not().and(carry.clone()));
+                    if !has_tail {
+                        (fs, xs)
+                    } else {
+                        let Some(et) = self.known_over(&e0, &tb, || None) else {
+                            ok = false;
+                            break;
+                        };
+                        let all: [bool; 256] = std::array::from_fn(|i| sb[i] || tb[i]);
+                        let over = |b: &[bool; 256], code: String| if (0..256).any(|i| b[i] && xb[i]) { Known::Test(code) } else { Known::No };
+                        let xv_ = xv.clone().unwrap_or_default();
+                        let xt = over(&tb, format!("bit(&{xv_}, l)"));
+                        let ft = match (&et, prev) {
+                            (Known::Yes, true) => over(&all, format!("bit(&{xv_}, l - 1)")),
+                            (Known::Yes, false) => xt.clone(),
+                            (Known::No, true) => fs.clone().or(over(&all, format!("any_in(&{xv_}, s, l - 1)"))),
+                            (Known::No, false) => fs.clone().or(over(&tb, format!("any_in(&{xv_}, s + 1, l)"))),
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        };
+                        let pick = |a: Known, b: Known| {
+                            let (a, b) = (a.code(), b.code());
+                            if a == b { Known::Test(a) } else { Known::Test(format!("if l > s {{ {a} }} else {{ {b} }}")) }
+                        };
+                        (pick(ft, fs), pick(xt, xs))
+                    }
+                };
+                codes.push((*row, fl.code(), xl.code()));
+            }
+            if !ok {
+                continue;
+            }
+            let xg = if matches!(xg, Expr::Empty) { None } else { Some(self.val(&xg)?) };
+            self.fills.push(LoopFill { name: name.clone(), key, shown: show(e), prev, x, xg, rows: codes });
+        }
+        Ok(())
     }
 
     /// `e` in one part of a token that reads region `k` (decision 0551's step B): at its start
@@ -888,6 +1241,10 @@ impl Gen<'_> {
         let here = self.bytes_at(e, 0, memo);
         if !(0..256).any(|i| here[i] && ctx[i]) {
             return Some(Expr::Empty);
+        }
+        // A fill the loop keeps, outside the regions: itself.
+        if k.is_none() && self.loop_read(e) {
+            return Some(e.clone());
         }
         Some(match e {
             // Assumed at a region token's last byte: none outside one, nor before its closer.
@@ -1431,6 +1788,39 @@ impl Gen<'_> {
         Ok(false)
     }
 
+    /// Escape `why` of `e`, which reads a fill the loop keeps and holds only at a token's start
+    /// (at no skipped byte, none in a token of code after its start, none in a region after its
+    /// start): tested at each start.
+    fn start_escape(&mut self, why: &str, e: &Expr, rows: &[(usize, &Stmt)]) -> Result<bool, String> {
+        if !self.reads_fill(e) {
+            return Ok(false);
+        }
+        let n = self.opens.as_ref().map_or(0, Vec::len);
+        let Some(v) = self.in_region(e, None, 0) else { return Ok(false) };
+        let at = self.bytes_at(&self.fills_as_all(&v), 0, &mut HashMap::new());
+        if (0..256).any(|i| at[i] && self.skipped[i]) {
+            return Ok(false);
+        }
+        for (_, st) in rows {
+            let Stmt::Token { kind, last, rule, .. } = st else { continue };
+            if matches!(rule, Some(TokenRule::Inside(..) | TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                continue;
+            }
+            let tb = self.row_tail_bytes(kind, rule, last);
+            if (0..256).any(|i| at[i] && tb[i]) {
+                return Ok(false);
+            }
+        }
+        if !(0..n).all(|k| (1..3).all(|part| matches!(self.in_region(e, Some(k), part), Some(Expr::Empty)))) {
+            return Ok(false);
+        }
+        let Some(here) = self.at_start(e)? else { return Ok(false) };
+        if here != "false" {
+            self.start_checks.push((why.to_owned(), here));
+        }
+        Ok(true)
+    }
+
     /// Whether `e` is the file's last byte (`~next(~empty)`, or a mask of it): it is never in a
     /// region that closes, whose closer comes after it.
     fn is_last_byte(&self, e: &Expr) -> bool {
@@ -1795,6 +2185,28 @@ impl Gen<'_> {
                 }
             }
         }
+        // The fills the loop keeps (`LoopFill`): the masks and the escapes' fills.
+        if self.opens.is_some() {
+            self.skipped = match &skip {
+                Some(k) => self.bytes_at(k, 0, &mut HashMap::new()),
+                None => [false; 256],
+            };
+            let mut exprs: Vec<(Option<String>, Expr)> = Vec::new();
+            for s in x.stmts {
+                if let Stmt::Mask(name, e) = s {
+                    exprs.push((Some(name.clone()), e.clone()));
+                    let mut inner = Vec::new();
+                    fills_in(e, &mut inner);
+                    exprs.extend(inner.into_iter().filter(|f| format!("{f:?}") != format!("{e:?}")).map(|f| (None, f)));
+                }
+            }
+            for (_, e) in &escapes {
+                let mut inner = Vec::new();
+                fills_in(e, &mut inner);
+                exprs.extend(inner.into_iter().map(|f| (None, f)));
+            }
+            self.find_loop_fills(&rows, &exprs)?;
+        }
         let mut refuse = Vec::new();
         for (why, e) in &escapes {
             if !self.regional(e) {
@@ -1803,6 +2215,16 @@ impl Gen<'_> {
                 continue;
             }
             if self.span_escape(why, e, skip.as_ref())? {
+                continue;
+            }
+            // At the file's last byte, a fill the loop keeps: tested after the loop.
+            if let Expr::And(a, b) = e
+                && let Some(i) = [(a, b), (b, a)].iter().find_map(|(l, f)| if self.is_last_byte(l) { self.fill_of(f) } else { None })
+            {
+                self.end_checks.push((why.to_string(), i));
+                continue;
+            }
+            if self.start_escape(why, e, &rows)? {
                 continue;
             }
             if self.region_escape(why, e, &read, skip.as_ref())? {
@@ -1833,9 +2255,12 @@ impl Gen<'_> {
             code: Expr,
             here: String,
             own: bool,
+            what: String,
         }
         let mut accs: Vec<GapAcc> = Vec::new();
         let mut acc_of: HashMap<String, usize> = HashMap::new();
+        // The fills the loop keeps whose value over the gap a gap mask reads.
+        let mut fill_used: std::collections::BTreeSet<usize> = Default::default();
         let skipped = match &skip {
             Some(k) => self.bytes_at(k, 0, &mut HashMap::new()),
             None => [false; 256],
@@ -1862,12 +2287,32 @@ impl Gen<'_> {
                     let code = self.in_region(at, None, 0);
                     let inside = (0..n).all(|k| (1..3).all(|part| matches!(self.in_region(at, Some(k), part), Some(Expr::Empty))));
                     let here = self.at_start(at)?;
+                    // Over a token of code after its start, a mask that reads a fill the loop keeps
+                    // must hold at none of its bytes.
+                    let code = match code {
+                        Some(c) if self.reads_fill(&c) => {
+                            let b = self.bytes_at(&self.fills_as_all(&c), 0, &mut HashMap::new());
+                            let clear = rows.iter().all(|(_, st)| match st {
+                                Stmt::Token { kind, last, rule, .. } if !matches!(rule, Some(TokenRule::Inside(..) | TokenRule::Read(_) | TokenRule::ReadParts(..))) => {
+                                    let tb = self.row_tail_bytes(kind, rule, last);
+                                    !(0..256).any(|i| b[i] && tb[i])
+                                }
+                                _ => true,
+                            });
+                            if clear { Some(Expr::Empty) } else { None }
+                        }
+                        c => c,
+                    };
+                    let gap = match gap {
+                        Some(g) => self.gap_code(&g, &mut fill_used)?,
+                        None => None,
+                    };
                     if let (Some(gap), Some(code), true, Some(here)) = (gap, code, inside, here)
-                        && !self.regional(&gap)
                         && !self.regional(&code)
                     {
-                        let gap = if matches!(gap, Expr::Empty) { None } else { Some(self.val(&gap)?) };
-                        accs.push(GapAcc { gap, code, here, own: false });
+                        let gap = if gap == "false" { None } else { Some(gap) };
+                        let what = self.brief(at);
+                        accs.push(GapAcc { gap, code, here, own: false, what });
                         acc_of.insert(key, accs.len() - 1);
                         acc = Some(accs.len() - 1);
                     }
@@ -2086,6 +2531,15 @@ impl Gen<'_> {
                 let to = if region_row { "l - 1" } else { "l" };
                 let _ = write!(hits, "            // `assume … at ends {m}`, not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert!(!any_in(&{v}, at, {to}), \"assume {m} at ends, by byte {{l}}\");\n");
             }
+            // The fills the loop keeps, at this token's last byte.
+            for (i, f) in self.fills.iter().enumerate() {
+                if let Some((_, fl, xl)) = f.rows.iter().find(|r| r.0 == *row) {
+                    let _ = write!(hits, "            fill_{i} = {fl};\n");
+                    if f.prev {
+                        let _ = write!(hits, "            xl_{i} = {xl};\n");
+                    }
+                }
+            }
             // The escapes outside the regions, over a token of code's bytes.
             if !region_row {
                 for (why, v) in &self.code_checks {
@@ -2182,10 +2636,10 @@ impl Gen<'_> {
         let mut acc_after = String::new();
         // The gap masks the loop keeps.
         for (j, a) in accs.iter().enumerate() {
-            let what = self.brief(&a.code);
-            let _ = writeln!(span_decl, "    // Whether a gap mask (outside the regions, `{what}`) held since the grammar token before{}.\n    let mut acc_{j} = false;{}", if a.own { ", and since the record before" } else { "" }, if a.own { format!("\n    let mut rec_{j} = false;") } else { String::new() });
+            let what = &a.what;
+            let _ = writeln!(span_decl, "    // Whether a gap mask (`{what}`) held since the grammar token before{}.\n    let mut acc_{j} = false;{}", if a.own { ", and since the record before" } else { "" }, if a.own { format!("\n    let mut rec_{j} = false;") } else { String::new() });
             if let Some(g) = &a.gap {
-                let _ = write!(open_code, "        // The skipped bytes before the token, for the gap masks.\n        if s > at && any_in(&{g}, at, s - 1) {{\n            acc_{j} = true;\n{}        }}\n", if a.own { format!("            rec_{j} = true;\n") } else { String::new() });
+                let _ = write!(open_code, "        // The skipped bytes before the token, for the gap masks.\n        if s > at && {g} {{\n            acc_{j} = true;\n{}        }}\n", if a.own { format!("            rec_{j} = true;\n") } else { String::new() });
             }
             if a.here != "false" {
                 let _ = writeln!(open_code, "        let here_{j} = {};", a.here);
@@ -2250,6 +2704,55 @@ impl Gen<'_> {
                 let _ = write!(span_after, "    // `{}`: a token covered its end.\n    if span_{i}.1 < n {{\n        let c = span_{i}.1;\n{after}    }}\n", sp.f);
             }
         }
+        let mut fill_top = String::new();
+        let mut fill_end = String::new();
+        for (i, f) in self.fills.iter().enumerate() {
+            let _ = writeln!(span_decl, "    // `{}` at the last byte of the token before{}.\n    let mut fill_{i} = false;{}", f.shown, if f.prev { ", and its `X`" } else { "" }, if f.prev { format!("\n    let mut xl_{i} = false;") } else { String::new() });
+            let (fs, xs, fgap) = match (f.prev, &f.xg) {
+                (true, None) => (format!("fill_{i} || (s > at && xl_{i})"), Some(format!("s == at && xl_{i}")), Some(format!("fill_{i} || xl_{i}"))),
+                (true, Some(g)) => (format!("fill_{i} || (s > at && (xl_{i} || (s > at + 1 && any_in(&{g}, at, s - 2))))"), Some(format!("if s > at {{ bit(&{g}, s - 1) }} else {{ xl_{i} }}")), None),
+                (false, None) => (format!("fill_{i}"), None, Some(format!("fill_{i}"))),
+                (false, Some(g)) => (format!("fill_{i} || (s > at && any_in(&{g}, at, s - 1))"), None, None),
+            };
+            let _ = writeln!(fill_top, "        // `{}`: at the byte before the token.\n        let fs_{i} = {fs};", f.shown);
+            if let Some(xs) = xs {
+                let _ = writeln!(fill_top, "        let xs_{i} = {xs};");
+            }
+            if fill_used.contains(&i) {
+                let fgap = fgap.ok_or_else(|| format!("tier 1 as Rust: `{}` read over a gap it is not the same over", f.shown))?;
+                let _ = writeln!(fill_top, "        // Over the gap.\n        let fgap_{i} = {fgap};");
+            }
+            for (why, j) in &self.end_checks {
+                if *j == i {
+                    if uses(&fs, "s") {
+                        let _ = write!(fill_end, "    // {why}\n    {{\n        let s = n;\n        if {fs} {{\n            refused = true;\n        }}\n    }}\n");
+                    } else {
+                        let _ = write!(fill_end, "    // {why}\n    if {fs} {{\n        refused = true;\n    }}\n");
+                    }
+                }
+            }
+        }
+        for (why, t) in &self.start_checks {
+            let _ = write!(open_code, "        // {why}\n        if {t} {{\n            refused = true;\n            break;\n        }}\n");
+        }
+        // Only the reads of them the code makes.
+        let rest = format!("{branches}{open_code}{gap_code}{own_code}{token_code}");
+        let mut top = String::new();
+        let mut pending_comment = String::new();
+        for line in fill_top.lines() {
+            if line.trim_start().starts_with("//") {
+                pending_comment = format!("{line}\n");
+                continue;
+            }
+            let var = line.trim_start().trim_start_matches("let ").split(' ').next().unwrap_or("");
+            if !var.is_empty() && uses(&rest, var) {
+                top.push_str(&pending_comment);
+                pending_comment.clear();
+                let _ = writeln!(top, "{line}");
+            }
+        }
+        open_code.insert_str(0, &top);
+        span_after.push_str(&fill_end);
         let mut out = String::new();
         out.push_str("// Generated by the Bitlex compiler (`rerail_compiler::bitlex_lex_rust`) from the grammar's lexer statements. Do not edit.\n\n");
         out.push_str("/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
@@ -2351,11 +2854,23 @@ pub fn substitute(e: &Expr, assumed: &[(&str, &Expr)], defs: &HashMap<String, Ex
 }
 
 /// `e` with its constants folded: `empty` (none) and `~empty` (every byte).
+/// `simplify` at each level of `e`, from its leaves.
+fn simplify_all(e: Expr) -> Expr {
+    let s = |a: Box<Expr>| Box::new(simplify_all(*a));
+    simplify(match e {
+        Expr::Not(a) => Expr::Not(s(a)),
+        Expr::And(a, b) => Expr::And(s(a), s(b)),
+        Expr::Or(a, b) => Expr::Or(s(a), s(b)),
+        Expr::Xor(a, b) => Expr::Xor(s(a), s(b)),
+        e => e,
+    })
+}
+
 fn simplify(e: Expr) -> Expr {
     let all = |x: &Expr| matches!(x, Expr::Not(a) if matches!(**a, Expr::Empty));
     match e {
         Expr::Not(a) => match *a {
-            Expr::Not(b) if all(&Expr::Not(b.clone())) => Expr::Empty,
+            Expr::Not(b) => *b,
             a => Expr::Not(Box::new(a)),
         },
         Expr::And(a, b) if format!("{a:?}") == format!("{b:?}") => *a,
@@ -2397,7 +2912,7 @@ fn simplify(e: Expr) -> Expr {
 
 /// The regions a start's test is one of (`open == K`, or several of those or'd), as `at_start` writes it.
 fn regions_of(t: &str) -> Option<Vec<usize>> {
-    let t = t.strip_prefix('(').and_then(|t| t.strip_suffix(')')).unwrap_or(t);
+    let t = t.replace(['(', ')'], "");
     t.split(" || ").map(|x| x.strip_prefix("open == ").and_then(|k| k.parse().ok())).collect()
 }
 
@@ -2576,5 +3091,5 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256] }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], fills: Vec::new(), start_checks: Vec::new(), end_checks: Vec::new() }.source()
 }
