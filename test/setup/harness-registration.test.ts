@@ -328,7 +328,7 @@ describe("Claude Code settings.json", () => {
     ]);
   });
 
-  /** A node at `<home>/../<folder>/node.exe` that `node` on PATH finds, as set-up reads PATH for Windows. */
+  /** A node at `<home>/../<folder>/node.exe` that `node` on PATH finds, as Windows looks a program up there. */
   async function windowsPathNode(home: string, folder: string): Promise<string> {
     const directory = join(dirname(home), folder);
     await mkdir(directory, { recursive: true });
@@ -417,7 +417,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, folder);
     const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
 
@@ -443,7 +442,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     // A file is at cmd.exe's path under each `SystemRoot` here, so the path's form alone decides.
     const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
@@ -465,7 +463,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
     vi.stubEnv("SystemRoot", systemRoot);
@@ -494,7 +491,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     // cmd.exe only where Windows is: an entry naming any other path would start nothing on every hook event.
     const fileExists = (file: string) => file === win32.join(windowsAt, "System32", "cmd.exe");
@@ -513,7 +509,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     // A full path that names no folder on any computer that runs this test.
     vi.stubEnv("SystemRoot", String.raw`Z:\rerail-test-no-windows`);
@@ -528,7 +523,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const ours = cmdEntry(launcherPath, nodePath, hookPath);
     const theirs = { ...ours, command: "cmd.exe" };
@@ -678,7 +672,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const ours = cmdEntry(launcherPath, nodePath, hookPath);
     // It ends as Rerail's entry does, with the launcher, the recorded node, the hook and `)`, but sets a variable first:
@@ -701,7 +694,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const, fileExists: cmdThere };
     // A build of Rerail wrote these words: a recorded node that could not start showed a hook error on every event.
@@ -726,7 +718,6 @@ describe("Claude Code settings.json", () => {
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
-    await windowsPathNode(home, "older-node");
     const nodePath = await windowsNode(home, "newer-node");
     const ours = cmdEntry(launcherPath, nodePath, hookPath);
     // Rerail writes cmd.exe by its System32 path: the same words after any other command are the person's.
@@ -742,7 +733,7 @@ describe("Claude Code settings.json", () => {
 
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
-    const nodePath = await windowsPathNode(home, "nodejs");
+    const nodePath = await windowsNode(home, "nodejs");
     const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
@@ -760,8 +751,8 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(hooks)).not.toContain("cmd /d /c");
     expect(change((await registerHarnesses(windows)).changes, "claude-code", "settings.json").action).toBe("unchanged");
 
-    // `rerail install --refresh` run with the new node first on PATH.
-    const upgradedNode = await windowsPathNode(home, "v24.9.0");
+    // `rerail install --refresh` records the new node.
+    const upgradedNode = await windowsNode(home, "v24.9.0");
     await registerHarnesses({ ...windows, nodePath: upgradedNode });
     const upgraded = (await readJson(path)).hooks as Record<string, unknown[]>;
     expect(upgraded.SessionStart).toEqual([{ hooks: [cmdEntry(launcherPath, upgradedNode, hookPath)] }]);
