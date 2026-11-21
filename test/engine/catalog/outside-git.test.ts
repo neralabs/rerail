@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,7 +10,7 @@ import { gitText, runGit, runGitAsync } from "../../../src/engine/git.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
@@ -225,6 +225,13 @@ function linkedWorktree(root: string): string {
   return join(root, "linked");
 }
 
+/** A linked worktree at `root/linked` whose main checkout `root/main` was deleted, so Git refuses it. */
+function goneMainWorktree(root: string): string {
+  const linked = linkedWorktree(root);
+  removeFolderSync(join(root, "main"));
+  return linked;
+}
+
 /** A work tree at `root/work` whose Git folder is `root/kept.git`. */
 function keptApart(root: string): string {
   git(root, "init", "-q", `--separate-git-dir=${join(root, "kept.git")}`, join(root, "work"));
@@ -273,6 +280,7 @@ const outsideShapes: readonly Shape[] = [
   { name: "while GIT_OBJECT_DIRECTORY names a repository's objects", asks: false, make: root => notesWhile(root, "GIT_OBJECT_DIRECTORY", join(checkout(root, "main"), ".git", "objects")) },
   { name: "while GIT_DISCOVERY_ACROSS_FILESYSTEM is set", asks: false, make: root => notesWhile(root, "GIT_DISCOVERY_ACROSS_FILESYSTEM", "1") },
   { name: "while GIT_INDEX_FILE is set", asks: false, make: root => notesWhile(root, "GIT_INDEX_FILE", join(root, "index")) },
+  { name: "a linked worktree whose main checkout was deleted", asks: false, make: root => goneMainWorktree(root) },
   { name: "by its \\\\localhost\\C$ path", asks: false, windowsOnly: true, make: root => byShare(folderAt(root, "notes")) },
   { name: "written in other letter case", asks: false, windowsOnly: true, make: root => folderAt(root, "notes").toUpperCase() },
   { name: "written with forward slashes", asks: false, windowsOnly: true, make: root => folderAt(root, "notes").split("\\").join("/") },
@@ -304,6 +312,7 @@ const askedShapes: readonly Shape[] = [
   { name: "a link to a checkout's top folder", asks: true, make: root => linkAt(checkout(root, "main"), join(root, "link")) },
   { name: "a plain folder while GIT_DIR names a repository", asks: true, make: root => notesWhile(root, "GIT_DIR", join(checkout(root, "main"), ".git")) },
   { name: "a plain folder while GIT_DIR names no repository", asks: true, make: root => notesWhile(root, "GIT_DIR", folderAt(root, "empty")) },
+  { name: "a linked worktree whose main checkout was deleted, while GIT_DIR names a repository", asks: true, make: root => ({ folder: goneMainWorktree(root), env: { GIT_DIR: join(checkout(root, "other"), ".git") } }) },
   { name: "a folder in a checkout past GIT_CEILING_DIRECTORIES", asks: true, make: root => ({ folder: folderAt(checkout(root, "main"), "src"), env: { GIT_CEILING_DIRECTORIES: join(root, "main") } }) },
   { name: "a checkout Git takes as another owner's", asks: true, make: root => ({ folder: checkout(root, "main"), env: { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" } }) },
   { name: "a folder that is gone", asks: true, make: root => join(root, "gone") },
@@ -322,6 +331,21 @@ describe("each folder shape gets Git's answer, and Git is asked only where a .gi
     for (const [name, value] of Object.entries(env)) vi.stubEnv(name, value);
 
     expect(askedWhileAnswering(folder), "Rerail asked Git").toBe(shape.asks);
+  });
+
+  it.skipIf(process.platform === "win32")("a .git that is a named pipe is never opened, as Git opens no such entry, and Git is asked", async () => {
+    const root = await plainRoot();
+    const folder = folderAt(root, "notes");
+    const pipe = join(folder, ".git");
+    execFileSync("mkfifo", [pipe]);
+    // A read of the pipe would wait for a writer; this one gives it a line naming a worktree's Git folder that is gone.
+    const gone = join(root, "main", ".git", "worktrees", "notes");
+    const writer = spawn("sh", ["-c", "printf 'gitdir: %s\\n' \"$0\" > \"$1\"", gone, pipe], { stdio: "ignore" });
+    try {
+      expect(askedWhileAnswering(folder), "Rerail asked Git").toBe(true);
+    } finally {
+      writer.kill();
+    }
   });
 
   it("an entry above the folder that cannot be read is taken as there, and Git is asked", async () => {

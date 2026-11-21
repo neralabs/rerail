@@ -22,7 +22,7 @@ import {
   statSync,
   type Stats,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { checkoutRealpath, realpathNamesInTurn, storedForm, storedPath } from "../checkout-control.js";
 
@@ -261,6 +261,20 @@ export function filePlacementInputs(folder: string): PlacementInputs | undefined
   const entry = gitFolderAt(folder);
   const common = entry === undefined ? undefined : commonOf(entry.gitFolder);
   return entry === undefined || common === undefined ? undefined : withCommon(folder, entry, common);
+}
+
+/**
+ * Whether `folder` is a linked worktree whose Git folder is gone: its `.git` file, read as Git reads it, names a folder
+ * in a Git folder's `worktrees` that is not there. Its main checkout was deleted or moved away, or Git pruned the
+ * worktree's entry, and the clone's id file, kept in the common Git folder, may have gone too; Git, asked about the
+ * folder, reads that file first and refuses it. A `.git` that is no regular file is never opened. False while the
+ * environment moves Git's lookup, and wherever the disk cannot tell. Two lstats and one read of a small file.
+ */
+export function worktreeGitFolderGone(folder: string): boolean {
+  if (environmentMovesLookup()) return false;
+  const entry = look(join(folder, ".git"));
+  const named = isEntry(entry) ? gitFolderOf(folder, entry) : undefined;
+  return named !== undefined && basename(dirname(named.gitFolder)) === "worktrees" && look(named.gitFolder) === "none";
 }
 
 function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder): PlacementInputs | undefined {

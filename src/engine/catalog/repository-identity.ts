@@ -26,6 +26,7 @@ import {
   realOf,
   searchedIn,
   searchStep,
+  worktreeGitFolderGone,
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
@@ -281,27 +282,6 @@ export function outsideGit(folder: string): boolean {
     return false;
   }
   return noMarkerUpFrom(written) && (real === written || noMarkerUpFrom(real));
-}
-
-/**
- * Whether `folder` is a linked worktree whose Git folder is gone: its own `.git` is a file whose `gitdir:` line names a
- * folder in a Git folder's `worktrees`, and nothing is there. Its main checkout was deleted or moved away, and the
- * clone's id file, kept in that Git folder, went with it; Git, asked about the folder, reads that file first and
- * refuses it. Read from the disk without starting Git; false where `GIT_DIR` would have Git look elsewhere, where
- * `.git` is no such file, or where the disk cannot tell.
- */
-export function worktreeGitFolderGone(folder: string): boolean {
-  if (process.env.GIT_DIR !== undefined) return false;
-  let text: string;
-  try {
-    text = readFileSync(join(folder, ".git"), "utf8");
-  } catch {
-    return false;
-  }
-  const named = /^gitdir: *(.+)$/mu.exec(text)?.[1];
-  if (named === undefined) return false;
-  const gitFolder = resolve(folder, named.trim());
-  return basename(dirname(gitFolder)) === "worktrees" && !entryMayBeThere(gitFolder);
 }
 
 /** Whether no folder from `start` up to its root holds one of {@link GIT_MARKERS}, or an entry that cannot be read. */
