@@ -64,17 +64,32 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        // Cold (a call) where 0310's policy marks the read so, and a read's 16z body called apart (decision 0353 step
-        // 4b, past `Z_APART`): inlined, each view's kernel carried the decoder once for every tape read in it.
-        let hot = *id < crate::reads::Z_APART && crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        // Cold (a call) where 0310's policy marks the read so.
+        let mut text = String::new();
+        body(&mut text, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        // A large body is a call on the device even where the JIT inlines it: a GPU compiler inlines a hot read at
+        // every call site, with the hot reads it calls, and the transducer's interpreter (`run_batch`) took 44.7 s in
+        // the AGX back end on an M5 Max with every tape read inlined, 5.5 s with none (`DEVICE_INLINE`, decision 0548;
+        // the tape's own reads, written by hand in `<ukl/reads/tape_body.h>`, are marked so there).
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot) && statements(&text) <= DEVICE_INLINE;
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
-        body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        bodies.push_str(&text);
         bodies.push_str("}\n");
     }
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// The most statements a hot read's body has and is still inlined on the device: the tape's small reads (`child`,
+/// `slot`, `has_kind`, `length`: 59 or fewer), not those that decode a format's lines or a node's stated span
+/// (`start_stated`, `line`, `start_next`, `end_stated`, `size`, `line_start`: 86 to 255, each calling more reads).
+pub const DEVICE_INLINE: usize = 70;
+
+/// A body's statements, as its text counts them.
+fn statements(body: &str) -> usize {
+    body.matches(';').count()
 }
 
 /// The 64-bit values of `f` of which every use reads only the low 32 bits (a demanded-bits pass to its fixpoint):
@@ -157,14 +172,26 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     }
 }
 
-/// A read's declaration: `UKL_INLINE` where it is hot, `UKL_COLD` (a call) where it is marked cold, as the JIT's
-/// inlining pass and the Rust backend treat it (decision 0310).
+/// The most instructions a read may have and still be inlined into its callers. A larger one (the 16z tape's block
+/// decode, about 3,000) is called, not copied into each caller: the backend's compile of a kernel grows with every
+/// copy, and a read that calls it from a loop gets several (Q383: one view read's pipeline took 32 s cold with its
+/// copies inlined, 2 s with the decode called).
+const MOST_INLINED: usize = 1024;
+
+/// Whether `f` is small enough to be inlined into its callers (`MOST_INLINED`).
+fn inlined(f: &ir::Function) -> bool {
+    f.layout.blocks().map(|b| f.layout.block_insts(b).count()).sum::<usize>() <= MOST_INLINED
+}
+
+/// A read's declaration: `UKL_INLINE` where it is hot and small (`MOST_INLINED`), else `UKL_COLD` (a call), as the
+/// JIT's inlining pass and the Rust backend treat a cold one (decision 0310): inlined at each use, 16z's block decoder
+/// (3,000 lines) made the node view's read 118,000 lines, and the M3's compiler took 114 s over it (2.6 s called).
 fn signature(f: &ir::Function, name: &str, family: Family, hot: bool) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    let qualifier = if hot { "UKL_INLINE" } else { "UKL_COLD" };
+    let qualifier = if hot && inlined(f) { "UKL_INLINE" } else { "UKL_COLD" };
     Ok(format!("{qualifier} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 

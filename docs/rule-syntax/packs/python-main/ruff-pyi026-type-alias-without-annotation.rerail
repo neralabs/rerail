@@ -1,5 +1,4 @@
 .policy "ruff-pyi026-type-alias-without-annotation" revision 1
-.guests off
 .description "Annotate type alias assignments in stub files with TypeAlias; it marks the line as an alias declaration instead of an ordinary variable."
 .language python
 .mode steer

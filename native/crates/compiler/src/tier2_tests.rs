@@ -1,11 +1,11 @@
-//! Tier 2 end to end in this crate: each Bitlex ladder step compiled (`bitlex_masks`),
+//! Tier 2 end to end in this crate: each of JSON's Bitlex grammars compiled (`bitlex_masks`),
 //! assembled and verified (`rir_asm`), lowered (`native_ir`) and run two ways, by the
 //! interpreters (tier 1's block program, then tier 2's words, `stream::run`) and by the
 //! Cranelift code (`native_cpu_stream::Parser`). Both give the same nodes, or the same
 //! refusal, for each document.
 //!
-//! The documents here are a fixed handful over the ladder's constructs. The engine's ladder
-//! tests draw many more from each step's grammar and check them against the reference.
+//! The documents here are a fixed handful over JSON's constructs. `ladder_tests` draws many
+//! more from each grammar and checks them against the reference.
 
 use crate::bitlex_masks::{self, FALLBACK, Symbols};
 use crate::native_cpu_stream::Parser;
@@ -25,45 +25,41 @@ impl Ids {
     }
 }
 
-/// Documents over the ladder's constructs, well formed and not: the empty file, keywords,
-/// lists, records, texts with escapes, numbers, both kinds of comment, and cut-off input.
+/// Documents over JSON's constructs, well formed and not: the empty file, keywords, lists, objects, strings with
+/// escapes, numbers, both kinds of comment (JSONC's), and cut-off input.
 const DOCUMENTS: &[&str] = &[
     "",
-    "vrai",
-    "fausse",
-    "nul",
-    " vrai ",
-    "vrai fausse",
-    "(vrai;fausse;nul)",
-    "((vrai);())",
-    "(vrai;",
-    "<#a# = vrai; #b# = (1;2)>",
-    "#texte#",
-    "#t^#x^^#",
-    "#cut",
+    "true",
+    "false",
+    "null",
+    " true ",
+    "true false",
+    "[true,false,null]",
+    "[[true],[]]",
+    "[true,",
+    "{\"a\": true, \"b\": [1, 2]}",
+    "\"texte\"",
+    "\"t\\\"x\\\\\"",
+    "\"cut",
     "42",
-    "~3,14e~2",
-    "1,",
-    "-- note\nvrai",
-    "{- note -} vrai",
-    "{- open",
+    "-3.14e-2",
+    "1.",
+    "// note\ntrue",
+    "/* note */ true",
+    "/* open",
     "{\"a\": [1, 2.5e3, true, null, \"x\\n\"]}",
     "[1, 2,]",
     "// c\n[1]",
 ];
 
-/// Each step: the compiled words equal the interpreters on every document, node for node, or
-/// refuse at the same word.
+/// Each of JSON's grammars: the compiled words equal the interpreters on every document, node for node, or refuse at
+/// the same word.
 #[test]
-fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    steps.sort();
-    // The test language's last step, JSON and JSONC (decision 0422).
-    assert_eq!(steps.len(), 3, "{} steps", steps.len());
+fn every_grammar_compiles_here_and_equals_the_interpreters() {
+    let steps = crate::ladder::grammars();
+    assert_eq!(steps.len(), 2, "JSON's two reference forms");
     let mut parsed = 0;
-    for path in steps {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-        let source = std::fs::read_to_string(&path).expect("a step");
+    for (name, source) in steps {
         let stmts = ::bitlex::syntax::parse(&source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
@@ -85,8 +81,7 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
         }
     }
     // Not refusals alone: many documents parse, so the nodes are compared too.
-    // 18 with the three steps (decision 0422).
-    assert!(parsed >= 15, "{parsed} documents parsed");
+    assert!(parsed >= 20, "{parsed} documents parsed");
 }
 
 /// A document whose tape does not fit 2-byte columns (70,000 blanks after its first separator: a
@@ -94,12 +89,10 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
 /// are the interpreter's, and its image is the writer's: offsets at 4 bytes, the rest at 2.
 #[test]
 fn a_tape_past_two_byte_columns_is_read_at_four() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    steps.sort();
+    let steps = crate::ladder::grammars();
     let mut wide = 0;
-    for path in steps {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+    for (name, source) in steps {
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
@@ -120,13 +113,12 @@ fn a_tape_past_two_byte_columns_is_read_at_four() {
             wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
         }
     }
-    // 5 with the three steps (decision 0422).
-    assert!(wide >= 5, "{wide} documents written at 4-byte offsets");
+    assert!(wide >= 6, "{wide} documents written at 4-byte offsets");
 }
 
 /// Decision 0434 §6, R17: tier 2 writes format 16 (and 16z) as it parses, passing its nodes to the writer's ops at
 /// its commit points (`Parser::image16`), with no format 15 image made, and its tape is the one the writer makes of
-/// tier 2's format 15 tape (`f16::write_from`), byte for byte: on every ladder step's documents, long ones (blocks
+/// tier 2's format 15 tape (`f16::write_from`), byte for byte: on every grammar's documents, long ones (blocks
 /// past the first, deep nesting) and ones with 70,000 blanks in them.
 #[test]
 fn tier2_writes_format_16_by_the_ops() {
@@ -144,17 +136,15 @@ fn tier2_writes_format_16_by_the_ops() {
             docs.push(format!("{}{}{}", &d[..=at], " ".repeat(70_000), &d[at + 1..]));
         }
     }
-    docs.push(format!("({})", vec!["vrai"; 3000].join(";")));
-    docs.push(format!("{}vrai{}", "(".repeat(300), ")".repeat(300)));
-    docs.push(format!("<{}>", (0..1500).map(|k| format!("#k{k}# = (1;~2,5e3;#t^#x#)")).collect::<Vec<_>>().join("; ")));
+    docs.push(format!("[{}]", vec!["true"; 3000].join(",")));
+    docs.push(format!("{}true{}", "[".repeat(300), "]".repeat(300)));
+    docs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [1, -2.5e3, \"t\\\"x\"]")).collect::<Vec<_>>().join(", ")));
     docs.push(format!("[{}]", vec!["{\"a\": [1, 2.5e3, true, null, \"x\\n\"]} // c\n"; 800].join(", ")));
     docs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)));
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    steps.sort();
+    let steps = crate::ladder::grammars();
     let (mut written, mut long) = (0, 0);
-    for path in steps {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+    for (name, source) in steps {
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
@@ -198,18 +188,16 @@ fn the_crate_assembles_only_a_parsers_program() {
     assert!(rir_asm::assemble("program sha256:00\n  0000 STOP 0\n").is_err(), "a digest");
 }
 
-/// Shared arms (`native_cpu_stream::shared_runs`) on every ladder step: each place of a body
+/// Shared arms (`native_cpu_stream::shared_runs`) on every grammar: each place of a body
 /// holds the body's words, runs do share, and refusals inside a place that is not its body's
 /// first say that place's word (the equality above checks the word; this, that it happens
 /// wherever such a place holds a word that can refuse).
 #[test]
 fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    steps.sort();
+    let steps = crate::ladder::grammars();
     let (mut runs, mut bodies, mut inside, mut refusing) = (0, 0, 0, 0);
-    for path in steps {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+    for (name, source) in steps {
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
@@ -289,8 +277,8 @@ fn a_numbers_check_runs_over_its_tokens_bytes() {
         }
         i == s.len()
     }
-    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
-    let c = crate::ladder::compile_step("14-json", &source);
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("JSON's grammar");
+    let c = crate::ladder::compile_step("json-rfc", &source);
     assert!(c.program.local_checks.iter().any(|k| k.token), "no token's check:\n{:?}", c.program.local_checks);
     let block = &c.program.block_programs[0];
     let ones = |n: usize| "1".repeat(n);
@@ -364,8 +352,8 @@ fn a_unicode_escapes_checks_run_at_its_u() {
         }
         !want_low
     }
-    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
-    let c = crate::ladder::compile_step("14-json", &source);
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("JSON's grammar");
+    let c = crate::ladder::compile_step("json-rfc", &source);
     // One token's check past its token (the hex digits and both lone halves, merged), and no
     // mask's. The lone low reads the six bytes before its escape and the tokens' ends there
     // (decision 0428): tier 1 has no surrogate test left.
@@ -442,7 +430,7 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
         ]);
     }
     let mut with = Vec::new();
-    for (name, source) in crate::ladder::steps() {
+    for (name, source) in crate::ladder::grammars() {
         let c = crate::ladder::compile_step(&name, &source);
         let block = &c.program.block_programs[0];
         let Some(r) = block.records.as_ref().filter(|r| r.gap.is_some()) else { continue };
@@ -472,7 +460,7 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
         let json = name.starts_with("14-") || name.starts_with("15-");
         assert!(tokens > if json { 1000 } else { 0 } && (refused > 0 || !json), "{name}: {tokens} tokens, {refused} files refused");
     }
-    for want in ["14-json", "15-jsonc"] {
+    for want in ["json-rfc", "jsonc"] {
         assert!(with.iter().any(|n| n.starts_with(want)), "{want}'s tokens do not end at their gaps: {with:?}");
     }
 }
@@ -488,7 +476,7 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
 #[test]
 #[cfg(target_arch = "aarch64")]
 fn the_hot_loop_carries_the_bytes_before_its_block() {
-    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+    for (name, source) in crate::ladder::grammars().into_iter().filter(|(n, _)| n.starts_with("json-rfc") || n.starts_with("jsonc")) {
         let c = crate::ladder::compile_step(&name, &source);
         let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
         let before: Vec<&String> = hot.iter().filter(|l| l.starts_with("ldr q") && l.contains(", #-")).collect();
@@ -527,7 +515,7 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
 #[test]
 #[cfg(target_arch = "aarch64")]
 fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
-    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+    for (name, source) in crate::ladder::grammars().into_iter().filter(|(n, _)| n.starts_with("json-rfc") || n.starts_with("jsonc")) {
         let c = crate::ladder::compile_step(&name, &source);
         let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
         for k in [14, 13] {
@@ -553,7 +541,7 @@ fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
         assert!(copies.len() <= 1, "{name}: vector copies in the hot loop: {copies:?}");
         let stack = crate::clif_text::loop_costs(&hot).0;
         // `machine_loop`'s loop, which takes in more of JSONC's than `json_shapes`'s (7 there).
-        let most = if name.starts_with("14-json") { 1 } else { 9 };
+        let most = if name.starts_with("json-rfc") { 1 } else { 9 };
         assert!(stack <= most, "{name}: {stack} stack loads or stores in the hot loop (at most {most})");
     }
 }
@@ -566,7 +554,7 @@ fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
 /// or cut short, continuations first or in runs, across the chunks' and the blocks' edges.
 #[test]
 fn utf8s_two_byte_rules_are_one_pair_lookup() {
-    let (name, source) = crate::ladder::steps().into_iter().find(|(n, _)| n.starts_with("14-json")).expect("14-json");
+    let (name, source) = crate::ladder::grammars().into_iter().find(|(n, _)| n.starts_with("json-rfc")).expect("json-rfc");
     let c = crate::ladder::compile_step(&name, &source);
     let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
     let (_, stripped) = crate::native_cpu_block::host_stripped(&native).expect("the host strips the mark");
@@ -614,7 +602,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
 /// and inside a string.
 #[test]
 fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
-    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::dir())).expect("14-json");
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("json-rfc");
     let at = source.find("error \"invalid UTF-8\"").expect("the check");
     let end = at + source[at..].find("\nerror ").expect("the next error");
     // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.
@@ -627,7 +615,7 @@ error "invalid UTF-8" when never | (needed ^ cont)
                          | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
                          | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)"#;
     let plain = format!("{}{plain_check}{}", &source[..at], &source[end..]);
-    let (a, b) = (crate::ladder::compile_step("14-json", &plain), crate::ladder::compile_step("14-json", &source));
+    let (a, b) = (crate::ladder::compile_step("json-rfc", &plain), crate::ladder::compile_step("json-rfc", &source));
     let (pa, pb) = (&a.program.block_programs[0], &b.program.block_programs[0]);
     let alphabet = [0x41u8, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xff];
     let (mut n, mut refused, mut differ) = (0usize, 0usize, Vec::new());
@@ -658,16 +646,19 @@ error "invalid UTF-8" when never | (needed ^ cont)
 #[test]
 fn a_mask_leaves_its_vector_where_it_is_read() {
     let mut checked = 0;
-    for (name, source) in crate::ladder::steps() {
+    for (name, source) in crate::ladder::grammars() {
         let c = crate::ladder::compile_step(&name, &source);
         for (block, lines) in crate::clif_text::hot_loop(&c.parser.tier1.clif) {
             for (i, l) in lines.iter().enumerate() {
                 let Some((v, rest)) = l.split_once(" = ") else { continue };
-                if !rest.starts_with("extractlane ") || rest.starts_with("extractlane.i8x16") {
+                // A mask taken out: a lane of a reduced vector (Arm's), or its bytes' high bits (x86-64's
+                // `vhigh_bits`, a `pmovmskb`).
+                let taken = |rest: &str| (rest.starts_with("extractlane ") && !rest.starts_with("extractlane.i8x16")) || rest.starts_with("vhigh_bits");
+                if !taken(rest) {
                     continue;
                 }
                 // Past the others moved before the same reader (a vector's two halves, say).
-                let j = (i + 1..lines.len()).find(|&j| crate::clif_text::opcode(&lines[j]) != "extractlane").expect("a terminator");
+                let j = (i + 1..lines.len()).find(|&j| !matches!(crate::clif_text::opcode(&lines[j]), "extractlane" | "vhigh_bits")).expect("a terminator");
                 let next = &lines[j];
                 let reads = next.split(|ch: char| !ch.is_alphanumeric()).any(|w| w == v);
                 let last = j + 1 == lines.len() || matches!(crate::clif_text::opcode(next), "brif" | "jump" | "return");
@@ -676,6 +667,35 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
             }
         }
     }
-    // 57 with the three steps (decision 0422).
-    assert!(checked >= 50, "{checked} masks");
+    assert!(checked > 30, "{checked} masks");
+}
+
+/// Decision 0529: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
+/// too: the interpreter's always, the compiled tier 1's where it stores them (JSON's forms). A token loop's tier 1
+/// (`.rr`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
+#[test]
+fn the_newline_output_is_every_newline() {
+    let rr = ("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned());
+    let docs: [&[u8]; 8] = [b"\n", b"\n\n", b"a\n", b" \n ", b"\r\n", b"// c\n", b"[1,\n2]\n", b"r(x).\n// c\n.decl r(a: number)\n"];
+    let mut differ = Vec::new();
+    for (name, source) in crate::ladder::grammars().into_iter().chain([rr]) {
+        let c = crate::ladder::compile_step(&name, &source);
+        let o = c.parser.tier1.newlines;
+        assert_eq!(o.is_none(), name == "rr", "{name}: tier 1's newlines where its body stores them");
+        let program = &c.program.block_programs[0];
+        let po = program.newline_output().expect("the program's newline output");
+        for doc in docs {
+            let long = [doc, &[b' '; 200][..], doc].concat();
+            for d in [doc, &long[..]] {
+                let want: Vec<usize> = (0..d.len()).filter(|&p| d[p] == b'\n').collect();
+                let bits = |words: &[u64]| (0..d.len()).filter(|&p| words.get(p / 64).is_some_and(|w| w >> (p % 64) & 1 == 1)).collect::<Vec<usize>>();
+                let interpreted = bits(&program.run(d).outputs[po]);
+                let compiled = o.map_or(want.clone(), |o| bits(&c.parser.tier1.extract(d).outputs[o]));
+                if interpreted != want || compiled != want {
+                    differ.push(format!("{name} {:?}: want {want:?}, interpreter {interpreted:?}, compiled {compiled:?}", String::from_utf8_lossy(d).chars().take(40).collect::<String>()));
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
 }

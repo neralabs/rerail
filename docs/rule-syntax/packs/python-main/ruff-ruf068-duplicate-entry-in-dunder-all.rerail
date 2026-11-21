@@ -1,5 +1,4 @@
 .policy "ruff-ruf068-duplicate-entry-in-dunder-all" revision 1
-.guests off
 .description "Don't list the same name twice in a module's __all__; a repeat has no effect and often hides a copy-paste mistake."
 .language python
 .mode steer

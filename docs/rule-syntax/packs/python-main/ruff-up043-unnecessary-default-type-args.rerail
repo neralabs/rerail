@@ -1,5 +1,4 @@
 .policy "ruff-up043-unnecessary-default-type-args" revision 1
-.guests off
 .description "Omit the trailing None type arguments from Generator and AsyncGenerator annotations; they are the defaults since Python 3.13."
 .language python
 .mode steer

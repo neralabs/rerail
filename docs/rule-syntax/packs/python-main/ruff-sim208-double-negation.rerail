@@ -1,5 +1,4 @@
 .policy "ruff-sim208-double-negation" revision 1
-.guests off
 .description "Remove double negation with not not; use the value itself, or bool() if you need a real boolean."
 .language python
 .mode steer

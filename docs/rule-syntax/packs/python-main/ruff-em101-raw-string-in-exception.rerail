@@ -1,5 +1,4 @@
 .policy "ruff-em101-raw-string-in-exception" revision 1
-.guests off
 .description "Assign an exception message to a variable before raising instead of passing a string literal; the traceback otherwise shows the message twice."
 .language python
 .mode steer

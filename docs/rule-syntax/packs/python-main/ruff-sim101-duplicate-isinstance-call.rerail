@@ -1,5 +1,4 @@
 .policy "ruff-sim101-duplicate-isinstance-call" revision 1
-.guests off
 .description "Merge isinstance() checks on the same object joined by or into one call with a tuple of types."
 .language python
 .mode steer

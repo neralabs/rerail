@@ -90,9 +90,8 @@ impl Session {
         let out = self.dir.join("out-kept");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
-        // The run's own scope, as `run`'s (Q357) and the session's run hold it: the shape is the run's count (decision
-        // 0442), read before the run ends. Without it the test's thread read a fresh count each time, every one 0, and
-        // R2's assertions held of nothing.
+        // The run's own scope, as the session's run holds it: its shape is the run's count (decision 0442). Without
+        // it the test's thread read a fresh count each time, every one 0, and R2's assertions held of nothing.
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -250,8 +249,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
-    let root = if root.exists() { root } else { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
+    let root = if root.exists() { root } else { std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(d) = stack.pop() {

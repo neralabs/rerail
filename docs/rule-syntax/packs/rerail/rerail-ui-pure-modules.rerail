@@ -1,0 +1,131 @@
+.policy "rerail-ui-pure-modules" revision 2
+.description "Keep the dashboard's pure derivation modules free of network, storage and DOM work and of imports of the modules that do it; they stay testable without a browser."
+.language javascript
+.mode log
+.scope include "ui/derive.js", "ui/first-open.js", "ui/pack-model.js", "ui/history-model.js", "ui/sessions-model.js", "ui/settings-model.js", "ui/repo-rules.js"
+// The dashboard's pure derivation modules (the scope's seven files) take their data as arguments, so they run
+// without a browser. Two clauses, as the JSON's:
+//   import { get } from "./api.js";                         UI_PURE_MODULE_IO_IMPORT (a module that does I/O or DOM
+//   import(`./views/${name}.js`)                            work: api, poll, shell, dom, app, …, views/, render/, frame/)
+//   fetch(url); document.title; window.location; history.back()    UI_PURE_MODULE_IO_GLOBAL
+//   import { isRunning } from "./derive.js";                not reported (another pure module)
+//   const at = (fetch) => fetch(url);                       not reported (a parameter, not the global)
+// A global is not reported under a function or arrow whose parameters name one of its group, nor in a block or
+// program that declares one with const, let or var (the JSON's groups: the I/O names; document; window, globalThis
+// and self; location; history).
+
+// ---- imports ---------------------------------------------------------------------------------------------------
+// io_module(s): the specifier string of an import, export … from or import(): a relative or rooted path to one of
+// the I/O modules or into views/, render/ or frame/ (a template too, by its static head), but rule-sheet-model.js.
+.decl io_module(s: node)
+io_module(s) :- (kind(s, "string") ; kind(s, "template_string")), import_source(s),
+    match("[\"'`](?:\\./|\\.\\./ui/|/(?:ui/)?)(?:(?:api|poll|shell|dom|app|actions|sheet|attachments|rule-remove|settings-writes)\\.js|(?:views|render|frame)/[^\"'`]*)(?:[?#][^\"'`]*)?[\"'`]", s),
+    !match("(?s:.*)rule-sheet-model\\.js(?s:.*)", s).
+io_module(s) :- kind(s, "template_string"), import_source(s), match("`(?:\\./|\\.\\./ui/|/(?:ui/)?)(?:views|render|frame)/(?s:.*)", s),
+    !match("(?s:.*)rule-sheet-model\\.js(?s:.*)", s).
+// import_source(s): s stands directly in an import or export statement, or in the arguments of import().
+.decl import_source(s: node)
+import_source(s) :- child(p, s, _), (kind(p, "import_statement") ; kind(p, "export_statement")).
+import_source(s) :- child(a, s, _), kind(a, "arguments"), child(c, a, _), kind(c, "call_expression"),
+    field(c, "function", f), kind(f, "import").
+
+.violation UI_PURE_MODULE_IO_IMPORT(at: node) "Take this data as an argument; do the request, write or DOM work in poll.js, a writes module or a view, and move a pure helper you need from there into a pure module."
+UI_PURE_MODULE_IO_IMPORT(s) :- io_module(s).
+
+// ---- globals ---------------------------------------------------------------------------------------------------
+// io_ref(n, g): n uses a browser global of group g: a bare I/O name or `document`, or a member of window,
+// globalThis or self, of location or of history that does I/O or reads the page.
+.decl io_ref(n: node, g: symbol)
+io_ref(n, "io") :- kind(n, "identifier"), io_names(p), glob(p, n).
+io_ref(n, "document") :- kind(n, "identifier"), text(n, "document").
+io_ref(m, "window") :- object_member(m, o, p), glob("{window,globalThis,self}", o),
+    glob("{location,history,localStorage,sessionStorage,navigator,document,addEventListener,removeEventListener,scrollTo,scrollBy,open,matchMedia,requestAnimationFrame,getComputedStyle,innerWidth,innerHeight,fetch}", p).
+io_ref(m, "location") :- object_member(m, o, p), text(o, "location"), glob("{hash,href,search,pathname,assign,replace,reload}", p).
+io_ref(m, "history") :- object_member(m, o, p), text(o, "history"), glob("{pushState,replaceState,back,forward,go}", p).
+// object_member(m, o, p): m is `o.p` with o a plain name.
+.decl object_member(m: node, o: node, p: node)
+object_member(m, o, p) :- kind(m, "member_expression"), field(m, "object", o), kind(o, "identifier"), field(m, "property", p).
+// io_names(p): the bare names that do I/O or touch the page, as a glob.
+.decl io_names(p: symbol)
+io_names("{fetch,EventSource,XMLHttpRequest,WebSocket,localStorage,sessionStorage,indexedDB,navigator,matchMedia,requestAnimationFrame,getComputedStyle,addEventListener,removeEventListener}").
+
+// binds(a, x): a binds the name x for the code inside it: an arrow's single parameter, any name in a function's
+// parameter list (defaults included), or a const, let or var declared directly in a block or the program.
+.decl binds(a: node, x: symbol)
+binds(a, x) :- kind(a, "arrow_function"), field(a, "parameter", p), text(p, x).
+binds(a, x) :- field(a, "parameters", ps), has(ps, i, "identifier"), text(i, x).
+binds(a, x) :- (kind(a, "statement_block") ; kind(a, "program")), child(a, d, _),
+    (kind(d, "lexical_declaration") ; kind(d, "variable_declaration")), child(d, v, _), kind(v, "variable_declarator"),
+    field(v, "name", x0), text(x0, x).
+// rebinds(a, g): a binds a name of group g.
+.decl rebinds(a: node, g: symbol)
+rebinds(a, "io") :- binds(a, x), io_names(p), glob(p, x).
+rebinds(a, "document") :- binds(a, "document").
+rebinds(a, "window") :- binds(a, x), glob("{window,globalThis,self}", x).
+rebinds(a, "location") :- binds(a, "location").
+rebinds(a, "history") :- binds(a, "history").
+// rebound(n, g): a use under something that rebinds its group, which is then no global.
+.decl rebound(n: node, g: symbol)
+rebound(n, g) :- io_ref(n, g), rebinds(a, g), within(n, a).
+
+.violation UI_PURE_MODULE_IO_GLOBAL(at: node) "Keep network, storage and DOM access out of this pure module: do it in poll.js, a writes module or a view, and pass the result in as an argument."
+UI_PURE_MODULE_IO_GLOBAL(n) :- io_ref(n, g), !rebound(n, g).
+
+// The pack's example (packs/rerail/pack.json).
+.test importing_io_modules_is_reported exactly
+    .fixture "ui/repo-rules.js" ```
+        import { get } from "./api.js";
+        import { toStoredRules } from "./poll.js";
+        ```
+    .expect UI_PURE_MODULE_IO_IMPORT at "ui/repo-rules.js":1
+    .expect UI_PURE_MODULE_IO_IMPORT at "ui/repo-rules.js":2
+.end
+
+.test views_re_exports_and_dynamic_imports_are_reported exactly
+    .fixture "ui/derive.js" ```
+        export { el } from "../ui/dom.js";
+        const view = await import(`./views/${name}.js`);
+        const frame = await import("/ui/frame/top.js?v=2");
+        import { sheetRows } from "./views/rule-sheet-model.js";
+        const label = "./api.js";
+        ```
+    .expect UI_PURE_MODULE_IO_IMPORT at "ui/derive.js":1
+    .expect UI_PURE_MODULE_IO_IMPORT at "ui/derive.js":2
+    .expect UI_PURE_MODULE_IO_IMPORT at "ui/derive.js":3
+.end
+
+.test browser_globals_are_reported exactly
+    .fixture "ui/settings-model.js" ```
+        export const load = (url) => fetch(url);
+        export const title = () => document.title;
+        export const here = () => window.location;
+        export function go(to) { location.hash = to; history.pushState(null, "", to); }
+        export const saved = () => localStorage.getItem("k");
+        ```
+    .expect UI_PURE_MODULE_IO_GLOBAL at "ui/settings-model.js":1
+    .expect UI_PURE_MODULE_IO_GLOBAL at "ui/settings-model.js":2
+    .expect UI_PURE_MODULE_IO_GLOBAL at "ui/settings-model.js":3
+    .expect UI_PURE_MODULE_IO_GLOBAL at "ui/settings-model.js":4
+    .expect UI_PURE_MODULE_IO_GLOBAL at "ui/settings-model.js":5
+.end
+
+// The pack's passing example; globals taken as parameters or declared locally; members of other objects; and a
+// module outside the scope.
+.test pure_imports_parameters_and_other_modules_pass exactly
+    .fixture "ui/repo-rules.js" ```
+        import { isRunning } from "./derive.js";
+        import { fmt, plural } from "./format.js";
+        ```
+    .fixture "ui/pack-model.js" ```
+        export const load = (fetch) => fetch(url);
+        export function title(document) { return document.title; }
+        export function here(window) { return window.location; }
+        export const at = (state) => state.location.hash + api.fetch(url);
+        const history = [];
+        history.go(1);
+        ```
+    .fixture "ui/poll.js" ```
+        import { get } from "./api.js";
+        export const load = (url) => fetch(url);
+        ```
+.end

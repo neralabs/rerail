@@ -256,7 +256,6 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     let mut prog = Program::new(&lang);
     let mut head = vec![
         format!(".policy {} revision {}", doc.get("id").map_or(q(""), q_val), doc.get("revision").map_or("1".to_owned(), py_str)),
-        ".guests off".to_owned(),
     ];
     if let Some(d) = doc.get("description").filter(|d| d.truthy()) {
         head.push(format!(".description {}", q_val(d)));

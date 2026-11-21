@@ -140,9 +140,13 @@ fn matcher_atom_exports_captures() {
 
 #[test]
 fn named_errors() {
-    let unbounded = parse(".decl hi(n: node, v: max<>)\n");
+    // An unbounded lattice needs `widen k` where its relation is recursive (decision 0515 §3): one its own rules read
+    // back. Read by none of them, a key's value changes once a batch.
+    let recursive = ".decl e(n: node, v: number)\n.input e\nhi(n, v) :- e(n, v).\nhi(n, w) :- hi(n, v), w = v + 1.\n";
+    let unbounded = parse(&format!(".decl hi(n: node, v: max<>)\n{recursive}"));
     assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
-    assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
+    assert!(parse(&format!(".decl hi(n: node, v: max<>) widen 4\n{recursive}")).is_ok());
+    assert!(parse(".decl e(n: node, v: number)\n.input e\n.decl hi(n: node, v: max<>)\nhi(n, v) :- e(n, v).\n").is_ok());
 
     // A min over symbols reduced their ids, not their text (python/references.rerail picked a route at random).
     let symbols = ".decl p(a: number, s: symbol)\n.decl q(a: number, s: symbol)\n.decl n(a: number, s: number)\n.decl r(a: number, s: number)\n";
@@ -449,7 +453,7 @@ fn no_tree_program_comes_back() {
             }
         }
     }
-    let native = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+    let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     let mut all = Vec::new();
     files(&native.join("src"), &mut all);
     for krate in std::fs::read_dir(native.join("crates")).unwrap() {
@@ -476,7 +480,7 @@ fn no_tree_program_comes_back() {
     let mut found = Vec::new();
     for path in &all {
         let text = std::fs::read_to_string(path).unwrap();
-        let rel = path.strip_prefix(native).unwrap_or(path).display().to_string();
+        let rel = path.strip_prefix(&native).unwrap_or(path).display().to_string();
         let home = rel.ends_with("logic/front/ast.rs") || rel.ends_with("logic/front.rs");
         let lowering = rel.contains("logic/rr/lower");
         let image = rel.contains("logic/program_image");

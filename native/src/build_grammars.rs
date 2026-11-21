@@ -241,15 +241,16 @@ fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
 /// the command that regenerates it, rather than spending half an hour generating it here; with
 /// GENERATE_PARSERS set, it is generated and written back.
 fn committed_parser(
-    base: &Path,
+    source: &Path,
     grammar: &VendoredGrammar,
     json: &str,
     generator: &str,
     out: &mut Vec<String>,
 ) -> String {
     use std::io::{Read, Write};
-    let path = base.join(format!("{}/{COMMITTED_PARSER}", grammar.source)).display().to_string();
-    out.push(format!("cargo:rerun-if-changed={path}"));
+    let path = source.join(COMMITTED_PARSER);
+    let display = path.display();
+    out.push(format!("cargo:rerun-if-changed={display}"));
     out.push(format!("cargo:rerun-if-env-changed={GENERATE_PARSERS}"));
     let expected = generated_from(grammar, json, generator);
     if std::env::var_os(GENERATE_PARSERS).is_some_and(|value| value == "1") {
@@ -259,24 +260,24 @@ fn committed_parser(
             .write_all(parser.as_bytes())
             .expect("gzip in memory");
         std::fs::write(&path, encoder.finish().expect("gzip in memory"))
-            .unwrap_or_else(|error| panic!("{path} is not writable: {error}"));
+            .unwrap_or_else(|error| panic!("{display} is not writable: {error}"));
         return parser;
     }
     let regenerate =
-        format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {path}");
+        format!("regenerate it with `node {GENERATOR}` (about 15 minutes) and commit {display}");
     let bytes = std::fs::read(&path)
-        .unwrap_or_else(|error| panic!("{path} is unreadable ({error}): {regenerate}"));
+        .unwrap_or_else(|error| panic!("{display} is unreadable ({error}): {regenerate}"));
     if bytes.starts_with(LFS_POINTER) {
-        panic!("{path} is a Git LFS pointer, not the file: run `{LFS_REMEDY}` (CONTRIBUTING.md)");
+        panic!("{display} is a Git LFS pointer, not the file: run `{LFS_REMEDY}` (CONTRIBUTING.md)");
     }
     let mut parser = String::new();
     flate2::read::GzDecoder::new(bytes.as_slice())
         .read_to_string(&mut parser)
-        .unwrap_or_else(|error| panic!("{path} is not a gzipped parser ({error}): {regenerate}"));
+        .unwrap_or_else(|error| panic!("{display} is not a gzipped parser ({error}): {regenerate}"));
     if !parser.starts_with(&expected) {
         let found = parser.lines().next().unwrap_or("");
         panic!(
-            "{path} was not generated from this grammar: it says\n  {found}\nnot\n  {}\n{regenerate}",
+            "{display} was not generated from this grammar: it says\n  {found}\nnot\n  {}\n{regenerate}",
             expected.trim_end()
         );
     }
@@ -295,13 +296,13 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) ->
         out.push(format!("cargo:rerun-if-changed={}", base.join(input).display()));
     }
     let name = grammar.name;
-    let source = base.join(grammar.source).display().to_string();
-    let json = std::fs::read_to_string(format!("{source}/grammar.json"))
+    let source = base.join(grammar.source);
+    let json = std::fs::read_to_string(source.join("grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
     if grammar.committed_parser {
-        let parser = committed_parser(base, grammar, &json, generator, &mut out);
+        let parser = committed_parser(&source, grammar, &json, generator, &mut out);
         std::fs::write(&parser_path, parser).expect("generated parser is writable");
     } else {
         // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
@@ -327,7 +328,7 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) ->
     let out_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
     let archive = out_dir.join(format!("lib{library}.a"));
     let compiled_stamp = out_dir.join(format!("{library}.compiled.sha256"));
-    let scanner = format!("{source}/scanner.c");
+    let scanner = source.join("scanner.c");
     let mut inputs = Sha256::new();
     for variable in ["TARGET", "HOST", "OPT_LEVEL", "DEBUG", "PROFILE", "CC", "CFLAGS"] {
         out.push(format!("cargo:rerun-if-env-changed={variable}"));
@@ -346,7 +347,7 @@ pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) ->
     collect_sources(&base.join(grammar.headers), &mut headers);
     headers.sort();
     for path in std::iter::once(parser_path.clone())
-        .chain(std::iter::once(PathBuf::from(&scanner)))
+        .chain(std::iter::once(scanner.clone()))
         .chain(headers)
     {
         inputs.update(path.to_string_lossy().as_bytes());

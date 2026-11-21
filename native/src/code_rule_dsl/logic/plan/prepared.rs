@@ -515,7 +515,7 @@ pub fn sizes_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> 
 /// `RERAIL_SIZES_FROM=LOG` (Q290's oracle, a measurement aid: a labelled bound, never a product path): each derived
 /// relation an estimate sizes is sized instead at the rows per node an earlier run held of it (the median of its `seen`
 /// lines in `LOG`, `sizes_log`'s), its columns' distinct values scaled with it. A version's prepared plans are kept by
-/// its identity (Q183), so a run under it needs a new store.
+/// its identity (Q228), so a run under it needs a new store.
 fn sizes_from() -> Option<std::sync::Arc<HashMap<String, f64>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
         let text = std::fs::read_to_string(std::env::var_os("RERAIL_SIZES_FROM")?).ok()?;

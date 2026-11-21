@@ -1,5 +1,4 @@
 .policy "ruff-d402-signature-in-docstring" revision 1
-.guests off
 .description "Describe what a function does in its docstring's first line instead of repeating its signature."
 .language python
 .mode steer

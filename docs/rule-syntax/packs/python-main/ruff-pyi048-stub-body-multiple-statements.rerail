@@ -1,5 +1,4 @@
 .policy "ruff-pyi048-stub-body-multiple-statements" revision 1
-.guests off
 .description "Give each function in a stub file a body of exactly one statement such as an ellipsis; stubs only declare types and are never executed."
 .language python
 .mode steer

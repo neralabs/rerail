@@ -2767,6 +2767,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "onig"
+version = "6.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc3cbf698f9438986c11a880c90a6d04b9de27575afd28bbf45b154b6c709e2"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "once_cell",
+ "onig_sys",
+]
+
+[[package]]
+name = "onig_sys"
+version = "69.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e68317604e77e53b85896388e1a803c1d21b74c899ec9e5e1112db90735edd7"
+dependencies = [
+ "cc",
+ "pkg-config",
+]
+
+[[package]]
 name = "ordermap"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3247,6 +3269,7 @@ dependencies = [
  "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -3331,6 +3354,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-device",
  "rerail-device-metal",
@@ -3462,6 +3486,7 @@ dependencies = [
  "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-tree-watch",
  "rerail-vue-lean",
  "rerail-w",
  "roaring",
@@ -3493,6 +3518,7 @@ name = "rerail-facts"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
@@ -4297,9 +4323,11 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
@@ -4695,14 +4723,17 @@ dependencies = [
 name = "rerail-store"
 version = "0.1.0"
 dependencies = [
+ "clru",
  "dunce",
  "foldhash",
  "gix",
  "hashbrown 0.16.1",
  "libc",
+ "onig",
  "parking_lot",
  "rayon",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
@@ -4710,11 +4741,13 @@ dependencies = [
  "rerail-prof",
  "rerail-store",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "tikv-jemalloc-sys",
+ "windows-sys 0.61.2",
  "zstd",
 ]
 
@@ -4814,6 +4847,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-tree-watch"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "libc",
+ "napi",
+ "napi-derive",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rerail-ukl"
 version = "0.1.0"
 dependencies = [
@@ -4880,6 +4924,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tree-watch",
  "rerail-w",
  "ruff_python_ast",
  "ruff_python_parser",
@@ -5146,13 +5191,13 @@ dependencies = [
 
 [[package]]
 name = "sha1"
-version = "0.10.7"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
 dependencies = [
  "cfg-if",
- "cpufeatures 0.2.17",
- "digest 0.10.7",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]

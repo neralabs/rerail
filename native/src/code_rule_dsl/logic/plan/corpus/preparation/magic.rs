@@ -229,6 +229,9 @@ fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSe
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|k| need.remove(k));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound).then(|| VarSet::of([var]))
             }
             Lit::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| lit_vars(*x)),
@@ -385,13 +388,15 @@ impl<'v> Ctx<'v, '_> {
             if pos.is_empty() {
                 return None;
             }
-            // A nullary atom is an existence test: it runs with no bindings (as the tree's `Adorn`, 614fc9a88e).
+            // A nullary atom is an existence test: it runs with no bindings.
             let first = |i: usize| match rest[i].first() {
-                None => true,
                 Some(t) if is_const(t) => true,
                 Some(Tm::Own(TermRef::Var(x))) => bound.contains(x),
                 Some(Tm::Fresh(n)) => bound.contains(fresh(r, n)),
-                _ => false,
+                Some(_) => false,
+                // A nullary atom is an existence test: it runs with no bindings (ported from cost-classifier-metal-rf's
+                // fix to the tree magic, `a_nullary_guard_is_ready_in_a_demanded_body`).
+                None => !matches!(rest[i], M::True),
             };
             let derived = |i: usize| self.idb.contains(rest[i].positive(v).expect("a positive atom"));
             let joined: Vec<usize> = pos.iter().copied().filter(|&i| !rest[i].vars(r).is_disjoint(&bound)).collect();

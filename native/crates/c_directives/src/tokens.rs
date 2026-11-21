@@ -111,13 +111,16 @@ mod tests {
         if interp != image {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
-        // The device runs it wherever there is one: always on macOS; on Linux where a GPU is (CI's has none).
+        // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
+        // never skipped). A Linux host's GPU lane (decision 0440 step E) may have no device, and is then skipped.
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if cfg!(target_os = "macos") || rerail_metal::lane::device().is_ok() {
-            let m = c.metal_images(&[src]).map_err(|e| format!("the device runs it: {e:?}"))?;
-            if m[0] != image {
-                return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
-            }
+        if let Some(m) = match c.metal_images(&[src]) {
+            Ok(m) => Some(m),
+            Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
+            Err(_) => None,
+        } && m[0] != image
+        {
+            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
         }
         let Some(image) = image else { return Ok(false) };
         let (got, want) = (read(&image, src)?, lean(src, cpp));

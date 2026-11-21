@@ -27,7 +27,7 @@ use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).
@@ -106,6 +106,12 @@ fn aggregate(op: &AggOp) -> Probe {
         AggOp::Max => probe("aggregate max", &["agg max"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = max v : { p(a, v) }."),
         AggOp::Product => probe("aggregate product", &["agg product"], "a: symbol, c: number", "{HEAD}(a, c) :- s(a), c = product v : { p(a, v) }."),
         AggOp::Join { .. } => probe("aggregate join", &["agg join"], "a: symbol, c: symbol", "{HEAD}(a, c) :- t(a), c = join b by b sep \", \" : { q(a, b) }."),
+        // Bounded by a probe's number (decision 0511): `max v : { p(a, v), v < x }` and its three others, over groups
+        // with values on both sides of a bound, on one side only, and none.
+        AggOp::Bounded { max, strict, .. } => {
+            let (name, op) = (if *max { "max" } else { "min" }, AggOp::bound_cmp(*max, *strict));
+            probe(format!("aggregate {name} bounded by {op}"), &[&format!("agg {name}")], "a: symbol, x: number, c: number", format!("{{HEAD}}(a, x, c) :- s(a), n(x), c = {name} v : {{ p(a, v), v {op} x }}."))
+        }
     }
 }
 
@@ -219,6 +225,9 @@ fn probes() -> Vec<Probe> {
     }
     for op in [AggOp::Count, AggOp::Sum, AggOp::Min, AggOp::Max, AggOp::Product, AggOp::Join { by: Vec::new(), sep: String::new() }] {
         out.push(aggregate(&op));
+    }
+    for (max, strict) in [(true, true), (true, false), (false, true), (false, false)] {
+        out.push(aggregate(&AggOp::Bounded { max, bound: "x".into(), strict }));
     }
     // `@concat` of more than two texts, as the data-layer programs write it: their concatenation, left to right.
     out.push(probe("functor @concat of three texts", &["call concat"], "a: symbol", "{HEAD}(v) :- t(a), t(b), v = @concat(a, \"::\", b)."));
@@ -336,7 +345,12 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     Ok(Verdict { native, device })
 }
 
+/// `RERAIL_COVERAGE_NO_DEVICE=1`: the probes' native verdicts alone, the device's not run (with
+/// `RERAIL_COVERAGE_ONLY`, a step built while Metal work waits, 2026-11-20).
 fn metal() -> bool {
+    if std::env::var_os("RERAIL_COVERAGE_NO_DEVICE").is_some() {
+        return false;
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     return crate::code_rule_dsl::transducer::packed::metal_join::available();
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -397,12 +411,18 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+    if had != text {
+        let old: BTreeSet<&str> = had.lines().collect();
+        let new: BTreeSet<&str> = text.lines().collect();
+        let gone = old.difference(&new).copied().collect::<Vec<_>>().join("\n");
+        let came = new.difference(&old).copied().collect::<Vec<_>>().join("\n");
+        panic!("the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{gone}\n+++ now\n{came}", path.display());
+    }
 }
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -583,7 +603,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {

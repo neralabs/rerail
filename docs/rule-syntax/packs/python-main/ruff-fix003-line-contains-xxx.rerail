@@ -1,5 +1,4 @@
 .policy "ruff-fix003-line-contains-xxx" revision 1
-.guests off
 .description "Resolve the issue an XXX comment marks before shipping, or at least replace it with a more descriptive tag such as TODO."
 .language python
 .mode steer

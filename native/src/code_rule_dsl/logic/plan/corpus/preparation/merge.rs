@@ -499,6 +499,10 @@ impl<'v> Canon<'v> {
                         AggRef::Product => (3, false),
                         AggRef::Max => (4, false),
                         AggRef::Join { .. } => (5, false),
+                        AggRef::Bounded { max: false, strict: false, .. } => (6, false),
+                        AggRef::Bounded { max: false, strict: true, .. } => (7, false),
+                        AggRef::Bounded { max: true, strict: false, .. } => (8, false),
+                        AggRef::Bounded { max: true, strict: true, .. } => (9, false),
                     };
                     c.out.push(Tok::I(k));
                     if !count {
@@ -510,6 +514,10 @@ impl<'v> Canon<'v> {
                             c.out.push(Tok::V(s));
                         }
                         c.out.push(Tok::S(v.text(sep)));
+                    }
+                    if let Some(b) = op.bound() {
+                        let b = c.name(b);
+                        c.out.push(Tok::V(b));
                     }
                     c.atom(atom);
                 }
@@ -880,17 +888,25 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Congruenc
     }
 }
 
-/// `congruence`'s last filter: a request's class is the request and its copies alone, the rest a class without it;
-/// an unread relation joins a class only with a lowering's widened copy of it (`rr_wide_<attr>_<r>`, decision 0174);
-/// any other stays apart.
+/// `congruence`'s last filter: a request's class is the request and its copies alone, each request's apart, the rest
+/// a class without them; an unread relation joins a class only with a lowering's widened copy of it
+/// (`rr_wide_<attr>_<r>`, decision 0174); any other stays apart.
 fn filter_classes(groups: impl Iterator<Item = Vec<String>>, read: &BTreeSet<&str>) -> Vec<Vec<String>> {
     groups
         .flat_map(|g| {
-            let (with_request, g): (Vec<String>, Vec<String>) = match g.iter().find(|r| request(r)).cloned() {
-                Some(req) => g.into_iter().partition(|r| *r == req || copy_of(r, &req)),
-                None => (Vec::new(), g),
-            };
-            [(with_request.len() > 1).then_some(with_request), (!g.is_empty()).then_some(g)].into_iter().flatten()
+            // Each request in a class splits off with its copies: a class of two requests is two classes, never one.
+            let (mut out, mut rest) = (Vec::new(), g);
+            while let Some(req) = rest.iter().find(|r| request(r)).cloned() {
+                let (with_request, others): (Vec<String>, Vec<String>) = rest.into_iter().partition(|r| *r == req || copy_of(r, &req));
+                if with_request.len() > 1 {
+                    out.push(with_request);
+                }
+                rest = others;
+            }
+            if !rest.is_empty() {
+                out.push(rest);
+            }
+            out
         })
         .filter_map(|g| {
             if g.iter().any(|r| request(r)) {

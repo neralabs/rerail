@@ -96,6 +96,15 @@ pub const VIEW_LOC_COL: u32 = 7;
 pub const VIEW_LOC_DOCOF: u32 = 8;
 /// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
 pub const VIEW_LINE: u32 = 9;
+/// The `tape`, `ast_depth` and `node_order` views (`View::Tape`, `View::Depth`, `View::Order`), read in place only
+/// (no device code makes their rows).
+pub const VIEW_TAPE: u32 = 10;
+pub const VIEW_DEPTH: u32 = 11;
+pub const VIEW_ORDER: u32 = 12;
+
+/// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const NVIEWS: usize = rerail_clif::view_reads::VIEWS.len();
 
 /// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
 /// device code.
@@ -110,6 +119,9 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_LOC_END => 7,
         VIEW_LOC_COL => 8,
         VIEW_LOC_DOCOF => 9,
+        VIEW_TAPE => 10,
+        VIEW_DEPTH => 11,
+        VIEW_ORDER => 12,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -126,6 +138,9 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
         View::Line => VIEW_LINE,
+        View::Tape => VIEW_TAPE,
+        View::Depth => VIEW_DEPTH,
+        View::Order => VIEW_ORDER,
         _ => return None,
     })
 }
@@ -190,20 +205,20 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
-    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+    build_dir(&chunk.block, &docs_of(batch, [0; NVIEWS]))
 }
 
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct DirDoc<'a> {
-    p: &'a Arc<super::Projected>,
+    p: &'a super::Projected,
     dialect: &'a super::Dialect,
-    rows: [u32; 9],
+    rows: [u32; NVIEWS],
 }
 
 /// `batch`'s documents in a directory, each view's rows past `past` of that view.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
+fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
     let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
     batch
         .docs
@@ -211,7 +226,7 @@ fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
         .enumerate()
         .map(|(i, p)| {
             let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
-            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc];
+            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc, n, n, n];
             DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
         })
         .collect()
@@ -219,10 +234,10 @@ fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
 
 /// Each view's rows of `batch` (`VIEWS`' order).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn rows_of(batch: &Batch) -> [u32; 9] {
+fn rows_of(batch: &Batch) -> [u32; NVIEWS] {
     let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
     let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
-    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc]
+    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc, n, n, n]
 }
 
 /// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
@@ -231,7 +246,7 @@ fn rows_of(batch: &Batch) -> [u32; 9] {
 /// a tape is not where the device reads it.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
-    let mut docs = docs_of(batch, [0; 9]);
+    let mut docs = docs_of(batch, [0; NVIEWS]);
     let mut past = rows_of(batch);
     for v in values {
         docs.extend(docs_of(v, past));
@@ -452,9 +467,9 @@ fn build_in(batch: &Batch) -> Chunk {
             (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
-            (*d).node_row = batch.nodes[i] as u32;
-            (*d).child_row = batch.children[i] as u32;
-            (*d).field_row = batch.fields[i] as u32;
+            (*d).node_row = batch.nodes()[i] as u32;
+            (*d).child_row = batch.offsets(View::Child)[i] as u32;
+            (*d).field_row = batch.offsets(View::Field)[i] as u32;
             (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
@@ -496,9 +511,9 @@ fn build_in(batch: &Batch) -> Chunk {
     // SAFETY: the root, just allocated; its spans point into `b`.
     unsafe {
         (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = *batch.nodes.last().unwrap_or(&0) as u32;
-        (*root).children = *batch.children.last().unwrap_or(&0) as u32;
-        (*root).fields = *batch.fields.last().unwrap_or(&0) as u32;
+        (*root).nodes = *batch.nodes().last().unwrap_or(&0) as u32;
+        (*root).children = *batch.offsets(View::Child).last().unwrap_or(&0) as u32;
+        (*root).fields = *batch.offsets(View::Field).last().unwrap_or(&0) as u32;
         Span::set(&raw const (*root).docs, docs, batch.docs.len());
     }
     let at = b.offset_of(root);

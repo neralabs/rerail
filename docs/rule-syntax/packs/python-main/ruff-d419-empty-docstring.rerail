@@ -1,5 +1,4 @@
 .policy "ruff-d419-empty-docstring" revision 1
-.guests off
 .description "Write a summary in every Python docstring or remove it; an empty docstring documents nothing."
 .language python
 .mode steer

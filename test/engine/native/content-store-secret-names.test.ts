@@ -29,7 +29,7 @@ describe("content store admission", () => {
     try {
       execFileSync("git", ["init", "--quiet", checkout]);
       writeFileSync(join(checkout, "seed.py"), "value = 1\n");
-      execFileSync("git", ["add", "."], { cwd: checkout });
+      execFileSync("git", ["add", "seed.py"], { cwd: checkout });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: checkout });
       workspace.addCodeRule(loadNativeBinding().CodeRuleDslRuntime!.compile(needle, "json", capabilities));
       const attachment = await workspace.enableStorageAsync(checkout, storePath, { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES });
@@ -54,6 +54,8 @@ describe("content store admission", () => {
       expect(sources.map(row => row.bytes)).toEqual([Buffer.byteLength(source)]);
     } finally {
       workspace.close();
+      // The engine's upkeep retires its jobs for the stores under the folder before the folder goes.
+      loadNativeBinding().retireUpkeepUnder?.(root);
       removeFolderSync(root);
     }
   });

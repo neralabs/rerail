@@ -808,13 +808,13 @@ pub(in crate::code_rule_dsl) fn factors_of(v: &Version, r: super::super::program
     factors_without(v, r, None)
 }
 
-/// `factors_of` over rule `r`'s body without its literal `skip` (a request's guard, decision 0506): the parts' literals
-/// by their places in the whole body.
+/// `factors_of` over rule `r`'s body without its literal `skip` (a request that guards the rule, which names both
+/// halves of its head): the parts' literals by their places in the whole body.
 pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::program_image::RuleRef<'_>, skip: Option<usize>) -> Option<(String, Vec<Vec<usize>>)> {
     use super::super::program_image::Lit;
+    let places: Vec<usize> = (0..r.body().count()).filter(|&i| Some(i) != skip).collect();
     let all: Vec<_> = r.body().collect();
-    let at: Vec<usize> = (0..all.len()).filter(|&i| Some(i) != skip).collect();
-    let lits: Vec<_> = at.iter().map(|&i| all[i]).collect();
+    let lits: Vec<_> = places.iter().map(|&i| all[i]).collect();
     if !lits.iter().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. })) {
         return None;
     }
@@ -827,7 +827,8 @@ pub(in crate::code_rule_dsl) fn factors_without(v: &Version, r: super::super::pr
     let vars: Vec<super::body::VarSet> = lits.iter().map(|&l| super::body::lit_vars(l)).collect();
     let numbered = Numbered::of(head.iter().map(name), vars.iter().map(|vs| vs.iter().map(name)));
     let (key, parts) = factor_parts(&numbered, &positive)?;
-    Some((numbered.names[key].to_owned(), parts.into_iter().map(|p| p.into_iter().map(|i| at[i]).collect()).collect()))
+    let parts = parts.into_iter().map(|p| p.into_iter().map(|i| places[i]).collect()).collect();
+    Some((numbered.names[key].to_owned(), parts))
 }
 
 /// A body's variables for `factor_parts`, numbered in the order of their names (so a key tried in number order is
@@ -1152,6 +1153,18 @@ pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop 
     }
     let own = to.published.load().is_some().then(Observed::default);
     Entered(Some(to), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
+}
+
+/// While the guard lives, the run reads and observes into `chunk`'s observations (`chunk_observed`, Q88): bound in
+/// the run's context for the extent, so its jobs do too, and this thread's own added to them as it ends.
+pub(in crate::code_rule_dsl) fn enter_chunk_observed(chunk: SharedObserved) -> impl Sized {
+    // The thread's own observations end first, inside the binding (fields drop in order).
+    struct In<E> {
+        _own: E,
+        _bound: crate::code_rule_dsl::logic::profile::Bound,
+    }
+    let bound = crate::code_rule_dsl::logic::profile::bind(ObservedAt(chunk.clone()));
+    In { _own: enter_observed(chunk), _bound: bound }
 }
 
 /// Observed join work and relations, each with the corpus nodes of the runs that observed it (summed), so a later

@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { TimeBalancedSequencer } from "./test/support/shards/time-balanced-sequencer.js";
 
-// Pulling-it-all-together's tests of its `relational` clause, merged in at cbee7a03c. This engine
+// PIAT's tests of its `relational` clause, merged in at cbee7a03c. This engine
 // compiles that clause only under `cargo test` (open item O18: it carries SQL, which rules do not),
 // so the addon refuses it ("unknown field `relational`"). RERAIL_RELATIONAL_TESTS=1 runs them
 // against an addon that has it, such as P's own (open item O84).
@@ -34,8 +34,8 @@ export default defineConfig({
     // RERAIL_MODIFY_PATH keeps set-up out of the shell startup files and the Windows user Path.
     env: { RERAIL_AUTOSTART: "0", RERAIL_DEVICE_SECRET_STORE: "file", RERAIL_MODIFY_PATH: "0" },
     // Points the temp folder at one folder per run, which the run removes when it ends and the next run removes if a
-    // kill ended this one first, so no test's temporary folder outlives the run.
-    globalSetup: ["./test/support/temporary/run-folder.ts"],
+    // kill ended this one first, so no test's temporary folder outlives the run. On Windows, the stores' cleanup too.
+    globalSetup: ["./test/support/temporary/run-folder.ts", ...(process.platform === "win32" ? ["./test/support/windows-store-cleanup.ts"] : [])],
     // The setup file mutates process.env to give every test file its own catalog home. Forked
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",

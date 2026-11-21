@@ -1,5 +1,4 @@
 .policy "ruff-up001-useless-metaclass-type" revision 1
-.guests off
 .description "Remove redundant assignments of type to __metaclass__; Python 3 classes already use type as their metaclass."
 .language python
 .mode steer

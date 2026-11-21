@@ -18,6 +18,8 @@
 //! they were a check of their `stat`s; within a process, the graph is kept while every module and every absent
 //! candidate is as it was.
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};
@@ -35,6 +37,29 @@ pub enum Seed {
     Text { t_shape: bool, includes: Vec<(i64, String)>, phases: Vec<String> },
     /// A program file (canonical).
     File(PathBuf),
+}
+
+// bootstrap.rerail splits and joins path symbols with '/'. A Windows verbatim path with mixed
+// separators cannot be opened. Convert at both boundaries, including absent candidates.
+fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
+    #[cfg(windows)]
+    if s.contains('\\') { return s.replace('\\', "/").into(); }
+    s.into()
+}
+
+fn host_spelling(s: &str) -> String {
+    #[cfg(windows)]
+    if s.contains('/') && std::path::Path::new(s).is_absolute() {
+        let spelling = bootstrap_spelling(s);
+        if let Ok(path) = std::path::absolute(spelling.as_ref()) {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    s.to_owned()
+}
+
+fn candidate_path(dir: &str, name: &str) -> PathBuf {
+    PathBuf::from(host_spelling(&format!("{}/{name}", bootstrap_spelling(dir))))
 }
 
 /// The include graph phase 0 derived.
@@ -143,14 +168,15 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
 /// of `bootstrap.rerail` over all of them (a pack's programs are one run, not one each).
 #[derive(Default)]
-struct PhaseZeroGraphs(Mutex<HashMap<Seed, Arc<Graph>>>);
+struct PhaseZeroGraphs(Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>);
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
+    let dirs = Dirs::here();
     let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
     let kept = &kept_held.0;
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
-        seeds.iter().map(|s| map.get(s).cloned()).collect()
+        seeds.iter().map(|s| map.get(&(dirs.clone(), s.clone())).cloned()).collect()
     };
     // A kept graph that no longer holds leaves the process's map too: the images' step below fills a seed from the
     // map, and found the stale graph there again, so a file edited after its graph was kept was read as it was (its
@@ -162,7 +188,15 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     if !stale.is_empty() {
         let mut map = kept.lock().expect("phase 0's graphs");
         for s in stale {
-            map.remove(s);
+            map.remove(&(dirs.clone(), s.clone()));
+        }
+    }
+    let images = Images::here();
+    if let Some(images) = &images {
+        for (seed, graph) in seeds.iter().zip(&found) {
+            if let Some(graph) = graph {
+                crate::code_rule_dsl::logic::rr::retain_graph_image(images.store.as_deref(), images.key(seed), || images.encode(graph));
+            }
         }
     }
     let wanted: Vec<Seed> = {
@@ -175,8 +209,8 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     // A seed's graph kept as an image (the shipped bundle, or an earlier process of this build) is taken where it
     // holds: a digest of each file and a look at each absent candidate, not a run of `bootstrap.rerail`.
     let mut wanted = wanted;
-    if !wanted.is_empty() && let Some(images) = Images::here() {
-        let mut map = kept.lock().expect("phase 0's graphs");
+    if !wanted.is_empty() && let Some(images) = &images {
+        let mut accepted = HashMap::new();
         // A pack's graphs share their modules: each file is looked at once for all of them, not once a graph.
         let mut looked: HashMap<PathBuf, Option<[u8; 32]>> = HashMap::new();
         let mut missing: HashMap<PathBuf, bool> = HashMap::new();
@@ -206,26 +240,32 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
                 return true;
             };
             crate::code_rule_dsl::prof::count("phase0.graph_image_read", 1);
-            map.insert(seed.clone(), Arc::new(g));
+            accepted.insert(seed.clone(), Arc::new(g));
             false
         });
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
-                *g = map.get(seed).cloned();
+                *g = accepted.get(seed).cloned();
             }
         }
+        kept.lock().expect("phase 0's graphs").extend(accepted.into_iter().map(|(seed, graph)| ((dirs.clone(), seed), graph)));
     }
     if !wanted.is_empty() {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
-            eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
+            eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if images.is_some() { "on" } else { "off" });
         }
-        let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
+        let whole = match derive(&wanted) {
+            Err(PlanError::Cache(_)) if super::tape_cache_path().is_some() => {
+                super::with_tape_cache_path(std::path::Path::new(":memory:"), None, || derive(&wanted))
+            }
+            result => result,
+        }.map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's. The image keeps the bootstrap run's plans (Q150), so this run and the next, which reads it, name
         // the same plans (`the_run_after_a_cold_one_writes_nothing`). Clearing them here as well (f7e047997, from
         // before images kept them) made the run that derived a graph name none and the run that read it name them.
-        if let Some(images) = Images::here() {
+        if let Some(images) = &images {
             for (seed, g) in &made {
                 crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
             }
@@ -239,7 +279,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         let keep = true;
         if keep {
             let mut map = kept.lock().expect("phase 0's graphs");
-            map.extend(made.iter().map(|(s, g)| (s.clone(), Arc::clone(g))));
+            map.extend(made.iter().map(|(s, g)| ((dirs.clone(), s.clone()), Arc::clone(g))));
         }
         for (g, seed) in found.iter_mut().zip(seeds) {
             if g.is_none() {
@@ -256,7 +296,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
 /// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
 /// to its read, which derives its graph again and reports the error.
 pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
-    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonicalize().ok()).map(Seed::File).collect();
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonical().ok()).map(Seed::File).collect();
     let _ = graphs(&seeds);
 }
 
@@ -273,7 +313,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rerail".to_owned())));
     for (at, name) in names {
         // `bootstrap.rerail`'s candidate: `cat(lib, "/", name)`, as written, not made canonical.
-        let path = PathBuf::from(format!("{}/{name}", lib.display()));
+        let path = candidate_path(&lib.to_string_lossy(), &name);
         if !file.digests.contains_key(&path) {
             return false;
         }
@@ -285,7 +325,7 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     let phase_lib = &dirs.phases;
     let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len());
     for p in phases {
-        let path = PathBuf::from(format!("{}/{p}.rerail", phase_lib.display()));
+        let path = candidate_path(&phase_lib.to_string_lossy(), &format!("{p}.rerail"));
         if !file.digests.contains_key(&path) && !file.absent.contains(&path) {
             return false;
         }
@@ -297,12 +337,13 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
         whole.phases.insert(text_key(0), named);
     }
     let graph = whole.of(seed, 0);
-    crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert(seed.clone(), Arc::new(graph));
+    crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>().0.lock().expect("phase 0's graphs").insert((Some(dirs.clone()), seed.clone()), Arc::new(graph));
     true
 }
 
 /// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
 /// once by a caller that keeps many texts (`keep_text`).
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub(in crate::code_rule_dsl) struct Dirs {
     pub(in crate::code_rule_dsl) lib: PathBuf,
     pub(in crate::code_rule_dsl) phases: PathBuf,
@@ -310,13 +351,13 @@ pub(in crate::code_rule_dsl) struct Dirs {
 
 impl Dirs {
     pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
-        Some(Dirs { lib: std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
+        Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
     }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.
 pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
-    std::fs::canonicalize(super::phases::builtin_dir()).ok()
+    dunce::canonicalize(super::phases::builtin_dir()).ok()
 }
 
 /// Graphs as images (`rr::graph_image`): keyed by the engine's build and the seed, their paths written relative to the
@@ -333,12 +374,13 @@ struct Images {
 
 impl Images {
     fn here() -> Option<Images> {
-        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
-        Some(Images { lib: format!("{}/", lib.display()), phases: format!("{}/", phase_lib()?.display()), store: crate::code_rule_dsl::logic::rr::image_store() })
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
+        Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: crate::code_rule_dsl::logic::rr::image_store() })
     }
 
     /// A path or an includer, relative where it is under one of the two directories.
     fn rel(&self, s: &str) -> String {
+        let s = bootstrap_spelling(s);
         if let Some(r) = s.strip_prefix(&self.lib) {
             format!("lib:{r}")
         } else if let Some(r) = s.strip_prefix(&self.phases) {
@@ -350,11 +392,11 @@ impl Images {
 
     fn abs(&self, s: &str) -> Option<String> {
         if let Some(r) = s.strip_prefix("lib:") {
-            Some(format!("{}{r}", self.lib))
+            Some(host_spelling(&format!("{}{r}", self.lib)))
         } else if let Some(r) = s.strip_prefix("phase:") {
-            Some(format!("{}{r}", self.phases))
+            Some(host_spelling(&format!("{}{r}", self.phases)))
         } else {
-            s.strip_prefix("abs:").map(str::to_owned)
+            s.strip_prefix("abs:").map(host_spelling)
         }
     }
 
@@ -441,14 +483,14 @@ impl Graph {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
         let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
         let mut candidate = |from: &str, name: &str| {
             if let Some(l) = &lib {
-                candidates.insert(PathBuf::from(format!("{l}/{name}")));
+                candidates.insert(candidate_path(l, name));
             }
-            if !from.starts_with("text:") && from != "engine" && let Some((dir, _)) = from.rsplit_once('/') {
-                candidates.insert(PathBuf::from(format!("{dir}/{name}")));
+            if !from.starts_with("text:") && from != "engine" && let Some((dir, _)) = bootstrap_spelling(from).rsplit_once('/') {
+                candidates.insert(candidate_path(dir, name));
             }
         };
         let own = |from: &str, at: i64, name: &str| from == start || !(at == -1 && name == "core.rerail");
@@ -529,21 +571,23 @@ impl Graph {
 /// Runs `bootstrap.rerail` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
 pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
-    let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
+    let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rerail");
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;
     text.push_str("\n// The engine's builtin facts.\n");
-    text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&lib.to_string_lossy())));
+    #[cfg(windows)]
+    text.push_str("env(\"rerail.windows_paths\", \"1\").\n");
+    text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&bootstrap_spelling(&lib.to_string_lossy()))));
     // The library's parent is a root too: packs include their tables beside the library (`#include
     // "../packs/python/….names.rerail"`), which the resolver before phase 0 read, and the loader confines reads to roots.
     if let Some(parent) = lib.parent() {
-        text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&parent.to_string_lossy())));
+        text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&bootstrap_spelling(&parent.to_string_lossy()))));
     }
     // The phase programs' directory, where a declaration's phase is found (`p0_phase`).
     if let Some(dir) = phase_lib() {
-        text.push_str(&format!("env(\"rerail.phase_lib\", {}).\n", quote(&dir.to_string_lossy())));
+        text.push_str(&format!("env(\"rerail.phase_lib\", {}).\n", quote(&bootstrap_spelling(&dir.to_string_lossy()))));
     }
     let mut dirs = std::collections::BTreeSet::new();
     for (k, seed) in seeds.iter().enumerate() {
@@ -562,7 +606,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 }
             }
             Seed::File(path) => {
-                text.push_str(&format!("p0_file({}).\n", quote(&path.to_string_lossy())));
+                text.push_str(&format!("p0_file({}).\n", quote(&bootstrap_spelling(&path.to_string_lossy()))));
                 // The file's own directory is a root the loader may read: its includes beside it are files there.
                 if let Some(dir) = path.parent() {
                     dirs.insert(dir.to_path_buf());
@@ -575,34 +619,26 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         .into_iter()
         .flatten()
         .chain(dirs.iter().cloned())
-        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .filter_map(|d| dunce::canonicalize(d).ok())
         .collect();
     for dir in dirs {
-        text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
+        text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&bootstrap_spelling(&dir.to_string_lossy()))));
     }
-    // No corpus: an empty root, and the library a root the loader may read (`env`).
-    // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
-    // Both are rerail's own (decision 0284), as the family `rerail-phase-0-…`: answered, never kept, and nothing above
-    // them watched for them. Canonicalizing the root had watched the whole temporary directory, whose news (other
-    // programs' files, the last process's outputs) the run after a cold one stored.
-    crate::content_store::observe::own(&std::env::temp_dir().join("rerail-phase-0"));
-    let root = std::env::temp_dir().join("rerail-phase-0-root");
-    std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
-    let root = std::fs::canonicalize(&root).unwrap_or(root);
-    static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-    let options = serde_json::json!({ "reuse": true });
+    // The library is already a permitted input root. Phase zero only loads the files its seeds request.
+    let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
+    let mut image = Vec::new();
     let phase_0 = in_phase_0();
-    let run = super::run_with_options(&[&text], &root, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",
+        crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options, Some(&mut image), Default::default());
     drop(phase_0);
-    let result = run.map(|report| {
+    run.and_then(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };
         // The outputs' image, read where it is: each value typed, nothing parsed.
-        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap_or_else(|_| crate::code_rule_dsl::logic::plan::output::Outputs::of(&[]).expect("no image"));
+        let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::of(&image).map_err(PlanError::Plan)?;
         for r in outputs.rows("p0_include") {
             if let (V::Text(from), Some(at), V::Text(name), V::Text(path)) = (r.get(0), r.get(1).int(), r.get(2), r.get(3)) {
-                g.includes.entry(from.to_owned()).or_default().push((at, name.to_owned(), PathBuf::from(path)));
+                g.includes.entry(host_spelling(from)).or_default().push((at, name.to_owned(), PathBuf::from(host_spelling(path))));
             }
         }
         for v in g.includes.values_mut() {
@@ -610,19 +646,19 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         }
         for r in outputs.rows("p0_missing") {
             if let (V::Text(from), Some(at), V::Text(name)) = (r.get(0), r.get(1).int(), r.get(2)) {
-                g.missing.push((from.to_owned(), at, name.to_owned()));
+                g.missing.push((host_spelling(from), at, name.to_owned()));
             }
         }
         g.missing.sort();
-        g.absent = outputs.rows("p0_absent").iter().filter_map(|r| r.get(0).text().map(PathBuf::from)).collect();
+        g.absent = outputs.rows("p0_absent").iter().filter_map(|r| r.get(0).text().map(host_spelling).map(PathBuf::from)).collect();
         // A candidate whose directory lies outside every root (`rules/../packs/…`, beside a rule file outside the
         // library) was refused, not looked at: its listing came back empty. It is no absent file the graph depends
         // on, and `holds`, which stats it, found it whenever it was there: such a graph never held, and phase 0 ran
         // again on every run, warm ones too (its first wave read every frame of the store, 250 MB).
-        g.absent.retain(|p| p.parent().and_then(|d| std::fs::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
+        g.absent.retain(|p| p.parent().and_then(|d| dunce::canonicalize(d).ok()).is_none_or(|d| roots.iter().any(|r| d.starts_with(r))));
         for r in outputs.rows("p0_phase") {
             if let (V::Text(from), V::Text(phase), V::Text(path)) = (r.get(0), r.get(1), r.get(2)) {
-                g.phases.entry(from.to_owned()).or_default().push((phase.to_owned(), PathBuf::from(path)));
+                g.phases.entry(host_spelling(from)).or_default().push((phase.to_owned(), PathBuf::from(host_spelling(path))));
             }
         }
         for v in g.phases.values_mut() {
@@ -641,10 +677,8 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 g.digests.insert(p, d);
             }
         }
-        g
-    });
-    let _ = std::fs::remove_dir_all(&out);
-    result
+        Ok(g)
+    })
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the

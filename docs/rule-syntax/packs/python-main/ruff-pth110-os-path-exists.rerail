@@ -1,5 +1,4 @@
 .policy "ruff-pth110-os-path-exists" revision 1
-.guests off
 .description "Use Path.exists() instead of os.path.exists(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

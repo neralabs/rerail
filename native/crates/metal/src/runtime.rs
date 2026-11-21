@@ -14,8 +14,8 @@ use crate::launch;
 // and output pools, 32-64 MB), in place of a 2 GB guard (list step 13). A plan's buffers are
 // sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
 // refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
-// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; 512 MB by default, decision
-// 0126), on top of the overall budget.
+// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; the overall budget by default,
+// decisions 0126 and 0549), on top of the overall budget.
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
@@ -27,10 +27,7 @@ pub fn metal_buffer_limit() -> usize {
 #[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 #[derive(Default)]
 pub(crate) struct DeviceState {
-    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
-    #[cfg(not(any(test, feature = "test-hooks")))]
     pool: Arc<AtomicUsize>,
-    #[cfg(not(any(test, feature = "test-hooks")))]
     peak: Arc<AtomicUsize>,
     #[cfg(target_os = "macos")]
     allocation: Mutex<()>,
@@ -187,9 +184,9 @@ impl BufferReservation {
         let previous = take()
             .or_else(|used| if pooled && rerail_accel::gpu::shared::make_room(bytes) { take() } else { Err(used) })
             .map_err(|used| {
-                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!(
-                        "TEMPO_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
+                        "RERAIL_METAL_RESERVATION_REJECT bytes={bytes} used={used} limit={limit}\n{}",
                         std::backtrace::Backtrace::force_capture()
                     );
                 }
@@ -335,16 +332,16 @@ impl HostMapped {
             let st = state();
             let _allocation = st.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if driver_refuses(metal, region.length) {
-                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                    eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} driver={}", region.length, driver_bytes(metal));
+                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("RERAIL_HOST_MAPPED_REJECT bytes={} driver={}", region.length, driver_bytes(metal));
                 }
                 return Err(Error::BackendCapacity);
             }
         }
         // SAFETY: the mapping is held with the buffer, and its holder waits for the commands that use it.
         let buffer = unsafe { rerail_device::device::wrap_host_memory(device, region.pointer.as_ptr(), region.length) }.map_err(|e| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} error={e}", region.length);
+            if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+                eprintln!("RERAIL_HOST_MAPPED_REJECT bytes={} error={e}", region.length);
             }
             Error::BackendCapacity
         })?;
@@ -384,12 +381,12 @@ impl Drop for MappedRegion {
 /// executions run side by side, one encoding while another's command buffers run, each on device memory it holds
 /// alone (a lease: the label passes' kept buffers, the program backend's workspaces, a run's own buffers), and what
 /// they share (pipelines, libraries) is behind its own mutex. (Until 2026-11-17 it was also a process-wide lock,
-/// copied from Tempo and held for a whole run, so no run could encode while another waited on the GPU.)
+/// copied from the predecessor and held for a whole run, so no run could encode while another waited on the GPU.)
 pub fn evaluation_scope() -> launch::LaunchScope {
     launch::LaunchScope::enter()
 }
 
-/// Releases the compiled pipelines and libraries (the residency's drop): the machine's; the store keeps them
+/// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
 /// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();

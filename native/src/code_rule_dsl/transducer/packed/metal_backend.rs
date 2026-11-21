@@ -278,7 +278,7 @@ impl PreparedAnchorScan {
             .value("args", &AnchorArgs { count, documents: self.table.views.len() as u32 })
             .buffer("chunk", block.device_buffer());
         for slab in &self.table.slabs {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(cache) = &self.table.cache {
             launch = launch.uses(cache);

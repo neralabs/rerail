@@ -41,6 +41,7 @@ use std::path::Path;
 pub enum Error {
     Front(super::front::Error),
     Sql(rusqlite::Error),
+    Cache(crate::content_store::StoreError),
     /// The facts have no planner statistics, or statistics of other data.
     Statistics(String),
     /// A rule the planner cannot order or lower.
@@ -52,8 +53,15 @@ impl fmt::Display for Error {
         match self {
             Error::Front(e) => write!(f, "{e}"),
             Error::Sql(e) => write!(f, "{e}"),
+            Error::Cache(e) => write!(f, "{e}"),
             Error::Statistics(m) | Error::Plan(m) => f.write_str(m),
         }
+    }
+}
+
+impl From<crate::content_store::StoreError> for Error {
+    fn from(error: crate::content_store::StoreError) -> Self {
+        Self::Cache(error)
     }
 }
 
@@ -362,7 +370,7 @@ impl FromIterator<((String, String), [i64; 4])> for ColStats {
     }
 }
 
-/// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
+/// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (SQL index prototype S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
 /// The climbs `Stats::steps` priced, by kind and set: each a function of the tree's statistics alone, so a model's
 /// plans made on several threads (`keeps::estimate`) share them.
@@ -443,10 +451,10 @@ pub struct Stats {
     /// (rel, col) → its heavy values (decision 0209 §4), made for the columns a line raised (`Run::heavy_for`).
     /// Shared, not copied, by a component's model.
     pub heavy: ColMap<std::sync::Arc<table::HeavyCol>>,
-    /// (derived rel, col) → its keys (decision 0506: the native relation's sketch's few values, or its filter), read
+    /// (derived rel, col) → its keys (decision 0488: the native relation's sketch's few values, or its filter), read
     /// where the engine keeps them: the keys two columns share price a probe's hits (`atom_rows`).
     pub keys: ColMap<super::bloom::Keys>,
-    /// (derived rel, col) → its counts for join sizes (decision 0506: the native relation's sketch's counters,
+    /// (derived rel, col) → its counts for join sizes (decision 0488: the native relation's sketch's counters,
     /// `join_size`): a probe by one atom's column is priced by the rows the two columns join (`atom_rows`).
     pub counts: ColMap<std::sync::Arc<super::join_size::JoinCounts>>,
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
@@ -454,7 +462,7 @@ pub struct Stats {
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
     /// (rel, col) → heavy values a model or any of its forks made, with the engine's relation as they were made
     /// over (`InRel::mark`): shared by a model's forks (`fork`), which plan a wave's components apart and take their
-    /// own back only as each retires. A fork takes an entry whose mark finds the relation unchanged (decision 0506:
+    /// own back only as each retires. A fork takes an entry whose mark finds the relation unchanged (decision 0488:
     /// corpus0's components counted each chunk's `kind` view again, 107 times). Held by the model, not the process.
     pub heavy_shared: std::sync::Arc<parking_lot::Mutex<HashMap<(String, usize), (std::sync::Arc<super::native::component::RelMark>, std::sync::Arc<table::HeavyCol>)>>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
@@ -1203,7 +1211,7 @@ thread_local! {
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
 fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
     with_plans(|p| {
-                let shared = p.as_ref()?;
+        let shared = p.as_ref()?;
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
@@ -1265,7 +1273,7 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
 /// changed by compare-and-swap, retried and copied the entry under that contention (2,774 samples of a cold run).
 fn plans_learnt(key: &PlanKey, learnt: Learnt) {
     with_plans(|p| {
-                let Some(shared) = p.as_ref() else { return };
+        let Some(shared) = p.as_ref() else { return };
         let learnt = OWN_PLANS.with(|o| {
             let mut o = o.borrow_mut();
             let Some(k) = o.as_mut().and_then(|m| m.get_mut(key)) else { return Some(learnt) };
@@ -1478,6 +1486,7 @@ impl OrderedPlans {
 pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlans) {
     let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
     let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
+    // The view is the plans its extent binds (its jobs carry it), and its own (`enter_plans`) go back to it.
     let r = {
         // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
         // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
@@ -1975,7 +1984,8 @@ pub fn plans_to_store() -> Option<StoredPlans> {
 
 /// `RERAIL_JOIN_LINES=FILE` (a measurement aid): each line that ran a search's work or more, appended as it ends,
 /// tab-separated: its stratum, its delta, its order (literal positions), its rows of work, its price for the rows it
-/// read, its wall seconds, its plan key and its rule.
+/// read, its wall seconds, its plan key, each step's bindings in and out (`in/out`, by step, in the order run) and
+/// its rule.
 /// The run's own (opened once a run, decision 0442).
 fn line_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
@@ -3332,7 +3342,13 @@ impl Model {
                 let cols: Vec<usize> = b.args(s.at).iter().enumerate().filter(|(_, t)| t.var().is_some_and(|v| bound.contains(v)) || b.constant(**t).is_some()).map(|(c, _)| c).collect();
                 let (into, made) = steps[k];
                 if let Some(fact) = self.stats.shapes.broken_at(rel, &cols, into, made) {
-                    shapes::report_broken(rel, fact.clone(), || format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text()));
+                    if shapes::run_broken().note(rel, fact.clone()) {
+                        let text = format!("{rel}: {fact} broken: {into} probes made {made} rows, in {}; planned from statistics for the rest of the run", b.head_text());
+                        if super::profile::strict() {
+                            eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+                        }
+                        super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+                    }
                     broke = true;
                 }
             }
@@ -3386,7 +3402,7 @@ impl Model {
         expected.as_ref().and_then(|(_, e)| joins::step_miss(e, steps, SEARCH_WORK))
     }
 
-    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0506's measure of what the counters do not
+    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0488's measure of what the counters do not
     /// price): each step's literal, the rule it was priced by, its rows priced, and the bindings in and rows out it
     /// made so far (`steps`).
     fn describe_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], steps: &[(u64, u64)]) -> String {
@@ -3657,6 +3673,29 @@ impl Model {
                 });
             }
         }
+        // var → the kind of the node it is a part of: `field($p, f, $c)` or `child($p, $c, i)` with $p's kind known and
+        // $c's not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the
+        // parent's size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children,
+        // 3 to 5 nodes, and the plan enumerated every function's body from it).
+        let mut part_of: HashMap<VarSlot, String> = HashMap::new();
+        for l in 0..b.len() {
+            if let Some(a) = b.plain_atom(l)
+                && !a.neg()
+            {
+                let args = b.args(l);
+                let (p, c) = match (b.rel(a), args.len()) {
+                    ("field", 3) => (args[0], args[2]),
+                    ("child", 3) => (args[0], args[1]),
+                    _ => continue,
+                };
+                if let (TermRef::Var(p), TermRef::Var(c)) = (p, c)
+                    && !kinds.contains_key(&c)
+                    && let Some(k) = kinds.get(&p)
+                {
+                    part_of.insert(c, k.clone());
+                }
+            }
+        }
         // The same binding domains are used by many candidate prefixes. Read the existing statistics once
         // per search, with no input recount and no additional SQL.
         let binding_domains: Vec<_> = (0..b.len()).filter(|&i| b.plain_atom(i).is_some_and(|a| !a.neg()))
@@ -3872,7 +3911,7 @@ impl Model {
                 && cols == [1]
                 && stats.nodes > 0.0
                 && let Some(size) = match args[1] {
-                    TermRef::Var(v) => kinds.get(&v).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
+                    TermRef::Var(v) => kinds.get(&v).or_else(|| part_of.get(&v)).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
                     _ => stats.subtree_fan(),
                 }
             {
@@ -3939,7 +3978,7 @@ impl Model {
                         if joined_else { all = false; }
                         by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
                     }
-                    // Each column priced with its kept keys (decision 0506), read where the engine keeps them.
+                    // Each column priced with its kept keys (decision 0488), read where the engine keeps them.
                     let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
                     if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
                         && let Some(by) = by_cols.iter().map(|&(dr, dc)| priced(dr, dc)).collect::<Option<Vec<_>>>()
@@ -3949,7 +3988,7 @@ impl Model {
                         misses_counted.set(misses_counted.get() | 1 << c.min(63));
                         return f.max(0.01);
                     }
-                    // Decision 0506: drawn through one atom's column, the rows the two columns join (their sketches'
+                    // Decision 0488: drawn through one atom's column, the rows the two columns join (their sketches'
                     // counters, `join_size`) over that column's rows are this column's rows a binding, the bindings
                     // that miss counted in. Only where the counters tell the join's size.
                     if all && let [(dr, dc)] = by_cols[..]
@@ -4034,7 +4073,7 @@ impl Model {
                             b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
                         })
                         .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
-                    // Where both columns' keys are kept (decision 0506), the bindings that hit are the share of the
+                    // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
                     let kept = at.and_then(|(d, c2)| {
@@ -4351,13 +4390,13 @@ impl Model {
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
         let connected = |l: usize, bound: &VarSet| { let live = bound.minus(&pinned); live.is_empty() || !b.vars(l).is_disjoint(&live) };
         let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
-        // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys its rule's own literals give
+        // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)` or an aggregate) holds only keys its rule's own literals give
         // (its `ask` is the body before the negation), so it never yields a row they would not: it is a test of a
         // bound key, joined once its key is bound and never crossed in to bind it. Its size is the size of what is
         // answered so far, which the stats of an earlier wave do not know. As the delta, it anchors as any atom.
         let gate_waits = |i: usize, bound: &dyn Fn(VarSlot) -> bool| -> bool {
             matches!(b.view(joins[i]), Lit::Atom(a) if super::answers::is_gate(b.rel(a)))
-                && (0..b.len()).any(|l| matches!(b.view(l), Lit::Atom(n) if n.neg() && n.gated()))
+                && (0..b.len()).any(|l| matches!(b.view(l), Lit::Atom(n) if n.neg() && n.gated()) || matches!(b.view(l), Lit::Agg { atom: n, .. } if n.gated()))
                 && first != Some(joins[i])
                 && b.vars(joins[i]).iter().any(|v| !bound(v))
                 && (0..joins.len()).any(|j| j != i)
@@ -4712,7 +4751,7 @@ impl Model {
                     // read every line of each pair's file (28.6 s against 5.4 s led from the lines). The rows here are
                     // every row walked, as the fixed order's are: a second cut of the rows passed on to the bindings
                     // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
-                    // documents no longer led (1 M rows where 1,200 come, Q378).
+                    // documents no longer led (1 M rows where 1,200 come, Q411).
                     let raw = from.raw + w + filtered;
                     let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
                     let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
@@ -5367,7 +5406,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
-        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" | "rr_long_text_node" => &[&["n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "rr_long_text_node" => &[&["n"]],
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -5375,12 +5414,11 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "next_sibling" => &[&["a"], &["b"]],
         "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
-        "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
-        "doc" | "pkg" | "unpackaged" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "doc" | "pkg" | "unpackaged" | "tape_error" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
         "token" | "rr_token_anon" => &[&["p", "i"], &["start"]],
@@ -6998,7 +7036,7 @@ pub struct LiveRel {
     pub ndv: Vec<i64>,
     pub sq: Vec<i64>,
     pub freq: Vec<(usize, HashMap<Constant, i64>)>,
-    /// Each column's keys, where the native engine keeps them (decision 0506), else none.
+    /// Each column's keys, where the native engine keeps them (decision 0488), else none.
     pub keys: Vec<super::bloom::Keys>,
     /// Each column's counts for join sizes, where the native engine keeps them (`join_size`), else none.
     pub counts: Vec<std::sync::Arc<super::join_size::JoinCounts>>,
@@ -7124,6 +7162,7 @@ fn decline_class(b: &Body<'_>, i: usize, f: Fields<'_>, native: &BTreeSet<String
                 super::program_image::AggRef::Sum => "sum",
                 super::program_image::AggRef::Product => "product",
                 super::program_image::AggRef::Join { .. } => "join (string concatenation)",
+                super::program_image::AggRef::Bounded { .. } => "bounded min or max (an as-of search)",
             }
         ),
         Lit::Atom(a) if f.is_input(b.rel(a)) => format!("{}read of input {}", neg(a), b.rel(a)),
@@ -8588,7 +8627,7 @@ impl<'a> Run<'a, '_> {
         let spec = ComponentSpec { name: name.clone(), lines };
         let fx = Fx { db: self.db, direct: true };
         for r in scc {
-            super::native::component::hold_start(self.db, r, Arc::clone(&olds[r]));
+            super::native::component::hold_maintained(self.db, r, Arc::clone(&olds[r]));
         }
         fx.open(&spec)?;
         fx.run(&name, 0)?;
@@ -9502,17 +9541,23 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
-            // A declared key a second row broke where the rows were written (decision 0361 step 6, Q330): the run's,
-            // as a probe's counts break one (`Model::layout_broken`).
-            let mut keys_broke = false;
+            // A declared key a second row broke where the rows were written (decision 0361 step 6): the run's, as a
+            // probe's counts break a fact (`Model::layout_broken`), planned from statistics from then on.
+            let mut key_broke = false;
             for (i, cols) in self.fx().key_breaks(&name)? {
                 let Some(rel) = rels.get(i).map(|r| r.to_string()) else { continue };
                 let names = self.model.stats.shapes.0.get(rel.as_str()).map(|(n, _)| n.clone()).unwrap_or_default();
                 let fact = crate::code_rule_dsl::logic::front::LayoutFact::Key(cols).show(&|c| names.get(c).cloned().unwrap_or_else(|| format!("${c}")));
-                shapes::report_broken(&rel, fact.clone(), || format!("{rel}: {fact} broken: a second row of a key, where its rows were written; planned from statistics for the rest of the run"));
-                keys_broke = true;
+                if shapes::run_broken().note(&rel, fact.clone()) {
+                    let text = format!("{rel}: {fact} broken: a second row of a key, where its rows were written; planned from statistics for the rest of the run");
+                    if super::profile::strict() {
+                        eprintln!("rerail: a layout fact broken (decision 0361 step 6): {text}");
+                    }
+                    super::profile::decision("broken layout facts (decision 0361 step 6)", || text);
+                }
+                key_broke = true;
             }
-            if keys_broke {
+            if key_broke {
                 self.model.stats.shapes = shapes::Shapes::for_run(std::sync::Arc::clone(&self.model.stats.shapes));
             }
             if profiling {
@@ -10423,7 +10468,8 @@ impl<'a> Run<'a, '_> {
                         let shown = order.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join(".");
                         let wall = walled.get(line).copied().unwrap_or(0.0);
                         use std::io::Write as _;
-                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{text}", key as u64);
+                        let steps = c.iter().map(|(i, o)| format!("{i}/{o}")).collect::<Vec<_>>().join(" ");
+                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{steps}\t{text}", key as u64);
                     }
                 }
                 lines_push(runs);
@@ -11043,9 +11089,9 @@ fn retainable_stratum(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>
         && !rules.iter().any(|&r| vs.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })))
 }
 
-/// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
+/// Old frames could record a nonempty answer digest beside an unmaterialized, empty payload.
 fn answer_read(p: &str) -> String {
-    format!("answer:{p}")
+    format!("answer:v2:{p}")
 }
 
 /// A set of answered rows' digest (`rows_digest`, of no rows when none), of relation `p`'s content (`Cells`).
@@ -11057,7 +11103,7 @@ fn answers_digest(f: Fields<'_>, db: &Connection, p: &str, rows: Option<&BTreeSe
     rows_digest(&Cells::new(&atoms, &stored_types(f, p, vec![b'i'; width])), &flat, rows.len())
 }
 
-/// A stratum's reads with its native step's answers (`answer:<p>` for each relation its requests produce), when
+/// A stratum's reads with its native step's answers (one digest per produced relation), when
 /// it makes requests of its own.
 fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
     let mut reads = reads?;
@@ -11079,13 +11125,16 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
+    if scc.contains("source_language_classification") {
+        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+    }
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
         let got = if run.native_rels.contains(r) {
             super::native::component::kept_rows(db, r)
         } else if f.produced(r) && !f.is_input(r) {
-            // A produced relation's answers, in its table (none when no rule reads it).
+            // SQL holds the answers when the relation is outside the native component.
             produced_rows(db, run, r)
         } else {
             None
@@ -12466,6 +12515,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 for (j, rules, moved) in reached_strata {
                     let scc = &sccs[j];
+                    if scc.contains("source_language_classification") {
+                        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+                    }
                     let key = stratum_key(scc);
                     reached += 1;
                     // A view of an input's columns (Q37) keeps nothing: it is held again in place, which is no work,
@@ -12645,7 +12697,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
-            // its answers are among what it reads (`answer:<p>`), so it is clean while they are as they were.
+            // Its reads include the observed answers. A changed answer invalidates the stratum.
             // (A request whose answers are all above the stratum is answered there, once its rows are whole.)
             let asks: Vec<&String> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(*p))).collect();
             // A stratum of produced relations above their requests is their native step: their rows are the answers.
@@ -12795,8 +12847,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 if let Some(at) = run.logging {
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
-                // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
+                // A later program can reuse this producer even when the current cone has no local reader.
+                // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
+                if f0.is_input(rel) || rows.is_empty() {
+                    continue;
+                }
+                if strata_kept.is_none()
+                    && !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str()))
+                {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above

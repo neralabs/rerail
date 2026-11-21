@@ -1,0 +1,5 @@
+.decl workspace_language_path(path: symbol)
+.input workspace_language_path
+
+source_language_request(p) :- workspace_language_path(p).
+.output source_language

@@ -1,5 +1,4 @@
 .policy "ruff-pyi010-non-empty-stub-body" revision 1
-.guests off
 .description "Use an ellipsis as the whole body of a function in stub files instead of real statements; stubs are never executed, so bodies are redundant."
 .language python
 .mode steer

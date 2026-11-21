@@ -2,7 +2,7 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
-use super::body::Body;
+use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
@@ -222,8 +222,9 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
-            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
-            d.u64(u64::from(b.head_bound()));
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
+            // the variables its delta binds (`Body::with_bound`): another spec each.
+            b.digest_pre(d);
             if bare {
                 // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
@@ -356,7 +357,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(l), c).map(str::to_owned)),
                             Lit::Agg { var, op: AggRef::Count | AggRef::Sum | AggRef::Product, .. } if var == n => Some("int".to_owned()),
                             // An extremum has its column's type (`v = min l : { line_of(f, l) }`).
-                            Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(o), atom: a } if var == n => b
+                            Lit::Agg { var, op: AggRef::Min | AggRef::Max | AggRef::Bounded { .. }, over: Some(o), atom: a } if var == n => b
                                 .args(s.at)
                                 .iter()
                                 .position(|x| x.var() == Some(o))
@@ -569,7 +570,7 @@ impl<'a> Run<'a, '_> {
                     let a = tok(b, x, &mut slots)?;
                     lines.push(JoinItem::Lt { a, b: tok(b, y, &mut slots)?, or_eq: !matches!(op, CmpOp::Lt | CmpOp::Gt) });
                 }
-                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max), over, atom: a } => {
+                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max | AggRef::Bounded { .. }), over, atom: a } => {
                     let rel = b.rel(a);
                     let mut args: Vec<TermRef<'_>> = b.args(s.at).to_vec();
                     // The over-variable belongs to the bag even if an outer step bound the same name.
@@ -615,18 +616,25 @@ impl<'a> Run<'a, '_> {
                         }
                     }
                     let out = var_tok(var, &mut slots);
+                    // A bounded aggregate's bound is bound before it (`Body::ready`): a key, as the atom's are.
+                    let bound = match op {
+                        AggRef::Bounded { bound, strict, .. } if slots.has(Key::Var(bound)) => Some((var_tok(bound, &mut slots), strict)),
+                        AggRef::Bounded { .. } => return None,
+                        _ => None,
+                    };
                     lines.push(match op {
                         AggRef::Count => JoinItem::Count { src, args: toks, out },
                         _ => JoinItem::Extreme {
                             op: match op {
                                 AggRef::Sum => Extreme::Sum,
-                                AggRef::Min => Extreme::Min,
+                                AggRef::Min | AggRef::Bounded { max: false, .. } => Extreme::Min,
                                 _ => Extreme::Max,
                             },
                             src,
                             args: toks,
                             col: value_col?,
                             out,
+                            bound,
                         },
                     });
                 }

@@ -1,5 +1,4 @@
 .policy "ruff-b002-unary-prefix-increment-decrement" revision 1
-.guests off
 .description "Don't write a doubled plus or minus prefix to increment or decrement a value; Python has no such operators, so the value is left unchanged."
 .language python
 .mode steer

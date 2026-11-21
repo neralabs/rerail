@@ -1,4 +1,4 @@
-//! A blocked Bloom filter of a column's keys (decision 0506): the probe screen's (`native::setfix::join_filter`) and
+//! A blocked Bloom filter of a column's keys (decision 0488): the probe screen's (`native::setfix::join_filter`) and
 //! the statistics' (a column's membership and the keys two columns share).
 //!
 //! ```text
@@ -168,7 +168,7 @@ impl Sample {
     }
 }
 
-/// A column's filter kept as its rows come (decision 0506). One writer adds to it, the column's sketch, while it is
+/// A column's filter kept as its rows come (decision 0488). One writer adds to it, the column's sketch, while it is
 /// read where it is: by the planner's statistics, the screens and the device's joins, which hold it (`Arc`) and never
 /// copy it. It lies in a block of the run's relations (`facts::rows::FactsBloom`, a `rerail_blocks::bloom::Bloom`):
 /// the device binds that block and tests it with the same read (`bloom_may`) the host makes. A word is a plain load
@@ -288,12 +288,21 @@ impl Reading {
     }
 }
 
-/// A column's keys as its statistics hold them: its few values exactly (a sketch's exact counts, `SMALL` of them at
-/// most), or its kept filter as read (`Reading`).
-#[derive(Clone, Debug)]
+/// A column's keys as its statistics hold them: its few values exactly (its sketch's exact counts, `join_size::EXACT`
+/// of them at most, read where they lie), or its kept filter as read (`Reading`).
+#[derive(Clone)]
 pub enum Keys {
-    Few(std::sync::Arc<[i64]>),
+    Few(std::sync::Arc<crate::code_rule_dsl::logic::join_size::Counts>),
     Filter(std::sync::Arc<Reading>),
+}
+
+impl std::fmt::Debug for Keys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Keys::Few(c) => write!(f, "Few({:?})", c.few().into_iter().flatten().map(|e| e[0]).collect::<Vec<_>>()),
+            Keys::Filter(r) => write!(f, "Filter({} words)", r.filter.len()),
+        }
+    }
 }
 
 impl Keys {
@@ -303,8 +312,8 @@ impl Keys {
         let mut v: Vec<i64> = values.into_iter().collect();
         v.sort_unstable();
         v.dedup();
-        if v.len() <= 64 {
-            return Keys::Few(v.into());
+        if v.len() <= crate::code_rule_dsl::logic::join_size::EXACT {
+            return Keys::few(v);
         }
         let (f, mut s) = (Kept::new(kept_words_for(2 * v.len())), Sample::default());
         for &x in &v {
@@ -314,10 +323,24 @@ impl Keys {
         Keys::Filter(std::sync::Arc::new(Reading::new(std::sync::Arc::new(f), s.hashes())))
     }
 
+    /// The few distinct values `values` (at most `join_size::EXACT`), held as a sketch holds them.
+    pub fn few(values: impl IntoIterator<Item = i64>) -> Keys {
+        let c = crate::code_rule_dsl::logic::join_size::Counts::new();
+        for v in values {
+            assert!(c.add_few(v), "more than {} values are not few", crate::code_rule_dsl::logic::join_size::EXACT);
+        }
+        Keys::Few(std::sync::Arc::new(c))
+    }
+
+    /// The few values, read where they lie.
+    fn values(c: &crate::code_rule_dsl::logic::join_size::Counts) -> impl Iterator<Item = i64> + '_ {
+        c.few().into_iter().flatten().map(|e| e[0])
+    }
+
     /// Whether `key` may be in: false is certain.
     pub fn may_hold(&self, key: i64) -> bool {
         match self {
-            Keys::Few(v) => v.contains(&key),
+            Keys::Few(c) => Keys::values(c).any(|v| v == key),
             Keys::Filter(r) => r.filter.may_hold(key),
         }
     }
@@ -325,7 +348,9 @@ impl Keys {
     /// Whether both are one column's keys (a self-join), or the same few values: their shared keys are all of them.
     pub fn same(&self, other: &Keys) -> bool {
         match (self, other) {
-            (Keys::Few(a), Keys::Few(b)) => a == b,
+            (Keys::Few(a), Keys::Few(b)) => {
+                std::sync::Arc::ptr_eq(a, b) || (a.few_len() == b.few_len() && Keys::values(a).all(|v| Keys::values(b).any(|w| w == v)))
+            }
             (Keys::Filter(a), Keys::Filter(b)) => std::sync::Arc::ptr_eq(&a.filter, &b.filter),
             _ => false,
         }
@@ -334,7 +359,7 @@ impl Keys {
     /// The distinct keys: exact, or the reading's estimate.
     pub fn distinct(&self) -> f64 {
         match self {
-            Keys::Few(v) => v.len() as f64,
+            Keys::Few(c) => c.few_len().unwrap_or(0) as f64,
             Keys::Filter(r) => r.distinct(),
         }
     }
@@ -348,9 +373,9 @@ impl Keys {
     /// `None` where the filter tested is full.
     pub fn shared(&self, other: &Keys) -> Option<f64> {
         match (self, other) {
-            (Keys::Few(a), Keys::Few(b)) => Some(a.iter().filter(|v| b.contains(v)).count() as f64),
+            (Keys::Few(a), Keys::Few(b)) => Some(Keys::values(a).filter(|&v| Keys::values(b).any(|w| w == v)).count() as f64),
             (Keys::Few(a), Keys::Filter(r)) | (Keys::Filter(r), Keys::Few(a)) => {
-                (!r.full()).then(|| a.iter().filter(|&&v| r.filter.may_hold(v)).count() as f64)
+                (!r.full()).then(|| Keys::values(a).filter(|&v| r.filter.may_hold(v)).count() as f64)
             }
             (Keys::Filter(a), Keys::Filter(b)) => {
                 let bits = (a.filter.len().max(b.filter.len()) <= COMPARED_WORDS).then(|| shared(&*a.filter, &*b.filter)).flatten();
@@ -432,8 +457,8 @@ mod tests {
         let none = shared(&big, &apart).unwrap();
         assert!(none < 0.02 * 40_000.0, "{none}");
         // A few values against a filter: those it passes.
-        let few = Keys::Few((150..250).collect::<Vec<_>>().into());
-        assert_eq!(few.shared(&keys(&small, &ss)), Some(100.0));
+        let few = Keys::few(150..200);
+        assert_eq!(few.shared(&keys(&small, &ss)), Some(50.0));
         let full = Kept::new(MIN_WORDS);
         for k in 0..100_000 {
             full.add_hashed(hash(k));

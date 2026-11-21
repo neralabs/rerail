@@ -34,6 +34,7 @@ pub(crate) struct Staged {
 
 enum Store {
     #[cfg(gpu_lane)]
+    /// Held by its lease's ledger (decision 0487 step 3): a kernel that binds it holds it until its work completes.
     Shared(crate::gpu::shared::Pooled),
     Host(#[allow(dead_code)] Box<[i64]>),
 }

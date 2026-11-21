@@ -65,7 +65,7 @@ Budgets: 500 MB RAM in total, 10 GB disk.
 4. Changes are written back to SQLite **eventually, not in the fast path.**
 - **Research basis.** This mechanism already exists in several streams:
   - main's `calls` per-consumer stamps;
-  - Moti's Y1 read-set memos with cutoff and backdating;
+  - The facts-engine stream's Y1 read-set memos with cutoff and backdating;
   - Typing's interface digests: a body edit re-derives 1 module instead of 408, and an interface edit 123 instead of 408 (M);
   - PR 2539's dependency cone.
 
@@ -85,7 +85,7 @@ matcher rule ──► datalog rules (relations to other facts)
 - **Combine and optimize.**
   - Shared sub-rule evaluation is the primary win: 535 queries collapse into one hash-consed graph of 6,821 ops, 1.4–3.1× faster (M, t1).
   - Also: fusion by shared root kind or target, set mode, lazy cursors, and existence and count barriers (t1 spec-fusion, spec-transducer).
-- **Interpreted, then JIT.** The interpreted and JIT forms are two bindings of **one plan**, with the same plan identity and the same outputs. Tempo supplies the IR, the verifier and the `native_ir` codegen (t6).
+- **Interpreted, then JIT.** The interpreted and JIT forms are two bindings of **one plan**, with the same plan identity and the same outputs. The predecessor supplies the IR, the verifier and the `native_ir` codegen (t6).
 - **Execution.** All transducers of a wave run as **one batch through a virtual table**: `demand(batch)`, one xFilter per (group, batch). The boundary costs 4.9% (M). This is the DLRE/N1562 whole-demand batch contract (t11).
 - **Metal and CPU.** Every op must exist on both, as the verifier requires. There is no CPU fallback for Metal.
 
@@ -113,7 +113,7 @@ matcher rule ──► datalog rules (relations to other facts)
 - **Research basis.**
   - PIAT §20 residency: zstd frames are decompressed directly into 64 MiB slabs, with one retained no-copy shared `MTLBuffer` per slab. Batches reference documents through a document table, with no copies or repacking (t1 §20).
   - The edited document's tape goes straight into a pinned edit slab, so nothing is uploaded.
-  - Tempo designed the identity-keyed tape cache but never implemented it (t5, t6).
+  - The predecessor designed the identity-keyed tape cache but never implemented it (t5, t6).
 - **Budget.** On Apple unified memory, pinned GPU buffers count against the 500 MB. At 8.25–8.55 B/node, the whole gate corpus (28.23M nodes) is about 240 MB of tape alone (D), plus about 56 MB for `par` and the source. So the cache is bounded, and what it pins is the **pre-filtered** working set (§6), not the corpus.
 
 ## 6. Statistics-based lowering and pre-filtering by SQLite indexes
@@ -133,7 +133,7 @@ matcher rule ──► datalog rules (relations to other facts)
   - batch size.
 - Decisions are recorded in `compiled_plans` with the statistic intervals over which they stay valid. Nothing counts rows at run time (DLRE trap T18).
 - **Research basis.**
-  - ast-index-spike: a positional kind index took an identifier anchor from 1.8 s to 64 ms (M).
+  - SQL index prototype: a positional kind index took an identifier anchor from 1.8 s to 64 ms (M).
   - t4 #20–28 and decisions 0006 cover the rest.
 
 ## 7. Everything is set-based; recursion is waves
@@ -316,7 +316,7 @@ derivation_input(id, ord, input_hash, name_id NULL)
 
 ## 15. Git trees and their relationships are facts
 
-Source: Tempo, `scale-test-the-re-railer/tempo/docs/workspace-store-runtime-journal.md` entries 31–34, and `content-addressed-workspace-store.md` "Git tree reuse". The same mechanism shipped in main as schemas 9/10 (`notes/t7`).
+Source: the predecessor (a branch of the predecessor repository), `<predecessor>/docs/workspace-store-runtime-journal.md` entries 31–34, and `content-addressed-workspace-store.md` "Git tree reuse". The same mechanism shipped in main as schemas 9/10 (`notes/t7`).
 
 **Facts:**
 
@@ -333,9 +333,9 @@ Source: Tempo, `scale-test-the-re-railer/tempo/docs/workspace-store-runtime-jour
 **A tree hash is a Merkle digest of everything below it.** That gives the lattice:
 1. **Push path from Git events.** A checkout, pull or branch switch compares root trees and descends only into subtrees whose hash changed. The invalidated batch is exactly the changed blobs: no directory walk, no reads, no hashing of unchanged files.
 2. **Coarse cutoff at directory granularity.** Derivations keyed by (tree hash, prefix, context chain, catalog/plan identity) are valid for a whole clean subtree. Results attach as stored pages, with no per-file state, source read, hash, tape restore, decode, parse or match.
-3. **Cross-file derivations** can record the tree hashes of the prefixes they read, as coarse read-set entries in `derivation_input`. This extends subtree reuse to cross-file rules, which Tempo and main exclude today ("policies with global checks continue to use per-file state").
+3. **Cross-file derivations** can record the tree hashes of the prefixes they read, as coarse read-set entries in `derivation_input`. This extends subtree reuse to cross-file rules, which the predecessor and main exclude today ("policies with global checks continue to use per-file state").
 
-**Measured gains (M, Tempo, 2026-09-26):**
+**Measured gains (M, the predecessor, 2026-09-26):**
 
 | Measurement | Before | After |
 |---|---|---|
@@ -358,7 +358,7 @@ Source: Tempo, `scale-test-the-re-railer/tempo/docs/workspace-store-runtime-jour
 
 ## 16. Regex
 
-Guided by ast-index-spike (`notes/t4` §4–5; PIAT `research/regex.md`, `spec-indexes.md`, shape-fixes §17).
+Guided by the SQL index prototype (`notes/t4` §4–5; PIAT `research/regex.md`, `spec-indexes.md`, shape-fixes §17).
 
 **Where regexes run.**
 1. **Filtering files and candidates runs the regex over the vocabulary, not file text.**

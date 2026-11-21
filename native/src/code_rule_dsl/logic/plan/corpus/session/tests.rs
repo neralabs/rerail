@@ -5,7 +5,7 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 /// The Python rule packs: `docs/rule-syntax/packs/python` above the crate that compiles these tests (the engine hosts
 /// them, `tools/cratify/test-hosts.tsv`; the logic crate's manifest sits two levels lower).
 fn packs() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).ancestors().map(|d| d.join("docs/rule-syntax/packs/python")).find(|d| d.is_dir()).expect("the rule packs")
 }
 
 
@@ -833,7 +833,7 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let root = work.path().join("files");
     fs::create_dir(&root).unwrap();
     fs::write(root.join("input.py"), "x = 1\n").unwrap();
-    let rule = work.path().join("join.rr");
+    let rule = work.path().join("join.rerail");
     let mut src = String::from(".decl doc(d:number, path:symbol, module:symbol)\n.input doc\n\
         .decl lhs(a:number,k:number)\n.decl rhs(b:number,k:number)\n.decl wide(a:number,b:number)\n\
         .decl lefts(a:number)\n.decl rights(b:number)\n.output lefts, rights\n\
@@ -851,7 +851,9 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
     let _profiling = Profiling(profile::on());
     profile::set(true);
     let _sources = rr::profile_join_sources(&[&rule]);
-    // The deferred joins are off by default (decision 0506): this test is of them.
+    // The runs' profiles are the run's (decision 0441): one run under way here holds them for the report.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    // The deferred joins are off by default (decision 0488): this test is of them.
     let _deferred = profile::bind(corpus::preparation::DeferredJoins(Some("auto")));
     let run = |out: &std::path::Path| {
         corpus::run_read(&program, &root, out, "program", Binding::Cpu, 4096,
@@ -868,18 +870,15 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
             2 => fs::remove_file(root.join("extra.py")).unwrap(),
             _ => {}
         }
-        // The runs' profiles are the run's (decision 0441): each snapshot's run holds its own for its report, so the
-        // report explains this snapshot's evaluation, not the earlier ones'.
-        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let actual = run(&work.path().join("out"));
         let mut report = String::new();
         profile::author_joins::render(&mut report, &profile::merged());
-        assert!(report.contains("join.rr:9)"), "snapshot {i}: {report}");
+        assert!(report.contains("join.rerail:9)"), "snapshot {i}: {report}");
         assert!(report.contains("Cache limit 4096 pair witnesses"), "{report}");
         assert!(report.contains(&format!("Observed {expected_pairs} cached pairs"))
             || (expected_pairs == 0 && report.contains("empty cache guard allows zero cached pairs")), "snapshot {i}: {report}");
         assert!(report.contains(if expected_pairs == 0 { "joined the factors directly" } else { "used the pair cache" }), "snapshot {i}: {report}");
-        assert!(report.contains("Reader lefts") && report.contains("join.rr:10)"), "{report}");
+        assert!(report.contains("Reader lefts") && report.contains("join.rerail:10)"), "{report}");
         let fresh = corpus::session::full(|| {
             let _fresh = corpus::use_store(work.path().join(format!("fresh-{i}.sqlite")));
             run(&work.path().join(format!("fresh-out-{i}")))

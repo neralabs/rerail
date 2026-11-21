@@ -13,6 +13,10 @@ use std::io;
 
 const RESERVATION: usize = 256 * 1024 * 1024;
 const SEPARATION: usize = 192 * 1024 * 1024;
+/// Past the ±256 MB Cranelift's `Arm64Call` relocation asserts (`diff >> 26` of a word count, wider than a `bl`'s
+/// ±128 MB): a direct call this far panics where it is laid, as a test can see without running it.
+const FAR_RESERVATION: usize = 512 * 1024 * 1024;
+const FAR_SEPARATION: usize = 320 * 1024 * 1024;
 
 type Relocations = Vec<(FuncId, Vec<ModuleReloc>)>;
 
@@ -60,18 +64,20 @@ struct SeparatedCode {
     base: usize,
     page: usize,
     positions: [usize; 2],
+    reservation: usize,
+    separation: usize,
     allocations: Vec<(usize, usize)>,
     system: SystemMemoryProvider,
 }
 
 impl SeparatedCode {
-    fn new() -> Self {
+    fn new(reservation: usize, separation: usize) -> Self {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         assert!(page > 0);
         let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                RESERVATION,
+                reservation,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANON,
                 -1,
@@ -83,6 +89,8 @@ impl SeparatedCode {
             base: base as usize,
             page: page as usize,
             positions: [0, 0],
+            reservation,
+            separation,
             allocations: Vec::new(),
             system: SystemMemoryProvider::new(),
         }
@@ -94,8 +102,8 @@ impl JITMemoryProvider for SeparatedCode {
         assert!(align <= self.page as u64);
         let region = self.allocations.len() % 2;
         let size = size.div_ceil(self.page) * self.page;
-        assert!(self.positions[region] + size < RESERVATION - SEPARATION);
-        let address = self.base + region * SEPARATION + self.positions[region];
+        assert!(self.positions[region] + size < self.reservation - self.separation);
+        let address = self.base + region * self.separation + self.positions[region];
         let status =
             unsafe { libc::mprotect(address as *mut _, size, libc::PROT_READ | libc::PROT_WRITE) };
         if status != 0 {
@@ -141,14 +149,18 @@ impl Drop for SeparatedCode {
         // Test function pointers never outlive their module.
         unsafe {
             self.system.free_memory();
-            assert_eq!(libc::munmap(self.base as *mut _, RESERVATION), 0);
+            assert_eq!(libc::munmap(self.base as *mut _, self.reservation), 0);
         }
     }
 }
 
 pub fn separated_module() -> JITModule {
+    separated_by(RESERVATION, SEPARATION)
+}
+
+fn separated_by(reservation: usize, separation: usize) -> JITModule {
     let mut builder = JITBuilder::new(default_libcall_names()).unwrap();
-    builder.memory_provider(Box::new(SeparatedCode::new()));
+    builder.memory_provider(Box::new(SeparatedCode::new(reservation, separation)));
     JITModule::new(builder)
 }
 
@@ -229,4 +241,14 @@ fn native_calls_reach_distant_callees_in_both_directions() {
         )
     };
     assert_eq!(unsafe { entry() }, 42);
+}
+
+/// The writer's ops defined in a module whose code is not in one arena (tier 2's without `Cut::near`): their calls of
+/// each other long-range, so the module finalizes wherever its code is mapped. Their direct calls here (`near`) were
+/// past a branch's reach, and Cranelift's relocation panicked: a full test run's tier 2 hit it (2026-11-20).
+#[test]
+fn the_writers_ops_reach_each_other_where_code_is_far_apart() {
+    let mut module = separated_by(FAR_RESERVATION, FAR_SEPARATION);
+    rerail_clif::writer::define_ops(&mut module, Linkage::Local, false).unwrap();
+    module.finalize_definitions().unwrap();
 }

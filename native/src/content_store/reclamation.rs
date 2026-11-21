@@ -268,6 +268,7 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        Self::discard_abandoned_analysis(&transaction)?;
         let mut report = CollectionReport::default();
         execute_collect(
             &transaction,
@@ -367,6 +368,8 @@ impl ContentStore {
             .query_row(
                 collect_sql(
                     "SELECT s.snapshot_id FROM snapshots s WHERE NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.snapshot_id=s.snapshot_id) \
+                     AND NOT EXISTS (SELECT 1 FROM analysis_scope_snapshot a WHERE a.snapshot_id=s.snapshot_id) \
+                     AND NOT EXISTS (SELECT 1 FROM analysis_scope_workspace_snapshot a WHERE a.snapshot_id=s.snapshot_id) \
                      ORDER BY s.snapshot_id LIMIT 1",
                 ),
                 [],

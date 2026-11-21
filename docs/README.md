@@ -34,6 +34,7 @@ Install Rerail, write rules, and see what it does in a session.
 ## Rules, packs and languages
 How rule packs are built, ported, checked and extended.
 
+- [rule-syntax/git.md](rule-syntax/git.md): query commit history and Git objects in native `.rerail` rules
 - [rule-packs.md](rule-packs.md): packs, matching and recommendation, the shipped packs, and a worktree's own rules
 - [pack-format.md](pack-format.md): pack layout, pack data, provenance records and the validation contract
 - [upstream.md](upstream.md): upstream snapshots and pack data, samples and their licences, new snapshots, the
@@ -62,6 +63,8 @@ How the project is run and laid out.
 ## Design notes
 Internal designs for contributors.
 
+- [Git inputs and the rule library](final-shape/notes/git-inputs/design.md): proposed Git source and metadata interfaces,
+  native contracts, and Datalog cache rules
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
 - [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries

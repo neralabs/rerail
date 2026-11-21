@@ -1,5 +1,4 @@
 .policy "ruff-ytt201-sys-version-info0-eq3" revision 1
-.guests off
 .description "Compare sys.version_info against a tuple instead of testing whether its major version equals 3; the test breaks on a future major version."
 .language python
 .mode steer

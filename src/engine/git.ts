@@ -5,7 +5,7 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
 import { endProcessTree, execFile, spawnSync } from "./child-process.js";
-import { runGitSync, startGit, type GitProcess } from "./git-start.js";
+import { runGitSyncBytes, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -982,7 +982,13 @@ const DEFAULT_TIMEOUT_MS = 10_000;
  * 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
  */
 function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}): NodeJS.ProcessEnv {
-  return { ...processGit.startEnvironment(executable, { ...process.env, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+  // Every caller names the directory to read. A Git hook can export its own checkout, index, object database and refs,
+  // which would override -C, in batch reads too: this process's are left out ({@link repositoryEnvironment}).
+  const inherited: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) inherited[key] = value;
+  }
+  return { ...processGit.startEnvironment(executable, { ...inherited, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
 
 /**
@@ -995,6 +1001,13 @@ function timeLeft(limitMs: number): () => number {
   return () => Math.max(0, Math.floor(deadline - performance.now()));
 }
 
+/** The variables through which a Git hook names a repository of its own: never inherited by Rerail's Git calls. */
+const repositoryEnvironment = new Set([
+  "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_PREFIX", "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
+  "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE",
+]);
+
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
@@ -1004,6 +1017,12 @@ function timeLeft(limitMs: number): () => number {
  * call fails as its start did.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const result = runGitBytes(cwd, args, options);
+  return { ...result, stdout: result.stdout.toString("utf8") };
+}
+
+/** {@link runGit} with stdout as the bytes Git wrote: the raw names of Git's NUL-delimited listings. */
+export function runGitBytes(cwd: string, args: readonly string[], options: RunGitOptions = {}): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const command = [...SAFE_CONFIG, "-C", cwd, ...args];
   const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
@@ -1013,11 +1032,11 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
   return again === undefined || rest === 0 ? result : runGitWith(again, command, { ...options, timeout: rest });
 }
 
-/** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
-function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): GitResult {
+/** One blocking start of the Git at `executable` with `args`, as {@link runGitBytes} makes it. */
+function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const { env, ...limits } = options;
-  const result = runGitSync(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
-  return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
+  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
@@ -1080,9 +1099,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -1462,23 +1490,39 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1511,6 +1555,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;

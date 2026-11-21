@@ -14,6 +14,9 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 
+// The provers' answers kept on the machine's file system (decision 0414): no file system on wasm.
+#[cfg(not(target_family = "wasm"))]
+pub mod answers;
 pub mod bitlex_masks;
 pub mod bitlex_prove;
 pub mod bitlex_sat;

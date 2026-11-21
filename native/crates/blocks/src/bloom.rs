@@ -1,4 +1,4 @@
-//! A blocked Bloom filter in a block (decision 0506): a column's keys, read where it lies by the host, the JIT and
+//! A blocked Bloom filter in a block (decision 0488): a column's keys, read where it lies by the host, the JIT and
 //! the kernels, through the reads written once in CLIF (`rerail_clif::relation`: `bloom_hash`, `bloom_mask`,
 //! `bloom_may`). One hash, one format, one memory for the CPU and the GPU.
 //!
@@ -31,18 +31,27 @@ structure! {
 /// The descriptor's chunk: the smallest class.
 const DESC_BYTES: usize = 64;
 
-/// The hash a filter places a key by (`bloom_hash`, the read written once).
+/// The hash a filter places a key by (the CLIF's `bloom_hash`, the kernels' and the JIT's), in 32-bit multiplies (the
+/// device's native ones): the key's halves folded (`lo ^ hi * φ`), murmur3's finalizer, and a second word of it for
+/// the high half.
 #[inline(always)]
 pub fn hash(key: i64) -> u64 {
-    // SAFETY: `bloom_hash` reads nothing through its descriptor.
-    unsafe { crate::generated_reads::bloom_hash(std::ptr::null(), key as u64) }
+    let v = key as u64;
+    let mut h = (v as u32) ^ ((v >> 32) as u32).wrapping_mul(0x9e37_79b1);
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 13;
+    h = h.wrapping_mul(0xc2b2_ae35);
+    h ^= h >> 16;
+    let mut w = h.wrapping_mul(0x27d4_eb2f);
+    w ^= w >> 15;
+    (u64::from(w) << 32) | u64::from(h)
 }
 
-/// The bits of its word a key of hash `h` sets (`bloom_mask`).
+/// The bits of its word a key of hash `h` sets (the CLIF's `bloom_mask`): five, from 6-bit fields of `h`.
 #[inline(always)]
 pub fn mask(h: u64) -> u64 {
-    // SAFETY: `bloom_mask` reads nothing through its descriptor.
-    unsafe { crate::generated_reads::bloom_mask(std::ptr::null(), h) }
+    (0..5).fold(0, |m, i| m | 1u64 << ((h >> (6 * i)) & 63))
 }
 
 /// A key's word (of `words`, a power of two) and its bits there.
@@ -97,11 +106,15 @@ impl Bloom {
         self.words()[i].load(Relaxed)
     }
 
-    /// Whether a key of hash `h` may be in: false is certain (`bloom_may`, the read the kernels make).
+    /// Whether a key of hash `h` may be in: false is certain (the CLIF's `bloom_may`, the read the kernels make). Its
+    /// word `(h >> 32) & (words - 1)` has every bit of `mask(h)`; a filter of no words holds every key.
     #[inline(always)]
     pub fn may_hold_hashed(&self, h: u64) -> bool {
-        // SAFETY: a live descriptor in its block.
-        unsafe { crate::generated_reads::bloom_may(std::ptr::from_ref(self).cast(), h) != 0 }
+        if self.is_empty() {
+            return true;
+        }
+        let (at, m) = place(h, self.len());
+        self.word(at) & m == m
     }
 
     /// Which of `keys` (at most 64) may be in: bit `i` for key `i`. The block's hashes in one loop (no loads, so the

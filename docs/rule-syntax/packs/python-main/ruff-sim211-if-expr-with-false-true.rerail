@@ -1,5 +1,4 @@
 .policy "ruff-sim211-if-expr-with-false-true" revision 1
-.guests off
 .description "Use not on the condition instead of a conditional expression that yields False when it holds and True otherwise."
 .language python
 .mode steer

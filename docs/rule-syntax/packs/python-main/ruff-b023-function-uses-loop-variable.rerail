@@ -1,5 +1,4 @@
 .policy "ruff-b023-function-uses-loop-variable" revision 1
-.guests off
 .description "Pass loop variables into functions and lambdas defined inside a loop as arguments or defaults; otherwise they all see the variable's last value."
 .language python
 .mode steer

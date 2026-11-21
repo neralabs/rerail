@@ -422,6 +422,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };
@@ -2112,7 +2113,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2548,7 +2552,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2655,11 +2662,16 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
         "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
         "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
         "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
+        // A number past simdjson's range with an exponent's `+`: refused by simdjson, read by the Bitlex parser.
+        "[1e+21, -9223372036854778000]", "{\"a\": 1e+21, \"b\": [12345678901234567890123]}",
     ]
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))
     .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2901,7 +2913,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3082,7 +3097,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -7674,6 +7692,8 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    // Not on MSVC, which builds none of simdjson's C++.
+    #[cfg(not(all(windows, target_env = "msvc")))]
     use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
@@ -7704,7 +7724,9 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
         // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();

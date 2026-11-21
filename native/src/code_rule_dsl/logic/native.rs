@@ -47,7 +47,7 @@ pub mod component {
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
     pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-    pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, hold_bound, hold_start, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
+    pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -148,7 +148,13 @@ impl Lattice for ShortlexMin {
         if a == TOP || b == TOP {
             return TOP;
         }
-        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        // An atom this process does not hold in memory is read from the store, as the set engine's symbols are
+        // (`Interner::known`): else a stored atom would join to the top.
+        let key = |v: i64| {
+            let atom = u32::try_from(v).ok()?;
+            let of = |s: &str| (s.chars().count(), s.as_bytes().to_vec());
+            self.0.with_str(atom, of).or_else(|| self.0.value(atom).ok().flatten().map(|s| of(&s)))
+        };
         match (key(a), key(b)) {
             (Some(x), Some(y)) => if y < x { b } else { a },
             _ => TOP,

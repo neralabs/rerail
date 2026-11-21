@@ -886,7 +886,7 @@ Progress (2026-11-18):
     `reads.rs`, `relation.rs`, `view.rs`, `view_reads.rs` and `rust.rs`. Its generated reads are:
     - block-major format 16 (0399);
     - 16z read through a cache (0353 steps 4a and 4b), which removes `decode16z.metal`;
-    - reads proven to stay within the tape's bytes (0403).
+    - reads proven to stay within the tape's bytes (0463).
 
     It also changes the label passes (`metal_label_passes.metal`, +211 lines), the relation reads, and the blocks'
     `atoms.rs` and `kept.rs`.

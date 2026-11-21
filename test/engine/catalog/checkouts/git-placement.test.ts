@@ -29,6 +29,7 @@ import {
 } from "../../../../src/engine/catalog/repository-identity.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
 import { gitText, runGit } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -652,15 +653,17 @@ describe("a kept answer is placed again once Git's answer can move, whatever fil
     git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "p1", "w"));
     const link = join(root, "L");
     linkFolder(join(root, "p1"), link);
-    let recorded = "1";
-    const owners = new CheckoutOwners(() => recorded);
+    const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
+    cleanups.push(async () => catalogs.close());
+    const owners = new CheckoutOwners(catalogs.database);
     const file = join(link, "w", "src", "x.ts");
     expectGitsAnswers(main, join(link, "w"));
     expect(owners.ownerOf(file)).toEqual({ checkoutRoot: physicalPath(join(root, "p1", "w")), path: "src/x.ts" });
 
     await rename(join(root, "p1"), join(root, "p2"));
     await relink(link, join(root, "p2"));
-    recorded = "2";
+    // The recorded checkouts change: the owners forget what they kept.
+    recordCheckout(catalogs.database, physicalPath(join(root, "p2", "w")));
     expect(owners.ownerOf(file)).toEqual({ checkoutRoot: physicalPath(join(root, "p2", "w")), path: "src/x.ts" });
     expectGitsRegistries(join(link, "w"));
   });
@@ -1951,7 +1954,7 @@ describe("a repository start", () => {
       return realpathSync.native(join(root, "wt", name));
     });
     const catalogs = new CheckoutCatalogs(databasePath);
-    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+    const owners = new CheckoutOwners(catalogs.database);
     const auditor = new CheckoutCodeRuleRouter({
       sessionRoot: main,
       startingCheckout: startingCheckout(owners, main).checkoutRoot,

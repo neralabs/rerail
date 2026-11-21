@@ -3,15 +3,17 @@
 //! counters, about 9% off), and, while it holds at most `SMALL` values or a bounded integer page, each value's exact count (then the distinct
 //! values and the sum are exact too). Compact labels use a 16 KiB page; sparse label sets retain at most 1,024 counters.
 //! Identity columns keep the fixed-size fallback. Exact counts are updated as rows arrive, never by a planning-time scan.
-//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0506), set
+//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0488), set
 //! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
 //! The screens test probes against it, and the planner counts the keys two columns share by it.
 
 use crate::code_rule_dsl::logic::bloom::{self, Keys, Kept, Reading, Sample, Words};
+use crate::code_rule_dsl::logic::join_size::Counts;
 use std::sync::Arc;
 
 /// The values a column holds at most for its exact counts.
-const SMALL: usize = 64;
+/// The values whose rows it counts exactly: `join_size::Counts`' few.
+const SMALL: usize = crate::code_rule_dsl::logic::join_size::EXACT;
 const REGISTERS: usize = 256;
 const DENSE_WIDTH: usize = 4096;
 use super::rows::BlockVec;
@@ -99,13 +101,17 @@ impl Sparse {
 
 pub(super) struct Sketch {
     registers: BlockVec<u8>,
-    counters: BlockVec<i32>,
+    /// Its join-size counters and, while it has at most `SMALL` values, each one's rows (`join_size::Counts`, in a
+    /// block): this sketch is their one writer; the planner's join sizes and the statistics' keys read them there.
+    counts: Arc<Counts>,
+    /// Held by it and its clones while they share `counts`: a sketch that adds while another holds it writes a copy
+    /// of its own first, the original as well as a clone, so neither's rows reach the other's counts (a clone's
+    /// counts are the column's as it was cloned). The one left holding it alone writes the shared counts in place.
+    sharing: Arc<()>,
     rows: u64,
-    /// Each value's rows (`[value, rows]`) while there are at most `SMALL` values.
-    small: Option<BlockVec<[i64; 2]>>,
     dense: Option<Dense>,
     sparse: Option<Sparse>,
-    /// Its keys' filter, once it holds more than `SMALL` values (while `small` holds them, they are its keys). This
+    /// Its keys' filter, once it holds more than `SMALL` values (while `counts` holds them, they are its keys). This
     /// sketch is its one writer; the planner's statistics and the screens read it where it is.
     keys: Option<Arc<Kept>>,
     /// Whether it writes `keys`: a clone reads the filter it was cloned with until it first adds a key, then writes a
@@ -117,7 +123,7 @@ pub(super) struct Sketch {
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: zeros(REGISTERS), counters: zeros(REGISTERS), rows: 0, small: Some(BlockVec::new()), dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
+        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), sharing: Arc::new(()), rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
     }
 }
 
@@ -125,7 +131,7 @@ impl Default for Sketch {
 /// columns' filters only where its rows change them.
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
-        Sketch { registers: self.registers.clone(), counters: self.counters.clone(), rows: self.rows, small: self.small.clone(), dense: self.dense.clone(),
+        Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), sharing: Arc::clone(&self.sharing), rows: self.rows, dense: self.dense.clone(),
                  sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
     }
 }
@@ -144,8 +150,11 @@ impl Sketch {
         if rho > self.registers[r] {
             self.registers[r] = rho;
         }
-        let (c, sign) = crate::code_rule_dsl::logic::join_size::bucket(h);
-        self.counters[c] += sign;
+        if Arc::strong_count(&self.sharing) > 1 {
+            self.counts = Arc::new(Counts::clone(&self.counts));
+            self.sharing = Arc::new(());
+        }
+        self.counts.count(h);
         self.rows += 1;
         if let Some(keys) = &mut self.keys {
             if !self.own_keys {
@@ -166,33 +175,31 @@ impl Sketch {
                 }
                 self.dense=None;
             }
-        } else if let Some(small) = &mut self.small {
-            if let Some(e) = small.iter_mut().find(|e| e[0] == v) {
-                e[1] += 1;
-            } else if small.len() < SMALL {
-                small.push([v, 1]);
-            } else {
-                // Retain bounded label domains beyond SMALL without linear searches.
-                // Large identity columns retain the fixed-size sketch fallback.
-                let base=v & !((DENSE_WIDTH as i64)-1);
-                if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
-                    let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:small.len(),sq:0};
-                    for &[x,n] in small.iter() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
-                    dense.add(v);
-                    self.dense=Some(dense);
-                } else if (0..LABEL_LIMIT).contains(&v) && small.iter().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
-                    let mut sparse=Sparse::from_counts(small.iter().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
-                }
-                // Its keys from here on in a filter, from the values it held and this one.
-                let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
-                for h in small.iter().map(|e| mix(e[0])).chain([h]) {
-                    keys.add_hashed(h);
-                    self.sample.offer(h);
-                }
-                self.keys = Some(Arc::new(keys));
-                self.own_keys = true;
-                self.small = None;
+        } else if self.counts.few_len().is_some() && !self.counts.add_few(v) {
+            // Its `SMALL + 1`th value: the few values and their rows, read where they lie (`counts`), make what
+            // follows them.
+            let counts = &self.counts;
+            let small = || counts.few().into_iter().flatten();
+            // Retain bounded label domains beyond SMALL without linear searches.
+            // Large identity columns retain the fixed-size sketch fallback.
+            let base=v & !((DENSE_WIDTH as i64)-1);
+            if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
+                let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
+                for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
+                dense.add(v);
+                self.dense=Some(dense);
+            } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
+                let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
             }
+            // Its keys from here on in a filter, from the values it held and this one.
+            let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
+            for h in small().map(|e| mix(e[0])).chain([h]) {
+                keys.add_hashed(h);
+                self.sample.offer(h);
+            }
+            self.keys = Some(Arc::new(keys));
+            self.own_keys = true;
+            self.counts.end_few();
         }
     }
 
@@ -200,8 +207,8 @@ impl Sketch {
     pub(super) fn ndv(&self) -> usize {
         if let Some(s)=&self.sparse {return s.len;}
         if let Some(d)=&self.dense {return d.ndv;}
-        if let Some(small) = &self.small {
-            return small.len();
+        if let Some(n) = self.counts.few_len() {
+            return n;
         }
         Self::estimate(self.registers.iter().copied(), self.rows)
     }
@@ -238,17 +245,17 @@ impl Sketch {
     pub(super) fn sq(&self) -> u64 {
         if let Some(s)=&self.sparse {return s.sq;}
         if let Some(d)=&self.dense {return d.sq;}
-        if let Some(small) = &self.small {
-            return small.iter().map(|e| (e[1] as u64) * (e[1] as u64)).sum();
+        if let Some(few) = self.counts.few() {
+            return few.map(|e| (e[1] as u64) * (e[1] as u64)).sum();
         }
-        let est: f64 = self.counters.iter().map(|&c| (c as f64) * (c as f64)).sum();
+        let est: f64 = self.counts.counters().map(|c| (c as f64) * (c as f64)).sum();
         // At least a row a value, at most every row one value.
         (est.round() as u64).clamp(self.rows, self.rows * self.rows)
     }
 
     /// Each value's rows, while they are exact: read from the sketch's arrays.
     pub(super) fn exact_counts(&self) -> Option<Vec<(i64,u32)>> {
-        if let Some(s)=&self.small {return Some(s.iter().map(|e|(e[0],e[1] as u32)).collect());}
+        if let Some(s)=self.counts.few() {return Some(s.map(|e|(e[0],e[1] as u32)).collect());}
         if let Some(s)=&self.sparse {return Some(s.counts().collect());}
         self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(d.base+i as i64,n)).collect())
     }
@@ -271,8 +278,8 @@ impl Sketch {
 
     /// Its keys, as the statistics read them: its few values, else its filter (held where it is) as read now.
     pub(super) fn keys(&self) -> Keys {
-        match (&self.small, &self.keys) {
-            (Some(small), _) => Keys::Few(small.iter().map(|e| e[0]).collect()),
+        match (self.counts.few_len(), &self.keys) {
+            (Some(_), _) => Keys::Few(Arc::clone(&self.counts)),
             (None, Some(k)) => Keys::Filter(Arc::new(Reading::new(Arc::clone(k), self.sample.hashes()))),
             (None, None) => unreachable!("a sketch past its few values keeps their filter"),
         }
@@ -280,7 +287,7 @@ impl Sketch {
 
     /// Its counts for the planner's join sizes (`logic::join_size`): its counters, and its few values' counts.
     pub(super) fn counts(&self) -> crate::code_rule_dsl::logic::join_size::JoinCounts {
-        crate::code_rule_dsl::logic::join_size::JoinCounts::new(&self.counters, self.small.as_deref(), self.rows, self.sq())
+        crate::code_rule_dsl::logic::join_size::JoinCounts::new(Arc::clone(&self.counts), self.rows, self.sq())
     }
 
     /// Its keys' filter, where it keeps one (past its few values); else its few values are its keys.
@@ -289,7 +296,7 @@ impl Sketch {
     }
 
     pub(super) fn bytes(&self) -> usize {
-        self.keys.as_ref().map_or(0, |k| k.bytes()) + self.sample.hashes().len() * 8 + self.sparse.as_ref().map_or(0,|s|s.slots.len()*16) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS * 5 + self.small.as_ref().map_or(0, |s| s.capacity() * 16)
+        self.keys.as_ref().map_or(0, |k| k.bytes()) + self.sample.hashes().len() * 8 + self.sparse.as_ref().map_or(0,|s|s.slots.len()*16) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS + self.counts.bytes()
     }
 }
 
@@ -301,13 +308,64 @@ pub mod tests {
     #[test]
     fn a_sketchs_arrays_are_in_blocks() {
         let mut s = Sketch::default();
-        assert!(s.registers.facts().is_some() && s.counters.facts().is_some());
+        assert!(s.registers.facts().is_some() && s.counts.in_blocks());
         for i in 0..100 { s.add(i); }
         assert!(s.dense.as_ref().is_some_and(|d| d.counts.facts().is_some()), "a page of counts");
         let mut t = Sketch::default();
         for i in 0..100 { t.add(i * 9_999); }
         assert!(t.sparse.as_ref().is_some_and(|x| x.slots.facts().is_some() && x.len == 100), "a label set's slots");
         assert_eq!(t.ndv(), 100);
+    }
+
+    /// Decision 0353: the planner's join counts and few keys are the sketch's own counts, read where they lie: a row
+    /// the sketch adds after they were taken is in them (nothing was copied). A clone reads them until it adds, then
+    /// writes counts of its own, and the first sketch's stay as they were.
+    #[test]
+    fn the_planners_counts_are_the_sketchs_own() {
+        use crate::code_rule_dsl::logic::join_size::JoinCounts;
+        let mut s = Sketch::default();
+        for v in 0..10 {
+            s.add(v);
+        }
+        let (counts, keys) = (s.counts(), s.keys());
+        let Keys::Few(few) = &keys else { panic!("few values") };
+        assert!(Arc::ptr_eq(few, &s.counts), "the keys are the sketch's counts");
+        let ten = JoinCounts::of([10]);
+        assert_eq!(counts.join(&ten).rows, 0.0);
+        s.add(10);
+        assert_eq!((few.few_len(), counts.join(&ten).rows), (Some(11), 1.0), "read where they lie, after the add");
+        let mut c = s.clone();
+        assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
+        c.add(10);
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
+        assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
+        // Past its few values, the counters, still the sketch's own.
+        for v in 11..1_000 {
+            s.add(v);
+        }
+        assert!(few.few_len().is_none() && Arc::ptr_eq(few, &s.counts));
+    }
+
+    /// A clone's counts are the column's as it was cloned: the first sketch's later rows, past its few values here,
+    /// never reach them, and the clone still has its few values as its keys (the 9,010-file run's panic: "a sketch
+    /// past its few values keeps their filter", from a clone whose shared counts the first sketch had ended).
+    #[test]
+    fn a_clone_keeps_its_counts_when_the_first_sketch_adds() {
+        let mut s = Sketch::default();
+        for v in 0..10 {
+            s.add(v);
+        }
+        let c = s.clone();
+        for v in 10..1_000 {
+            s.add(v);
+        }
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&c.sharing) == 1);
+        assert_eq!((c.counts.few_len(), c.ndv(), c.rows), (Some(10), 10, 10));
+        assert!(matches!(c.keys(), Keys::Few(_)), "its few values are its keys");
+        assert!(s.counts.few_len().is_none() && matches!(s.keys(), Keys::Filter(_)));
+        let mut c = c;
+        c.add(3);
+        assert_eq!(c.counts.few_len(), Some(10), "the clone, alone now, writes the counts in place");
     }
 
     #[test]

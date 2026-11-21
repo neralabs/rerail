@@ -18,7 +18,7 @@ The interpreted retry's 45 M tasks raised the footprint to 3,017 MB before its b
 
 ## Prior work consulted
 
-- **ast-index-spike design index, conclusion 1 ("Nothing may store one row per node"):**
+- **SQL index prototype design index, conclusion 1 ("Nothing may store one row per node"):**
   **agrees.** A node list per pass is a per-node row made on every run.
 - **The same index, conclusion 5 ("Fused plans beat materialized intermediates"; a materialized
   per-query anchor cost 289%):** **agrees.** The roots are read where they are used, not written

@@ -1,5 +1,4 @@
 .policy "ruff-f406-undefined-local-with-nested-import-star-usage" revision 1
-.guests off
 .description "Don't use from module import * inside a function or class; star imports are only allowed at module level."
 .language python
 .mode steer

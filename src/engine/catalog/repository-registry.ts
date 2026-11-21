@@ -3,9 +3,10 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
+import { lstatSync } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, parse, resolve } from "node:path";
+import { dirname, join, parse, resolve, sep } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
 import { earlierPhysicalPath, physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -13,7 +14,9 @@ import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
+  checkoutIdentity,
   GIT_IDENTITY_FILE,
+  legacyBareCloneId,
   normalizeRemoteAddress,
   outsideGit,
   readCloneIdAt,
@@ -34,6 +37,13 @@ const CLONE_KEY_PREFIX = "clone:";
 /** A remote-keyed repository is named after the remote's last path segment; a clone-keyed one keeps `folderName`. */
 function displayNameFor(repositoryKey: RepositoryKey, folderName: string): string {
   return repositoryKey.startsWith(CLONE_KEY_PREFIX) ? folderName : repositoryKey.slice(repositoryKey.lastIndexOf("/") + 1);
+}
+
+/** The repository a scan of `workspace` reports when no catalog records it: the remote's, else its clone's own. */
+export function standaloneRepository(workspace: string): { key: RepositoryKey; displayName: string } {
+  const { cloneId, location } = resolveCloneId(workspace);
+  const key = remoteKeyOf(location) ?? `${CLONE_KEY_PREFIX}${cloneId}`;
+  return { key, displayName: displayNameFor(key, repositoryFolderName(location)) };
 }
 
 type RepositoryRow = typeof repositories.$inferSelect;
@@ -168,8 +178,17 @@ function deleteRepositorySettings(db: Writer, key: RepositoryKey): void {
   db.delete(mergeAssistState).where(inArray(mergeAssistState.key, [mergeAssistSettingsKey(key), mergeAssistGithubKey(key)])).run();
 }
 
-/** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */
-const adoptionChecked = new Set<RepositoryKey>();
+/**
+ * Clone-keyed repositories whose remote each catalog already tried to adopt in this process (a process can hold
+ * several catalogs); a clone with no remote is checked again.
+ */
+const adoptionChecked = new WeakMap<object, Set<RepositoryKey>>();
+
+function adoptedIn(db: RerailDatabase): Set<RepositoryKey> {
+  let checked = adoptionChecked.get(db);
+  if (checked === undefined) adoptionChecked.set(db, checked = new Set());
+  return checked;
+}
 
 /**
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
@@ -209,6 +228,13 @@ function recordCheckoutRow(
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
     return existing.repositoryKey;
   }
+  // A bare repository's own checkout recorded under the id it had before bare clones and their linked checkouts shared
+  // one: the same checkout, its settings kept.
+  if (existing && location.main && location.workspaceRoot === dirname(location.identityPath) && existing.cloneId === legacyBareCloneId(location)) {
+    const repositoryKey = cloneRepository(tx, cloneId) ?? existing.repositoryKey;
+    tx.update(checkouts).set({ cloneId, repositoryKey, lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
+    return repositoryKey;
+  }
   if (existing !== undefined) {
     deleteCheckoutSettings(tx, [checkoutPath]);
     tx.delete(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).run();
@@ -239,12 +265,13 @@ function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocatio
 
 /** A clone-keyed repository adopts the checkout's remote once per process; "no remote" is not remembered, so a remote added later is adopted. */
 function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
-  if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
+  if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptedIn(db).has(context.repositoryKey)) return context;
   const remoteKey = remoteKeyOf(location);
   if (remoteKey === undefined) return context;
-  adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
   adoptRemote(db, context.repositoryKey, target, now);
+  // Marked once it held: an adoption rolled back (a write refused) is tried again at the next record.
+  adoptedIn(db).add(context.repositoryKey);
   const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, context.checkoutPath)).get();
   return { ...context, repositoryKey: adopted?.key ?? context.repositoryKey };
 }
@@ -260,8 +287,9 @@ function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context:
  * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
 export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
-  const cloneId = readCloneIdAt(location.identityPath);
-  if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
+  if (!location.git || physicalPath(location.workspaceRoot) !== root) return false;
+  const { id: cloneId } = checkoutIdentity(location);
+  if (cloneId === undefined) return false;
   const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
   const listed = recorded.some(peer =>
@@ -289,7 +317,7 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
+  return lookupAt(db, repositoryIdentityLocation(workspace));
 }
 
 /**
@@ -297,60 +325,55 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
  * the thread): a recorded checkout is found with no Git process.
  */
 export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  return lookupAt(db, location, new Map());
+  return lookupAt(db, location);
 }
 
-function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
-  const cloneId = readCloneIdAt(location.identityPath) ?? null;
+function lookupAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  const { id, marked } = checkoutIdentity(location);
+  const cloneId = id ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
-    ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
-    ?? remoteRepository(db, location, checkoutPath, remoteKeys);
-  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
+  const knownClone = cloneId === null ? undefined : recordedRepositoryAt(db, checkoutPath, cloneId) ?? cloneRepository(db, cloneId);
+  const repositoryKey = knownClone ?? remoteRepository(db, location);
+  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, marked || knownClone !== undefined ? cloneId : null);
 }
 
-/** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
-function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
-  const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
-    .where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  return recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId) ? recorded.key : undefined;
+/** The repository of the row for the current identity at this path: a different id is a re-clone. */
+function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string): RepositoryKey | undefined {
+  return db.select({ key: checkouts.repositoryKey }).from(checkouts)
+    .where(and(eq(checkouts.checkoutPath, checkoutPath), eq(checkouts.cloneId, cloneId))).get()?.key;
 }
 
-/** The known repository the checkout's remote names, its remote read once per `remoteKeys`; a folder outside git has none. */
-function remoteRepository(
-  db: Reader,
-  location: RepositoryIdentityLocation,
-  checkoutPath: string,
-  remoteKeys: Map<string, RepositoryKey | undefined>,
-): RepositoryKey | undefined {
-  if (!location.git) return undefined;
-  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location));
-  const remoteKey = remoteKeys.get(checkoutPath);
+/**
+ * The nearest physically enclosing plain folder recorded with a registration of its own: its row, and the `.rerail`
+ * marker in it naming the same id.
+ */
+export function recordedPlainRoot(db: Reader, real: string): string | undefined {
+  const ancestors = [real];
+  for (let dir = real; dirname(dir) !== dir; dir = dirname(dir)) ancestors.push(dirname(dir));
+  const rows = db.select({ path: checkouts.checkoutPath, id: checkouts.cloneId }).from(checkouts)
+    .where(inArray(checkouts.checkoutPath, ancestors)).orderBy(sql`length(${checkouts.checkoutPath}) DESC`).all();
+  return rows.find(row => {
+    const directory = join(row.path, ".rerail");
+    return readCloneIdAt(join(directory, "repository-id")) === row.id && lstatSync(directory, { throwIfNoEntry: false })?.isDirectory();
+  })?.path;
+}
+
+/**
+ * The known repository an unrecorded Git checkout's effective remote names, read again on each call: Git's includes
+ * and branch configuration can change it between calls. A folder outside git has none.
+ */
+function remoteRepository(db: Reader, location: RepositoryIdentityLocation): RepositoryKey | undefined {
+  const remoteKey = location.git ? remoteKeyOf(location) : undefined;
   return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
 
 /**
- * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each
- * workspace's git location is read once (a folder outside git is located again, so a later `git init` is seen),
- * and the database is read on every call, so adoption and new records show at once.
+ * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request. Each call reads the
+ * checkout now at the folder and its remote: a linked worktree that replaced another at a path, or a remote changed
+ * since, is seen at once (b78c86062a: 9 ms a call for a recorded checkout, 23 ms for an unrecorded clone).
  */
 export function createCheckoutResolver(db: Reader): (workspace: string) => CheckoutContext | undefined {
-  const locations = new Map<string, RepositoryIdentityLocation>();
-  const remoteKeys = new Map<string, RepositoryKey | undefined>();
-  return workspace => {
-    try {
-      gitExecutable();
-    } catch (error) {
-      if (error instanceof GitUnavailableError) return undefined;
-      throw error;
-    }
-    let location = locations.get(workspace);
-    if (location === undefined) {
-      location = repositoryIdentityLocation(workspace);
-      if (location.git) locations.set(workspace, location);
-    }
-    return lookupAt(db, location, remoteKeys);
-  };
+  return workspace => lookupCheckout(db, workspace);
 }
 
 /** `fromKey`'s settings become `toKey`'s, its Merge Assist settings too; its `gh` readiness is read again for `toKey`. */
@@ -449,8 +472,8 @@ export interface RecordedCheckout extends CheckoutRecord {
 const recordedCheckoutColumns = { ...getTableColumns(checkouts), rowid: sql<number>`rowid` };
 
 /** A checkout row that contains another checkout, and how long the key of the folder it names is ({@link listedFolderKey}). */
-interface ContainingCheckout {
-  readonly row: RecordedCheckout;
+interface ContainingCheckout<Row = RecordedCheckout> {
+  readonly row: Row;
   readonly folderLength: number;
 }
 
@@ -461,7 +484,7 @@ interface ContainingCheckout {
  * case on Windows) go in the order they were recorded, by rowid, the order SQLite reads a repository's checkouts in: so
  * the order never depends on the clock or on how a reader got its rows.
  */
-function nearestFirst(containing: readonly ContainingCheckout[]): RecordedCheckout[] {
+function nearestFirst<Row extends Pick<RecordedCheckout, "rowid">>(containing: ReadonlyArray<ContainingCheckout<Row>>): Row[] {
   return [...containing].sort((left, right) => right.folderLength - left.folderLength || left.row.rowid - right.row.rowid).map(({ row }) => row);
 }
 
@@ -621,6 +644,210 @@ function listedRowsAt(
   return { own, parents: nearestFirst(parents) };
 }
 
+/** A recorded checkout as {@link RecordedCheckouts.read} reads it. */
+export interface RecordedCheckoutStatus {
+  readonly repositoryKey: RepositoryKey;
+  readonly cloneId: string;
+  /** The recorded checkouts of its repository whose folder holds it, nearest first, as `parentCheckouts` gives them. */
+  readonly parents: readonly string[];
+  /** `checkoutStatus` of the checkout. */
+  readonly status: RepositoryStatus;
+}
+
+/**
+ * The start state, set-up and parent checkouts of many recorded checkouts at once, and the recorded checkouts inside a
+ * folder, over one connection: what a session that knows every worktree of its repository asks at every event and every
+ * tool call. Each answer equals {@link checkoutStatus}, {@link parentCheckouts} and a read of every row with
+ * `withinCheckout`, but a read costs one statement and the rows at the asked checkouts and at the folders above them,
+ * however many checkouts are recorded.
+ *
+ * The rows that name a folder are found by the folder's key ({@link listedFolderKey}): every spelling a row was recorded
+ * in that names it as `withinCheckout` compares paths (a `.` segment, a trailing separator, and on Windows letter case).
+ * Which spellings are recorded is kept per version of the recorded checkouts ({@link recordedCheckoutsVersion}), which
+ * changes whenever a row is written or removed; the state of each row is read again at every read.
+ */
+export interface RecordedCheckouts {
+  /** Each of `checkoutPaths` that has a row, with its state and parents, in one statement; a path with no row is left out. */
+  read(checkoutPaths: readonly string[]): Map<string, RecordedCheckoutStatus>;
+  /**
+   * The recorded checkouts strictly inside `root`, at any depth, sorted: every row `withinCheckout(root, path)` takes
+   * but the one at `root` itself. No statement runs while the recorded checkouts are as they were.
+   */
+  within(root: string): string[];
+}
+
+/** The recorded paths by the key of the folder each names, as of one version of the recorded checkouts. */
+interface Spellings {
+  readonly version: string;
+  readonly byFolder: ReadonlyMap<string, readonly string[]>;
+  /** Every folder key, sorted, for the range of keys inside a folder. */
+  readonly keys: readonly string[];
+}
+
+/** The parameter of one read: the asked checkouts and every spelling recorded at their folders and above. */
+interface Question {
+  readonly asked: readonly string[];
+  readonly version: string;
+  readonly parameter: string;
+}
+
+/** Entries a cache of keys keeps before it starts again: more folders than a runtime asks after, and a bound on memory. */
+const KEPT_KEYS = 8_192;
+
+/** `cache`'s value for `path`, worked out by `work` and kept; the cache starts again once it holds {@link KEPT_KEYS}. */
+function kept<V>(cache: Map<string, V>, path: string, work: (path: string) => V): V {
+  let value = cache.get(path);
+  if (value === undefined) {
+    if (cache.size >= KEPT_KEYS) cache.clear();
+    value = work(path);
+    cache.set(path, value);
+  }
+  return value;
+}
+
+/** The first index in sorted `keys` whose key is `key` or sorts after it. */
+function firstAtOrAfter(keys: readonly string[], key: string): number {
+  let low = 0;
+  let high = keys.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (keys[middle]! < key) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * The keys of `spellings` that name `rootKey`'s folder or one inside it: one range of the sorted keys for the inside,
+ * which holds the folder's own key too when that ends with a separator (a filesystem or share root).
+ */
+function keysWithin(spellings: Spellings, rootKey: string): string[] {
+  const { keys } = spellings;
+  const inside = rootKey.endsWith(sep) ? rootKey : `${rootKey}${sep}`;
+  const found = inside !== rootKey && keys[firstAtOrAfter(keys, rootKey)] === rootKey ? [rootKey] : [];
+  for (let index = firstAtOrAfter(keys, inside); index < keys.length && keys[index]!.startsWith(inside); index += 1) found.push(keys[index]!);
+  return found;
+}
+
+/** The rows at the paths a JSON array names, with each one's rowid and its repository's start state and set-up. */
+function rowsStatement(db: Reader) {
+  return db.select({
+    checkoutPath: checkouts.checkoutPath,
+    repositoryKey: checkouts.repositoryKey,
+    cloneId: checkouts.cloneId,
+    started: checkouts.started,
+    rowid: sql<number>`${checkouts}.rowid`,
+    repositoryStarted: repositories.started,
+    configuredAt: repositories.configuredAt,
+  }).from(checkouts)
+    .leftJoin(repositories, eq(repositories.repositoryKey, checkouts.repositoryKey))
+    .where(sql`${checkouts.checkoutPath} IN (SELECT value FROM json_each(${sql.placeholder("paths")}))`)
+    .prepare();
+}
+
+type StateRow = ReturnType<ReturnType<typeof rowsStatement>["all"]>[number];
+
+/** Every recorded path. */
+function pathsStatement(db: Reader) {
+  return db.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts).prepare();
+}
+
+/** The status and parents of the checkout at `path` from the rows read, `keys` being its folder's key and those above it. */
+function stateOf(path: string, keys: readonly string[], spellings: Spellings, rows: ReadonlyMap<string, StateRow>): RecordedCheckoutStatus | undefined {
+  const own = rows.get(path);
+  if (own === undefined) return undefined;
+  const containing: Array<{ readonly row: StateRow; readonly folderLength: number }> = [];
+  for (const key of keys) {
+    for (const spelling of spellings.byFolder.get(key) ?? []) {
+      const row = spelling === path ? undefined : rows.get(spelling);
+      if (row?.repositoryKey === own.repositoryKey) containing.push({ row, folderLength: key.length });
+    }
+  }
+  const parents = nearestFirst(containing);
+  return {
+    repositoryKey: own.repositoryKey,
+    cloneId: own.cloneId,
+    parents: parents.map(row => row.checkoutPath),
+    status: statusOf({ started: own.repositoryStarted, configuredAt: own.configuredAt }, own.started, parents),
+  };
+}
+
+class CheckoutsReader implements RecordedCheckouts {
+  readonly #version: () => string;
+  readonly #paths: ReturnType<typeof pathsStatement>;
+  readonly #rowsAt: ReturnType<typeof rowsStatement>;
+  /** Each recorded path's folder key, kept across versions: a recorded path never changes its spelling. */
+  readonly #folderKeys = new Map<string, string>();
+  /** Each asked checkout's folder key and those of the folders above it, nearest first. */
+  readonly #keysAbove = new Map<string, readonly string[]>();
+  #spellings: Spellings | undefined;
+  #last: Question | undefined;
+
+  constructor(db: Reader) {
+    this.#version = recordedCheckoutsVersionReader(db);
+    this.#paths = pathsStatement(db);
+    this.#rowsAt = rowsStatement(db);
+  }
+
+  read(checkoutPaths: readonly string[]): Map<string, RecordedCheckoutStatus> {
+    const known = this.#current();
+    const rows = new Map(this.#rowsAt.all({ paths: this.#question(checkoutPaths, known).parameter }).map(row => [row.checkoutPath, row]));
+    const read = new Map<string, RecordedCheckoutStatus>();
+    for (const path of checkoutPaths) {
+      const state = stateOf(path, this.#keysOf(path), known, rows);
+      if (state !== undefined) read.set(path, state);
+    }
+    return read;
+  }
+
+  within(root: string): string[] {
+    const known = this.#current();
+    return keysWithin(known, kept(this.#folderKeys, root, listedFolderKey))
+      .flatMap(key => known.byFolder.get(key) ?? [])
+      .filter(path => path !== root)
+      .sort();
+  }
+
+  /** The recorded spellings as of now: read again only when the recorded checkouts' version moved. */
+  #current(): Spellings {
+    const version = this.#version();
+    if (this.#spellings?.version === version) return this.#spellings;
+    const byFolder = new Map<string, string[]>();
+    for (const { checkoutPath } of this.#paths.all()) {
+      const key = kept(this.#folderKeys, checkoutPath, listedFolderKey);
+      byFolder.set(key, [...(byFolder.get(key) ?? []), checkoutPath]);
+    }
+    this.#spellings = { version, byFolder, keys: [...byFolder.keys()].sort() };
+    return this.#spellings;
+  }
+
+  #keysOf(path: string): readonly string[] {
+    return kept(this.#keysAbove, path, asked => folderAndAbove(asked).map(resolvedFolderKey));
+  }
+
+  /** The last question when it asked the same checkouts at the same version, else a new one. */
+  #question(asked: readonly string[], known: Spellings): Question {
+    const last = this.#last;
+    if (last !== undefined && asksAgain(last, asked, known.version)) return last;
+    const read = new Set(asked);
+    for (const path of asked) {
+      for (const key of this.#keysOf(path)) for (const spelling of known.byFolder.get(key) ?? []) read.add(spelling);
+    }
+    this.#last = { asked: [...asked], version: known.version, parameter: JSON.stringify([...read]) };
+    return this.#last;
+  }
+}
+
+/** Whether `last` asked the same checkouts, in the same order, at `version`. */
+function asksAgain(last: Question, asked: readonly string[], version: string): boolean {
+  return last.version === version && last.asked.length === asked.length && last.asked.every((path, index) => path === asked[index]);
+}
+
+/** {@link RecordedCheckouts} over `db`, its statements prepared once. */
+export function recordedCheckoutsReader(db: Reader): RecordedCheckouts {
+  return new CheckoutsReader(db);
+}
+
 /**
  * Every repository id a repository's sessions may be recorded under: its key, its aliases, and its checkouts' clone
  * ids (rows recorded before sessions carried the repository key). History reads, `rerail reset` and the dashboard's
@@ -657,6 +884,8 @@ interface Pass {
   readonly removed: Map<string, Promise<boolean>>;
   /** What `git worktree list` names, for each common Git folder ({@link worktreesListedIn}). */
   readonly listings: Map<string, ReadonlySet<string> | undefined>;
+  /** The recorded checkouts whose folder was not there when the pass looked ({@link forgetCheckouts}). */
+  readonly missing: Set<string>;
 }
 
 /**
@@ -982,20 +1211,26 @@ export async function pruneCheckouts(
   unanswered.looking = looking;
   const answered = (): void => { unanswered.looking = undefined; };
   void looking.then(answered, answered);
-  const gone = await unlessAborted(looking, signal);
-  if (gone === undefined || gone.length === 0 || signal?.aborted === true) return [];
-  return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
+  const looked = await unlessAborted(looking, signal);
+  if (looked === undefined || looked.gone.length === 0 || signal?.aborted === true) return [];
+  return db.transaction(tx => forgetCheckouts(tx, looked, now), { behavior: "immediate" });
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */
-async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<string[]> {
-  const pass: Pass = { signal, recorded: new Set(rows.map(row => listingKey(row.path))), removed: new Map(), listings: new Map() };
+async function goneCheckouts(rows: ReadonlyArray<{ readonly path: string; readonly cloneId: string }>, signal: AbortSignal | undefined): Promise<GoneCheckouts> {
+  const pass: Pass = { signal, recorded: new Set(rows.map(row => listingKey(row.path))), removed: new Map(), listings: new Map(), missing: new Set() };
   const looked: LookedAt[] = [];
   for (const row of rows) {
-    if (signal?.aborted === true) return [];
+    if (signal?.aborted === true) return { gone: [], missing: pass.missing };
     looked.push({ ...row, onDisk: await onDiskOf(row, pass) });
   }
-  return await unlistedByTheirClones(looked, pass);
+  return { gone: await unlistedByTheirClones(looked, pass), missing: pass.missing };
+}
+
+/** The checkouts a pass found gone, and those of them whose folder was not there ({@link Pass.missing}). */
+interface GoneCheckouts {
+  readonly gone: readonly string[];
+  readonly missing: ReadonlySet<string>;
 }
 
 /**
@@ -1020,15 +1255,21 @@ async function unlessAborted<T>(work: Promise<T>, signal: AbortSignal | undefine
 async function onDiskOf({ path, cloneId }: { readonly path: string; readonly cloneId: string }, pass: Pass): Promise<OnDisk> {
   const present = await folderPresent(path, cloneId, pass);
   if (present === undefined) return "unknown";
+  if (!present) pass.missing.add(path);
   return present ? await gitEntry(path, cloneId, pass) : "unlisted";
 }
 
-/** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */
-function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): string[] {
+/**
+ * Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. A
+ * checkout whose folder was missing when the pass looked and is there again (renamed back since) stays, to be looked at
+ * by the next pass: one look at a folder whose filesystem answered that pass, under the write lock, so that a session
+ * recording it waits for the answer.
+ */
+function forgetCheckouts(tx: Writer, { gone, missing }: GoneCheckouts, now: number): string[] {
   const forgotten = statementRuns(gone)
     .flatMap(paths => tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
       .where(inArray(checkouts.checkoutPath, paths)).all())
-    .filter(row => row.lastSeenAt < now)
+    .filter(row => row.lastSeenAt < now && !(missing.has(row.path) && lstatSync(row.path, { throwIfNoEntry: false }) !== undefined))
     .map(row => row.path);
   deleteCheckoutSettings(tx, forgotten);
   for (const paths of statementRuns(forgotten)) tx.delete(checkouts).where(inArray(checkouts.checkoutPath, paths)).run();
@@ -1037,7 +1278,10 @@ function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): stri
 
 /**
  * Changes whenever a checkout is recorded, re-recorded under another identity or removed: the count, the newest row
- * and the newest record time. Caches of which checkout holds a folder are forgotten when it changes.
+ * and the newest record time, and the sums of the paths' lengths and of the record times, so a row written after the
+ * newest one was removed changes it though SQLite gives it that row's rowid and the clock stood at or before that
+ * row's time. Caches of which checkout holds a folder, and of which spellings are recorded, are forgotten when it
+ * changes.
  */
 export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "select">): string {
   return recordedCheckoutsVersionQuery(db).get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
@@ -1056,6 +1300,7 @@ const EMPTY_RECORDED_CHECKOUTS = "0:0:0";
 
 function recordedCheckoutsVersionQuery(db: Pick<RerailDatabase, "select">) {
   return db.select({
-    version: sql<string>`count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(max(${checkouts.createdAt}), 0)`,
+    version: sql<string>`count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(max(${checkouts.createdAt}), 0)
+      || ':' || total(length(${checkouts.checkoutPath})) || ':' || total(${checkouts.createdAt})`,
   }).from(checkouts);
 }

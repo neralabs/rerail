@@ -982,7 +982,6 @@ fn kernel(key: u64, source: &str, name: &'static str) -> Result<lane::Kernel, Er
     }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let made = lane::kernel(source, name, None);
-    let st_ = kernels();
     if let Ok(mut m) = st_.0.lock() {
         m.insert((key, name), made.clone());
     }
@@ -1536,8 +1535,10 @@ DEFINE_KERNEL2(serial, serial_write,
     (out, sw, counted)
 }
 
-/// Threads a file of the record pass: each takes every `RECORD_LANES`th token.
+/// Threads a file of the record pass: each takes every `RECORD_LANES`th token. A file's lanes are
+/// one threadgroup (the pass's barrier is theirs).
 const RECORD_LANES: usize = 64;
+const _: () = assert!(RECORD_LANES == THREADS, "a file's record lanes are one threadgroup");
 
 /// The record pass (`rerail_compiler::records`) in UKL: per program with records, its tables
 /// as constants and its function; the kernel `serial_records`, a file's tokens over
@@ -1663,8 +1664,16 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 if (bad) ukl_atomic_or(flag + f.tot_base + {x}u, 1u);\n\
              }}\n",
             // A file its totals refused (`serial_prefix`'s flag) goes to the fallback: no token
-            // of it is coded (`stop` at all of them).
-            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}") },
+            // of it is coded (`stop` at all of them). The pass's own refusal sets the same word
+            // (`flag` is `tot`), so every lane reads it before any lane can: a file's lanes are
+            // one threadgroup, and its barrier orders the reads first. Read as each lane started,
+            // a lane started after another refused returned uncoded: a 64th of the tokens lost
+            // each, the CPU's lanes running in turn (the rr marks test, roll-up 22).
+            refused = if n.totals.is_empty() {
+                String::new()
+            } else {
+                format!("\n  const bool before = tot[f.tot_base + {x}u] != 0u;\n  ukl_tg_barrier();\n  if (before) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}")
+            },
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
             // The token tests (`Records::checks`): by its first byte, the tests of a token's
             // rule, each a bit; a count over its words, a run from a window of one word or two.
@@ -2013,10 +2022,6 @@ fn run_split_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], segments: 
 
 /// The files' bytes admitted once a run, every pass of it reading them where they are.
 fn run_kept(programs: &[&BlockNative], files: &[BatchFile<'_>], digests: Option<&[[u8; 32]]>, segments: Segments, read: bool) -> Result<(SerialRun, Option<Resident>), Error> {
-    // A prefix (0335): `run_batch` generates it, the serial path not yet (`starts_late`).
-    if programs.iter().any(|p| crate::block_program::starts_late(p)) {
-        return Err(Error::UnsupportedBackend);
-    }
     let bytes: Vec<&[u8]> = files.iter().map(|f| f.bytes).collect();
     let sources = match digests {
         Some(d) if d.len() == files.len() => crate::slabs::admit_sources_digested(&bytes, d)?,

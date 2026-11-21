@@ -1,5 +1,4 @@
 .policy "ruff-pth201-path-constructor-current-directory" revision 1
-.guests off
 .description "Call Path() without arguments instead of passing the current directory explicitly; the constructor already defaults to it."
 .language python
 .mode steer

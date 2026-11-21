@@ -4,13 +4,15 @@
 // raw runs, ratio and status under a stable id, so runs compare across nights; each failing item names the phase that
 // moved (its locator), and each level names its biggest contributor one level down, so a reader can stop at the pack
 // table. A figure that fails at the median and passes its confirmation runs is noisy: reported, not counted. A pack
-// missing any slice is incomplete and never passes; a run narrowed by --packs or --corpus is PARTIAL, never PASS. Pure
+// missing any slice is incomplete and never passes; a run narrowed by --packs or --corpus is PARTIAL, never PASS. A
+// pack whose verdict does not count (the `.rerail` side's, without an equivalence.json saying equivalent) is judged
+// alike and reported only: the candidate's counted status, the one the exit status reads, leaves it out. Pure
 // functions; report.ts renders the Markdown.
 
 import { methodGaps, type RunMethod } from "./platform.js";
 import type { Candidate, CellVerdict, Corpus, LoadSummary, MeasuredMetric, OneFileVerdict, OneRuleTiming, OneRuleVerdict, PackVerdict, RuleTiming, SameFindings, Verdict } from "./shipbar.js";
 import { type CellCost, KNOWN_GAPS, type RuleMultiple, ruleMultiples } from "./metric.js";
-import { type FileLabel, median, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, SLICES_TOLERANCE_PERCENT, spread, type TimeVerdict } from "./verdict.js";
+import { type FileLabel, median, RR_RULE_TIME, RULE_ALERT_RATIO, RULE_FLOOR_MS, ruleSliceStats, SLICES_TOLERANCE_PERCENT, spread, type TimeVerdict } from "./verdict.js";
 import type { WaitsSection } from "./waits-model.js";
 
 export const SCHEMA = "ship-no-ship/report/v2";
@@ -74,7 +76,7 @@ export interface SameItem {
 }
 
 export interface RuleItem extends Attribution {
-  /** compile + evaluate: the rule's time alone. */
+  /** The rule's time alone: compile + evaluate, or the `.rerail` side's net wall (verdict.ts RR_RULE_TIME). */
   time: TimeItem;
   status: ItemStatus;
   locator: string | null;
@@ -117,6 +119,8 @@ export interface OneRuleItem {
   /** Why it is not compared. */
   reason: string | null;
   unmeasured: string[];
+  /** What each rule's judged time is (ruleTimeLabel): compile + evaluate, or the `.rerail` side's net wall. */
+  rule_time: string;
   runs_per_side: number;
   /** The empty rule set: cold wall, load, compile and evaluate. */
   fixed: { status: ItemStatus; times: TimeItem[]; locator: string | null; completion: { status: ItemStatus; kind: string; reason: string } } | null;
@@ -216,6 +220,10 @@ export interface PackItem {
   candidate: Candidate;
   pack: string;
   status: ItemStatus | "incomplete" | "no_baseline";
+  /** Whether the pack's verdict counts toward its candidate's counted status (the exit status); false: reported only. */
+  counted: boolean;
+  /** Why it counts or not (the `.rerail` side's equivalence.json); null where it always counts. */
+  gate_reason: string | null;
   summary: PackSummary;
   coverage: { missing: { rule: string; reason: string }[]; extra: string[] };
   /** Slice A. */
@@ -235,6 +243,8 @@ export interface FailureItem {
   id: string;
   candidate: Candidate;
   pack: string;
+  /** Whether its pack's verdict counts (PackItem.counted); false: reported only. */
+  counted: boolean;
   slice: Slice | null;
   corpus: Corpus | null;
   item: string;
@@ -247,8 +257,11 @@ export interface FailureItem {
 export interface CandidateItem {
   candidate: Candidate;
   description: string;
+  /** Over every pack, counted or reported only. */
   status: VerdictStatus;
-  counts: { packs: number; failing_packs: number; noisy_packs: number; incomplete_packs: number; failing_items: number; noisy_items: number };
+  /** Over the packs whose verdict counts: what the exit status reads; null when none counts. */
+  counted_status: VerdictStatus | null;
+  counts: { packs: number; failing_packs: number; noisy_packs: number; incomplete_packs: number; reported_packs: number; failing_items: number; noisy_items: number };
   failures: FailureItem[];
   noisy: FailureItem[];
   packs: PackItem[];
@@ -280,7 +293,7 @@ export interface Report {
     gate: Candidate[];
     /** How the run was narrowed: a partial verdict is never PASS. */
     partial: string[];
-    candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; failing_packs: number; failing_items: number }>>;
+    candidates: Partial<Record<Candidate, { status: CandidateItem["status"]; counted_status: CandidateItem["counted_status"]; failing_packs: number; failing_items: number }>>;
     waits: WaitsSection["status"] | null;
   };
   candidates: CandidateItem[];
@@ -413,13 +426,22 @@ function ruleStatsItem(times: readonly TimeVerdict[]): RuleStatsItem {
   return { rules: s.rules, compared: s.compared, median_ratio: s.medianRatio, p95_ratio: s.p95Ratio, over_bar_before: s.overBefore, failing: s.failing, over_alert: s.overAlert, worst: s.worst.map((w) => ({ rule: w.rule, ratio: w.ratio, baseline_ms: w.main, candidate_ms: w.candidate })) };
 }
 
+/** Slice B's fixed cost on one corpus: the empty rule set's times, the phase that moved, and whether it completed. */
+function fixedItem(fixed: OneRuleVerdict["fixed"]): OneRuleItem["fixed"] {
+  if (fixed === null) return null;
+  const times = fixed.times.map(timeItem);
+  const completion = { status: completionStatus(fixed.completion.status), kind: fixed.completion.kind, reason: fixed.completion.reason };
+  return { status: worstStatus([...times.map((t) => t.status), completion.status]), times, locator: fixed.locator, completion };
+}
+
 /** Slice B on one corpus: the fixed cost, every rule alone with its added time, and the corpus's rule statistics. */
 function oneRuleItem(candidate: Candidate, pack: string, b: OneRuleVerdict): OneRuleItem {
   const id = `${candidate}/${pack}/one-rule/${b.corpus}`;
   const timing = (r: OneRuleTiming): RuleTiming => ({ rule: r.rule, main: r.times[0]!.main, candidate: r.times[0]!.candidate });
   const { rules: attributed, totalAddedMs } = attribute(b.rules.map(timing));
   const byRule = new Map(b.rules.map((r) => [r.rule, r]));
-  const fixedTimes = b.fixed?.times.map(timeItem) ?? [];
+  const fixed = fixedItem(b.fixed);
+  const fixedTimes = fixed?.times ?? [];
   const phase = (name: string, side: "baseline_ms" | "candidate_ms"): number | null => fixedTimes.find((t) => t.name === name)?.[side] ?? null;
   const add = (a: number | null, c: number | null): number | null => (a === null || c === null ? null : a + c);
   const startup = { baseline_ms: add(phase("compile", "baseline_ms"), phase("evaluate", "baseline_ms")), candidate_ms: add(phase("compile", "candidate_ms"), phase("evaluate", "candidate_ms")) };
@@ -433,8 +455,6 @@ function oneRuleItem(candidate: Candidate, pack: string, b: OneRuleVerdict): One
     const status = worstStatus([time.status, completion.status, ...(findings === null ? [] : [findings.status]), ...(r.ruleFailure === null ? [] : (["fail"] as ItemStatus[]))]);
     return { ...a, ...multiples.get(a.rule), time, status, locator: r.locator, completion, findings, rule_failure: r.ruleFailure, wall_ms: { baseline: r.wallMs.main, candidate: r.wallMs.candidate }, rss_mb: { baseline: mb(r.rssKB.main), candidate: mb(r.rssKB.candidate) } };
   });
-  const fixedCompletion = b.fixed === null ? null : { status: completionStatus(b.fixed.completion.status), kind: b.fixed.completion.kind, reason: b.fixed.completion.reason };
-  const fixed = b.fixed === null || fixedCompletion === null ? null : { status: worstStatus([...fixedTimes.map((t) => t.status), fixedCompletion.status]), times: fixedTimes, locator: b.fixed.locator, completion: fixedCompletion };
   const status = b.note !== "" ? "not_compared" : worstStatus([...(fixed === null ? [] : [fixed.status]), ...rules.map((r) => r.status)]);
   return {
     id,
@@ -442,6 +462,7 @@ function oneRuleItem(candidate: Candidate, pack: string, b: OneRuleVerdict): One
     status,
     reason: b.note === "" ? null : b.note,
     unmeasured: b.unmeasured,
+    rule_time: ruleTimeLabel(candidate === "rr" ? RR_RULE_TIME : "compile+evaluate"),
     runs_per_side: b.runs,
     fixed,
     rules,
@@ -510,25 +531,37 @@ function cellItem(candidate: Candidate, pack: string, cell: CellVerdict, oneRule
   };
 }
 
+/** Slice B's lack on one corpus: not measured, or rules not timed on both sides; null when it lacks nothing. */
+function missingOneRule(p: PackVerdict, corpus: Corpus): MissingSlice | null {
+  const b = p.oneRule.find((o) => o.corpus === corpus);
+  if (b === undefined || b.note !== "") return { slice: "B", reason: `${corpus}: ${b?.note ?? "not measured"}` };
+  if (b.unmeasured.length > 0) return { slice: "B", reason: `${corpus}: ${b.unmeasured.length} rule${b.unmeasured.length === 1 ? "" : "s"} not timed on both sides (${b.unmeasured.slice(0, 3).join(", ")}${b.unmeasured.length > 3 ? ", …" : ""})` };
+  return null;
+}
+
+/** Slice C's lack: fewer than its three files measured, where the run covers the real-code corpus; null otherwise. */
+function missingOneFile(p: PackVerdict, cells: readonly CellItem[]): MissingSlice | null {
+  if (!cells.some((cell) => cell.corpus === "real")) return null;
+  const measured = p.oneFile.filter((f) => f.note === "");
+  if (measured.length >= 3) return null;
+  return { slice: "C", reason: `${measured.length} of 3 files measured${p.oneFile.length === 0 ? " (no files picked)" : ""}` };
+}
+
 /**
  * What a pack lacks of the three slices, within the run's scope (the corpora its A cells cover; a pack without a
  * fixtures corpus has no fixtures cell to lack): an A cell not measured, a B corpus not measured or with rules not timed
- * on both sides, fewer than C's three files measured, or a candidate that measures slice A only.
+ * on both sides, or fewer than C's three files measured.
  */
 export function missingSlices(p: PackVerdict, cells: readonly CellItem[]): MissingSlice[] {
   if (p.noBaseline) return [];
   const absent = (cell: CellItem): boolean => (cell.reason ?? "").startsWith("no fixtures corpus");
   const missing: MissingSlice[] = cells.filter((cell) => cell.status === "not_compared" && !absent(cell)).map((cell) => ({ slice: "A", reason: `${cell.corpus}: ${cell.reason ?? "not compared"}` }));
-  if (p.slicesNote !== null) return [...missing, { slice: "B", reason: p.slicesNote }, { slice: "C", reason: p.slicesNote }];
   for (const cell of cells.filter((c) => !absent(c))) {
-    const b = p.oneRule.find((o) => o.corpus === cell.corpus);
-    if (b === undefined || b.note !== "") missing.push({ slice: "B", reason: `${cell.corpus}: ${b?.note ?? "not measured"}` });
-    else if (b.unmeasured.length > 0) missing.push({ slice: "B", reason: `${cell.corpus}: ${b.unmeasured.length} rule${b.unmeasured.length === 1 ? "" : "s"} not timed on both sides (${b.unmeasured.slice(0, 3).join(", ")}${b.unmeasured.length > 3 ? ", …" : ""})` });
+    const b = missingOneRule(p, cell.corpus);
+    if (b !== null) missing.push(b);
   }
-  if (cells.some((cell) => cell.corpus === "real")) {
-    const measured = p.oneFile.filter((f) => f.note === "");
-    if (measured.length < 3) missing.push({ slice: "C", reason: `${measured.length} of 3 files measured${p.oneFile.length === 0 ? " (no files picked)" : ""}` });
-  }
+  const c = missingOneFile(p, cells);
+  if (c !== null) missing.push(c);
   return missing;
 }
 
@@ -600,23 +633,40 @@ export function packSummary(cells: readonly CellItem[], oneRule: readonly OneRul
   };
 }
 
+/** A pack's status: no baseline, else incomplete while a slice is missing and nothing fails, else its items' worst. */
+function packStatus(p: PackVerdict, worst: ItemStatus, incomplete: readonly MissingSlice[]): PackItem["status"] {
+  if (p.noBaseline) return "no_baseline";
+  return worst !== "fail" && incomplete.length > 0 ? "incomplete" : worst;
+}
+
+/** A pack's hint when its items give none: a rule the baseline ships that cannot run, else the first missing slice. */
+function packHint(p: PackVerdict, incomplete: readonly MissingSlice[]): string | null {
+  if (p.missing.length > 0) return `${p.missing.length} rule${p.missing.length === 1 ? "" : "s"} cannot run: ${p.missing[0]!.rule} (${p.missing[0]!.reason})`;
+  if (incomplete.length > 0) return `incomplete: slice ${incomplete[0]!.slice} ${incomplete[0]!.reason}`;
+  return null;
+}
+
 function packItem(candidate: Candidate, p: PackVerdict, reproduce: ReproduceSettings): PackItem {
   const oneRule = p.oneRule.map((b) => oneRuleItem(candidate, p.pack, b));
   const oneFile = p.oneFile.map((f) => oneFileItem(candidate, p.pack, f));
   const cells = p.cells.map((cell) => cellItem(candidate, p.pack, cell, oneRule.find((b) => b.corpus === cell.corpus), reproduce));
   const incomplete = missingSlices(p, cells);
   const worst = worstStatus([...cells.map((c) => c.status), ...oneRule.map((b) => b.status), ...oneFile.map((f) => f.status), ...(p.missing.length > 0 ? (["fail"] as ItemStatus[]) : [])]);
-  const status: PackItem["status"] = p.noBaseline ? "no_baseline" : worst !== "fail" && incomplete.length > 0 ? "incomplete" : worst;
+  const status = packStatus(p, worst, incomplete);
   const summary = packSummary(cells, oneRule, oneFile, incomplete, packRuleStats(p.oneRule));
-  if (summary.hint === null && p.missing.length > 0) summary.hint = `${p.missing.length} rule${p.missing.length === 1 ? "" : "s"} cannot run: ${p.missing[0]!.rule} (${p.missing[0]!.reason})`;
-  if (summary.hint === null && incomplete.length > 0) summary.hint = `incomplete: slice ${incomplete[0]!.slice} ${incomplete[0]!.reason}`;
-  return { id: `${candidate}/${p.pack}`, candidate, pack: p.pack, status, summary, coverage: { missing: p.missing, extra: p.extra }, cells, one_rule: oneRule, one_file: oneFile, incomplete };
+  if (summary.hint === null) summary.hint = packHint(p, incomplete);
+  return { id: `${candidate}/${p.pack}`, candidate, pack: p.pack, status, counted: p.gate?.counted ?? true, gate_reason: p.gate?.reason ?? null, summary, coverage: { missing: p.missing, extra: p.extra }, cells, one_rule: oneRule, one_file: oneFile, incomplete };
 }
 
 const LABELS: Record<string, string> = { "wall-cold": "wall cold", "wall-warm": "wall warm", "cpu-cold": "CPU cold", "cpu-warm": "CPU warm", "rss-cold": "peak RSS cold", "rss-warm": "peak RSS warm" };
 
 export function metricLabel(metric: string): string {
   return LABELS[metric] ?? metric;
+}
+
+/** What a slice B rule's time is, as the report names it: the product path's compile + evaluate, or the `.rerail` side's net wall against it. */
+export function ruleTimeLabel(name: string): string {
+  return name === RR_RULE_TIME ? "compile + evaluate → net wall (cold wall less the empty rule set's)" : "compile + evaluate";
 }
 
 /** The phase a run stopped in, from a completion reason ("…; stopped on <phase>"). */
@@ -630,58 +680,107 @@ function failurePhase(reason: string): string {
   return reason.startsWith("compile:") ? "compile" : "evaluate";
 }
 
+/** A ratio as a failure reason states it: three decimals, – where there is none. */
+function reasonRatio(r: number | null): string {
+  return r === null || !Number.isFinite(r) ? "–" : `${r.toFixed(3)}x`;
+}
+
+/** The bar as a failure reason states it. */
+function reasonBar(): string {
+  return (1 + SLICES_TOLERANCE_PERCENT / 100).toFixed(2);
+}
+
+/** The step a run stopped on, as a failure item's locator; null where the run does not say. */
+function stoppedOn(step: string | null): string | null {
+  return step === null ? null : `stopped in ${step}`;
+}
+
+/** A failure item without the pack's fields (packFailure adds them). */
+type PackFailure = Omit<FailureItem, "candidate" | "pack" | "counted">;
+
+/** A pack's failure item: its candidate, its pack and whether the pack counts, then the item. */
+function packFailure(p: PackItem, item: PackFailure): FailureItem {
+  return { candidate: p.candidate, pack: p.pack, counted: p.counted, ...item };
+}
+
+/** An A cell's or a C file's metrics in the wanted status, each with the bar and its confirmation ratio. */
+function metricFailures(p: PackItem, wanted: ItemStatus, slice: Slice, corpus: Corpus | null, metrics: readonly MetricItem[], note: string, hint: string | null): FailureItem[] {
+  return metrics
+    .filter((m) => m.status === wanted)
+    .map((m) => {
+      const confirmed = m.confirm === null ? "" : `; confirmation ${reasonRatio(m.confirm.ratio)}`;
+      return { id: m.id, candidate: p.candidate, pack: p.pack, counted: p.counted, slice, corpus, item: m.metric, reason: `${reasonRatio(m.ratio)} baseline (bar ${reasonBar()}x)${confirmed}${note}`, locator: m.locator, hint };
+    });
+}
+
+/** What stops slice A on one corpus: blocked, not completed, rules failing on the candidate only. */
+function cellStops(p: PackItem, cell: CellItem): FailureItem[] {
+  const out: FailureItem[] = [];
+  if (cell.status === "fail" && cell.reason !== null) out.push(packFailure(p, { id: `${cell.id}/blocked`, slice: "A", corpus: cell.corpus, item: "completion", reason: cell.reason, locator: null, hint: null }));
+  if (cell.completion?.status === "fail") out.push(packFailure(p, { id: `${cell.id}/completion`, slice: "A", corpus: cell.corpus, item: "completion", reason: cell.completion.reason, locator: stoppedOn(cell.completion.stopped_on), hint: null }));
+  for (const f of cell.rule_failures) out.push(packFailure(p, { id: `${cell.id}/rule-failure/${f.rule}`, slice: "A", corpus: cell.corpus, item: "rule failure", reason: `${f.rule}: ${f.reason}`, locator: failurePhase(f.reason), hint: null }));
+  return out;
+}
+
+/** Slice A on one corpus: what stops it, its metrics in the wanted status, its findings differing; all but the metrics fail only. */
+function cellFailures(p: PackItem, cell: CellItem, wanted: ItemStatus): FailureItem[] {
+  const out: FailureItem[] = wanted === "fail" ? cellStops(p, cell) : [];
+  out.push(...metricFailures(p, wanted, "A", cell.corpus, cell.metrics, cell.chunked === null ? "" : ` (chunked: the sum of ${cell.chunked.chunks} chunk runs)`, cell.hint));
+  if (wanted === "fail" && cell.findings?.status === "fail") out.push(packFailure(p, { id: `${cell.id}/findings`, slice: "A", corpus: cell.corpus, item: "findings", reason: cell.findings.reason, locator: "evaluate: findings differ", hint: cell.findings.samples[0] ?? null }));
+  return out;
+}
+
+/** Slice B's fixed cost on one corpus: its times in the wanted status, then not completed (fail only). */
+function fixedFailures(p: PackItem, b: OneRuleItem, wanted: ItemStatus): FailureItem[] {
+  const { fixed } = b;
+  if (fixed === null) return [];
+  const out = fixed.times
+    .filter((t) => t.status === wanted)
+    .map((t) => {
+      const confirmed = t.confirm === null ? "" : `; confirmation ${reasonRatio(t.confirm.ratio)}`;
+      return packFailure(p, { id: `${b.id}/fixed/${t.name}`, slice: "B", corpus: b.corpus, item: `fixed ${t.name}`, reason: `empty rule set ${formatMs(t.baseline_ms ?? 0)} → ${formatMs(t.candidate_ms ?? 0)}, ${reasonRatio(t.ratio)} baseline (bar ${reasonBar()}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: fixed.locator, hint: null });
+    });
+  if (wanted === "fail" && fixed.completion.status === "fail") out.push(packFailure(p, { id: `${b.id}/fixed/completion`, slice: "B", corpus: b.corpus, item: "completion", reason: `empty rule set: ${fixed.completion.reason}`, locator: stoppedIn(fixed.completion.reason), hint: null }));
+  return out;
+}
+
+/** A slice B rule's time over the bar (or noisy), with the floor and its confirmation times. */
+function ruleTimeFailure(p: PackItem, b: OneRuleItem, r: RuleItem): FailureItem {
+  const confirmed = r.time.confirm === null ? "" : `; confirmation ${formatMs(r.time.confirm.baseline_ms)} → ${formatMs(r.time.confirm.candidate_ms)} ${reasonRatio(r.time.confirm.ratio)}`;
+  return packFailure(p, { id: `${b.id}/${r.rule}/time`, slice: "B", corpus: b.corpus, item: "rule time", reason: `\`${r.rule}\` ${ruleTimeLabel(r.time.name)} ${formatMs(r.time.baseline_ms ?? 0)} → ${formatMs(r.time.candidate_ms ?? 0)}, ${reasonRatio(r.time.ratio)} baseline (bar ${reasonBar()}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: r.locator, hint: null });
+}
+
+/** A slice B rule: its time in the wanted status, then (fail only) not completed, findings differing, failing on the candidate only. */
+function ruleFailures(p: PackItem, b: OneRuleItem, r: RuleItem, wanted: ItemStatus): FailureItem[] {
+  const out: FailureItem[] = r.time.status === wanted ? [ruleTimeFailure(p, b, r)] : [];
+  if (wanted !== "fail") return out;
+  if (r.completion.status === "fail") out.push(packFailure(p, { id: `${b.id}/${r.rule}/completion`, slice: "B", corpus: b.corpus, item: "completion", reason: `\`${r.rule}\`: ${r.completion.reason}`, locator: stoppedIn(r.completion.reason), hint: null }));
+  if (r.findings?.status === "fail") out.push(packFailure(p, { id: `${b.id}/${r.rule}/findings`, slice: "B", corpus: b.corpus, item: "findings", reason: `\`${r.rule}\`: ${r.findings.baseline_only} baseline only, ${r.findings.candidate_only} candidate only`, locator: "evaluate: findings differ", hint: r.findings.samples[0] ?? null }));
+  if (r.rule_failure !== null) out.push(packFailure(p, { id: `${b.id}/${r.rule}/rule-failure`, slice: "B", corpus: b.corpus, item: "rule failure", reason: `\`${r.rule}\`: ${r.rule_failure}`, locator: failurePhase(r.rule_failure), hint: null }));
+  return out;
+}
+
+/** Slice C on one file: not completed (fail only), its metrics in the wanted status, then (fail only) findings differing and rules failing on the candidate only. */
+function oneFileFailures(p: PackItem, f: OneFileItem, wanted: ItemStatus): FailureItem[] {
+  const out: FailureItem[] = [];
+  if (wanted === "fail" && f.completion?.status === "fail") out.push(packFailure(p, { id: `${f.id}/completion`, slice: "C", corpus: "real", item: "completion", reason: `${f.path}: ${f.completion.reason}`, locator: stoppedOn(f.completion.stopped_on), hint: null }));
+  out.push(...metricFailures(p, wanted, "C", "real", f.metrics, ` (${f.label}: ${f.path})`, null));
+  if (wanted !== "fail") return out;
+  if (f.findings?.status === "fail") out.push(packFailure(p, { id: `${f.id}/findings`, slice: "C", corpus: "real", item: "findings", reason: `${f.path}: ${f.findings.baseline_only} baseline only, ${f.findings.candidate_only} candidate only`, locator: "evaluate: findings differ", hint: f.findings.samples[0] ?? null }));
+  for (const r of f.rule_failures) out.push(packFailure(p, { id: `${f.id}/rule-failure/${r.rule}`, slice: "C", corpus: "real", item: "rule failure", reason: `${f.path}: ${r.rule}: ${r.reason}`, locator: failurePhase(r.reason), hint: null }));
+  return out;
+}
+
+/** One pack's items in the wanted status: coverage first (fail only), then each slice in turn. */
+function packFailures(p: PackItem, wanted: ItemStatus): FailureItem[] {
+  const coverage = wanted === "fail" ? p.coverage.missing.map((m) => packFailure(p, { id: `${p.id}/coverage/${m.rule}`, slice: null, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}`, locator: null, hint: null })) : [];
+  const oneRule = p.one_rule.flatMap((b) => [...fixedFailures(p, b, wanted), ...b.rules.flatMap((r) => ruleFailures(p, b, r, wanted))]);
+  return [...coverage, ...p.cells.flatMap((cell) => cellFailures(p, cell, wanted)), ...oneRule, ...p.one_file.flatMap((f) => oneFileFailures(p, f, wanted))];
+}
+
 /** Every item that fails (or is noisy) under one candidate, in pack order, coverage first, each slice in turn. */
 function items(packs: readonly PackItem[], wanted: ItemStatus): FailureItem[] {
-  const out: FailureItem[] = [];
-  const bar = (1 + SLICES_TOLERANCE_PERCENT / 100).toFixed(2);
-  const ratio = (r: number | null): string => (r === null || !Number.isFinite(r) ? "–" : `${r.toFixed(3)}x`);
-  const metricItems = (p: PackItem, slice: Slice, corpus: Corpus | null, metrics: readonly MetricItem[], note: string, hint: string | null): void => {
-    for (const m of metrics) {
-      if (m.status !== wanted) continue;
-      const confirmed = m.confirm === null ? "" : `; confirmation ${ratio(m.confirm.ratio)}`;
-      out.push({ id: m.id, candidate: p.candidate, pack: p.pack, slice, corpus, item: m.metric, reason: `${ratio(m.ratio)} baseline (bar ${bar}x)${confirmed}${note}`, locator: m.locator, hint });
-    }
-  };
-  for (const p of packs) {
-    const push = (item: Omit<FailureItem, "candidate" | "pack">): void => {
-      out.push({ candidate: p.candidate, pack: p.pack, ...item });
-    };
-    if (wanted === "fail") for (const m of p.coverage.missing) push({ id: `${p.id}/coverage/${m.rule}`, slice: null, corpus: null, item: "coverage", reason: `${m.rule}: ${m.reason}`, locator: null, hint: null });
-    for (const cell of p.cells) {
-      if (wanted === "fail" && cell.status === "fail" && cell.reason !== null) push({ id: `${cell.id}/blocked`, slice: "A", corpus: cell.corpus, item: "completion", reason: cell.reason, locator: null, hint: null });
-      if (wanted === "fail" && cell.completion?.status === "fail") push({ id: `${cell.id}/completion`, slice: "A", corpus: cell.corpus, item: "completion", reason: cell.completion.reason, locator: cell.completion.stopped_on === null ? null : `stopped in ${cell.completion.stopped_on}`, hint: null });
-      if (wanted === "fail") for (const f of cell.rule_failures) push({ id: `${cell.id}/rule-failure/${f.rule}`, slice: "A", corpus: cell.corpus, item: "rule failure", reason: `${f.rule}: ${f.reason}`, locator: failurePhase(f.reason), hint: null });
-      metricItems(p, "A", cell.corpus, cell.metrics, cell.chunked === null ? "" : ` (chunked: the sum of ${cell.chunked.chunks} chunk runs)`, cell.hint);
-      if (wanted === "fail" && cell.findings?.status === "fail") push({ id: `${cell.id}/findings`, slice: "A", corpus: cell.corpus, item: "findings", reason: cell.findings.reason, locator: "evaluate: findings differ", hint: cell.findings.samples[0] ?? null });
-    }
-    for (const b of p.one_rule) {
-      if (b.fixed !== null) {
-        for (const t of b.fixed.times) {
-          if (t.status !== wanted) continue;
-          const confirmed = t.confirm === null ? "" : `; confirmation ${ratio(t.confirm.ratio)}`;
-          push({ id: `${b.id}/fixed/${t.name}`, slice: "B", corpus: b.corpus, item: `fixed ${t.name}`, reason: `empty rule set ${formatMs(t.baseline_ms ?? 0)} → ${formatMs(t.candidate_ms ?? 0)}, ${ratio(t.ratio)} baseline (bar ${bar}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: b.fixed.locator, hint: null });
-        }
-        if (wanted === "fail" && b.fixed.completion.status === "fail") push({ id: `${b.id}/fixed/completion`, slice: "B", corpus: b.corpus, item: "completion", reason: `empty rule set: ${b.fixed.completion.reason}`, locator: stoppedIn(b.fixed.completion.reason), hint: null });
-      }
-      for (const r of b.rules) {
-        if (r.time.status === wanted) {
-          const confirmed = r.time.confirm === null ? "" : `; confirmation ${formatMs(r.time.confirm.baseline_ms)} → ${formatMs(r.time.confirm.candidate_ms)} ${ratio(r.time.confirm.ratio)}`;
-          push({ id: `${b.id}/${r.rule}/time`, slice: "B", corpus: b.corpus, item: "rule time", reason: `\`${r.rule}\` compile + evaluate ${formatMs(r.time.baseline_ms ?? 0)} → ${formatMs(r.time.candidate_ms ?? 0)}, ${ratio(r.time.ratio)} baseline (bar ${bar}x, floor ${RULE_FLOOR_MS} ms)${confirmed}`, locator: r.locator, hint: null });
-        }
-        if (wanted !== "fail") continue;
-        if (r.completion.status === "fail") push({ id: `${b.id}/${r.rule}/completion`, slice: "B", corpus: b.corpus, item: "completion", reason: `\`${r.rule}\`: ${r.completion.reason}`, locator: stoppedIn(r.completion.reason), hint: null });
-        if (r.findings?.status === "fail") push({ id: `${b.id}/${r.rule}/findings`, slice: "B", corpus: b.corpus, item: "findings", reason: `\`${r.rule}\`: ${r.findings.baseline_only} baseline only, ${r.findings.candidate_only} candidate only`, locator: "evaluate: findings differ", hint: r.findings.samples[0] ?? null });
-        if (r.rule_failure !== null) push({ id: `${b.id}/${r.rule}/rule-failure`, slice: "B", corpus: b.corpus, item: "rule failure", reason: `\`${r.rule}\`: ${r.rule_failure}`, locator: failurePhase(r.rule_failure), hint: null });
-      }
-    }
-    for (const f of p.one_file) {
-      if (wanted === "fail" && f.completion?.status === "fail") push({ id: `${f.id}/completion`, slice: "C", corpus: "real", item: "completion", reason: `${f.path}: ${f.completion.reason}`, locator: f.completion.stopped_on === null ? null : `stopped in ${f.completion.stopped_on}`, hint: null });
-      metricItems(p, "C", "real", f.metrics, ` (${f.label}: ${f.path})`, null);
-      if (wanted === "fail" && f.findings?.status === "fail") push({ id: `${f.id}/findings`, slice: "C", corpus: "real", item: "findings", reason: `${f.path}: ${f.findings.baseline_only} baseline only, ${f.findings.candidate_only} candidate only`, locator: "evaluate: findings differ", hint: f.findings.samples[0] ?? null });
-      if (wanted === "fail") for (const r of f.rule_failures) push({ id: `${f.id}/rule-failure/${r.rule}`, slice: "C", corpus: "real", item: "rule failure", reason: `${f.path}: ${r.rule}: ${r.reason}`, locator: failurePhase(r.reason), hint: null });
-    }
-  }
-  return out;
+  return packs.flatMap((p) => packFailures(p, wanted));
 }
 
 export interface RunMeta {
@@ -695,6 +794,34 @@ export interface RunMeta {
   fileRuns: number;
 }
 
+/** The run's status: a gated candidate counts by its counted packs only (none counted: it cannot fail the run); a narrowed run is never PASS. */
+function runStatus(candidates: readonly CandidateItem[], gate: Verdict["gate"], partial: Verdict["partial"], waits: WaitsSection | null): VerdictStatus {
+  const gated = candidates.filter((c) => gate.includes(c.candidate));
+  const statuses: VerdictStatus[] = [...gated.flatMap((c) => (c.counted_status === null ? [] : [c.counted_status])), ...(waits === null ? [] : [waits.status]), ...(partial.length > 0 && candidates.length > 0 ? (["PARTIAL"] as const) : [])];
+  return (["FAIL", "INCOMPLETE", "PARTIAL"] as const).find((s) => statuses.includes(s)) ?? "PASS";
+}
+
+/** What the report measured and what it did not: the packs' three slices when packs ran, the user waits when measured. */
+function scopeItem(packsRan: boolean, waits: WaitsSection | null): Report["scope"] {
+  return {
+    measured: [
+      ...(packsRan
+        ? [
+            "every pack the baseline ships in three slices: A, all of its rules on its upstream fixtures and one pinned real-code corpus (wall, CPU and peak RSS, cold and warm; findings; completion; coverage); B, the empty rule set and each rule alone on both corpora (compile + evaluate per rule, the `.rerail` side's net wall against it, the fixed cost's wall and phases; findings per rule); C, all of its rules on three files of the real-code corpus (wall, CPU and peak RSS, cold and warm; findings)",
+          ]
+        : []),
+      ...(waits === null ? [] : [`user waits through hooks, daemon and CLI: ${[...new Set(waits.items.map((i) => i.wait))].join(", ")}`]),
+    ],
+    not_measured: [
+      ...(packsRan ? [] : ["pack timing (§5.1): no pack runs in this directory"]),
+      ...(waits === null ? ["user waits through hooks, daemon and CLI (W1–W8)"] : waits.not_measured.map((n) => `${n.id}: ${n.reason}`)),
+      "a repository's whole enabled rule set across packs, and the rule work budget",
+      ...(waits === null ? [] : ["user waits on macOS and Windows: waits measure on Linux only"]),
+    ],
+    known_gaps: KNOWN_GAPS,
+  };
+}
+
 export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection | null = null): Report {
   const reproduce: ReproduceSettings = { baseline: verdict.baseline.ref ?? verdict.baseline.sha, runs: verdict.runs };
   const partial = verdict.partial;
@@ -702,21 +829,28 @@ export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection
     const packs = c.packs.map((p) => packItem(c.candidate, p, reproduce));
     const failures = items(packs, "fail");
     const noisy = items(packs, "noisy");
-    const incompletePacks = packs.filter((p) => p.incomplete.length > 0).length;
-    const status: VerdictStatus = failures.length > 0 ? "FAIL" : incompletePacks > 0 ? "INCOMPLETE" : partial.length > 0 ? "PARTIAL" : "PASS";
+    const statusOf = (subset: readonly PackItem[]): VerdictStatus => (items(subset, "fail").length > 0 ? "FAIL" : subset.some((p) => p.incomplete.length > 0) ? "INCOMPLETE" : partial.length > 0 ? "PARTIAL" : "PASS");
+    const counted = packs.filter((p) => p.counted);
     return {
       candidate: c.candidate,
       description: c.description,
-      status,
-      counts: { packs: packs.filter((p) => p.status !== "no_baseline").length, failing_packs: packs.filter((p) => p.status === "fail").length, noisy_packs: packs.filter((p) => p.status === "noisy").length, incomplete_packs: incompletePacks, failing_items: failures.length, noisy_items: noisy.length },
+      status: statusOf(packs),
+      counted_status: counted.length === 0 ? null : statusOf(counted),
+      counts: {
+        packs: packs.filter((p) => p.status !== "no_baseline").length,
+        failing_packs: packs.filter((p) => p.status === "fail").length,
+        noisy_packs: packs.filter((p) => p.status === "noisy").length,
+        incomplete_packs: packs.filter((p) => p.incomplete.length > 0).length,
+        reported_packs: packs.filter((p) => !p.counted).length,
+        failing_items: failures.length,
+        noisy_items: noisy.length,
+      },
       failures,
       noisy,
       packs,
     };
   });
-  const gated = candidates.filter((c) => verdict.gate.includes(c.candidate));
-  const statuses: VerdictStatus[] = [...gated.map((c) => c.status), ...(waits === null ? [] : [waits.status])];
-  const overallStatus: VerdictStatus = (["FAIL", "INCOMPLETE", "PARTIAL"] as const).find((s) => statuses.includes(s)) ?? "PASS";
+  const overallStatus = runStatus(candidates, verdict.gate, partial, waits);
   return {
     schema: SCHEMA,
     run: { started_at: meta.startedAt, finished_at: meta.finishedAt, invoked_by: meta.invokedBy, command: meta.command, harness_sha: meta.harnessSha },
@@ -737,25 +871,9 @@ export function buildReport(verdict: Verdict, meta: RunMeta, waits: WaitsSection
       threads: verdict.machine.threads,
       methods: verdict.machine.methods.map((m) => ({ ...m, gaps: methodGaps(m.method) })),
     },
-    verdict: { status: overallStatus, gate: verdict.gate, partial: candidates.length > 0 ? [...partial] : [], candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])), waits: waits?.status ?? null },
+    verdict: { status: overallStatus, gate: verdict.gate, partial: candidates.length > 0 ? [...partial] : [], candidates: Object.fromEntries(candidates.map((c) => [c.candidate, { status: c.status, counted_status: c.counted_status, failing_packs: c.counts.failing_packs, failing_items: c.counts.failing_items }])), waits: waits?.status ?? null },
     candidates,
     waits,
-    scope: {
-      measured: [
-        ...(candidates.length > 0
-          ? [
-              "every pack the baseline ships in three slices: A, all of its rules on its upstream fixtures and one pinned real-code corpus (wall, CPU and peak RSS, cold and warm; findings; completion; coverage); B, the empty rule set and each rule alone on both corpora (compile + evaluate per rule, the fixed cost's wall and phases; findings per rule); C, all of its rules on three files of the real-code corpus (wall, CPU and peak RSS, cold and warm; findings)",
-            ]
-          : []),
-        ...(waits === null ? [] : [`user waits through hooks, daemon and CLI: ${[...new Set(waits.items.map((i) => i.wait))].join(", ")}`]),
-      ],
-      not_measured: [
-        ...(candidates.length > 0 ? [] : ["pack timing (§5.1): no pack runs in this directory"]),
-        ...(waits === null ? ["user waits through hooks, daemon and CLI (W1–W8)"] : waits.not_measured.map((n) => `${n.id}: ${n.reason}`)),
-        "a repository's whole enabled rule set across packs, and the rule work budget",
-        ...(waits === null ? [] : ["user waits on macOS and Windows: waits measure on Linux only"]),
-      ],
-      known_gaps: KNOWN_GAPS,
-    },
+    scope: scopeItem(candidates.length > 0, waits),
   };
 }

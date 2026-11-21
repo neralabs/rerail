@@ -1,5 +1,4 @@
 .policy "bandit-b315-xml-bad-expatreader" revision 1
-.guests off
 .description "Use defusedxml instead of creating parsers with xml.sax.expatreader; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
 .language python
 .mode steer

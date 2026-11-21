@@ -1,5 +1,4 @@
 .policy "ruff-n801-invalid-class-name" revision 1
-.guests off
 .description "Name classes in CapWords style, starting with a capital letter and without underscores between words, as PEP 8 recommends."
 .language python
 .mode steer

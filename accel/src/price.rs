@@ -271,8 +271,10 @@ pub const MIN_SAMPLES: usize = 8;
 
 // A price reads its thread's copy of the rates (`LEARNED_COPY`), taken again only when their version moves, so pricing
 // (on every thread, for every launch) touches no shared lock.
+/// The learned rates' generation and, per kernel name and lane, its line's six coefficients.
+type LearnedCopy = (u64, Vec<(String, Lane, [f64; 6])>);
 thread_local! {
-    static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, [f64; 6])>)> = const { std::cell::RefCell::new((0, Vec::new())) };
+    static LEARNED_COPY: std::cell::RefCell<LearnedCopy> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
 /// What a price waits for first: the stored statistics, which the engine reads once a run has work to price
@@ -329,6 +331,22 @@ pub fn host_learned(name: &str, lane: Lane) -> bool {
     Form::ALL.iter().all(|f| f.name() != name) && learned(name, lane).is_some()
 }
 
+/// One finished job as a price learns from it: its lane, its launches' names (comma-joined), how many launches and
+/// units, its wall and host CPU, the cores' slowdown when it ended, and whether it was cold and succeeded
+/// ([`crate::score::Sample::measured`], [`observe`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Measured<'a> {
+    pub lane: Lane,
+    pub forms: &'a str,
+    pub launches: u32,
+    pub units: f64,
+    pub wall: f64,
+    pub cpu: f64,
+    pub load: f64,
+    pub cold: bool,
+    pub ok: bool,
+}
+
 /// A sample as a fit reads it: its kernel name, and per launch its units, busy wall (the lane's fixed costs taken
 /// out) and host CPU; `None` where it fits no rate: cold, failed, no units, more than one kernel name, or a table form
 /// on the cores (it splits over the threads, so its wall is not one unit's cost).
@@ -336,7 +354,8 @@ pub fn host_learned(name: &str, lane: Lane) -> bool {
 /// A pool lane's wall is divided by the cores' slowdown when it ran (`load`, at least 1): its price multiplies the
 /// rate by the slowdown when it prices (`Prices::cost`), so a rate fitted from loaded walls counted the load twice (the
 /// cores' matcher wave at 7.8e-8 s a unit under a load of 80, priced at 4 times that again).
-fn point_of(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: f64, load: f64, cold: bool, ok: bool) -> Option<(String, [f64; 3])> {
+fn point_of(m: &Measured) -> Option<(String, [f64; 3])> {
+    let Measured { lane, forms, launches, units, wall, cpu, load, cold, ok } = *m;
     let name = forms.split(',').next().unwrap_or("");
     if cold || !ok || units <= 0.0 || launches == 0 || forms.split(',').any(|f| f != name) {
         return None;
@@ -394,7 +413,9 @@ fn fitted(name: String, lane: Lane, points: &[[f64; 3]], this_run: bool) -> Lear
 /// This run's warm samples' points, by (kernel name, lane): the latest [`RUN_HELD`] of each (the run's own, decision
 /// 0442).
 #[derive(Default)]
-struct RunPoints(std::sync::Mutex<std::collections::BTreeMap<(String, usize), std::collections::VecDeque<[f64; 3]>>>);
+struct RunPoints(std::sync::Mutex<std::collections::BTreeMap<(String, usize), PointsHeld>>);
+/// One kernel name's latest points on one lane, oldest first.
+type PointsHeld = std::collections::VecDeque<[f64; 3]>;
 /// The most recent samples a rate of this run is fitted from.
 const RUN_HELD: usize = 64;
 /// The fewest of this run's own samples a rate is fitted from: fewer than the stored statistics' ([`MIN_SAMPLES`]),
@@ -406,8 +427,9 @@ pub const RUN_MIN_SAMPLES: usize = 4;
 /// statistics' rate. A run then prices its later launches from what its earlier ones measured, not from a constant
 /// (a cold run with no stored statistics priced the GPU's matcher wave at 2.5e-8 s a unit, 1.65 times what it
 /// measured, and its host CPU at nothing). Refitted at each sample up to 16, then at every 8th.
-pub fn observe(lane: Lane, forms: &str, launches: u32, units: f64, wall: f64, cpu: f64, load: f64, cold: bool, ok: bool) {
-    let Some((name, point)) = point_of(lane, forms, launches, units, wall, cpu, load, cold, ok) else { return };
+pub fn observe(m: Measured) {
+    let lane = m.lane;
+    let Some((name, point)) = point_of(&m) else { return };
     let fit = {
         let points = rerail_context::local::<RunPoints>();
         let Ok(mut run) = points.0.lock() else { return };
@@ -470,7 +492,7 @@ pub const FIT_HELD: usize = 256;
 pub fn fit_rates(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let mut by: std::collections::BTreeMap<(String, usize), Vec<[f64; 3]>> = Default::default();
     for s in samples {
-        if let Some((name, point)) = point_of(s.lane, &s.forms, s.launches, s.units, s.wall, s.cpu, s.load, s.cold, s.ok) {
+        if let Some((name, point)) = point_of(&s.measured()) {
             let held = by.entry((name, s.lane.index())).or_default();
             if held.len() < FIT_HELD {
                 held.push(point);

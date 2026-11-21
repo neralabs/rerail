@@ -1,5 +1,4 @@
 .policy "ruff-d215-overindented-section-underline" revision 1
-.guests off
 .description "Align a docstring section's dashed underline with the docstring's own indentation, not deeper than it."
 .language python
 .mode steer

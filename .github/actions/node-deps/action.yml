@@ -1,5 +1,8 @@
 name: Node.js and dependencies
-description: Node.js v24 with the npm cache, `npm ci`, and optionally the built package from the build job.
+description: >-
+  Node.js v24 with the npm cache, `npm ci`, and optionally the built package from the build job. The npm cache
+  (~/.npm, under setup-node's key) is restored everywhere and saved only by a push to main, into main's scope, which
+  every branch and pull request restores: a pull request's run saves no copy of its own.
 
 inputs:
   built:
@@ -7,8 +10,8 @@ inputs:
     default: "false"
   npm-cache:
     description: >-
-      Restore and save the npm cache. A job that runs a pull request's code under pull_request_target sets it to false:
-      setup-node saves on a miss, into the base branch's scope, which every workflow on main restores.
+      Restore the npm cache, and save it on a push to main. False skips both, for a job that runs a pull request's code
+      under pull_request_target, which runs in main's cache scope.
     default: "true"
 
 runs:
@@ -18,13 +21,41 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: "24"
-        cache: ${{ inputs.npm-cache == 'true' && 'npm' || '' }}
-        package-manager-cache: ${{ inputs.npm-cache == 'true' }}
-        cache-dependency-path: package-lock.json
+        package-manager-cache: false
+
+    # setup-node's own key (`node-cache-<OS>-<arch>-npm-<lockfile hash>`), so main's entries keep serving as they are.
+    - id: npm-cache
+      name: Locate the npm cache
+      if: inputs.npm-cache == 'true'
+      shell: bash
+      env:
+        LOCK_HASH: ${{ hashFiles('package-lock.json') }}
+      run: |
+        echo "path=$(npm config get cache)" >> "$GITHUB_OUTPUT"
+        echo "key=node-cache-$RUNNER_OS-$(node -p process.arch)-npm-$LOCK_HASH" >> "$GITHUB_OUTPUT"
+
+    # Restore only: setup-node's cache and actions/cache would save in their post-job step, on any branch.
+    - id: restored
+      name: Restore the npm cache
+      if: inputs.npm-cache == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.npm-cache.outputs.path }}
+        key: ${{ steps.npm-cache.outputs.key }}
 
     - name: Install dependencies
       shell: bash
       run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
+
+    # A push to main saves a new lockfile's cache, straight after the install that filled it.
+    - name: Save the npm cache
+      if: >-
+        inputs.npm-cache == 'true' && steps.restored.outputs.cache-hit != 'true' &&
+        github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.npm-cache.outputs.path }}
+        key: ${{ steps.npm-cache.outputs.key }}
 
     - name: Download the built package
       if: inputs.built == 'true'

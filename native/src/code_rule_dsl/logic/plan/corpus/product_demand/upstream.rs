@@ -132,7 +132,7 @@ fn demand_body(
 pub(super) struct Proof {
     pub(super) rule: RuleId,
     pub(super) read: usize,
-    pub(super) own: bool,
+    own: bool,
     pub(super) parts: Vec<Part>,
 }
 
@@ -140,9 +140,9 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
     install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
 }
 
-/// `install` under the demand relation `{prefix}{rel}`: the deferred joins' requested pairs (decision 0506,
-/// `DEFERRED_PAIRS`) are reader demand by another name. Made only if `restricts` holds of the version and the demand's
-/// rules it would write (the deferred pass refuses a request that asks for every key, `deferred::void_request`).
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
+/// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
+/// costs a join of its own and restricts nothing).
 pub(super) fn install_named(
     program: &mut Program<'_>,
     rel: &str,

@@ -1,16 +1,25 @@
 #!/usr/bin/python3
-"""Runs a test command on another Mac of the build farm, in this checkout's copy there; here when none
-is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
+"""Runs a build or test command on another machine of the build farm, in this checkout's copy there;
+here when none is usable (docs/final-shape/notes/t37, §2; scripts/build/farm/README.md).
 
-    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--dir native] [--remote-only] [--tree DIR]... -- COMMAND...
+    scripts/dev/test-remote [--host NAME] [--os macos|linux|windows|any] [--dir native] [--remote-only] [--tree DIR]... [--fetch PATH]... -- COMMAND...
 
-e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite, or
-`scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`.
+e.g. `scripts/dev/test-remote -- cargo nextest run --lib --profile gate` for the full suite,
+`scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'`, or
+`scripts/dev/test-remote --fetch debug/rerail-engine -- cargo build --bin rerail-engine --features test-hooks`
+for the CLI, built on a Mac host and brought back to this checkout's `target/debug/`.
 
 The host is a usable one (`scripts/build/farm/status`: reachable, on its link, with disk to spare)
 with a free test slot (a third of its cores, or `test_slots` in the configuration), the one with the
-most of its slots free first, then the most cores to spare; with none free, whichever slot frees
-first on any of them.
+most of its slots free first, then the most cores to spare, a Linux host as much as a Mac, a fast
+link before a slow one and a VM on this Mac last (`tier`); with none
+free, whichever slot frees first on any of them. COMMAND gets its share of the host
+(`farm.cpu_share`: twice its cores over its slots) as CARGO_BUILD_JOBS, NEXTEST_TEST_THREADS and
+RUST_TEST_THREADS, unless they are set here.
+
+`--fetch PATH` (repeatable) brings PATH of the host's target directory back into this checkout's
+`target/` once COMMAND exits 0, executable: a program built there to run here. It keeps COMMAND on a
+Mac. When COMMAND runs here instead, it builds into `target/` itself.
 What changed of this checkout is sent through the farm's mirror into the host's farm root, after
 the host is asked again what it holds (it may have been cleaned). COMMAND runs there at `nice -n
 10`, from the checkout's `native/` (or `--dir`), with this machine's open-file limit, and builds in
@@ -23,9 +32,9 @@ With no usable host, or when the host is lost during the run (asleep, off the ne
 status is COMMAND's. Ctrl-C, a kill or a closed terminal stops it on the host too.
 
 A host may be a Linux machine (`"os": "linux"` in the configuration): COMMAND there is a Linux
-build and run, as CI's. The Macs go first; a Linux host takes a command when every Mac slot is
-taken, and never one that needs macOS: one naming Metal (`metal-tests`, `rerail-device-metal`) or
-sending a `--tree` (a program built here is a macOS one). `--os linux` sends it to a Linux host
+build and run, as CI's. It takes any command that does not need macOS: one naming Metal
+(`metal-tests`, `rerail-device-metal`), sending a `--tree` (a program built here is a macOS one) or
+fetching a program (`--fetch`). `--os linux` sends it to a Linux host
 only, `--os any` lets any host take it, `--os macos` keeps it off Linux.
 
 A Windows host (`"os": "windows"`: a Windows PC's or VM's Windows side, through its WSL) takes a
@@ -95,6 +104,49 @@ def needs_macos(argv, trees):
     return bool(trees) or "metal" in " ".join(argv).lower()
 
 
+def stopped_guests(oses):
+    """The guests (guest.py) of one of `oses` that take test commands and are stopped now: each one
+    machine, so a Windows host and its Linux side (`shares`) count once, the one of `oses`."""
+    out, seen = [], set()
+    for h in farm.hosts():
+        if not h.get("enabled", True) or not h.get("tests", True) or h.get("by_name") or farm.host_os(h) not in oses:
+            continue
+        base = farm.shared_base(h)
+        if base.get("guest") and base["name"] not in seen and farm.health(h).get("guest") == "stopped":
+            seen.add(base["name"])
+            out.append(h)
+    return out
+
+
+# A link this slow costs minutes a send (a remote site's tunnel, about 4 MB/s); the LAN's hosts,
+# reached over this Mac's Wi-Fi or a 100 Mbit hop at 10-40 MB/s, send a checkout's changes in
+# seconds, and count as fast.
+FAST_MBPS = 8
+
+
+def tier(host):
+    """Where `host` stands before its free slots and cores count: 0, a link of FAST_MBPS or more
+    through ssh (the health probe's measure) to another machine; 1, a slower one; 2, a VM on this
+    Mac (a command there loads the machine it was meant to spare)."""
+    base = farm.shared_base(host)
+    if (base.get("guest") or {}).get("on") == "local":
+        return 2
+    # The best of the last hour's measurements (`mbps_best`), not the last one: load only lowers it.
+    h = farm.health(host)
+    return 0 if (h.get("mbps_best") or h.get("mbps") or 0) >= FAST_MBPS else 1
+
+
+def wait_for_guest(host):
+    """`host`'s health once its guest is up, or once its start failed (at most START_SECONDS and a minute)."""
+    deadline = time.time() + guest.START_SECONDS + 60
+    while time.time() < deadline:
+        h = farm.health(host)
+        if h.get("ok") or h.get("guest") == "stopped":
+            return h
+        time.sleep(3)
+    return farm.health(host)
+
+
 def choose(named, oses, roots):
     """A usable host of one of `oses`, its test slot and this checkout's copy there (`farm.CopyUse`
     of the tree `roots` hold), each held until exit; or (None, None, None, why)."""
@@ -105,6 +157,17 @@ def choose(named, oses, roots):
         if farm.host_os(host) not in oses:
             return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
         h = farm.health(host, fresh=True)
+        if not h.get("ok") and h.get("guest") in ("stopped", "starting") and guest.request_start(host):
+            base = guest.spec(host)[0]
+            what = "its guest " + base["name"] if base["name"] != named else "the guest"
+            if farm.host_os(host) == "windows" and base["name"] != named:
+                what = f"{base['name']}, its WSL (which runs its Windows jobs)"
+            if guest.is_cloud(base["guest"]):
+                b = guest.budget()
+                what += (f", a cloud VM at US${base['guest'].get('cost_per_hour', '?')}/h (today US${b['day']} of US${b['day_limit']};"
+                         f" it stops when idle {base['guest'].get('idle_minutes', guest.IDLE_MINUTES)} min, and by {guest.cloud_limits()['max_hours']} h)")
+            say(f"{named}: starting {what} (guest.py; up to {guest.START_SECONDS // 60} min)")
+            h = wait_for_guest(host)
         if not h.get("ok"):
             return None, None, None, f"{named} is not usable: {h.get('why')}"
         candidates = [host]
@@ -117,12 +180,25 @@ def choose(named, oses, roots):
             with concurrent.futures.ThreadPoolExecutor(max(len(hosts), 1)) as pool:
                 list(pool.map(lambda h: farm.health(h, fresh=True), hosts))
             candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
-        if not candidates:
+        if not candidates and stopped_guests(oses):
+            # No running host of these: a guest that can be one is started, and the command waits
+            # for it (below), as for a slot.
+            pass
+        elif not candidates:
             reasons = [f"{h['name']}: {farm.health(h).get('why') or 'not ' + ' or '.join(oses)}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]
             return None, None, None, "no usable host" + (f" ({'; '.join(reasons)})" if reasons else " (none configured)")
     said = False
+    starting = []
     while True:
+        # A guest started for this command (below) that is up now is a candidate too.
+        for g in starting:
+            if g not in candidates and farm.health(g).get("ok"):
+                candidates.append(g)
+        if starting and not any(farm.health(g).get("guest") == "starting" or farm.health(g).get("ok") for g in starting) \
+                and not any(farm.health(h).get("ok") for h in candidates):
+            return None, None, None, "no usable host, and the guests started for it did not come up (" + \
+                "; ".join(f"{g['name']}: {farm.health(g).get('why')}" for g in starting) + ")"
         # The host with the most of its test slots free, then the most cores to spare; any slot that
         # frees on any host is taken, not only the first host's.
         free = []
@@ -156,17 +232,31 @@ def choose(named, oses, roots):
                 # builds for them one at a time: a host where none runs goes first.
                 # (a host short of disk last: it keeps only its recently used targets, and drops
                 # even those under its floor)
-                free.append((farm.host_os(host) != "macos", bool(farm.health(host).get("short")), not use.sends,
+                free.append((bool(farm.health(host).get("short")), tier(host), not use.sends,
                              -idle / len(paths), -farm.spare(host), host, got, use))
         if free:
-            # A Mac first: a Linux host's run is another platform's build.
+            # Any OS the command allows, a Linux host as much as a Mac: a fast link first (`tier`),
+            # then the most of its slots free, then the most cores to spare. (Macs first had left
+            # the Linux hosts idle while two Macs ran loads of 44 and 88, 2026-11-20.)
             free.sort(key=lambda f: f[:5])
             for f in free[1:]:
                 f[6].release()
                 f[7].release()
             best = free[0]
+            best[6].used()
             return best[5], best[6], best[7], None
-        if not said:
+        if not starting and not named:
+            # It would wait: the stopped guests that can take it are started (guest.py), and it
+            # takes the first slot that frees, a running host's or a guest's once it is up. A
+            # named host (`--host`) waits for its own slot: another guest started would take it.
+            # One a command: another machine's before this Mac's (where the edit loop runs), then the
+            # most cores; a second command that would wait starts the next.
+            order = sorted(stopped_guests(oses), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
+            starting = next(([g] for g in order if guest.request_start(g)), [])
+            if starting:
+                say("starting " + ", ".join(f"{g['name']} (a guest on {guest.placement(farm.shared_base(g)['guest']) or farm.shared_base(g)['guest']['on']})" for g in starting)
+                    + f": it takes the command once it is up, unless a slot frees first (up to {guest.START_SECONDS // 60} min)")
+        if not said and candidates:
             say("every test slot of every usable host is taken"
                 + (f", or this checkout's copy there runs another command from other files ({', '.join(other_tree)})" if other_tree else "")
                 + ": waiting for the first that frees (" + ", ".join(f"{h['name']} {farm.test_slots(h)}" for h in candidates) + ")")
@@ -181,7 +271,7 @@ def usage(why):
 def parse(argv):
     """The options and COMMAND, checked before anything is sent: an unknown option or a missing
     COMMAND is refused here, never run on a host."""
-    named, directory, remote_only, trees, os_choice = None, "native", False, [], None
+    named, directory, remote_only, trees, os_choice, fetches = None, "native", False, [], None, []
     while argv and argv[0] != "--":
         a = argv[0]
         if a in ("-h", "--help"):
@@ -193,6 +283,13 @@ def parse(argv):
             if len(argv) < 2 or not os.path.isdir(argv[1]):
                 usage("--tree needs a directory")
             trees.append(os.path.realpath(argv[1]))
+            argv = argv[2:]
+        elif a == "--fetch":
+            # A path in the target directory (`debug/rerail-engine`), brought back to this
+            # checkout's target/ once COMMAND exits 0.
+            if len(argv) < 2 or argv[1].startswith("-") or argv[1].startswith("/") or ".." in argv[1].split("/"):
+                usage("--fetch takes a path inside the target directory, e.g. debug/rerail-engine")
+            fetches.append(argv[1].removeprefix("target/"))
             argv = argv[2:]
         elif a == "--os":
             if len(argv) < 2 or argv[1] not in ("macos", "linux", "windows", "any"):
@@ -215,7 +312,29 @@ def parse(argv):
         usage("no COMMAND")
     if not os.path.isdir(os.path.join(CHECKOUT, directory)):
         usage(f"--dir {directory}: no such directory in {CHECKOUT}")
-    return named, directory, remote_only, trees, os_choice, argv
+    if fetches and os_choice not in (None, "macos"):
+        usage("--fetch brings back a program for this Mac: it runs on a Mac (no --os)")
+    return named, directory, remote_only, trees, os_choice, fetches, argv
+
+
+def fetch(host, paths):
+    """Each of `paths` (in the command's target directory on `host`) into this checkout's target/,
+    executable, written beside and renamed into place: a failed copy leaves the old file. None, or why
+    one failed."""
+    for rel in paths:
+        dest = os.path.join(CHECKOUT, "target", rel)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        part = dest + ".fetching"
+        with open(part, "wb") as out:
+            r = subprocess.run(farm.ssh(host["name"], farm.on_host("farm-agent") + " fetch " + shlex.quote(farm.key(CHECKOUT)) + " " + shlex.quote(rel), "test"),
+                               stdout=out, stderr=subprocess.PIPE, text=False, timeout=600)
+        if r.returncode != 0:
+            os.remove(part)
+            return f"{rel}: {r.stderr.decode(errors='replace').strip()[-300:] or 'exit ' + str(r.returncode)}"
+        os.chmod(part, 0o755)
+        os.replace(part, dest)
+        say(f"fetched {os.path.relpath(dest, CHECKOUT)} ({os.path.getsize(dest) / 1e6:.1f} MB)")
+    return None
 
 
 def pack_data():
@@ -232,15 +351,16 @@ def pack_data():
 
 
 def main(argv):
-    named, directory, remote_only, trees, os_choice, argv = parse(argv)
+    named, directory, remote_only, trees, os_choice, fetches, argv = parse(argv)
     trees += [t for t in pack_data() if t not in trees]
     stop_on_signals()
     if not os.path.exists(os.path.join(SHARE, "farm.py")):
         here(argv, directory, "the farm is not installed (scripts/build/farm/setup)", remote_only)
     sys.path.insert(0, SHARE)
-    global farm, mirror
+    global farm, mirror, guest
     import farm
     import mirror
+    import guest
     try:
         tree = int(open(os.path.join(CHECKOUT, "scripts/build/farm/farm.py")).read().split("\nVERSION = ", 1)[1].split()[0])
     except (OSError, IndexError, ValueError):
@@ -253,7 +373,7 @@ def main(argv):
     if os_choice is None and named and farm.host_os(farm.entry(named)) == "windows":
         os_choice = "windows"
     if os_choice is None:
-        os_choice = "macos" if needs_macos(argv, trees) else "any"
+        os_choice = "macos" if needs_macos(argv, trees) or fetches else "any"
     oses = ("macos", "linux") if os_choice == "any" else (os_choice,)
     roots = [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in trees]
     host, slot, use, why = choose(named, oses, roots)
@@ -282,8 +402,13 @@ def main(argv):
 
     # The farm's wrapper is this machine's; the host's cargo builds as it would alone, in a target
     # directory of its own (farm-agent's `exec`).
+    # Its share of the host (farm.cpu_share), unless the caller set one.
+    share = str(farm.cpu_share(host))
+    env = {"RUSTC_WRAPPER": ""}
+    for k in ("CARGO_BUILD_JOBS", "NEXTEST_TEST_THREADS", "RUST_TEST_THREADS"):
+        env[k] = os.environ.get(k) or share
     job = {"cwd": os.path.join(CHECKOUT, directory), "argv": argv, "map": [CHECKOUT] + [t for t in trees if not t.startswith(CHECKOUT + os.sep)],
-           "env": {"RUSTC_WRAPPER": ""}, "target": farm.key(CHECKOUT), "nice": host.get("nice", 10),
+           "env": env, "target": farm.key(CHECKOUT), "nice": host.get("nice", 10),
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0],
            "min_free_gb": farm.config().get("min_free_gb", 40),
            "max_target_gb": host.get("max_target_gb", farm.config()["max_target_gb"])}
@@ -307,9 +432,21 @@ def main(argv):
         farm.mark_down(name, "lost during a test run")
         use.release()
         slot.release()
-        here(argv, directory, f"the connection to {name} was lost", remote_only)
+        if not os.environ.get("RERAIL_TEST_REMOTE_RETRIED"):
+            # Once more through the farm, not here: this Mac is the busiest machine in it, and the
+            # lost host is asked again first (`mark_down`), so another takes the command if it is gone.
+            say(f"the connection to {name} was lost: choosing a host again")
+            os.environ["RERAIL_TEST_REMOTE_RETRIED"] = "1"
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + ORIGINAL_ARGS)
+        here(argv, directory, f"the connection to {name} was lost again", remote_only)
+    if code == 0 and fetches:
+        why = fetch(host, fetches)
+        if why:
+            say(f"could not fetch from {name}: {why}")
+            sys.exit(1)
     sys.exit(code)
 
 
 if __name__ == "__main__":
+    ORIGINAL_ARGS = sys.argv[1:]  # (as given: a lost connection reruns them, `main`)
     main(sys.argv[1:])

@@ -1,5 +1,4 @@
 .policy "ruff-fix001-line-contains-fixme" revision 1
-.guests off
 .description "Resolve the bug or unexpected behavior a FIXME comment marks before shipping, then remove the comment."
 .language python
 .mode steer

@@ -2810,6 +2810,7 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
         tape: b"derived tape",
         source_map: b"map",
         host_errors: b"",
+        at: None,
     };
     let stored = store
         .publish_overlay_file(
@@ -2944,7 +2945,7 @@ fn mode_of(path: &std::path::Path) -> u32 {
         .unwrap()
         .permissions()
         .mode()
-        & 0o777
+        & 0o7777
 }
 
 #[cfg(unix)]
@@ -2974,15 +2975,30 @@ fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
 
 #[cfg(unix)]
 #[test]
-fn opening_a_store_others_can_read_takes_their_access_away() {
-    let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
-    let path = folder.join(STORE_FILE_NAME);
-    drop(ContentStore::open(&path).unwrap());
-    set_mode(&folder, 0o755);
-    set_mode(&path, 0o644);
-    let _store = ContentStore::open(&path).unwrap();
+fn opening_an_explicit_store_preserves_existing_parent_permissions() {
+    for mode in [0o755, 0o1777] {
+        let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
+        let path = folder.join(STORE_FILE_NAME);
+        set_mode(&folder, mode);
+        drop(ContentStore::open(&path).unwrap());
+        assert_eq!(mode_of(&folder), mode);
+        set_mode(&path, 0o644);
+        let _store = ContentStore::open(&path).unwrap();
+        assert_eq!(mode_of(&folder), mode);
+        assert_eq!(mode_of(&path), 0o600);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_cache_directories_restore_private_permissions_on_reopen() {
+    let root = test_support::TemporaryFolder::new("rerail-content-store-managed");
+    let folder = root.join("cache");
+    prepare_cache_directory(&folder).unwrap();
     assert_eq!(mode_of(&folder), 0o700);
-    assert_eq!(mode_of(&path), 0o600);
+    set_mode(&folder, 0o755);
+    prepare_cache_directory(&folder).unwrap();
+    assert_eq!(mode_of(&folder), 0o700);
 }
 
 #[cfg(unix)]

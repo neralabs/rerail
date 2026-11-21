@@ -1,5 +1,4 @@
 .policy "ruff-isc003-explicit-string-concatenation" revision 1
-.guests off
 .description "Join string literals split across lines by implicit concatenation inside parentheses instead of the + operator, which adds noise without changing the result."
 .language python
 .mode steer

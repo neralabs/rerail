@@ -41,7 +41,7 @@ The level's CPU strata run meanwhile.
 
 ## Prior work consulted
 
-- **ast-index-spike design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. Set-based decoding is
+- **SQL index prototype design index, §19 GPU/SIMD.** Nothing was designed or measured for a GPU. Set-based decoding is
   a prefix sum (D S053), and row bookkeeping dominates per-touch cost (D S152).
   - **Agrees.** Every device kernel here is columnar: counted, then scattered.
 - **Design index §3–4.** Mis-estimated intermediates pick bad joins (D S069, S153–S156).
@@ -51,7 +51,7 @@ The level's CPU strata run meanwhile.
   - **Agrees.** A launch is per relation and form, never per row.
 - **Ledger row 26.** Acceptance is structural: the work is proportional to the inputs and results.
   - **Agrees.** Residency removes repeated uploads and sorts, and the gate counts submissions per chunk.
-- **Tempo-metal's host-driven generations** stopped at 595 dispatches (0027).
+- **Predecessor-metal's host-driven generations** stopped at 595 dispatches (0027).
   - **Agrees.** The host plans per level, not per round. Recursion inside a level stays on the work queue (0027).
 - **Decisions.**
   - 0010 (waves). SQL and the planner still choose what runs. A level is the planner's order, grouped.
@@ -374,9 +374,10 @@ job is a job:
 - **The windows are resolved one at a time**, each a job started when the last ends. A window's statements may
   run a parallel loop, whose wait may run another job: if that job resolved a window too, it would wait for a
   lock its own thread holds.
-- **The cone of requests** takes turns with the main thread: it asks, the main thread answers. It runs on
-  another of the pool's threads, and the main thread runs no job until it has started, so it never runs inside
-  the main thread's wait. With one thread, it gets a thread of its own: one thread cannot hold both stacks.
+- **The cone of requests** takes turns with its caller. It asks and the caller answers. Each needs its own stack.
+  With two or more workers, the caller offers the cone to the pool and waits up to one millisecond for a claim.
+  If it can still claim the job, it starts the cone on a service thread. With one worker it uses a service thread immediately.
+  Simultaneous callers can then answer requests even when every pool thread started a scan.
 
 **What stays a thread of its own.** None of these runs a run's work on the cores:
 

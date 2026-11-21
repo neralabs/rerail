@@ -6,7 +6,9 @@ description: >-
   against, and runs `scripts/build/target-sources.mjs apply`: a fresh checkout dates every file now, which made cargo
   rebuild every workspace crate, so the files that build saw unchanged are dated before its outputs and cargo rebuilds
   only the crates a change reaches. `save`, after the build, records the sources the target was built from and
-  uploads the target for later runs; ci.yml saves on pushes to main only. The job needs `actions: read`.
+  uploads the target for later runs; ci.yml saves on pushes to main only. `ref` names another branch to restore from,
+  so a manual run can prove a change here before main has a target (ci.yml's `warm-ref` and `save-warm`). The job
+  needs `actions: read`.
 
 inputs:
   name:
@@ -15,26 +17,30 @@ inputs:
   mode:
     description: '"restore" before the build, "save" after it.'
     required: true
+  ref:
+    description: The branch whose runs' targets `restore` reads.
+    default: main
 
 runs:
   using: composite
   steps:
     - id: find
-      name: Find main's last cargo target
+      name: Find the branch's last cargo target
       if: inputs.mode == 'restore'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         NAME: ${{ inputs.name }}
+        REF: ${{ inputs.ref }}
+      # A push, schedule or dispatch on the branch in this repository, of a commit in its history
+      # (scripts/check/ci/trusted-artifact.mjs); never a pull request whose head branch, or a tag, has that name.
       run: |
-        run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$NAME&per_page=50" --jq '
-          [.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main"
-            and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].workflow_run.id // empty' || true)"
-        if [ -z "$run_id" ]; then echo "No $NAME from main: a cold build"; fi
+        read -r _ run_id <<< "$(node scripts/check/ci/trusted-artifact.mjs "$NAME" "$REF")" || true
+        if [ -z "$run_id" ]; then echo "No $NAME from $REF: a cold build"; fi
         echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
 
     - id: download
-      name: Download main's last cargo target
+      name: Download the branch's last cargo target
       if: inputs.mode == 'restore' && steps.find.outputs.run-id != ''
       continue-on-error: true
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -48,6 +54,8 @@ runs:
     - name: Unpack the cargo target
       if: inputs.mode == 'restore' && steps.download.outcome == 'success'
       shell: bash
+      env:
+        REF: ${{ inputs.ref }}
       run: |
         set -uo pipefail
         in="$RUNNER_TEMP/cargo-target-in"
@@ -57,7 +65,7 @@ runs:
           && unpack "$(ls "$in"/cargo-home.tar.*)" | tar -xf - -C "$HOME"; then
           node scripts/build/target-sources.mjs apply target
         else
-          echo "::warning::cargo-target: main's target did not unpack; building cold."
+          echo "::warning::cargo-target: $REF's target did not unpack; building cold."
           rm -rf target "$HOME/.cargo/registry/index" "$HOME/.cargo/registry/cache" "$HOME/.cargo/git/db"
         fi
         rm -rf "$in"

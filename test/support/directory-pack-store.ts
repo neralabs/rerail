@@ -7,13 +7,20 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { defaultRerailHome, rulePackPackageName } from "../../src/engine/index.js";
 import type { PackStore, PackVersion } from "../../src/setup/index.js";
-import { fileSpecDirectory, installPackDirectory, uninstallPack } from "./installed-packs.js";
+import { fileSpecDirectory, installPackDirectory, uninstallPack, versionOf } from "./installed-packs.js";
 import { repositoryPath } from "./oracles.js";
 
 export interface DirectoryPackStore extends PackStore {
   /** The npm specs each `install` call was given, in order. */
   readonly installs: string[][];
 }
+
+/**
+ * This repository's core version, from its root `package.json`: a fixture core at it loads this repository's packs,
+ * since a release raises a pack's core range to the version it releases. A hard-coded fixture version falls behind
+ * the packs' ranges at the next release that raises them.
+ */
+export const REPOSITORY_CORE_VERSION = versionOf(repositoryPath());
 
 /** This repository's packs at the versions their `package.json` names: what a confirm answer's `--packs` carries. */
 export function repositoryPackVersions(...ids: string[]): PackVersion[] {

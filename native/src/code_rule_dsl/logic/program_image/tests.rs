@@ -70,7 +70,7 @@ fn every_part() -> Arc<Version> {
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
@@ -2088,7 +2088,7 @@ fn facts_in_another_order_are_the_same_program() {
 
 /// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
 /// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
-/// the record by the made version's rules, not the input's (decision 0506: every `rr_value_req` rule was then read
+/// the record by the made version's rules, not the input's (decision 0488: every `rr_value_req` rule was then read
 /// as serving only itself).
 #[test]
 fn a_made_steps_request_record_is_carried_by_its_own_rules() {

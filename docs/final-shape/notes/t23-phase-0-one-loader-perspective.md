@@ -101,7 +101,7 @@ The loader turns the answer into a delta of `entry`, `content` and `document` ro
 git where the root is a git work tree, stat otherwise. Inside a git root, an untracked path or a path with a
 filter attribute uses stat.
 
-**a. Git (gix, in-process; no subprocess).** This is what the scale-test branch built in the `tempo` engine
+**a. Git (gix, in-process; no subprocess).** This is what the scale-test branch built in the predecessor's engine
 (`native/src/git_workspace.rs` at `8fe9ffed4`, before `f671d7798` removed subtree reuse):
 - **The tree.** The provider reads HEAD's tree and keeps each tree object id by path prefix. A prefix whose tree
   id matches the stored one, with no status entry below it, is unchanged. Its rows are reused without
@@ -205,14 +205,14 @@ Each step is measured on the 84 files with typeshed, and the git step also on th
 
 ## Prior work consulted
 
-- **The ast-index-spike indexes:**
+- **The SQL index prototype indexes:**
   - S124: incremental indexing allows no corpus-wide statistic. Agrees.
   - S134: an incremental load must return its dead rows. Agrees (§6).
   - The linter survey's F3 (a fixed cost per file, all-or-nothing cache invalidation) and F6 (path scoping is a
     caller join). Agrees: scope is not a key.
   - T2: a union-scoped shared relation measured scope, not sharing. Agrees: no scope in keys.
 - **The scale-test branch's workspace store:**
-  - the `tempo` journal, entries 25 and 31–34;
+  - the predecessor's journal, entries 25 and 31–34;
   - `docs/content-addressed-workspace-store.md` ("Git aliases", "Git tree reuse", "Git limitations").
   - It agrees, and is adopted for §3a, including its pitfalls.
 - **Rerail decisions and notes:**

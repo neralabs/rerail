@@ -1,12 +1,12 @@
 """Writes eager-resolve.tables.rerail, the name sets, text patterns and signatures of the eager-resolve linter.
-    python3 docs/rule-syntax/data-layer/gen-eager-resolve.py [--check]
+    DATA_LAYER_REPO=<checkout> python3 docs/rule-syntax/data-layer/gen-eager-resolve.py [--check]
 The source is scripts/lint_eager_resolve.py at the pinned commit of the data-layer repository. Each table is read
 from the module-level literal of the same name. --check regenerates the text and fails if the committed file
 differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_eager_resolve.py"
 OUT = os.path.join(HERE, "eager-resolve.tables.rerail")

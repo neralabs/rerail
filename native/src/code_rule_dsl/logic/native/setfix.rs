@@ -82,11 +82,15 @@ mod cut_tests;
 #[cfg(test)]
 mod key_tests;
 #[cfg(test)]
+mod index_order_tests;
+#[cfg(test)]
+mod bounded_tests;
+#[cfg(test)]
 mod view_tests;
 #[cfg(test)]
 mod base_probe;
 mod inputs_tests;
-// macOS's malloc hooks (`malloc_logger`, `malloc_zone_statistics`) count its heap: a macOS measurement.
+// macOS's: it reads the malloc zones' statistics and logger, an OS fact (decision 0440 step E keeps those there).
 #[cfg(all(test, target_os = "macos"))]
 mod blocks_compare_tests;
 #[cfg(test)]
@@ -869,8 +873,10 @@ impl Rel {
     }
     /// Checks columns `cols` as a key of its rows from now on (a `key` line, decision 0361 step 6), the rows it holds
     /// already first. A lattice relation's key is its own (it folds by it), and a key it broke is not checked again.
+    /// A key of no columns is a relation of one row at most (`doc(d, "a/b.py", _)`'s, a path fixing its document):
+    /// every row is of the one key, so a second live row breaks it.
     fn set_key(&mut self, cols: Vec<usize>) -> Result<()> {
-        if cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
+        if cols.len() > MAX_KEY || cols.iter().any(|&c| c >= self.k) {
             return Err(err(format!("{}: key {cols:?} of {} columns", self.table, self.k)));
         }
         if self.lat.is_some() || self.keyed.iter().any(|x| x.cols == cols) || self.broke.contains(&cols) {
@@ -3288,6 +3294,27 @@ pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vec<f64>>> {
     }).collect())
 }
 
+/// Per probe of component `name`, by plan step (as `step_counts`'s), whether the CPU's probe there reads only the
+/// range of its index that later comparisons bound (`ranges`, Q245 item 5): its rows out are then fewer than a
+/// probe's that reads every row of its key (the device's), from the same bindings. A probe that is not a join: none.
+pub fn step_ranged(conn: impl Scoped, name: &str) -> Result<Vec<Vec<bool>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => {
+            let mut by = vec![false; j.plan_steps];
+            for (i, r) in j.ranges.iter().enumerate() {
+                if let (Some(_), Some(&at)) = (r, j.from.get(i)) && at < by.len() {
+                    by[at] = true;
+                }
+            }
+            by
+        }
+        Body::Sql(_) | Body::Unplanned => Vec::new(),
+    }).collect())
+}
+
 /// Per probe of component `name`, the first step past the one that binds its head's slots (`tail`): from it on, the
 /// CPU's walk counts one witness (decision 0229) and the device's stages every row (decision 0277), so the two
 /// counts agree only before it. A probe that is not a join: 0.
@@ -3563,7 +3590,7 @@ pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and each value's postings when a bounded exact histogram is available.
-/// `keys`: each column's keys (`Sketch::keys`, decision 0506), read where they are kept; `counts`, its counts for
+/// `keys`: each column's keys (`Sketch::keys`, decision 0488), read where they are kept; `counts`, its counts for
 /// join sizes (`Sketch::counts`).
 pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)>, pub keys: Vec<crate::code_rule_dsl::logic::bloom::Keys>, pub counts: Vec<std::sync::Arc<crate::code_rule_dsl::logic::join_size::JoinCounts>> }
 pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
@@ -4485,13 +4512,12 @@ pub fn adopt(conn: &Connection, table: &str, rel: Arc<InRel>) {
 /// relation is its kept one, unchanged (decision 0101 §1), shared with its indexes.
 pub fn hold_as(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
-    hold_start(conn, table, rel);
+    hold_maintained(conn, table, rel);
 }
 
-/// Holds `table` in `conn`'s run as `rel`, its kept rows, where a maintained stratum starts from them (decision 0364):
-/// not a set this run completed, so the authors' report observes none (`author_joins::observe`); the stratum's own,
-/// at its `close`, is.
-pub fn hold_start(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
+/// Holds `table` in `conn`'s run as `rel`, its kept relation, for a component that maintains it from its deltas: the
+/// rows an earlier snapshot left, which the profile does not count as this run's (the component's close does).
+pub fn hold_maintained(conn: impl Scoped, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
     let conn = conn.db();
     forgotten_on_close();
@@ -4673,6 +4699,7 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    // Not observed (`author_joins::observe`): an earlier run's set, which this run's maintenance changes, not its own.
     on(conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -4700,7 +4727,7 @@ pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
 }
 
 impl InRel {
-    /// Column `c`'s kept filter (decision 0506), where its sketches count every row of its own (no view's): what a
+    /// Column `c`'s kept filter (decision 0488), where its sketches count every row of its own (no view's): what a
     /// screen of a probe of it may borrow, the CPU's and the device's.
     pub fn kept_keys(&self, c: usize) -> Option<&Arc<crate::code_rule_dsl::logic::bloom::Kept>> {
         if self.view.is_some() || self.sketches.len() != self.k {
@@ -5742,7 +5769,7 @@ impl InRel {
     /// (0364 R2). `None` where it did not start as the marked relation.
     pub fn delta_ids_since_mark(&self, old: &RelMark) -> Option<DeltaIds<'_>> {
         // A view is a read of its source, which does not change while it is held: the same view over the same source
-        // and rows has no change (corpus0's `kind` view had its heavy values counted again 594 times, decision 0506).
+        // and rows has no change (corpus0's `kind` view had its heavy values counted again 594 times, decision 0488).
         // Any other view's change is not known.
         if let Some(v) = &self.view {
             let same = self as *const InRel as usize == old.at && self.k == old.k && self.len() == old.n
@@ -6184,20 +6211,17 @@ impl InRel {
         let i = if build { ib.own_index(&key) } else { ib.found_index(&key) }?;
         Some((ib, i))
     }
-    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count (as the
-    /// device's view home, `Part::for_device`), its index built from each row's key read through the view. Dead rows
-    /// are in it, as in every block index; a probe skips them by their bits.
+    /// An index on `cols` of this view's rows in a block: a home of no columns and the view's row count, in the run's
+    /// own memory (`Part::for_host`: the CPU builds and probes it, and a host with no device makes it too), its index
+    /// built from each row's key read through the view. Dead rows are in it, as in every block index; a probe skips
+    /// them by their bits.
     fn view_index(&self, cols: &[usize]) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         if self.view.is_none() || cols.is_empty() || self.len() == 0 {
             return None;
         }
         assert!(cols.len() <= rerail_blocks::relation::MAX_KEY, "a view's key of {} columns", cols.len());
         let n = self.len();
-        // In the device's memory where the process has a device (its stages probe the view by it), else the run's.
-        use crate::code_rule_dsl::facts::rows::{Life, Part};
-        let home = Part::for_device(0, n)
-            .or_else(|_| Part::reserved(Life::Run, 0, n))
-            .unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
+        let home = crate::code_rule_dsl::facts::rows::Part::for_host(0, n).unwrap_or_else(|e| panic!("a view's index home of {n} rows: {e}"));
         let ib = home.in_block(n as u32);
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let hash = |i: u32| {
@@ -6730,8 +6754,10 @@ pub enum Step {
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     /// Direct non-null scalar. The shared logical proof selects a bag; the source owns versioned summaries.
+    /// `bound`: a bounded min or max (decision 0511), the bound and whether it is strict: only the values on its
+    /// side (under it for a max, over it for a min) count, and no summary of the group alone holds them.
     Scalar { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: Option<usize>,
-        kind: ScalarKind, out: usize, bind: bool, bag: Option<Arc<scalars::Bag>> },
+        kind: ScalarKind, out: usize, bind: bool, bag: Option<Arc<scalars::Bag>>, bound: Option<(Key, bool)> },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
     /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
@@ -7161,21 +7187,38 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                         Src::In(rel, ix)
                     }
                 };
+                // An input's index is kept by its set of key columns (`InRel::index`), in the column order of the join
+                // that asked for it first. A probe reads its key in that order (the index's lead, its table, the
+                // order's columns, `candidates`): the step's keys go in it. In the step's own order, a second join on
+                // the same columns looked a node up in a constant's chain and found nothing (t50 step 1: `rf_ref` by
+                // `[0, 1, 2, 3]` through an index made for `[1, 0, 2, 3]`, a handoff's replacement that derived none
+                // of its 295 rows).
+                if let Src::In(_, ix) = &src && ix.cols.len() == keys.len() && ix.cols.iter().zip(&keys).any(|(&c, &(k, _))| c != k) {
+                    keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+                }
                 match item {
                     JoinItem::StrJoin { x, by, sep, out: o, .. } => {
                         let Some(Key::Const(sep)) = tok(sep, syms) else { return Err(err("a strjoin's separator is a constant")) };
                         let (o, bind) = out_slot(o, "strjoin", &mut bound, syms)?;
                         steps.push(Step::StrJoin { src, keys, tests, x: *x, by: by.clone(), sep, out: o, bind });
                     }
-                    JoinItem::Extreme { op, col, out: o, .. } => {
+                    JoinItem::Extreme { op, col, out: o, bound: limit, .. } => {
                         if *col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
+                        let limit = match limit {
+                            Some((b, strict)) => match tok(b, syms) {
+                                Some(Key::Slot(s)) if bound.get(s).copied().unwrap_or(false) => Some((Key::Slot(s), *strict)),
+                                Some(Key::Const(c)) => Some((Key::Const(c), *strict)),
+                                _ => return Err(err("a bounded min or max reads its bound before it binds")),
+                            },
+                            None => None,
+                        };
                         let (o, bind) = out_slot(o, "min or max", &mut bound, syms)?;
                         let kind = match op { spec::Extreme::Sum => ScalarKind::Sum, spec::Extreme::Min => ScalarKind::Min, spec::Extreme::Max => ScalarKind::Max };
-                        steps.push(Step::Scalar { src, keys, tests, col: Some(*col), out: o, bind, kind, bag: None });
+                        steps.push(Step::Scalar { src, keys, tests, col: Some(*col), out: o, bind, kind, bag: None, bound: limit });
                     }
                     JoinItem::Count { out: o, .. } => {
                         let (o, bind) = out_slot(o, "count", &mut bound, syms)?;
-                        steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None });
+                        steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None, bound: None });
                     }
                     _ => steps.push(Step::Atom { src, neg, keys, binds, tests }),
                 }
@@ -7748,6 +7791,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     else if ix.composite && let Some(v) = &rel.view {
                         let mut eq = [(0usize, 0i64); MAX_KEY];
                         for (j, &c) in ix.cols.iter().enumerate() { eq[j] = (v.cols[c], key[j]); }
+                        // A step that reads no column of the row (every key exact, `need` 0) asks only whether it is
+                        // there: a source's test where it has one (`Source::holds`, `within` with both bound). The
+                        // candidate it gives is never read.
+                        // `RERAIL_WITHIN_TEST=off` (a measurement aid) probes such a step's rows as before: the
+                        // run's setting (decision 0442), not the process's.
+                        let test = || rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off"));
+                        if need == 0 && test() && let Some(h) = v.src.holds(&eq[..ix.cols.len()]) {
+                            return (Rows::Source(v), Cands::Range(0, u32::from(h)));
+                        }
                         let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
@@ -7854,7 +7906,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         cands = Cands::Owned(order);
                     }
                 }
-                // A screened scan (decision 0506): its candidates selected by the screen a block of keys at a time
+                // A screened scan (decision 0488): its candidates selected by the screen a block of keys at a time
                 // (`Screening::select`), so only the rows it passes go on, and none is tested again at the screened
                 // step. A view's rows read as the probe found them (`Cands::Read`) are tested a binding at a time.
                 if i == 0 && keys.is_empty() && let Some(f) = cx.screen && let Some(c) = f.scan_col() {
@@ -7997,7 +8049,38 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if reads_delta { cx.only = only; }
                 if exists && found != *neg { go(cx, i + 1, slots); }
             }
-            Step::Scalar { src, keys, tests, col, kind, out, bind, bag } => {
+            Step::Scalar { src, keys, tests, col, kind, out, bind, bound: Some((limit, strict)), .. } => {
+                // A bounded min or max (decision 0511): the group's values on the bound's side, folded as the group
+                // is read. Nothing is made per probe.
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (limit, max) = (val(slots, *limit), *kind == ScalarKind::Max);
+                let Some(c) = *col else { return };
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None);
+                let mut best: Option<i64> = None;
+                let mut inspected = 0;
+                cands.any(|id| {
+                    inspected += 1;
+                    if rows.dead(id) { return false; }
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(k, v)| row.at(k) == val(slots, v)) && tests.iter().all(|&(a, b)| row.at(a) == row.at(b)) {
+                        let v = row.at(c);
+                        let inside = match (max, *strict) {
+                            (true, true) => v < limit,
+                            (true, false) => v <= limit,
+                            (false, true) => v > limit,
+                            (false, false) => v >= limit,
+                        };
+                        if inside && best.is_none_or(|b| if max { v > b } else { v < b }) { best = Some(v); }
+                    }
+                    false
+                });
+                charge(Unit::Value, inspected);
+                let Some(v) = best else { return };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
+            Step::Scalar { src, keys, tests, col, kind, out, bind, bag, bound: None } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 // A count from the step's count table, once it has one (`table`, decision 0098 §1).
@@ -8873,7 +8956,7 @@ pub mod posted_tests {
         }
     }
 
-    /// A view's mark (`InRel::mark`) finds it unchanged while it reads the same source (decision 0506: heavy values
+    /// A view's mark (`InRel::mark`) finds it unchanged while it reads the same source (decision 0488: heavy values
     /// over a view were counted again at every stratum); another source, or another relation, is not known.
     #[test]
     fn a_views_mark_finds_it_unchanged_over_its_source() {

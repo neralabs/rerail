@@ -860,7 +860,7 @@ pub struct BloomProbeInput {
     pub distinct_overlap: Option<f64>,
     pub sampled: usize,
     pub rejected: usize,
-    /// Whether the filter is the probe side's own (kept with its column, decision 0506): nothing was built for it,
+    /// Whether the filter is the probe side's own (kept with its column, decision 0488): nothing was built for it,
     /// and a walk backs off where it stops paying, so an eighth of the samples refused is enough.
     pub kept: bool,
 }

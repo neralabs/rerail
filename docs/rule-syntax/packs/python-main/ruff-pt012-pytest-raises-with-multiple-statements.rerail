@@ -1,5 +1,4 @@
 .policy "ruff-pt012-pytest-raises-with-multiple-statements" revision 1
-.guests off
 .description "Keep a pytest.raises block to a single simple statement; extra statements can raise the expected exception before the code under test runs, so the test passes for the wrong reason."
 .language python
 .mode steer

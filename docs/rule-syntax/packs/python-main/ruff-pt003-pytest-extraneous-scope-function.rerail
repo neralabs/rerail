@@ -1,5 +1,4 @@
 .policy "ruff-pt003-pytest-extraneous-scope-function" revision 1
-.guests off
 .description "Remove an explicit function scope from a pytest fixture decorator; function scope is already the default."
 .language python
 .mode steer
