@@ -992,10 +992,10 @@ const SAFE_CONFIG: readonly string[] = [
 const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * The most bytes the guard's own questions (a repository's config, its index's submodules) take: past it, the call it
- * guards is not made. 256 MiB holds the index listing of some two million files, and sits under the longest string
- * Node makes (`MAX_STRING_LENGTH`), past which joining the output would throw.
+ * guards is not made. It is the longest string Node makes (`MAX_STRING_LENGTH`, some 512 Mi on 64-bit Node), past which
+ * joining the output would throw: UTF-8 decodes to no more UTF-16 units than it has bytes, so output within it joins.
  */
-const MAX_LISTING_BYTES = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
+const MAX_LISTING_BYTES = bufferConstants.MAX_STRING_LENGTH;
 
 /**
  * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's with
@@ -1063,7 +1063,7 @@ export async function runGitWithoutBlocking(cwd: string, args: readonly string[]
 }
 
 /** Starts one Git of a {@link runGitWithoutBlocking} call, within what is left of the call's time limit. */
-type LaterGit = (cwd: string, args: readonly string[], options?: RunGitOptions) => Promise<GitResult>;
+type LaterGit = (cwd: string, args: readonly string[], options?: RunGitOptions & Pick<RunGitAsyncOptions, "maxErrorBuffer">) => Promise<GitResult>;
 
 /**
  * The most Git processes one {@link runGitWithoutBlocking} call runs at once: one per processor, as Git's own parallel
@@ -1211,7 +1211,8 @@ interface GuardedCall {
 /** Stdout of each question `git -C <cwd> <args>` with `env` set, or how it failed. */
 function asker(git: LaterGit, cwd: string, env: GitVariables): Ask {
   return async (args, most = MAX_LISTING_BYTES) => {
-    const answer = await git(cwd, args, { env, maxBuffer: most });
+    // Stderr keeps the default's cap whatever stdout's: what a question prints there does not change its answer.
+    const answer = await git(cwd, args, { env, maxBuffer: most, maxErrorBuffer: MAX_LISTING_BYTES });
     return answer.status === 0 && answer.error === undefined ? answer.stdout : answer;
   };
 }
@@ -1296,15 +1297,16 @@ interface GuardGit {
  */
 const guardGits = new Map<string, GuardGit>();
 
-/** The {@link GuardGit} of the Git this process runs now; undefined before it was asked, or when no Git is found. */
-function knownGuardGit(): GuardGit | undefined {
-  const executable = readerGit(undefined);
+/** The {@link GuardGit} of the Git at `executable`; undefined before it was asked, or when no Git is found. */
+function knownGuardGit(executable: string | undefined): GuardGit | undefined {
   return executable === undefined ? undefined : guardGits.get(executable);
 }
 
-/** `asked`, kept for the Git this process runs once it answered: the one that answered, or the one found again for it. */
-function keptGuardGit(asked: GuardGit | undefined): GuardGit | undefined {
-  const executable = readerGit(undefined);
+/**
+ * `asked`, kept for the Git at `executable`, the one this process ran when the question was put: a Git found again
+ * while that Git answered is asked itself at its first call.
+ */
+function keptGuardGit(executable: string | undefined, asked: GuardGit | undefined): GuardGit | undefined {
   if (asked !== undefined && executable !== undefined) guardGits.set(executable, asked);
   return asked;
 }
@@ -1325,12 +1327,14 @@ function guardGitOf(answer: GitResult): GuardGit | undefined {
  * guard would cover says why on the process's error stream, which for the daemon is its log.
  */
 function guardWorks(git: CallGit, cwd: string): boolean {
-  return guardCovers(knownGuardGit() ?? keptGuardGit(askedGuardGitSync(git, cwd)));
+  const executable = readerGit(undefined);
+  return guardCovers(knownGuardGit(executable) ?? keptGuardGit(executable, askedGuardGitSync(git, cwd)));
 }
 
 /** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has asked this Git. */
 async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<boolean> {
-  return guardCovers(knownGuardGit() ?? keptGuardGit(await version()));
+  const executable = readerGit(undefined);
+  return guardCovers(knownGuardGit(executable) ?? keptGuardGit(executable, await version()));
 }
 
 /** {@link GuardGit} from `git version` asked in `cwd` within a {@link runGitWithoutBlocking} call. */
@@ -1376,7 +1380,11 @@ function runGitWith(executable: string, args: readonly string[], options: RunGit
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
-type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
+type RunGitAsyncOptions = RunGitOptions & GitReadOptions & {
+  input?: string;
+  /** The most bytes Git may print to stderr; `maxBuffer` by default. */
+  maxErrorBuffer?: number;
+};
 
 /**
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
@@ -1399,22 +1407,23 @@ export async function runGitAsync(cwd: string, args: readonly string[], options:
 
 /** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
 async function runGitAsyncWith(executable: string, args: readonly string[], options: RunGitAsyncOptions): Promise<GitResult> {
-  const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
+  const { maxBuffer = 1024 * 1024, maxErrorBuffer = maxBuffer, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
   const child = startOrError(() => startGit(executable, args, gitEnvironment(executable, options.env), "pipe"));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
+  const most = { stdout: maxBuffer, stderr: maxErrorBuffer };
   let failure: Error | undefined;
   for (const stream of ["stdout", "stderr"] as const) {
     let bytes = 0;
     child[stream].setEncoding("utf8");
     child[stream].on("data", (chunk: string) => {
       bytes += Buffer.byteLength(chunk);
-      if (bytes <= maxBuffer) printed[stream].push(chunk);
+      if (bytes <= most[stream]) printed[stream].push(chunk);
       else if (failure === undefined) {
-        // `ENOBUFS`, as `spawnSync` names the same failure.
-        failure = Object.assign(new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`), { code: "ENOBUFS" });
+        // `ENOBUFS`, as `spawnSync` names the same failure, and the stream Git printed past its cap.
+        failure = Object.assign(new Error(`Git printed more than maxBuffer (${most[stream]} bytes) to ${stream}`), { code: "ENOBUFS", stream });
         endPastMaxBuffer(child);
       }
     });

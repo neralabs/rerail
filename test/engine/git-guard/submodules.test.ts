@@ -226,6 +226,41 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([statuses.length, statuses.some(events => /"event":"exit".*"code":0[,}]/u.test(events))]).toEqual([1, false]);
   }, 60_000);
 
+  // Windows has no folder its owner cannot open, and the superuser opens every folder.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("and leave out a submodule whose status lists nothing and warns past what Rerail reads of its output, as Git leaves it out", async () => {
+    const root = await folder();
+    const { work, shut } = await warningSubmodule(root);
+    try {
+      const answers = [await rerail(work, AUDIT_DIFF), await rerail(work, SCAN_DIFF)];
+
+      expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
+      expect(answers).toEqual([[true, ""], [true, ""]]);
+    } finally {
+      for (const path of shut) chmodSync(path, 0o755);
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("and fail a diff where a submodule's status warns past the most the guard reads, as a question past its cap fails", async () => {
+    const root = await folder();
+    const { work, shut } = await warningSubmodule(root);
+    // The guard's cap at 32 KiB, under the submodule's warnings: Node's longest string sets it.
+    vi.doMock("node:buffer", async original => {
+      const actual = await original<typeof import("node:buffer")>();
+      return { ...actual, constants: { ...actual.constants, MAX_STRING_LENGTH: 32 * 1024 } };
+    });
+    vi.resetModules();
+    try {
+      const fresh = await import("../../../src/engine/git.js");
+
+      const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
+
+      expect([audit.status, audit.stdout, (audit.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "", "ENOBUFS"]);
+    } finally {
+      vi.doUnmock("node:buffer");
+      for (const path of shut) chmodSync(path, 0o755);
+    }
+  }, 60_000);
+
   it("and ask Git which index it reads where the diff runs in a Git folder whose core.worktree names the checkout", async () => {
     const root = await folder();
     // The folder above holds a repository of its own, whose index records no submodule.
@@ -653,6 +688,21 @@ describe("Rerail's diffs list the submodules Git's own diff lists", () => {
   }, 120_000);
 });
 
+/**
+ * A clean checkout `work` with a clean checked-out submodule `sub` holding 300 empty folders no one may open (`shut`):
+ * its status with untracked files lists no entry and warns of each, some 90 KB, past the 64 KiB Rerail reads of its
+ * stdout.
+ */
+async function warningSubmodule(root: string): Promise<{ work: string; shut: string[] }> {
+  const source = await repository(root, "source", { "inner.txt": "one\n" });
+  const work = await repository(root, "work", { "top.txt": "top\n" });
+  git(work, "submodule", "add", "--quiet", source, "sub");
+  git(work, "commit", "--quiet", "-m", "submodule");
+  const shut = Array.from({ length: 300 }, (_, at) => join(work, "sub", `shut-${String(at).padStart(3, "0")}-${"x".repeat(240)}`));
+  for (const path of shut) mkdirSync(path, { mode: 0o000 });
+  return { work, shut };
+}
+
 /** A checkout `work` with a checked-out submodule `sub`: `top.txt` changed in the checkout, `inner.txt` in the submodule. */
 async function changedSubmodule(root: string): Promise<string> {
   const source = await repository(root, "source", { "inner.txt": "one\n" });
@@ -724,6 +774,20 @@ const GIT_FOLDERS: ReadonlyArray<readonly [string, (work: string, root: string) 
     await writeFile(join(linked, "top.txt"), "changed\n");
     await writeFile(join(linked, "sub", "inner.txt"), "two\n");
     return linked;
+  }],
+  ["in a linked worktree of the submodule's own repository, whose `commondir` climbs out of it through a link", async work => {
+    const commit = git(join(work, "sub"), "rev-parse", "HEAD").trim();
+    const gitFolder = join(work, ".git", "modules", "sub");
+    await removeFolder(join(work, "sub"));
+    git(work, "config", "--file", join(gitFolder, "config"), "--unset", "core.worktree");
+    git(work, "--git-dir", gitFolder, "worktree", "add", "--quiet", "--detach", join(work, "sub"), commit);
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+    // Through the link, the four `..` lead to the repository; read as text, to the folder above it, which holds none.
+    const linkedFolder = join(gitFolder, "worktrees", "sub");
+    mkdirSync(join(linkedFolder, "a", "b"), { recursive: true });
+    symlinkSync(join(linkedFolder, "a", "b"), join(linkedFolder, "ln"), "junction");
+    writeFileSync(join(linkedFolder, "commondir"), "ln/../../../..\n");
+    return work;
   }],
 ];
 
@@ -862,6 +926,48 @@ describe("Rerail's diffs answer as Git's own for each Git folder a submodule's `
 
     expect(answers).toEqual([own(work, AUDIT_DIFF), own(work, SCAN_DIFF)]);
     expect(answers).toEqual([[true, "sub\0"], [true, "sub\0"]]);
+  }, 60_000);
+});
+
+/**
+ * Folders a diff runs in where the path Rerail is given leads, read as text, to another repository's `.git` than the
+ * one Git finds, and how to make each; the folder to diff in. A link is a junction on Windows.
+ */
+const DISCOVERED: ReadonlyArray<readonly [string, (root: string) => Promise<string>]> = [
+  ["a link in a repository whose index records no submodule, to a folder of a checkout whose submodule there changed", async root => {
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "deep/sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "deep", "sub", "inner.txt"), "two\n");
+    const outer = await repository(root, "outer", { "outer.txt": "outer\n" });
+    symlinkSync(join(work, "deep"), join(outer, "link"), "junction");
+    return join(outer, "link");
+  }],
+  ["a checkout whose `.git` file names its Git folder through a link and `..`, where the text alone leads to a repository with no submodule", async root => {
+    const work = await changedSubmodule(root);
+    const store = join(root, "a", "store.git");
+    mkdirSync(join(root, "a", "b"), { recursive: true });
+    renameSync(join(work, ".git"), store);
+    git(store, "config", "--file", join(store, "modules", "sub", "config"), "core.worktree", join(work, "sub"));
+    // Git for Windows hides a submodule's `.git` file, and Windows refuses to open a hidden file for writing.
+    unlinkSync(join(work, "sub", ".git"));
+    await writeFile(join(work, "sub", ".git"), `gitdir: ${join(store, "modules", "sub").replaceAll("\\", "/")}\n`);
+    symlinkSync(join(root, "a", "b"), join(work, "ln"), "junction");
+    await writeFile(join(work, ".git"), "gitdir: ln/../store.git\n");
+    git(root, "init", "--quiet", "--bare", join(work, "store.git"));
+    cpSync(join(root, "source", ".git", "index"), join(work, "store.git", "index"));
+    return work;
+  }],
+];
+
+describe("Rerail's diffs read the index Git's own diff reads", () => {
+  it.each(DISCOVERED)("in %s", async (_name, made) => {
+    const cwd = await made(await folder());
+
+    const answers = [await rerail(cwd, AUDIT_DIFF), await rerail(cwd, SCAN_DIFF)];
+
+    expect(answers).toEqual([own(cwd, AUDIT_DIFF), own(cwd, SCAN_DIFF)]);
   }, 60_000);
 });
 

@@ -387,10 +387,11 @@ describe("Rerail's listings of changed files answer as the person's Git does", (
 
 /**
  * A `git` in `root/bin` that answers as Git `version` does where Rerail's guard needs a newer one: it names that
- * version, ignores the command-line config of `GIT_CONFIG_COUNT` (Git 2.31), and before Git 2.26 refuses
- * `--show-scope` as an unknown option. Every other call runs the Git this test found first, as it is.
+ * version, after running the shell commands `beforeVersion`, ignores the command-line config of `GIT_CONFIG_COUNT`
+ * (Git 2.31), and before Git 2.26 refuses `--show-scope` as an unknown option. Every other call runs the Git this test
+ * found first, as it is.
  */
-async function olderGit(root: string, version: string): Promise<string> {
+async function olderGit(root: string, version: string, beforeVersion = ""): Promise<string> {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const bin = join(root, "bin");
   await mkdir(bin);
@@ -400,7 +401,7 @@ async function olderGit(root: string, version: string): Promise<string> {
   const program = [
     "#!/bin/sh",
     "for argument in \"$@\"; do",
-    `  case "$argument" in version|--version) echo "git version ${version}"; exit 0;; ${refusesScope} esac`,
+    `  case "$argument" in version|--version) ${beforeVersion} echo "git version ${version}"; exit 0;; ${refusesScope} esac`,
     "done",
     minor < 31 ? ignoresCount : "",
     `exec '${real}' "$@"`,
@@ -506,6 +507,51 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(existsSync(marker)).toBe(false);
   }, 60_000);
 
+  it("a daemon whose Git is replaced while the Git kept answers its version asks the one found again", async () => {
+    const root = await folder();
+    const [one, two] = [join(root, "one"), join(root, "two")];
+    await Promise.all([mkdir(one), mkdir(two)]);
+    const [asked, answer] = [join(root, "version-asked"), join(root, "version-answer")];
+    // The Git kept answers its version only once this test has had it found gone and another kept.
+    const waits = `touch '${asked}'; while [ ! -e '${answer}' ]; do sleep 0.05; done;`;
+    vi.stubEnv("PATH", [await olderGit(one, "2.53.0", waits), await olderGit(two, "2.25.1"), process.env.PATH ?? ""].join(delimiter));
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    git.gitLivesOn();
+    const { work } = await checkoutWithDriver(root);
+    const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const first = git.runGitWithoutBlocking(work, AUDIT_DIFF);
+    for (let waited = 0; !existsSync(asked); waited += 1) {
+      if (waited === 400) throw new Error("the Git kept was not asked its version");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    await rm(git.gitExecutable());
+    await git.runGitAsync(root, ["--version"]);
+    await writeFile(answer, "");
+    await first;
+
+    const answers = [await git.runGitWithoutBlocking(work, AUDIT_DIFF), git.runGit(work, AUDIT_DIFF)];
+
+    expect(git.gitExecutable()).toBe(join(two, "bin", "git"));
+    expect(answers.map(result => [result.status, result.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail: Git 2.25.1 is older than 2.31"))).toHaveLength(1);
+  }, 60_000);
+
+  it("a config listing of 300 MiB, under Node's longest string, guards the call as a short one does", async () => {
+    const root = await folder();
+    const bin = await paddedGit(root, 300 * 1024 * 1024);
+    vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    const { work, marker } = await checkoutWithDriver(root);
+
+    const answers = [git.runGit(work, AUDIT_DIFF), await git.runGitWithoutBlocking(work, AUDIT_DIFF)];
+    const walk = await git.gitModifiedOrUntrackedPaths(work);
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect([walk, existsSync(marker)]).toEqual([["notes.txt"], false]);
+  }, 120_000);
+
   it("a config listing past what the guard reads fails the call it guards, and throws nothing", async () => {
     const root = await folder();
     const bin = await printingGit(root, 600 * 1024 * 1024);
@@ -521,6 +567,21 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect([walk, existsSync(marker)]).toEqual([[], false]);
   }, 120_000);
 });
+
+/**
+ * A `git` in `root/bin` whose config listing with scopes is the found Git's with one more entry of `bytes` letters, and
+ * that runs every other call as the Git this test found first.
+ */
+async function paddedGit(root: string, bytes: number): Promise<string> {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  const padding = `'${real}' "$@" && printf 'local\\000rerail.padding\\n' && head -c ${bytes} /dev/zero | tr '\\000' a && printf '\\000'; exit $?`;
+  const program = ["#!/bin/sh", "for argument in \"$@\"; do", `  case "$argument" in --show-scope) ${padding};; esac`, "done", `exec '${real}' "$@"`];
+  await writeFile(join(bin, "git"), `${program.join("\n")}\n`);
+  chmodSync(join(bin, "git"), 0o755);
+  return bin;
+}
 
 /** A `git` in `root/bin` that prints `bytes` NUL bytes as its config listing with scopes, and runs every other call as the Git this test found first. */
 async function printingGit(root: string, bytes: number): Promise<string> {

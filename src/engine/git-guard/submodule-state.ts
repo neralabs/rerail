@@ -13,9 +13,9 @@
  * submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a submodule changed
  * (`is_submodule_modified`): any entry its status lists.
  */
-import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
 
 /** How a diff treats a submodule's worktree: Git's `--ignore-submodules` values. */
@@ -39,8 +39,9 @@ export interface Places {
 }
 
 /**
- * Stdout of `git <args>` run in a repository, or how it failed: past `most` bytes of output (by default the most a
- * guard's question takes), with the error `code` `ENOBUFS`, as Node's `spawnSync` fails such a start.
+ * Stdout of `git <args>` run in a repository, or how it failed: past `most` bytes of stdout (by default the most a
+ * guard's question takes) or past that default on stderr, with the error `code` `ENOBUFS`, as Node's `spawnSync` fails
+ * such a start, and its `stream` the one Git printed past it.
  */
 export type Ask = (args: readonly string[], most?: number) => Promise<string | GitFailure>;
 
@@ -167,19 +168,46 @@ const PLACING_VARIABLES = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CO
 
 /**
  * The index file a Git started in `folder` with the environment `env` reads, found in process as Git's discovery finds
- * a worktree's: the `index` of the Git folder of the first `.git` from `folder` up ({@link discoveredAt}). Undefined,
- * so that Git is asked, when `env` sets one of {@link PLACING_VARIABLES}, or the discovery meets a folder it does not
- * take as a worktree's.
+ * a worktree's: the `index` of the Git folder of the first `.git` from `folder` up ({@link discoveredAt}), climbing the
+ * folder's path with every link resolved, as Git climbs from `getcwd()` once `-C` changed into it. Undefined, so that
+ * Git is asked, when `env` sets one of {@link PLACING_VARIABLES}, that path cannot be read, or the discovery meets a
+ * folder it does not take as a worktree's.
  */
 export function worktreeIndex(folder: string, env: Readonly<Record<string, string | undefined>>): string | undefined {
   if (PLACING_VARIABLES.some(name => env[name] !== undefined)) return undefined;
-  let at = resolve(folder);
+  let at = physicalPath(folder);
+  if (at === undefined) return undefined;
   let found = discoveredAt(at);
   while (found === undefined && dirname(at) !== at) {
     at = dirname(at);
     found = discoveredAt(at);
   }
   return typeof found === "string" ? join(found, "index") : undefined;
+}
+
+/**
+ * `path` with every link in it resolved, as the system resolves it for Git: `realpath` on Linux and macOS, the final
+ * path of the folder's handle on Windows, which also resolves a junction or a `subst` drive. Undefined when it cannot
+ * be read.
+ */
+function physicalPath(path: string): string | undefined {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A path Git takes as absolute (`is_absolute_path`): from the root, and on Windows from a drive (`C:`) too. */
+const GIT_ABSOLUTE = process.platform === "win32" ? /^(?:[\\/]|[A-Za-z]:)/u : /^\//u;
+
+/**
+ * The folder a Git file names with `named` from the folder `base`, as Git finds it: `base/named` joined as text unless
+ * `named` is absolute, then resolved by the system ({@link physicalPath}, Git's `strbuf_realpath`), so each `..` goes
+ * up from where the links before it lead. Undefined when that path cannot be read.
+ */
+function namedFolder(base: string, named: string): string | undefined {
+  return physicalPath(GIT_ABSOLUTE.test(named) ? named : `${base}/${named}`);
 }
 
 /**
@@ -524,13 +552,14 @@ export function repositoryConfig(gitFolder: string): string | undefined {
 
 /**
  * The common directory of the repository in `gitFolder`, as Git's `get_common_dir` finds it: the folder its `commondir`
- * file names, relative to it, else `gitFolder`; undefined when that file cannot be read as one.
+ * file names from it ({@link namedFolder}), else `gitFolder`; undefined when that file or the folder it names cannot be
+ * read.
  */
 function commonDirectory(gitFolder: string): string | undefined {
   const file = join(gitFolder, "commondir");
   if (!existsSync(file)) return gitFolder;
   const named = textOf(file)?.replace(/[\r\n]+$/u, "");
-  return named === undefined ? undefined : resolve(gitFolder, named);
+  return named === undefined ? undefined : namedFolder(gitFolder, named);
 }
 
 /** Whether Git takes the `HEAD` at `path` (`validate_headref`): a link into `refs/`, `ref: refs/…`, or an object id first. */
@@ -583,13 +612,16 @@ function linkOf(path: string): string | undefined {
 }
 
 /**
- * The Git folder the `.git` file `dotGit` (`stats`) names, relative to `folder`; undefined when it went before it could
- * be read, and how it failed for one Git cannot read as a `.git` file (not a regular file, too large, no `gitdir:`).
+ * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it went
+ * before it could be read, and how it failed for one Git cannot read as a `.git` file (not a regular file, too large,
+ * no `gitdir:`) or that names a folder that cannot be read.
  */
 function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
   const text = stats.isFile() && stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
   if (text === undefined) return undefined;
-  return text.startsWith("gitdir: ") ? resolve(folder, text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "")) : notARepository(dotGit);
+  if (!text.startsWith("gitdir: ")) return notARepository(dotGit);
+  const named = text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "");
+  return namedFolder(folder, named) ?? notARepository(named);
 }
 
 function statOf(path: string): Stats | undefined {
@@ -621,9 +653,13 @@ export function notARepository(gitFolder: string): GitFailure {
  */
 const STATUS_MOST_BYTES = 64 * 1024;
 
-/** Whether `failure` is a question's that printed past the most its asker takes ({@link Ask}). */
+/**
+ * Whether `failure` is a question's that printed past the most its asker takes ({@link Ask}) to its standard output:
+ * past the cap on its error stream it listed nothing more, and fails as any question does.
+ */
 function pastMost(failure: GitFailure): boolean {
-  return (failure.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+  const error = failure.error as (NodeJS.ErrnoException & { stream?: string }) | undefined;
+  return error?.code === "ENOBUFS" && error.stream === "stdout";
 }
 
 /**
