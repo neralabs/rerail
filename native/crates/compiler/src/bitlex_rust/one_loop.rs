@@ -307,7 +307,7 @@ impl Lp<'_, '_> {
             End::Run(f) => format!("run_last(&m.{f}, s) + 1"),
             End::Pair(f) => format!("s + 1 + usize::from(bit(&m.{f}, s))"),
             End::Last(f) => format!("first_bit(&m.{f}, s).unwrap_or(s) + 1"),
-            End::Region(r) => format!("first_bit(&m.{}, s + 1).map_or(src.len(), |c| c + 1)", self.readers[*r].close),
+            End::Region(r) => format!("first_bit(&m.{}, s + 1).map_or(n, |c| c + 1)", self.readers[*r].close),
         })
     }
 
@@ -787,7 +787,7 @@ impl Lp<'_, '_> {
                         // The level the root's value: the file's last record its closer, checked before the walk, as
                         // the lean parser's `last != '}'`.
                         if self.root_place.get() == Some(ret) {
-                            let _ = write!(out, "if starts.last().map(|&l| src[l as usize]) != Some({close:#04x}) {{\nreturn Err(at(src, starts, i));\n}}\n");
+                            let _ = write!(out, "if src[starts[count - 1] as usize] != {close:#04x} {{\nreturn Err(at(src, starts, i));\n}}\n");
                         }
                         // Empty: one leaf from its opener (its decision's) to its closer, as the lean parser's `empty!`;
                         // its depth tested as a level's.
@@ -1012,19 +1012,24 @@ fn close(d: *mut u8, end: u64) {
     debug_assert_eq!(r, 0, "the writer's close, its room reserved");
 }
 
-/// The first byte of record `i`, or 256 past the last.
+/// The first byte of record `i`: past the last, the padding's (a space, which no token starts with), as simdjson's
+/// stage 2 reads `*next`.
 #[inline(always)]
 fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
-    match starts.get(i) {
-        Some(&s) => u16::from(src[s as usize]),
-        None => 256,
-    }
+    debug_assert!(i < starts.len() && (starts[i] as usize) < src.len());
+    // SAFETY: `i` is at most the count: a record past the last is the first of the index's three last entries,
+    // `len`, whose byte is the padding's, which no arm takes, so nothing reads past it; `len` is within the padded
+    // source.
+    unsafe { u16::from(*src.get_unchecked(*starts.get_unchecked(i) as usize)) }
 }
 
-/// Where record `i` starts, or the file's end past the last.
+/// Where record `i` starts: past the last, the file's end (the index's last entries).
 #[inline(always)]
 fn at(src: &[u8], starts: &[u32], i: usize) -> u32 {
-    starts.get(i).copied().unwrap_or(src.len() as u32)
+    let _ = src;
+    debug_assert!(i < starts.len());
+    // SAFETY: as `peek`'s.
+    unsafe { *starts.get_unchecked(i) }
 }
 
 #[inline(always)]
@@ -1114,7 +1119,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     };
     let first = lp.place(String::new());
     let number = lp.number(kind, &Key::default())?;
-    let end = "close(d, src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
+    let end = "close(d, n as u64);\nif i != count {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
     let code = format!("open(d, {number}, at(src, starts, i) as u64);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
@@ -1174,7 +1179,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nw.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
+        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, n) = (&lx.starts[..], lx.count, lx.len);\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
     );
     let _ = &x.tokens;
     Ok(out)

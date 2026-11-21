@@ -307,15 +307,17 @@ fn simdjson_form_against_simdjson() {
         let nodes = f.len() / 2 + 16;
         // Ours writes the JIT's tape.
         let want = jit.parser.image16(f, &lang, &numbers, false).map(|w| w.extent().to_vec()).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e:?}"));
+        // The file padded once, as simdjson's caller pads it (`padded_string`).
+        let fp = rerail_json_aot::padded(f);
         let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, false, true, nodes);
-        rerail_json_aot::parse(f, &mut w).unwrap_or_else(|b| panic!("{name}: the Rust refuses it at byte {b}"));
+        rerail_json_aot::parse(&fp, f.len(), &mut w).unwrap_or_else(|b| panic!("{name}: the Rust refuses it at byte {b}"));
         assert!(w.finish().expect("finishes").tape.extent() == &want[..], "{name}: the Rust's tape is the JIT's");
         // Ours as simdjson's caller runs simdjson: one writer, kept from one document to the next (simdjson's parser is
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
             w.begin(&lang, f, tag, false, true, nodes);
-            rerail_json_aot::parse(f, &mut w).expect("parses");
+            rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
         };
@@ -334,12 +336,12 @@ fn simdjson_form_against_simdjson() {
         });
         // Of ours, tier 1 alone; and tier 2 alone, on tier 1's records made once, the writer kept.
         let (t1i, t1n) = measure(&mut || {
-            std::hint::black_box(rerail_json_aot::lex(f));
+            std::hint::black_box(rerail_json_aot::lex(&fp, f.len()));
         });
-        let lexed = rerail_json_aot::lex(f);
+        let lexed = rerail_json_aot::lex(&fp, f.len());
         let (t2i, t2n) = measure(&mut || {
             w.begin(&lang, f, tag, false, true, nodes);
-            rerail_json_aot::parse_lexed(f, &lexed, &mut w).expect("parses");
+            rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
         });
@@ -1141,7 +1143,7 @@ fn json_rust_is_current() {
     // An empty object or array one leaf, at its call (decision 0553): at every call of each, a value's arm.
     for (opener, kind) in [("0x7b", "object"), ("0x5b", "array")] {
         // A call's arm: the depth's test, or first the root's closer's.
-        let calls = tier2.matches(&format!("{opener} => {{\nif stack.len() == DEPTH {{")).count() + tier2.matches(&format!("{opener} => {{\nif starts.last()")).count();
+        let calls = tier2.matches(&format!("{opener} => {{\nif stack.len() == DEPTH {{")).count() + tier2.matches(&format!("{opener} => {{\nif src[starts[count - 1]")).count();
         assert!(calls > 0 && tier2.matches(&format!("// `{kind}`, empty.")).count() == calls, "every call of {kind} peeks for its closer");
     }
     // A value's decision once a site of the grammar's, not once a word of the number's row: the root's, a pair's
@@ -1149,7 +1151,7 @@ fn json_rust_is_current() {
     assert_eq!(tier2.matches("// `object`, empty.").count(), 3, "a value's decision a site");
     // The root's closer checked before the walk, where its value is a container: once each.
     for b in ["0x7d", "0x5d"] {
-        assert_eq!(tier2.matches(&format!("if starts.last().map(|&l| src[l as usize]) != Some({b}) {{")).count(), 1, "the closer {b} checked once");
+        assert_eq!(tier2.matches(&format!("if src[starts[count - 1] as usize] != {b} {{")).count(), 1, "the closer {b} checked once");
     }
 }
 
@@ -1182,7 +1184,7 @@ fn json_rusts_tapes_are_the_jits() {
         for z in [false, true] {
             let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| w.extent().to_vec());
             let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, z, true, f.len() / 2 + 16);
-            let got = rerail_json_aot::parse(f, &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
+            let got = rerail_json_aot::parse(&rerail_json_aot::padded(f), f.len(), &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
             match (&want, &got) {
                 (Ok(a), Ok(b)) => {
                     assert!(a == b, "file {k} ({:?}, 16z {z}): the Rust's tape is not the JIT's; the JIT's nodes {:?}", show(), ours(&jit, f));

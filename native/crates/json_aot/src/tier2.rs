@@ -60,19 +60,24 @@ fn close(d: *mut u8, end: u64) {
     debug_assert_eq!(r, 0, "the writer's close, its room reserved");
 }
 
-/// The first byte of record `i`, or 256 past the last.
+/// The first byte of record `i`: past the last, the padding's (a space, which no token starts with), as simdjson's
+/// stage 2 reads `*next`.
 #[inline(always)]
 fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
-    match starts.get(i) {
-        Some(&s) => u16::from(src[s as usize]),
-        None => 256,
-    }
+    debug_assert!(i < starts.len() && (starts[i] as usize) < src.len());
+    // SAFETY: `i` is at most the count: a record past the last is the first of the index's three last entries,
+    // `len`, whose byte is the padding's, which no arm takes, so nothing reads past it; `len` is within the padded
+    // source.
+    unsafe { u16::from(*src.get_unchecked(*starts.get_unchecked(i) as usize)) }
 }
 
-/// Where record `i` starts, or the file's end past the last.
+/// Where record `i` starts: past the last, the file's end (the index's last entries).
 #[inline(always)]
 fn at(src: &[u8], starts: &[u32], i: usize) -> u32 {
-    starts.get(i).copied().unwrap_or(src.len() as u32)
+    let _ = src;
+    debug_assert!(i < starts.len());
+    // SAFETY: as `peek`'s.
+    unsafe { *starts.get_unchecked(i) }
 }
 
 #[inline(always)]
@@ -267,7 +272,7 @@ return Err(at(src, starts, i));
 Ok(e)
 }
 
-/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.
+/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and masks, or the byte it was refused at.
 /// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes
 /// open at once (3 a level), and the root's.
 pub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {
@@ -275,7 +280,11 @@ pub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(),
 if lx.refused {
 return Err(0);
 }
-w.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * 3 + 1);
+// A file with no token: simdjson's `EMPTY`.
+if lx.count == 0 {
+return Err(lx.len as u32);
+}
+w.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * 3 + 1);
 // Each node final as written: no commit after each.
 w.final_as_written();
 let d = w.state_address();
@@ -288,7 +297,8 @@ Some(_) => Err(u32::MAX),
 
 /// `parse`'s walk, on the writer's state `d`.
 fn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {
-let starts = &lx.starts[..];
+// The records, then the index's three last entries; their count; the file's length (`src` is it padded).
+let (starts, count, n) = (&lx.starts[..], lx.count, lx.len);
 let m = &lx.masks;
 // The next record, the last token's end, the places the open levels return to, the place.
 let mut i = 0usize;
@@ -306,7 +316,7 @@ st = 1;
 continue 'run;
 }
 0x7b => {
-if starts.last().map(|&l| src[l as usize]) != Some(0x7d) {
+if src[starts[count - 1] as usize] != 0x7d {
 return Err(at(src, starts, i));
 }
 if stack.len() == DEPTH {
@@ -327,7 +337,7 @@ st = 2;
 continue 'run;
 }
 0x5b => {
-if starts.last().map(|&l| src[l as usize]) != Some(0x5d) {
+if src[starts[count - 1] as usize] != 0x5d {
 return Err(at(src, starts, i));
 }
 if stack.len() == DEPTH {
@@ -353,8 +363,8 @@ return Err(at(src, starts, i));
 }
 }
 1 => {
-close(d, src.len() as u64);
-if i != starts.len() {
+close(d, n as u64);
+if i != count {
 return Err(at(src, starts, i));
 }
 return Ok(());

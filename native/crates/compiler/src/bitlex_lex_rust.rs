@@ -264,6 +264,9 @@ struct Gen<'a> {
     region_checks: Vec<Vec<(String, [Option<String>; 3])>>,
     /// `prefix`'s bytes (decision 0335).
     prefix: Option<Vec<u8>>,
+    /// Simdjson's stage 1 (no `skip`, every mask in the pass): the mask whose bits are the records, written as
+    /// indexes at its block (`bit_indexer`), the source padded (`PADDING`) and each block loaded where it is.
+    index: Option<usize>,
 }
 
 /// What a name means where a statement reads it: made of the regions or not, its local after stage 1,
@@ -620,10 +623,17 @@ impl Gen<'_> {
         for n in &kept {
             let _ = writeln!(out, "    {}: Vec<u64>,", n.name);
         }
+        if self.index.is_some() {
+            out.push_str("    /// The records (simdjson's structural indexes), then `n`, `n` and 0; and their count.\n    starts: Vec<u32>,\n    count: usize,\n");
+        }
         out.push_str("    refused: bool,\n}\n\n");
         let most = self.nodes.iter().map(|n| n.lag).max().unwrap_or(0);
         let ring = (most as usize + 2).next_power_of_two();
-        let _ = writeln!(out, "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), its last {ring} words in a ring.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {{\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    const RING: usize = {ring};");
+        let _ = writeln!(out, "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), its last {ring} words in a ring.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);\n    const RING: usize = {ring};", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" }, if self.index.is_some() { "" } else { "    let n = src.len();\n" });
+        if self.index.is_some() {
+            // Room for a record a byte, and the slack of a block's unconditional writes.
+            out.push_str("    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let si = starts.as_mut_ptr();\n    let mut count = 0usize;\n");
+        }
         for n in &self.nodes {
             let _ = writeln!(out, "    let mut r_{} = [0u64; RING];", n.name);
             if n.carry {
@@ -644,7 +654,12 @@ impl Gen<'_> {
             let _ = writeln!(out, "        {guard}\n            // The block's bits inside the file (none past its end).\n            let lv = if 64 * q + 64 <= n {{ !0u64 }} else if q < nw {{ (1u64 << (n % 64)) - 1 }} else {{ 0 }};");
             out.push_str(&self.prefix_code(true, "            "));
             if lag == 0 {
-                let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = unsafe {{ S::load(&b) }};");
+                if self.index.is_some() {
+                    // The source padded: each block of the file loaded where it is (`PADDING` past its end).
+                    let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = unsafe {{ S::load(b) }};");
+                } else {
+                    let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = unsafe {{ S::load(&b) }};");
+                }
                 for p in 0..self.pairs.len() {
                     let _ = writeln!(out, "            let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
                 }
@@ -661,14 +676,27 @@ impl Gen<'_> {
                 for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
                     let _ = writeln!(out, "            // {why}\n            refused |= q < nw && w != 0;");
                 }
+                if self.index == Some(i) {
+                    // simdjson's `bit_indexer::write`: four indexes, four more where there are, then one at a time; each
+                    // write past the count is written over by the next block's, or past the end.
+                    out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n            if q < nw {\n                let (base, cnt, mut bits) = (64 * q as u32, w.count_ones() as usize, w);\n                // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\n                unsafe {\n                    for k in 0..4 {\n                        *si.add(count + k) = base + bits.trailing_zeros();\n                        bits &= bits.wrapping_sub(1);\n                    }\n                    if cnt > 4 {\n                        for k in 4..8 {\n                            *si.add(count + k) = base + bits.trailing_zeros();\n                            bits &= bits.wrapping_sub(1);\n                        }\n                    }\n                    let mut k = 8;\n                    while k < cnt {\n                        *si.add(count + k) = base + bits.trailing_zeros();\n                        bits &= bits.wrapping_sub(1);\n                        k += 1;\n                    }\n                }\n                count += cnt;\n            }\n");
+                }
             }
             out.push_str("        }\n");
         }
-        out.push_str("    }\n    Stage1 {\n");
+        out.push_str("    }\n");
+        if self.index.is_some() {
+            // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
+            out.push_str("    // SAFETY: `count` records written, and room for three more.\n    unsafe {\n        *si.add(count) = n as u32;\n        *si.add(count + 1) = n as u32;\n        *si.add(count + 2) = 0;\n        starts.set_len(count + 3);\n    }\n");
+        }
+        out.push_str("    Stage1 {\n");
         for n in &kept {
             let _ = writeln!(out, "        {},", n.name);
         }
-        out.push_str("        refused,\n    }\n}\n\nrerail_simd8::dispatch! {\n    fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;\n}\n\n");
+        if self.index.is_some() {
+            out.push_str("        starts,\n        count,\n");
+        }
+        let _ = write!(out, "        refused,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    fn stage1_best({}) -> Stage1 = stage1, on stage1_on;\n}}\n\n", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" });
         out
     }
 
@@ -937,6 +965,25 @@ impl Gen<'_> {
             }
             self.opens = Some(v);
         }
+        // One region whose closer is its opener, one byte, nothing else (a JSON string): its bytes are the parity of
+        // the openers up to each (simdjson's `prefix_xor`), in stage 1, and so is every mask made of it.
+        if let [r] = ks.as_slice()
+            && format!("{:?}", r.opener) == format!("{:?}", r.closers())
+            && r.bytes == 1
+            && !r.outside
+            && r.empty.is_none()
+            && r.or.is_none()
+            && r.after.is_empty()
+        {
+            let (f, o) = (format!("f_{}", r.kind), format!("o_{}", r.kind));
+            let inside = Expr::Call("toggle".into(), vec![Arg::E(r.opener.clone())]);
+            self.make_node(format!("={f}"), format!("m_{}", ident(&f)), format!("{f}: a region's opener to its closer, `toggle({})`", show(&r.opener)), &inside)?;
+            let opener = Expr::And(Box::new(r.opener.clone()), Box::new(Expr::Name(f.clone())));
+            self.make_node(format!("={o}"), format!("m_{}", ident(&o)), format!("{o}: its openers"), &opener)?;
+            let hidden = Expr::Xor(Box::new(Expr::Name(f.clone())), Box::new(r.opener.clone()));
+            self.make_node(format!("={}", rg.hidden), format!("m_{}", ident(&rg.hidden)), format!("{}: after its opener to its closer", rg.hidden), &hidden)?;
+            return Ok(());
+        }
         let hidden = format!("m_{}", ident(&rg.hidden));
         let _ = writeln!(self.body, "    // regions {} {{ … }}: the first opener not hidden opens its region, to its closer.", rg.hidden);
         let _ = writeln!(self.body, "    let mut {hidden} = vec![0u64; nw];");
@@ -1062,12 +1109,15 @@ impl Gen<'_> {
         let x = self.x;
         let mut all: Option<Expr> = None;
         let mut chain = String::new();
+        // Every mask in the pass: the records too, there (simdjson's stage 1), with no kinds.
+        // (After stage 1 then, only its escapes' verdict: every escape tested in the pass.)
+        let in_pass = self.body.trim() == "let mut refused = escapes;";
         for (row, s) in rows {
             let Stmt::Token { kind, start, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
                 continue;
             }
-            let st = self.val(start)?;
+            let st = if in_pass { String::new() } else { self.val(start)? };
             let k = self.kind_of(*row);
             let _ = write!(chain, "{}if bit(&{st}, s) {{\n                // `{kind}`\n                {k}\n            }} ", if chain.is_empty() { "" } else { "else " });
             all = Some(match all.take() {
@@ -1075,7 +1125,13 @@ impl Gen<'_> {
                 None => start.clone(),
             });
         }
-        let all = self.val(&all.ok_or("tier 1 as Rust: no token")?)?;
+        let all_e = all.ok_or("tier 1 as Rust: no token")?;
+        let all = if in_pass {
+            self.index = Some(self.node(&all_e)?);
+            String::new()
+        } else {
+            self.val(&all_e)?
+        };
         // The masks tier 2 reads: a reader's, then each row's end's.
         let mut fields: Vec<(String, Expr)> = readers(x.stmts).into_iter().flat_map(|r| r.masks).collect();
         fields.extend(stage1_ends(x.stmts)?);
@@ -1092,6 +1148,20 @@ impl Gen<'_> {
         let mut out = String::new();
         out.push_str("// Generated by the Bitlex compiler (`rerail_bitlex::bitlex_lex_rust`) from the grammar's lexer statements. Do not edit.\n\n");
         let _ = write!(out, "/// The masks tier 2 reads, a bit a byte: those it finds a token's end by, and splits a region by.\npub struct Masks {{\n{decl}}}\n\n");
+        if in_pass {
+            // The records and the masks tier 2 reads, nothing more: simdjson's stage 1 writes its indexes alone.
+            out.push_str("/// The bytes the source has past its end, spaces (simdjson's padding): tier 1 loads each block where it is, and\n/// tier 2 reads the byte at the index's last entries.\npub const PADDING: usize = 64;\n\n");
+            out.push_str("/// Tier 1's records, simdjson's stage 1: each token's first byte (its structural index), then `len`, `len` and 0;\n/// their count; the file's length; the masks tier 2 reads; and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub starts: Vec<u32>,\n    pub count: usize,\n    pub len: usize,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
+            out.push_str(&self.stage1());
+            let kept: Vec<&str> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.as_str()).collect();
+            let _ = write!(
+                out,
+                "/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    // Stage 1: the records, the masks tier 2 reads, and whether an escape holds.\n    let Stage1 {{ {}, starts, count, refused }} = stage1_best(buf, n);\n    Lexed {{\n        starts,\n        count,\n        len: n,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
+                kept.join(", ")
+            );
+            out.push_str(&used_helpers(&out));
+            return Ok(out);
+        }
         out.push_str("/// Tier 1's records, simdjson's stage 1: each token's first byte and its kind, the masks tier 2 reads, and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub starts: Vec<u32>,\n    pub codes: Vec<u32>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
         let kinds: Vec<String> = x.kinds.iter().map(|k| k.to_string()).collect();
         let _ = write!(out, "/// Each byte's record kind, as a token's first byte.\nconst KINDS: [u8; 256] = [{}];\n\n", kinds.join(", "));
@@ -1586,6 +1656,33 @@ fn indent(s: &str, p: &str) -> String {
 }
 
 /// The word operations the masks are made of, and the token loop's searches.
+/// The helpers of `HELPERS` that `code` calls, outside its comments, and those they call.
+fn used_helpers(code: &str) -> String {
+    let called = |text: &str, name: &str| text.lines().filter(|l| !l.trim_start().starts_with("//")).any(|l| l.contains(&format!("{name}(")) && !l.contains(&format!("fn {name}(")));
+    // Each helper: its doc comment, attributes and body, up to the next's.
+    let mut parts: Vec<(String, String)> = Vec::new();
+    for chunk in HELPERS.split("\n\n") {
+        let Some(name) = chunk.lines().find_map(|l| l.strip_prefix("fn ")).and_then(|l| l.split(['(', '<']).next()) else { continue };
+        parts.push((name.to_owned(), chunk.trim_matches('\n').to_owned()));
+    }
+    let mut keep = vec![false; parts.len()];
+    let mut text = code.to_owned();
+    loop {
+        let mut more = false;
+        for (k, (name, body)) in parts.iter().enumerate() {
+            if !keep[k] && called(&text, name) {
+                keep[k] = true;
+                text.push_str(body);
+                more = true;
+            }
+        }
+        if !more {
+            break;
+        }
+    }
+    parts.iter().zip(keep).filter(|(_, k)| *k).map(|((_, b), _)| format!("\n{b}\n")).collect()
+}
+
 const HELPERS: &str = r#"
 /// Block `q`'s 64 bytes; the last block's past the file are 0x00.
 #[inline(always)]
@@ -1777,5 +1874,5 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None }.source()
 }
