@@ -76,11 +76,13 @@ fn pack_files() -> Vec<std::path::PathBuf> {
     files
 }
 
-/// Every seventh pack program, as the text's test samples them.
+/// Every seventh pack program, as the text's test samples them, parsed a thread each: one after another they took
+/// most of a minute (two on Windows), and three tests read them.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
+    use rayon::prelude::*;
     let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
+    files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,
@@ -92,13 +94,14 @@ fn a_program_reads_back_from_its_image() {
     same(&back, &v);
     handles_agree(&back, &v);
     assert!(back.show().contains("$j = join $y by ($k, $sep) sep \", \" : { ast($y, $k, $sep) }"), "{}", back.show());
-    let mut n = 0;
-    for (path, prog) in pack_programs() {
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(path, prog)| {
         let back = Version::open(prog.fold().unwrap().base_bytes().unwrap()).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        same(&back, &prog);
-        handles_agree(&back, &prog);
-        n += 1;
-    }
+        same(&back, prog);
+        handles_agree(&back, prog);
+    });
+    let n = programs.len();
     assert!(n > 50, "{n}");
 }
 
@@ -679,11 +682,10 @@ fn normalizable_on(b: &mut Builder<'_>) {
 /// everywhere; and a `top` of two domains is refused.
 #[test]
 fn the_planners_passes_over_a_version_hold() {
-    let mut n = 0;
-    for (_, prog) in pack_programs() {
-        passes_hold(&prog);
-        n += 1;
-    }
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(_, prog)| passes_hold(prog));
+    let n = programs.len();
     assert!(n > 50, "{n}");
     let p = {
         let mut b = Builder::base();
@@ -934,11 +936,10 @@ fn fields_agree(v: &Arc<Version>) {
 /// pack programs, and on programs with a field of every kind.
 #[test]
 fn a_versions_fields_say_what_its_readers_say() {
-    let mut n = 0;
-    for (_, prog) in pack_programs() {
-        fields_agree(&prog);
-        n += 1;
-    }
+    use rayon::prelude::*;
+    let programs = pack_programs();
+    programs.par_iter().for_each(|(_, prog)| fields_agree(prog));
+    let n = programs.len();
     assert!(n > 50, "{n}");
     fields_agree(&every_part());
     fields_agree(&analysed());
