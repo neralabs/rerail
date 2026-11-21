@@ -14,7 +14,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedForm, storedPath } from "./checkout-control.js";
 import {
   filePlacementInputs,
@@ -31,6 +31,7 @@ import {
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
 import { openNoFollowSync } from "../no-follow.js";
+import { nativeGitAccess } from "../native/git-access.js";
 import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitReadOptions, type GitResult } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -835,25 +836,84 @@ interface RemoteSource {
 }
 
 /**
- * Where `root`'s remotes come from, read now: the repository's `config`, the worktree's `config.worktree`, and the
- * person's global files, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home ({@link gitHome}) and `git/config`
- * in `XDG_CONFIG_HOME` or that home's `.config` (an `insteadOf` there rewrites an address), each by its text. The
- * system file, which only an administrator writes, is left out, as for the excludes files Rerail reads. Undefined, so
- * Git is asked each time, where Git's placement of `root` is not read from its files ({@link placementInputs}), where
- * another account owns it (Git reads the repository's config only while a `safe.directory` entry trusts it, the
- * system file's too), or where a file cannot be read or includes another.
+ * Where `root`'s remotes come from, read now ({@link remoteFacts}). Undefined, so Git is asked each time, where Git's
+ * placement of `root` is not read from its files ({@link placementInputs}), where another account owns it (Git reads
+ * the repository's config only while a `safe.directory` entry trusts it, the system file's too), or where a fact
+ * cannot be read or named.
  */
 function remoteSource(root: string): RemoteSource | undefined {
   const inputs = placementInputs(resolve(root));
   if (inputs === undefined || !inputs.owned) return undefined;
   const own = configText(join(inputs.gitFolder, "config.worktree"));
-  const files = [join(inputs.linkedCommon ?? inputs.gitFolder, "config"), ...globalConfigFiles()];
-  const texts = [own, ...files.map(configText)];
-  if (texts.some(text => text === undefined)) return undefined;
-  const key = own === NO_FILE ? inputs.realCommon : inputs.gitFolder;
-  return { key, facts: [...files, ...texts].join("\0") };
+  const facts = remoteFacts(own, inputs.linkedCommon ?? inputs.gitFolder);
+  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : inputs.gitFolder, facts };
 }
 
+/**
+ * Every fact Git reads a clone's remote from but the worktree's `config.worktree` (`own`, its text): the configuration
+ * this process hands Git ({@link environmentConfig}), the text of the repository's `config` and of each file outside
+ * it ({@link wideConfigFiles}), where an `insteadOf` also rewrites an address, and the common folder's older remote
+ * files ({@link olderRemoteFiles}). Undefined where one cannot be read, includes another file, or cannot be named.
+ */
+function remoteFacts(own: string | undefined, common: string): string | undefined {
+  const environment = environmentConfig();
+  const wide = wideConfigFiles();
+  if (own === undefined || wide === undefined || INCLUDE.test(environment)) return undefined;
+  const files = [join(common, "config"), ...wide];
+  const texts = [own, ...files.map(configText), olderRemoteFiles(common)];
+  return texts.some(text => text === undefined) ? undefined : [environment, ...files, ...texts].join("\0");
+}
+
+/** The variables through which a process hands Git configuration of its own: `-c`'s, and `GIT_CONFIG_COUNT`'s. */
+const ENVIRONMENT_CONFIG = /^GIT_CONFIG_(?:PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/iu;
+
+/** The configuration this process hands every Git it starts, read now: each such variable and its value, one per line. */
+function environmentConfig(): string {
+  return Object.entries(process.env)
+    .filter(([name]) => ENVIRONMENT_CONFIG.test(name))
+    .map(([name, value]) => `${name}=${value ?? ""}`)
+    .join("\n");
+}
+
+/**
+ * The config files outside the repository that Git reads, by path: the system files ({@link systemConfigFiles}) and the
+ * person's global ones ({@link globalConfigFiles}). Undefined where one cannot be named for every Git this process
+ * starts: Git named no system file, or a path is relative, which each Git opens from its own folder.
+ */
+function wideConfigFiles(): string[] | undefined {
+  const system = systemConfigFiles();
+  if (system === undefined) return undefined;
+  const files = [...system, ...globalConfigFiles()];
+  return files.every(file => isAbsolute(file)) ? files : undefined;
+}
+
+/** The values Git's boolean reading takes as true, read case-blind; any other value of `GIT_CONFIG_NOSYSTEM` reads the system files too. */
+const GIT_TRUE = /^(?:1|true|yes|on)$/iu;
+
+/**
+ * The system files Git reads: none under `GIT_CONFIG_NOSYSTEM`; else `GIT_CONFIG_SYSTEM`, or where it is unset the file
+ * Rerail's Git was built to read, as the engine's owner of its Git reads names it ({@link nativeGitAccess}), with the
+ * file Apple Git reads beside it. On Windows also the program data file Git for Windows reads before them. Undefined
+ * where Git named no system file.
+ */
+function systemConfigFiles(): string[] | undefined {
+  const programData = programDataConfig();
+  if (GIT_TRUE.test(process.env["GIT_CONFIG_NOSYSTEM"] ?? "")) return programData;
+  const access = nativeGitAccess();
+  const named = process.env["GIT_CONFIG_SYSTEM"] ?? access.systemConfig;
+  return named === null ? undefined : [named, access.installationConfig, ...programData].filter(file => file !== null);
+}
+
+/** `%PROGRAMDATA%\Git\config`, which Git for Windows reads before its system file; none on any other system. */
+function programDataConfig(): string[] {
+  const folder = process.platform === "win32" ? process.env["PROGRAMDATA"] : undefined;
+  return folder === undefined ? [] : [join(folder, "Git", "config")];
+}
+
+/**
+ * The person's global files: `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home ({@link gitHome}) and
+ * `git/config` in `XDG_CONFIG_HOME` or that home's `.config`.
+ */
 function globalConfigFiles(): string[] {
   const named = process.env["GIT_CONFIG_GLOBAL"];
   if (named !== undefined && named !== "") return [named];
@@ -861,9 +921,30 @@ function globalConfigFiles(): string[] {
   return [join(gitHome(), ".gitconfig"), join(xdg === undefined || xdg === "" ? join(gitHome(), ".config") : xdg, "git", "config")];
 }
 
+/**
+ * {@link NO_FILE} while the common Git folder holds neither of the older forms Git still reads a remote from when its
+ * configuration gives it no address, `remotes/<name>` and `branches/<name>`; undefined where it holds one or cannot be
+ * read, so Git is asked each time.
+ */
+function olderRemoteFiles(common: string): string | undefined {
+  return ["remotes", "branches"].every(folder => entryCount(join(common, folder)) === 0) ? NO_FILE : undefined;
+}
+
+/** How many entries the folder at `path` holds: 0 where nothing is there, undefined where it cannot be read. */
+function entryCount(path: string): number | undefined {
+  try {
+    return readdirSync(path).length;
+  } catch (error) {
+    return errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR" ? 0 : undefined;
+  }
+}
+
 const NO_FILE = "\0none";
-/** A config section that reads another file, which this source does not follow. */
-const INCLUDE = /^\s*\[\s*include/imu;
+/**
+ * Text that may include another file, which this source does not follow: a section opens anywhere on a line
+ * (`[core] [include] path = ...`), and the environment names the key itself (`include.path`).
+ */
+const INCLUDE = /include/iu;
 /**
  * A config file's text, read now as Git reads it ({@link fileText}); {@link NO_FILE} when nothing is there; undefined
  * when it is no regular file, cannot be read or includes another.
