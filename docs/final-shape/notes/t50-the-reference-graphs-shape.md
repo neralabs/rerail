@@ -594,6 +594,37 @@ instructions, rows unchanged. So the executor's frames were about a tenth of it,
 readers' 240 ms is now 191 ms of tests and 47 ms of pushing `look`'s rows. The tests' cost is the probes themselves, the
 probe structure's job (step 5's spike, above).
 
+### The stage run's memory, after the hub's merge (2026-11-21, f25f01dab1)
+
+Before the merge, `all` peaked at 6.5 GB, once the harness kept row digests, not texts. After it, the same run passed
+16 GB and was stopped, and s1000 went from 727 MB to 2.36 GB of footprint. Found with the heap sampler
+(`RERAIL_HEAP_SAMPLE=1`) and the engine's ceiling (`RERAIL_MEMORY_MAX_MB`, which stops a run and names it). Fixed
+(4b650debdb, c44ab79f97):
+
+- A chunk binds every source as `values::Layered`, which forwarded neither `holds` nor the composite probe. `within`
+  with both sides bound (step 4) made every ancestor's row again: `def_outside` 4.6 → 1.8 s and 880 → 167 MB on
+  s1000.
+- A base relation's statistics were counted off every row (48 bytes a row), `within`'s through a `len` that made all
+  of its rows: now its structure's (`Source::statistics`). Counts over 1 M rows go a window of whole documents at a
+  time.
+- A CPU run's axis solve made the batch's device chunk block before checking the binding: `rf_crossing`'s morsels
+  raised the peak 7.9 → 2.4 GB.
+
+`all` now: peak 16.8 GB (resident, both sides), the engine's footprint 14.0 GB at most, rows unchanged. At the peak,
+in the cross part's `rf_crossing`: heap live 6.1 GB, host blocks 7.2 GB (the Metal driver's 6.2 GB is the same
+blocks, counted by Metal). Of the live heap (sampled, 5.7 GB):
+
+- the inputs' kept frames, 1.67 GB, and the writer's queue at 2.3 GB: every input's frames are gathered into the run's
+  wave and written in its one transaction (0104), so on a cold run they are held until the run ends;
+- the outputs, 0.71 GB writing and 0.63 GB in the cross part;
+- the harness's W side and digests, 0.84 GB.
+
+The host blocks grow through the per-file part, steadily: 10 MB at 2 s, 2.4 GB at 163 s, 7.2 GB at the peak. The
+cross part makes every document's projection again (the lazy corpus batch, 0494), 2.56 GB, where `rf_crossing`'s
+pair statistics (0203) solve `rf_fnl` for the whole corpus. And `def_outside`'s plan reads `nearest` by its scope
+(1.6 M rows on s1000) where it read the demand's `pre_` relations before (0.03 s). These are the hub's mechanisms,
+left for now.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
