@@ -20,15 +20,15 @@ pub const DIRS: usize = 96;
 pub const MIN_LOG: u32 = 4;
 
 structure! {
-    /// One column: its width in bytes (4 or 8), its dictionary, and each chunk's offset from this descriptor.
+    /// One column: its width in bytes (4 or 8), its key runs, and each chunk's offset from this descriptor.
     ///
-    /// A 4-byte column may be dictionary-coded: `dict` is then the offset, in 8-byte words, from this descriptor
-    /// to an array of 8-byte values in the same block, and a row holds a code, its value the array's `code`th (an
-    /// axis's node ids, held once for every axis over a batch: rows of node rows, read through the batch's ids).
-    /// 0: none, the row's 4 bytes its value.
+    /// A 4-byte column may hold the low 32 bits of values whose high 32 bits are its rows' runs' (`runs`: the
+    /// offset, in 8-byte words, from this descriptor to a run table in the same block, `KeyRuns`): an axis's node
+    /// ids, each its document's key over its node's low bits, the runs one a document. 0: none, the row's 4
+    /// bytes its value.
     pub struct ColDir {
         pub width: u32,
-        pub dict: i32,
+        pub runs: i32,
         pub chunk: [AtomicI64; 96],
     }
 }
@@ -68,49 +68,83 @@ impl ColDir {
         start.wrapping_add(place * self.width as usize).cast_mut()
     }
 
-    /// Row `i`'s value (a 4-byte column's unsigned, or its dictionary's value for it; the CLIF's `col_get`).
+    /// Row `i`'s value (a 4-byte column's unsigned, over its run's high bits when it has runs; the CLIF's
+    /// `col_get`).
     ///
     /// # Safety
     /// Row `i` is reserved: its chunk is made.
     #[inline(always)]
     pub unsafe fn get(&self, min_log: u32, i: u32) -> i64 {
         let p = self.at(min_log, i);
-        // SAFETY: the row's value in its chunk, aligned to the column's width (the caller's); a code's value in the
-        // dictionary the column was given, whose every code's value is there (`Rows::set_dict`).
+        // SAFETY: the row's value in its chunk, aligned to the column's width (the caller's); its run in the table
+        // the column was given (`Rows::set_runs`).
         unsafe {
             if self.width == 4 {
-                let code = *p.cast::<u32>();
-                if self.dict == 0 { i64::from(code) } else { self.decode(code) }
+                let low = i64::from(*p.cast::<u32>());
+                if self.runs == 0 { low } else { i64::from(self.high(i)) << 32 | low }
             } else {
                 *p.cast::<i64>()
             }
         }
     }
 
-    /// Row `i`'s 4 bytes as written: a dictionary column's code.
+    /// Row `i`'s 4 bytes as written: a column with runs holds its value's low 32 bits.
     ///
     /// # Safety
     /// Row `i` is reserved, and the column is 4 bytes wide.
     #[inline(always)]
-    pub unsafe fn code(&self, min_log: u32, i: u32) -> u32 {
+    pub unsafe fn low(&self, min_log: u32, i: u32) -> u32 {
         // SAFETY: the caller's.
         unsafe { *self.at(min_log, i).cast::<u32>() }
     }
 
-    /// A code's value in the column's dictionary.
+    /// Row `i`'s high 32 bits: its run's, the last whose first row is not past `i` (a search of the run table,
+    /// a few entries, one a document; the CLIF's `col_high`).
     ///
     /// # Safety
-    /// The column has a dictionary, which holds `code`.
+    /// The column has runs, the first from row 0.
     #[inline(always)]
-    pub unsafe fn decode(&self, code: u32) -> i64 {
-        // SAFETY: the caller's; the dictionary is in this descriptor's block, `dict` words from it.
-        unsafe { *std::ptr::from_ref(self).cast::<i64>().offset(self.dict as isize + code as isize) }
+    pub unsafe fn high(&self, i: u32) -> u32 {
+        // SAFETY: the caller's; the table is in this descriptor's block, `runs` words from it: its count, then each
+        // run's first row and high bits.
+        unsafe {
+            let t = std::ptr::from_ref(self).cast::<u64>().offset(self.runs as isize).cast::<u32>();
+            let (mut lo, mut hi) = (0u32, *t);
+            while lo < hi {
+                let m = lo + (hi - lo) / 2;
+                if *t.add(2 + 2 * m as usize) <= i { lo = m + 1 } else { hi = m }
+            }
+            *t.add(2 * lo as usize + 1)
+        }
     }
 
-    /// Whether the column is dictionary-coded.
+    /// Whether the column holds low bits under key runs.
     #[inline(always)]
-    pub fn coded(&self) -> bool {
-        self.dict != 0
+    pub fn has_runs(&self) -> bool {
+        self.runs != 0
+    }
+}
+
+/// A run table (`ColDir::runs`) of `n` runs in `block`, every run's first row 0 and high bits 0 until set
+/// (`put_run`): 8 bytes a run past its count.
+pub fn alloc_runs(block: &Block, n: usize) -> *mut u32 {
+    let t: *mut u32 = block.alloc_t((2 + 2 * n).max(4));
+    // SAFETY: just allocated, zeroed, for the count and `n` runs.
+    unsafe { *t = u32::try_from(n).expect("runs in a u32") };
+    t
+}
+
+/// Run `k` of the table at `t`: rows from `first` (each run's past the one's before, the first's 0) hold values
+/// whose high 32 bits are `high`.
+///
+/// # Safety
+/// `t` is a run table of more than `k` runs (`alloc_runs`), not yet read.
+pub unsafe fn put_run(t: *mut u32, k: usize, first: u32, high: u32) {
+    // SAFETY: the caller's.
+    unsafe {
+        debug_assert!(k < *t as usize);
+        *t.add(2 + 2 * k) = first;
+        *t.add(3 + 2 * k) = high;
     }
 }
 
@@ -185,7 +219,7 @@ impl Rows {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
                 (*cols.add(c)).width = w;
-                (*cols.add(c)).dict = 0;
+                (*cols.add(c)).runs = 0;
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
@@ -240,9 +274,10 @@ impl Rows {
         let (p, w) = self.at(i, c);
         unsafe {
             if w == 4 {
-                // A value is never a code: a writer of a dictionary column writes codes (`put_code`).
-                assert!(!self.col(c).coded(), "a value {v} written into column {c}, a dictionary's codes");
-                debug_assert!((0..=u32::MAX as i64).contains(&v), "{v} in a 4-byte column");
+                // A column with runs holds a value's low bits, its high bits its row's run's.
+                let d = self.col(c);
+                let fits = if d.has_runs() { (v as u64 >> 32) as u32 == d.high(i) } else { v >> 32 == 0 };
+                assert!(fits, "{v} in 4-byte column {c}: not its row {i}'s high bits");
                 *(p as *mut u32) = v as u32
             } else {
                 *(p as *mut i64) = v
@@ -250,35 +285,23 @@ impl Rows {
         }
     }
 
-    /// Row `i`'s code in dictionary column `c` (a device writer stores it through `rows_put`, at the column's width).
+    /// Column `c`, 4 bytes wide, under the key runs of the table at `runs` (`alloc_runs`, in the block this relation
+    /// lies in): each row then holds its value's low 32 bits, its high bits its run's, for every reader (the CLIF's
+    /// `col_get`, the kernels' and the JIT's). Set before any row is written, by its one writer; the columns of a
+    /// relation may share one table.
     ///
     /// # Safety
-    /// Row `i` was claimed by the caller and reserved; `code` is in the column's dictionary.
-    #[inline]
-    pub unsafe fn put_code(&self, i: u32, c: usize, code: u32) {
-        let (p, w) = self.at(i, c);
-        debug_assert!(w == 4 && self.col(c).coded(), "a code written into column {c}, not a dictionary's");
-        // SAFETY: the caller's.
-        unsafe { *(p as *mut u32) = code };
-    }
-
-    /// Column `c`, 4 bytes wide, coded by the values at `dict`, in the block this relation lies in: each row's
-    /// value is then `dict[code]`, for every reader (the CLIF's `col_get`, the kernels' and the JIT's). Set before
-    /// any row is written, by its one writer.
-    ///
-    /// # Safety
-    /// `dict` is in the same block as the relation and outlives it there, and holds a value for every code
-    /// written.
-    pub unsafe fn set_dict(&self, c: usize, dict: *const i64) {
+    /// `runs` is in the same block as the relation and outlives it there; its runs are set, the first from row 0,
+    /// before any row is written.
+    pub unsafe fn set_runs(&self, c: usize, runs: *const u32) {
         let d = self.col(c);
-        assert_eq!(d.width, 4, "a dictionary codes a 4-byte column");
-        assert!(self.is_empty(), "a dictionary given before the column's rows");
-        let from = std::ptr::from_ref(d) as isize;
-        let off = dict as isize - from;
-        assert!(off % 8 == 0 && off != 0, "a dictionary at a word from the column's directory");
-        let words = i32::try_from(off / 8).expect("a dictionary within 16 GB of the column's directory");
+        assert_eq!(d.width, 4, "runs of high bits over a 4-byte column");
+        assert!(self.is_empty(), "runs given before the column's rows");
+        let off = runs as isize - std::ptr::from_ref(d) as isize;
+        assert!(off % 8 == 0 && off != 0, "a run table at a word from the column's directory");
+        let words = i32::try_from(off / 8).expect("a run table within 16 GB of the column's directory");
         // SAFETY: the directory's one writer, before any reader (asserted empty).
-        unsafe { (*std::ptr::from_ref(d).cast_mut()).dict = words };
+        unsafe { (*std::ptr::from_ref(d).cast_mut()).runs = words };
     }
 
     /// Makes chunks until `n` rows fit. The caller holds the relation's lock, or no kernel is running.
@@ -396,7 +419,7 @@ impl Rows {
     /// Column `c`'s values as dense slices, one per chunk: a scan reads these.
     pub fn col_chunks_u32(&self, c: usize) -> impl Iterator<Item = &[u32]> + '_ {
         assert_eq!(self.col(c).width, 4);
-        assert!(!self.col(c).coded(), "a scan of column {c}'s values reads a dictionary's codes");
+        assert!(!self.col(c).has_runs(), "a scan of column {c}'s values reads only their low bits");
         let n = self.len() as u64;
         (0..self.nchunks.load(Relaxed) as usize)
             .map_while(move |k| self.chunk_raw(c, k, n))
@@ -412,10 +435,10 @@ impl Rows {
             let o = &mut out[first as usize..first as usize + len];
             if w == 4 {
                 let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
-                if d.coded() {
-                    for (o, &v) in o.iter_mut().zip(s) {
-                        // SAFETY: every code written is in the dictionary (`set_dict`).
-                        *o = unsafe { d.decode(v) };
+                if d.has_runs() {
+                    for (j, (o, &v)) in o.iter_mut().zip(s).enumerate() {
+                        // SAFETY: the column's runs are set (`set_runs`).
+                        *o = i64::from(unsafe { d.high(first as u32 + j as u32) }) << 32 | i64::from(v);
                     }
                 } else {
                     for (o, &v) in o.iter_mut().zip(s) {
@@ -433,7 +456,7 @@ impl Rows {
     /// one else writes them.
     pub fn write_col(&self, c: usize, vals: &[i64]) {
         let w = self.col(c).width;
-        assert!(!self.col(c).coded(), "values written into column {c}, a dictionary's codes");
+        assert!(!self.col(c).has_runs(), "values written into column {c} by their low bits, unchecked");
         let mut k = 0;
         while let Some((first, len, p)) = self.chunk_raw(c, k, vals.len() as u64) {
             let v = &vals[first as usize..first as usize + len];
@@ -472,8 +495,8 @@ impl Rows {
         }
         let (start, len, p) = self.chunk_raw(c, k, hi as u64).expect("a chunk in range");
         let a = (lo as u64).saturating_sub(start) as usize;
-        let at = if self.col(c).coded() {
-            // A code's value is its dictionary's: the search reads each row's value.
+        let at = if self.col(c).has_runs() {
+            // A value's high bits are its run's: the search reads each row's value.
             let (mut l, mut h) = (a, len);
             while l < h {
                 let m = l + (h - l) / 2;
@@ -607,37 +630,41 @@ mod tests {
         assert_eq!(back, vals);
     }
 
-    /// A dictionary column (an axis's node rows, coded by the batch's ids) reads as its values through every read:
-    /// a row's, a column resolved once, a chunk at a time and the searches; a value written into it is refused.
+    /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits) reads as its
+    /// values through every read: a row's, a column resolved once, a chunk at a time and the searches; a value whose
+    /// high bits are not its row's run's is refused.
     #[test]
-    fn a_dictionary_columns_rows_read_as_its_values() {
+    fn a_columns_key_runs_read_as_its_values() {
         let block = Block::anon(kind::FACTS, 64 << 20);
         let lock = Mutex::new(());
         let rows: &Rows = unsafe { &*block.alloc_t::<Rows>(1) };
         unsafe { Rows::init(rows as *const Rows as *mut Rows, &block, &[4, 4], MIN_LOG) };
-        // The dictionary: sorted node ids, of many documents (a key in the high word), past a u32.
-        let ids: Vec<i64> = (0..3_000i64).map(|i| (i / 700 + 1) << 32 | (i % 700) * 5).collect();
-        let dict = block.alloc_t::<i64>(ids.len());
-        unsafe { std::ptr::copy_nonoverlapping(ids.as_ptr(), dict, ids.len()) };
-        unsafe { rows.set_dict(0, dict) };
-        // Rows in node order, each node's codes repeated (an axis's `n` side), and an uncoded column beside.
-        let codes: Vec<u32> = (0..20_000u32).map(|i| i / 7).collect();
-        let n = codes.len() as u32;
-        let s = rows.claim(&block, &lock, n);
-        for (i, &code) in codes.iter().enumerate() {
-            unsafe { rows.put_code(s + i as u32, 0, code) };
-            unsafe { rows.put(s + i as u32, 1, i64::from(code)) };
+        // Documents of uneven rows (one of a single row), keys ascending, past a u32 once shifted.
+        let firsts = [0u32, 1, 2_900, 2_901, 7_000, 19_999];
+        let keys = [3u32, 9, 10, 4_000_000, 4_000_001, u32::MAX];
+        let t = alloc_runs(&block, firsts.len());
+        for (k, (&f, &key)) in firsts.iter().zip(&keys).enumerate() {
+            unsafe { put_run(t, k, f, key) };
         }
-        let vals: Vec<i64> = codes.iter().map(|&c| ids[c as usize]).collect();
+        unsafe { rows.set_runs(0, t) };
+        let n = 20_000u32;
+        let run = |i: u32| firsts.iter().rposition(|&f| f <= i).unwrap();
+        // Within a document, low bits ascending (a node's, nodes in order) with repeats.
+        let vals: Vec<i64> = (0..n).map(|i| i64::from(keys[run(i)]) << 32 | i64::from((i - firsts[run(i)]) / 3 * 5)).collect();
+        let s = rows.claim(&block, &lock, n);
+        for (i, &v) in vals.iter().enumerate() {
+            unsafe { rows.put(s + i as u32, 0, v) };
+            unsafe { rows.put(s + i as u32, 1, v & 0xffff_ffff) };
+        }
         let r = rows.reader(0);
         for i in 0..n {
-            assert_eq!((rows.get(i, 0), r.get(i), rows.get(i, 1)), (vals[i as usize], vals[i as usize], i64::from(codes[i as usize])), "row {i}");
-            assert_eq!(unsafe { rows.col(0).code(rows.min_log, i) }, codes[i as usize], "row {i}'s code");
+            assert_eq!((rows.get(i, 0), r.get(i), rows.get(i, 1)), (vals[i as usize], vals[i as usize], vals[i as usize] & 0xffff_ffff), "row {i}");
+            assert_eq!(unsafe { rows.col(0).low(rows.min_log, i) }, vals[i as usize] as u32, "row {i}'s low bits");
         }
         let mut back = vec![0i64; vals.len()];
         rows.read_col(0, n, &mut back);
         assert_eq!(back, vals);
-        for key in [ids[0] - 1, ids[0], ids[699], ids[700], ids[1234] + 1, ids[2_856], i64::MAX] {
+        for key in [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_901], vals[12_345], vals[19_999], i64::MAX] {
             for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100)] {
                 let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| v < key) as u32;
                 assert_eq!(rows.lower_bound(0, lo, hi, key), want_lo, "lower {key} in {lo}..{hi}");
@@ -645,7 +672,8 @@ mod tests {
                 assert_eq!(rows.upper_from(0, want_lo, hi, key), want_hi, "upper {key} in {lo}..{hi}");
             }
         }
-        let refused = std::panic::catch_unwind(|| unsafe { rows.put(0, 0, 5) });
-        assert!(refused.is_err(), "a value written into a dictionary's codes");
+        // Row 1's run is key 9's: a value of another document's key is refused.
+        let refused = std::panic::catch_unwind(|| unsafe { rows.put(1, 0, 3 << 32 | 7) });
+        assert!(refused.is_err(), "a value under another run's high bits");
     }
 }

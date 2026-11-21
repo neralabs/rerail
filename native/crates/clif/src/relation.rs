@@ -33,7 +33,7 @@ const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
 const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
 const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
 const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
-const COL_DICT: i32 = offset_of!(ColDir, dict) as i32;
+const COL_RUNS: i32 = offset_of!(ColDir, runs) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
@@ -127,8 +127,8 @@ pub fn col_at(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `col_get(dir, min_log, i)`: row `i`'s value in the column whose directory is `dir` (a 4-byte column's
-/// unsigned, or its dictionary's value for it: the 8-byte word `dict + code` words from the directory, `dict` 0
-/// for none, `rows::ColDir`): a reader of many rows of one column resolves its directory once (`rows::ColRead`).
+/// unsigned, over its run's high bits when it has key runs: `rows::ColDir`'s `runs`, `col_high`): a reader of many
+/// rows of one column resolves its directory once (`rows::ColRead`).
 pub fn col_get(b: &mut B<'_, '_>) -> Value {
     let (min_log, i) = (b.arg(0), b.arg(1));
     let dir = b.tape;
@@ -140,24 +140,62 @@ pub fn col_get(b: &mut B<'_, '_>) -> Value {
         four,
         |b| {
             let v = b.word_at(I32, p, 0);
-            let code = b.f.ins().uextend(I64, v);
-            let dict = b.word_at(I32, dir, COL_DICT);
-            let plain = b.f.ins().icmp_imm(IntCC::Equal, dict, 0);
+            let low = b.f.ins().uextend(I64, v);
+            let runs = b.word_at(I32, dir, COL_RUNS);
+            let plain = b.f.ins().icmp_imm(IntCC::Equal, runs, 0);
             b.either(
                 I64,
                 plain,
-                |_| code,
+                |_| low,
                 |b| {
-                    let dict = b.f.ins().sextend(I64, dict);
-                    let word = b.f.ins().iadd(dict, code);
-                    let at = b.f.ins().ishl_imm(word, 3);
-                    let at = b.f.ins().iadd(dir, at);
-                    b.word_at(I64, at, 0)
+                    let high = col_high(b, dir, runs, i);
+                    let high = b.f.ins().uextend(I64, high);
+                    let high = b.f.ins().ishl_imm(high, 32);
+                    b.f.ins().bor(high, low)
                 },
             )
         },
         |b| b.word_at(I64, p, 0),
     )
+}
+
+/// Row `i`'s high 32 bits in a column with key runs (`rows::ColDir::high`): the table `runs` words from `dir` holds
+/// its count, then each run's first row and high bits; the run is the last whose first row is not past `i`, found by
+/// a search of the table (a few runs, one a document).
+fn col_high(b: &mut B<'_, '_>, dir: Value, runs: Value, i: Value) -> Value {
+    let words = b.f.ins().sextend(I64, runs);
+    let at = b.f.ins().ishl_imm(words, 3);
+    let t = b.f.ins().iadd(dir, at);
+    let n = b.word_at(I32, t, 0);
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(head, &[zero.into(), n.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    b.f.switch_to_block(body);
+    let span = b.f.ins().isub(hi, lo);
+    let half = b.f.ins().ushr_imm(span, 1);
+    let m = b.f.ins().iadd(lo, half);
+    let m64 = b.f.ins().uextend(I64, m);
+    let off = b.f.ins().ishl_imm(m64, 3);
+    let entry = b.f.ins().iadd(t, off);
+    let first = b.word_at(I32, entry, 8);
+    let le = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, first, i);
+    let next = b.f.ins().iadd_imm(m, 1);
+    let lo2 = b.f.ins().select(le, next, lo);
+    let hi2 = b.f.ins().select(le, hi, m);
+    b.f.ins().jump(head, &[lo2.into(), hi2.into()]);
+    b.f.switch_to_block(done);
+    let lo = b.f.block_params(done)[0];
+    let lo64 = b.f.ins().uextend(I64, lo);
+    let off = b.f.ins().ishl_imm(lo64, 3);
+    let entry = b.f.ins().iadd(t, off);
+    b.word_at(I32, entry, 4)
 }
 
 /// `rows_at(rows, i, c)`: the address of row `i`'s value in column `c`.
@@ -492,11 +530,11 @@ mod tests {
         }
     }
 
-    /// A dictionary-coded column (an axis's node rows, read through its batch's ids, `rows::ColDir`'s `dict`) reads
-    /// in the JIT as on the host: each row's value its dictionary's, through its rows, a column resolved once and the
-    /// relation, beside an uncoded 4-byte column and an 8-byte one.
+    /// A column under key runs (an axis's node ids: each document's key over its nodes' low bits, `rows::ColDir`'s
+    /// `runs`) reads in the JIT as on the host: each row's value through its rows, a column resolved once and the
+    /// relation, beside an uncoded 4-byte column and an 8-byte one, with the run table before the relation and after.
     #[test]
-    fn the_jits_dictionary_reads_are_the_hosts() {
+    fn the_jits_key_run_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
@@ -507,45 +545,45 @@ mod tests {
                 std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
             )
         };
-        let spec = Spec { widths: vec![4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
+        let spec = Spec { widths: vec![4, 4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
         let block = Block::anon(kind::FACTS, 16 << 20);
-        // The dictionary before the relation and after it: a negative offset and a positive one.
-        let ids: Vec<i64> = (0..900i64).map(|i| (i / 300 + 7) << 32 | i * 3).collect();
-        let before = block.alloc_t::<i64>(ids.len());
+        let (firsts, keys) = ([0u32, 1, 700, 701, 3_000, 4_999], [1u32, 2, 77, 1 << 31, u32::MAX - 1, u32::MAX]);
+        let before = rerail_blocks::rows::alloc_runs(&block, firsts.len());
         let rel = Relation::create(&block, &spec, None);
-        let after = block.alloc_t::<i64>(ids.len());
-        for (d, sign) in [(before, 1i64), (after, -1)] {
-            for (k, &v) in ids.iter().enumerate() {
-                // SAFETY: `ids.len()` values allocated at `d`.
-                unsafe { *d.add(k) = sign * v };
-            }
-        }
-        // SAFETY: both in the relation's block, holding every code written below.
+        // One run alone after it: every row's high bits one key.
+        let after = rerail_blocks::rows::alloc_runs(&block, 1);
+        // SAFETY: tables of those runs, just allocated.
         unsafe {
-            rel.rows.set_dict(0, before);
-            rel.rows.set_dict(1, after);
+            for (k, (&f, &key)) in firsts.iter().zip(&keys).enumerate() {
+                rerail_blocks::rows::put_run(before, k, f, key);
+            }
+            rerail_blocks::rows::put_run(after, 0, 0, 5);
+            rel.rows.set_runs(0, before);
+            rel.rows.set_runs(1, after);
         }
         let n = 5_000u32;
+        let run = |i: u32| firsts.iter().rposition(|&f| f <= i).unwrap();
+        let want = |i: u32| [i64::from(keys[run(i)]) << 32 | i64::from(i * 7 % 900), 5 << 32 | i64::from(i / 6), i64::from(u32::MAX - i), -i64::from(i)];
         rel.rows.reserve(&block, u64::from(n));
         // SAFETY: rows `0..n` reserved; this thread alone writes them.
         unsafe {
             rel.rows.claim_reserved(n);
             for i in 0..n {
-                rel.rows.put_code(i, 0, i * 7 % 900);
-                rel.rows.put_code(i, 1, i / 6);
-                rel.rows.put(i, 2, -i64::from(i));
+                for (c, v) in want(i).into_iter().enumerate() {
+                    rel.rows.put(i, c, v);
+                }
             }
         }
         let desc = std::ptr::from_ref(rel).cast::<u8>();
         let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
         for i in 0..n {
-            let want = [ids[(i * 7 % 900) as usize], -ids[(i / 6) as usize], -i64::from(i)];
-            for c in 0..3u32 {
-                assert_eq!(rel.rows.get(i, c as usize), want[c as usize], "host row {i} column {c}");
-                assert_eq!(rows_get(rows, i, c) as i64, want[c as usize], "rows_get row {i} column {c}");
+            for c in 0..4u32 {
+                let w = want(i)[c as usize];
+                assert_eq!(rel.rows.get(i, c as usize), w, "host row {i} column {c}");
+                assert_eq!(rows_get(rows, i, c) as i64, w, "rows_get row {i} column {c}");
                 let dir = std::ptr::from_ref(rel.rows.col(c as usize)).cast::<u8>();
-                assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, want[c as usize], "col_get row {i} column {c}");
-                assert_eq!(rel_get(desc, i, c) as i64, want[c as usize], "rel_get row {i} column {c}");
+                assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, w, "col_get row {i} column {c}");
+                assert_eq!(rel_get(desc, i, c) as i64, w, "rel_get row {i} column {c}");
             }
         }
     }
