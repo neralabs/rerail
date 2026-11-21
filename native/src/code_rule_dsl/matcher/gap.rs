@@ -229,14 +229,16 @@ impl GapTest {
                     }
                     // The gap after the node: the first token on that the walk does not pass,
                     // before the next children, or at the end.
+                    // The stored children are counted by their ids: `children` holds them only for a stop rule.
                     _ => {
+                        let stored = parent_gaps.ids.len();
                         let mut k = at + 1;
                         loop {
-                            let word = if k < children.len() { &gaps.before[k] } else { &gaps.end };
+                            let word = if k < stored { &gaps.before[k] } else { &gaps.end };
                             if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
                                 return matches(token);
                             }
-                            if k >= children.len() || !passed(k) {
+                            if k >= stored || !passed(k) {
                                 return false;
                             }
                             k += 1;
