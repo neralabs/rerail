@@ -159,8 +159,14 @@ pub fn help_once() -> bool {
     ran
 }
 
-/// What [`fenced`] calls around a job ([`fence_jobs`]).
-static JOB_FENCE: OnceLock<(fn(), fn())> = OnceLock::new();
+/// What [`fenced`] calls around a job ([`fence_jobs`]): `enter` before it, `leave` after.
+struct FenceCalls {
+    enter: fn(),
+    leave: fn(),
+}
+
+/// The engine's fence ([`fence_jobs`]).
+static JOB_FENCE: OnceLock<FenceCalls> = OnceLock::new();
 
 /// A job's fence, closed when it ends (or unwinds).
 struct Fence(fn());
@@ -174,20 +180,20 @@ impl Drop for Fence {
 /// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the pool's, a
 /// stream's worker, or a thread that waits and takes it (a wait that helps, rayon's own waits).
 pub fn fenced<R>(f: impl FnOnce() -> R) -> R {
-    let _fence = JOB_FENCE.get().map(|&(enter, exit)| {
-        enter();
-        Fence(exit)
+    let _fence = JOB_FENCE.get().map(|calls| {
+        (calls.enter)();
+        Fence(calls.leave)
     });
     f()
 }
 
 /// Sets what fences a job off the per-thread state of the job it may be run inside: `enter` is called before each job
-/// ([`fenced`]) and `exit` after. The engine's device wave keeps the launches a stratum queued on its thread until the
+/// ([`fenced`]) and `leave` after. The engine's device wave keeps the launches a stratum queued on its thread until the
 /// stratum's wave is flushed (`rerail_engine`'s `lanes::wave`); a job taken by that thread while it waited, whose own
 /// flush took them, ran them into its own outputs, and the stratum, resumed elsewhere, found none. Set once, at start;
 /// a later call is ignored.
-pub fn fence_jobs(enter: fn(), exit: fn()) {
-    let _ = JOB_FENCE.set((enter, exit));
+pub fn fence_jobs(enter: fn(), leave: fn()) {
+    let _ = JOB_FENCE.set(FenceCalls { enter, leave });
 }
 
 /// One site's waits ([`Waiting`]): how many ran others' jobs, for how long, and how late those jobs made them.
