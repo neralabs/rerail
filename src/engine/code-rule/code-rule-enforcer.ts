@@ -1720,10 +1720,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return !this.#closing;
   }
 
-  /**
-   * A scope audit's result from its pages, recorded as the audit's end; a completed audit that was not stopped first
-   * retains its analysis scope.
-   */
+  /** A scope audit's result from its pages, recorded as the audit's end, with its analysis scope where it completed. */
   async #recordScopeAuditResult(
     { workspace, auditId, scope, failures, stopped }: ScopeAuditCompletion,
     streamed: Pick<Evaluation, "violations" | "failures"> & { paged: boolean },

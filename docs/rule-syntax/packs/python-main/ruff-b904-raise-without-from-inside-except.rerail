@@ -1,5 +1,4 @@
 .policy "ruff-b904-raise-without-from-inside-except" revision 1
-.guests off
 .description "Use raise ... from err (or from None) when raising a new exception inside an except block; it keeps the cause chain clear instead of looking like a bug in the handler."
 .language python
 .mode steer

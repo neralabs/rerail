@@ -535,6 +535,7 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
     use crate::content_store::observe::{DigestRead, DigestStep};
     use rayon::prelude::*;
     let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
+    // A blob several paths share is read and hashed once: its first path's step answers the rest.
     let mut first_by_blob = std::collections::HashMap::new();
     let representatives: Vec<_> = steps.iter().enumerate().map(|(i, step)| match step {
         DigestStep::Read(read) if let Some(key) = read.blob_key() => *first_by_blob.entry(key).or_insert(i),
@@ -542,26 +543,26 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
     }).collect();
     let hashed: Vec<_> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         steps
-        .par_iter()
-        .zip(paths.par_iter())
-        .enumerate()
-        .map(|(i, (s, path))| match s {
-            DigestStep::Read(r) if representatives[i] == i => {
-                let bytes = r.read()?;
-                let hashed = DigestRead::hashed(&bytes);
-                let mut git_text = None;
-                if let Some(hold) = hold {
-                    if let Some(s) = r.stat() {
-                        hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
-                    } else {
-                        git_text = Some(bytes);
+            .par_iter()
+            .zip(paths.par_iter())
+            .enumerate()
+            .map(|(i, (s, path))| match s {
+                DigestStep::Read(r) if representatives[i] == i => {
+                    let bytes = r.read()?;
+                    let hashed = DigestRead::hashed(&bytes);
+                    let mut git_text = None;
+                    if let Some(hold) = hold {
+                        if let Some(s) = r.stat() {
+                            hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                        } else {
+                            git_text = Some(bytes);
+                        }
                     }
+                    Some((hashed, git_text))
                 }
-                Some((hashed, git_text))
-            }
-            _ => None,
-        })
-        .collect()
+                _ => None,
+            })
+            .collect()
     });
     if let Some(hold) = hold {
         for (path, &first) in paths.iter().zip(&representatives) {

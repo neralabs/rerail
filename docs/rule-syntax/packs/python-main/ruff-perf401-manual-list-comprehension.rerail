@@ -1,5 +1,4 @@
 .policy "ruff-perf401-manual-list-comprehension" revision 1
-.guests off
 .description "Use a list comprehension or extend instead of appending to a list inside a for loop; it is shorter and faster."
 .language python
 .mode steer

@@ -11,7 +11,6 @@ import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/sto
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { gitsAnswer } from "../../support/gits-answer.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
@@ -55,14 +54,11 @@ function locateCalls(folder: string): number {
   return vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === resolve(folder) && args.includes("--show-toplevel")).length;
 }
 
-/**
- * Rerail's answer for `folder` against Git's, as Rerail runs Git ({@link gitsAnswer}): whether it is in Git, and its
- * place when it is (its top level, or the bare repository it is in).
- */
+/** Rerail's answer for `folder` against Git's: whether it is in Git, and its top level when it is. */
 function expectGitsAnswer(folder: string): void {
-  const gits = gitsAnswer(folder);
+  const top = gitTop(folder);
   const location = repositoryIdentityLocation(folder);
-  expect({ git: location.git, top: location.git ? location.workspaceRoot : undefined }).toEqual({ git: gits.git, top: gits.git ? gits.workspaceRoot : undefined });
+  expect({ git: location.git, top: location.git ? location.workspaceRoot : undefined }).toEqual({ git: top !== undefined, top });
 }
 
 /** Whether Rerail asked Git about `folder` while it gave Git's answer for it. */
@@ -156,18 +152,17 @@ describe("a folder outside Git", () => {
 });
 
 describe("a folder Git places in a repository with no work tree", () => {
-  // A bare repository is placed in Git, as its linked checkouts are, so they share its identity; a checkout's .git is not.
   it.for([
-    { name: "a bare repository", git: true, make: (root: string) => bareRepository(root) },
-    { name: "a folder inside a checkout's .git", git: false, make: (root: string) => join(checkout(root, "main"), ".git", "refs") },
-  ])("$name is keyed by its remote", async ({ git: inGit, make }) => {
+    { name: "a bare repository", make: (root: string) => bareRepository(root) },
+    { name: "a folder inside a checkout's .git", make: (root: string) => join(checkout(root, "main"), ".git", "refs") },
+  ])("$name is keyed by its remote", async ({ make }) => {
     const root = await plainRoot();
     const folder = make(root);
     git(folder, "remote", "add", "origin", "https://github.com/example/demo.git");
 
     const recorded = recordCheckout(database(root), folder);
 
-    expect(recorded).toMatchObject({ git: inGit, repositoryKey: "remote:github.com/example/demo" });
+    expect(recorded).toMatchObject({ git: false, repositoryKey: "remote:github.com/example/demo" });
   });
 });
 
@@ -176,10 +171,7 @@ type Made = string | { readonly folder: string; readonly env?: Record<string, st
 
 interface Shape {
   readonly name: string;
-  /**
-   * Whether Rerail asks Git: only where a `.git` or `HEAD` is in the folder or above it. A parent's `GIT_DIR` never
-   * reaches Rerail's Git (`gitInherits`), so it leads Git nowhere.
-   */
+  /** Whether Rerail asks Git: only where a `.git` or `HEAD` is in the folder or above it, or `GIT_DIR` is set. */
   readonly asks: boolean;
   readonly windowsOnly?: true;
   /** Makes the shape under `root`, a new folder outside Git. */
@@ -252,8 +244,6 @@ const outsideShapes: readonly Shape[] = [
   { name: "a folder holding a link that leads nowhere", asks: false, make: root => resolve(linkAt(join(root, "missing"), join(folderAt(root, "notes"), "docs")), "..") },
   { name: "a link to a folder outside Git", asks: false, make: root => linkAt(folderAt(root, "notes"), join(root, "link")) },
   { name: "while GIT_CEILING_DIRECTORIES names its parent", asks: false, make: root => notesWhile(root, "GIT_CEILING_DIRECTORIES", root) },
-  { name: "while a parent's GIT_DIR names a repository", asks: false, make: root => notesWhile(root, "GIT_DIR", join(checkout(root, "main"), ".git")) },
-  { name: "while a parent's GIT_DIR names no repository", asks: false, make: root => notesWhile(root, "GIT_DIR", folderAt(root, "empty")) },
   { name: "while GIT_WORK_TREE names it", asks: false, make: root => notesWhile(root, "GIT_WORK_TREE", join(root, "notes")) },
   { name: "while GIT_COMMON_DIR names a repository's Git folder", asks: false, make: root => notesWhile(root, "GIT_COMMON_DIR", join(checkout(root, "main"), ".git")) },
   { name: "while GIT_OBJECT_DIRECTORY names a repository's objects", asks: false, make: root => notesWhile(root, "GIT_OBJECT_DIRECTORY", join(checkout(root, "main"), ".git", "objects")) },
@@ -288,6 +278,8 @@ const askedShapes: readonly Shape[] = [
   { name: "a link into a checkout", asks: true, make: root => linkAt(folderAt(checkout(root, "main"), "src"), join(root, "link")) },
   { name: "a link inside a checkout to a folder outside one", asks: true, make: root => linkAt(folderAt(root, "outside"), join(checkout(root, "main"), "out")) },
   { name: "a link to a checkout's top folder", asks: true, make: root => linkAt(checkout(root, "main"), join(root, "link")) },
+  { name: "a plain folder while GIT_DIR names a repository", asks: true, make: root => notesWhile(root, "GIT_DIR", join(checkout(root, "main"), ".git")) },
+  { name: "a plain folder while GIT_DIR names no repository", asks: true, make: root => notesWhile(root, "GIT_DIR", folderAt(root, "empty")) },
   { name: "a folder in a checkout past GIT_CEILING_DIRECTORIES", asks: true, make: root => ({ folder: folderAt(checkout(root, "main"), "src"), env: { GIT_CEILING_DIRECTORIES: join(root, "main") } }) },
   { name: "a checkout Git takes as another owner's", asks: true, make: root => ({ folder: checkout(root, "main"), env: { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" } }) },
   { name: "a folder that is gone", asks: true, make: root => join(root, "gone") },
@@ -298,7 +290,7 @@ const askedShapes: readonly Shape[] = [
 
 const shapesHere = [...outsideShapes, ...askedShapes].filter(shape => process.platform === "win32" || shape.windowsOnly !== true);
 
-describe("each folder shape gets Git's answer, and Git is asked only where a .git or a HEAD can lead it to a repository", () => {
+describe("each folder shape gets Git's answer, and Git is asked only where a .git, a HEAD or GIT_DIR can lead it to a repository", () => {
   it.for(shapesHere)("$name", async (shape, context) => {
     const made = shape.make(await plainRoot());
     const { folder, env = {}, skip }: Exclude<Made, string> = typeof made === "string" ? { folder: made } : made;

@@ -195,6 +195,28 @@ pub fn device_memory() -> (usize, usize) {
     DEVICE_MEMORY.get().map_or((0, 0), |read| read())
 }
 
+/// The process's CPU (user, system) seconds, every thread's.
+pub fn process_usage() -> (f64, f64) {
+    #[cfg(unix)]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: getrusage writes the struct it is given.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(false);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    // The browser build's one thread.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
+}
+
 /// The calling thread's CPU (user, system) seconds.
 pub fn thread_usage() -> (f64, f64) {
     #[cfg(target_os = "macos")]

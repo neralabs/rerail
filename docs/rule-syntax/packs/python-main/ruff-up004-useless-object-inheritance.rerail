@@ -1,5 +1,4 @@
 .policy "ruff-up004-useless-object-inheritance" revision 1
-.guests off
 .description "Omit object from a class's base list; every Python 3 class already inherits from it."
 .language python
 .mode steer

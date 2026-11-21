@@ -32,7 +32,9 @@ use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_corpus");
+// The corpus directory, found as the test runs: not written into its build (decision 0224).
+static DIR: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}/bitlex_corpus", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
 
 // The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
 pub use rerail_compiler::ladder::{Ids, Rng};
@@ -400,8 +402,8 @@ fn expr(rng: &mut Rng, names: &[String], depth: u64) -> String {
 
 /// The corpus as it is on disk, in name order.
 fn on_disk() -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = std::fs::read_dir(DIR)
-        .unwrap_or_else(|e| panic!("{DIR}: {e}"))
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&*DIR)
+        .unwrap_or_else(|e| panic!("{}: {e}", *DIR))
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
         .map(|p| (p.file_name().expect("a name").to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
@@ -414,12 +416,12 @@ fn on_disk() -> Vec<(String, String)> {
 #[ignore = "writes the corpus; run by name with RERAIL_WRITE_CORPUS=1"]
 fn write_the_corpus() {
     assert!(std::env::var_os("RERAIL_WRITE_CORPUS").is_some(), "set RERAIL_WRITE_CORPUS=1");
-    std::fs::create_dir_all(DIR).expect("makes the directory");
+    std::fs::create_dir_all(&*DIR).expect("makes the directory");
     for (name, _) in on_disk() {
-        std::fs::remove_file(format!("{DIR}/{name}")).expect("removes an old file");
+        std::fs::remove_file(format!("{}/{name}", *DIR)).expect("removes an old file");
     }
     for (name, source) in generated() {
-        std::fs::write(format!("{DIR}/{name}"), source).expect("writes");
+        std::fs::write(format!("{}/{name}", *DIR), source).expect("writes");
     }
 }
 
@@ -625,7 +627,17 @@ fn executors_equal_the_interpreter(metal: bool) {
         for ((f, got), want) in files.iter().zip(got).zip(&want) {
             let case = &cases[f.program];
             if let Some(k) = (0..want.len()).find(|&k| got[k] != want[k]) {
-                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes)));
+                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| {
+                    // `RERAIL_CORPUS_CLIF`: a directory for each differing program's native values and Cranelift's
+                    // function, to read where they part.
+                    if let Some(dir) = std::env::var_os("RERAIL_CORPUS_CLIF") {
+                        let dir = std::path::Path::new(&dir);
+                        let values: String = natives[f.program].insts.iter().enumerate().map(|(x, i)| format!("%{x} = {i:?}\n")).collect();
+                        std::fs::write(dir.join(format!("{}.values", case.name)), values).expect("writes the values");
+                        std::fs::write(dir.join(format!("{}.clif", case.name)), &compiled[f.program].clif).expect("writes the CLIF");
+                    }
+                    format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes))
+                });
             }
         }
     }
@@ -671,7 +683,7 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
     runs
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
     Vec::new()
@@ -934,6 +946,6 @@ fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: 
     }
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}

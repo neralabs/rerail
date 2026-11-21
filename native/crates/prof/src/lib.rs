@@ -656,7 +656,7 @@ pub mod heap {
             *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
         v
     }
 
@@ -756,7 +756,7 @@ pub mod heap {
             for slot in got.iter_mut() {
                 // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
                 // caller's record is higher, and a walk out of the stack stops.
-                if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
+                if fp == 0 || !fp.is_multiple_of(8) || fp < start || fp > start + (64 << 20) {
                     break;
                 }
                 let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };

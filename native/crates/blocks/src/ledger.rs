@@ -28,9 +28,7 @@ pub enum Access {
 /// How a freed chunk goes back.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Freeing {
-    /// As the pieces of its length, the largest first (`try_alloc_chunk_fit`'s), else as one chunk of its class.
-    pub pieces: bool,
-    /// Its whole pages past each piece's link go to the OS (an anonymous block's, when the owner asks).
+    /// The pages it leaves with no live byte go to the OS (an anonymous block's, when the owner asks).
     pub pages: bool,
 }
 
@@ -52,8 +50,8 @@ struct ChunkUse {
 
 #[derive(Default)]
 struct State {
-    /// The free list's heads' offset (0: none, a bump block or a frozen one).
-    heads: usize,
+    /// It keeps free lists (false: a bump block, or a frozen one).
+    listed: bool,
     /// Whether chunks are tracked: a bit a 64 bytes, live and start.
     tracked: bool,
     live: Vec<u64>,
@@ -67,6 +65,12 @@ struct State {
     retiring: Vec<Retiring>,
     /// The block's memory, handed over by its drop while a use was queued: let go when the last completes.
     gone: Option<Box<dyn FnOnce() + Send>>,
+    /// The free chunks by class (decision 0342, amended by 0494 step 6): here, not in the chunks, so a free chunk's
+    /// pages hold nothing and go to the OS once no live chunk shares them. Each chunk is aligned to its size, and
+    /// merged with its buddy when both are free; the lowest first is taken.
+    lists: Vec<std::collections::BTreeSet<usize>>,
+    /// A bit a page: given to the OS, and marked in use again when a chunk handed out reaches it.
+    given: Vec<u64>,
 }
 
 /// A block's ledger. The block holds it, and so does every fence with a use of the block, so its memory outlives the
@@ -76,6 +80,9 @@ pub struct Ledger {
     /// GPU uses of chunks queued now (`State::chunks`' length): with none, a CPU access is checked without the lock
     /// (a block's arrays are read and written at every value, `cpu_read`, `cpu_write`).
     chunk_uses: std::sync::atomic::AtomicUsize,
+    /// The block's own region while a handle holds it (`region::whole`, decision 0491 step 3): what a kernel's bind
+    /// of the block, found by address, pins (`region::bind_address`).
+    pub(crate) root: Mutex<std::sync::Weak<crate::region::Region>>,
     base: usize,
     /// Its pages may go to the OS: an anonymous block's (a slab's are the device buffer's, a file's are written back).
     pages: bool,
@@ -142,16 +149,18 @@ fn bit(bits: &[u64], i: usize) -> bool {
 
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
-        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), base: base as usize, pages, ext });
+        let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
         let mut live = blocks();
-        let i = live.partition_point(|e| e.0 < l.base);
+        // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
+        // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
+        let i = live.partition_point(|e| e.0 <= l.base);
         live.insert(i, (l.base, l.base + len, Arc::downgrade(&l)));
         l
     }
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks().iter_mut().find(|e| e.0 == self.base) {
+        if let Some(e) = blocks().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
             e.1 = self.base + len;
         }
     }
@@ -160,24 +169,28 @@ impl Ledger {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Starts tracking its chunks: the block keeps a free list at `heads` now, and `0..top` is its own (the header,
-    /// the heads).
-    pub(crate) fn track(&self, heads: usize, top: usize) {
+    /// Starts tracking its chunks: the block keeps free lists now, and `0..top` is its own (its header).
+    pub(crate) fn track(&self, top: usize) {
         let mut s = self.lock();
-        s.heads = heads;
+        s.listed = true;
         s.tracked = true;
         set(&mut s.live, 0, top.div_ceil(G), true);
         set(&mut s.starts, 0, 1, true);
     }
 
-    /// The free list is gone (a freeze): chunks still retiring finish with their pages given back, onto no list.
+    /// The free lists are gone (a freeze): the pages their chunks leave with no live byte go to the OS, and chunks
+    /// still retiring finish with theirs given back, onto no list.
     pub(crate) fn untrack_list(&self) {
-        self.lock().heads = 0;
-    }
-
-    /// `len` bytes at `at`, a chunk from the free list, are handed out (R1: none of them live).
-    pub(crate) fn taken(&self, at: usize, len: usize) {
-        self.take(at, len, true);
+        let mut s = self.lock();
+        s.listed = false;
+        let lists = std::mem::take(&mut s.lists);
+        if self.pages {
+            for (class, l) in lists.iter().enumerate() {
+                for &at in l {
+                    self.give_free_pages(&mut s, at, 1 << (MIN_LOG as usize + class));
+                }
+            }
+        }
     }
 
     /// `len` bytes at `at` from the block's front are handed out: past its top, so none can be live, and of any
@@ -189,19 +202,122 @@ impl Ledger {
     fn take(&self, at: usize, len: usize, check: bool) {
         let v = {
             let mut s = self.lock();
-            if !s.tracked || len == 0 {
-                return;
-            }
-            let (from, to) = (at / G, (at + len).div_ceil(G));
-            if check && any(&s.live, from, to) {
-                Err(format!("{len} bytes at {at} handed out over a live chunk"))
-            } else {
-                set(&mut s.live, from, to, true);
-                set(&mut s.starts, from, from + 1, true);
-                Ok(())
-            }
+            self.take_in(&mut s, at, len, check)
         };
         fail(v);
+    }
+
+    fn take_in(&self, s: &mut State, at: usize, len: usize, check: bool) -> Verdict {
+        if !s.tracked || len == 0 {
+            return Ok(());
+        }
+        let (from, to) = (at / G, (at + len).div_ceil(G));
+        if check && any(&s.live, from, to) {
+            return Err(format!("{len} bytes at {at} handed out over a live chunk"));
+        }
+        set(&mut s.live, from, to, true);
+        set(&mut s.starts, from, from + 1, true);
+        self.reuse_in(s, at, len);
+        Ok(())
+    }
+
+    /// A chunk of `class` from the lists, handed out (`taken`): its class's lowest, else the lowest of the smallest
+    /// larger class that has one, split down (each upper half onto its list). Its offset.
+    pub(crate) fn pop(&self, class: usize) -> Option<usize> {
+        let size = 1usize << (MIN_LOG as usize + class);
+        let (at, v) = {
+            let mut s = self.lock();
+            let from = (class..s.lists.len()).find(|&c| !s.lists[c].is_empty())?;
+            let at = s.lists[from].pop_first()?;
+            for c in (class..from).rev() {
+                s.lists[c].insert(at + (1usize << (MIN_LOG as usize + c)));
+            }
+            self.ext.free.fetch_sub(size, Relaxed);
+            (at, self.take_in(&mut s, at, size, true))
+        };
+        fail(v);
+        Some(at)
+    }
+
+    /// A chunk of `size` bytes (a class's, aligned to it), never live (the rest of a fitted chunk, or the bytes
+    /// skipped to align one), onto its list; the pages it leaves with no live byte go to the OS.
+    pub(crate) fn push_never_live(&self, at: usize, size: usize) {
+        let mut s = self.lock();
+        if !s.listed {
+            return;
+        }
+        let (class, size) = crate::free::class_of(size);
+        Self::put(&mut s, at, class);
+        self.ext.free.fetch_add(size, Relaxed);
+        if self.pages {
+            self.give_free_pages(&mut s, at, size);
+        }
+    }
+
+    /// A free chunk of `class` at `at` (aligned to its size, or to `ALIGN_MAX`) onto its list, merged with its buddy
+    /// while the buddy is free.
+    fn put(s: &mut State, mut at: usize, mut class: usize) {
+        loop {
+            if s.lists.len() <= class + 1 {
+                s.lists.resize_with(class + 2, Default::default);
+            }
+            let size = 1usize << (MIN_LOG as usize + class);
+            assert!(at.is_multiple_of(size.min(crate::free::ALIGN_MAX)), "block ledger: a free chunk of {size} bytes at {at}, misaligned");
+            // One not aligned to its size (a large one, at `ALIGN_MAX`) has no buddy.
+            if at.is_multiple_of(size) && class + 1 < crate::free::CLASSES && s.lists[class].remove(&(at ^ size)) {
+                at &= !size;
+                class += 1;
+                continue;
+            }
+            s.lists[class].insert(at);
+            return;
+        }
+    }
+
+    /// The pages `len` bytes at `at` reach that were given to the OS, marked in use again.
+    fn reuse_in(&self, s: &mut State, at: usize, len: usize) {
+        if !self.pages || s.given.is_empty() {
+            return;
+        }
+        let (p0, p1) = (at / PAGE, (at + len).div_ceil(PAGE));
+        let mut p = p0;
+        while p < p1 {
+            if !bit(&s.given, p) {
+                p += 1;
+                continue;
+            }
+            let q0 = p;
+            while p < p1 && bit(&s.given, p) {
+                p += 1;
+            }
+            set(&mut s.given, q0, p, false);
+            // SAFETY: pages of the block given back earlier; their chunk is the taker's now.
+            unsafe { crate::mem::reuse_pages((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
+        }
+    }
+
+    /// The pages `len` bytes at `at` reach that hold no live byte now and were not given yet, to the OS (R6: whole
+    /// pages, none live). The bytes given.
+    fn give_free_pages(&self, s: &mut State, at: usize, len: usize) -> usize {
+        const PER: usize = PAGE / G;
+        let (p0, p1) = (at / PAGE, (at + len).div_ceil(PAGE));
+        let mut given = 0;
+        let mut p = p0;
+        while p < p1 {
+            let free = |s: &State, p: usize| !bit(&s.given, p) && !any(&s.live, p * PER, (p + 1) * PER);
+            if !free(s, p) {
+                p += 1;
+                continue;
+            }
+            let q0 = p;
+            while p < p1 && free(s, p) {
+                p += 1;
+            }
+            set(&mut s.given, q0, p, true);
+            // SAFETY: whole pages of the block, none live (above).
+            given += unsafe { crate::mem::give_back((self.base + q0 * PAGE) as *mut u8, (p - q0) * PAGE) };
+        }
+        given
     }
 
     /// The tail `at + keep..at + size` of a chunk just handed out is not the holder's (never written).
@@ -244,53 +360,25 @@ impl Ledger {
     fn finish(&self, s: &mut State, at: usize, len: usize, how: Freeing) -> usize {
         set(&mut s.live, at / G, (at + len).div_ceil(G), false);
         set(&mut s.starts, at / G, at / G + 1, false);
-        let base = self.base as *mut u8;
         let mut given = 0;
         let mut piece_at = at;
         let mut left = len;
         while left > 0 {
-            let piece = if how.pieces { 1usize << (usize::BITS - 1 - left.leading_zeros()) } else { crate::free::class_of(left).1 };
-            if how.pages && self.pages {
-                // A piece on the list keeps its link, its first word; with no list, all of it goes.
-                let skip = if s.heads != 0 { 8 } else { 0 };
-                given += self.give_back_in(s, piece_at + skip, piece - skip);
-            }
-            if s.heads != 0 {
+            // A chunk of its class whole, a fitted one in its pieces (`free::piece`).
+            let piece = crate::free::piece(piece_at, left);
+            if s.listed {
                 let (class, size) = crate::free::class_of(piece);
-                // SAFETY: the block's own heads; the piece is free now, nothing reads it, of its class's size.
-                unsafe { crate::free::push(base, base.add(s.heads) as *const std::sync::atomic::AtomicU64, class, piece_at) };
+                Self::put(s, piece_at, class);
                 self.ext.free.fetch_add(size, Relaxed);
             }
             piece_at += piece;
             left = left.saturating_sub(piece);
         }
+        if how.pages && self.pages {
+            // A free chunk holds no link: every page it reaches with no live byte left goes.
+            given += self.give_free_pages(s, at, len);
+        }
         given
-    }
-
-    /// The whole pages inside `len` bytes at `at` to the OS (R6: none holds a live byte). The bytes given.
-    pub(crate) fn give_back(&self, at: usize, len: usize) -> usize {
-        if !self.pages {
-            return 0;
-        }
-        let mut s = self.lock();
-        self.give_back_in(&mut s, at, len)
-    }
-
-    fn give_back_in(&self, s: &mut State, at: usize, len: usize) -> usize {
-        let p = self.base + at;
-        let (start, end) = (p.next_multiple_of(PAGE), (p + len) / PAGE * PAGE);
-        if end <= start {
-            return 0;
-        }
-        let (from, to) = ((start - self.base) / G, (end - self.base) / G);
-        if s.tracked && any(&s.live, from, to) {
-            let off = start - self.base;
-            let msg = format!("pages {off}..{} given to the OS hold a live chunk's bytes", end - self.base);
-            // The guard poisons as this unwinds; every lock takes a poisoned one as it is (`lock`).
-            panic!("block ledger: {msg}");
-        }
-        // SAFETY: whole pages of the block, none live (above).
-        unsafe { crate::mem::give_back(start as *mut u8, end - start) }
     }
 
     /// The CPU is about to write `len` bytes at `at` (R4: no GPU use of them is queued).
@@ -400,10 +488,11 @@ impl Ledger {
     /// The block is dropped: `release` lets its memory go, now when no GPU use is queued, else when the last one
     /// completes (R5).
     pub(crate) fn let_go(&self, release: Box<dyn FnOnce() + Send>) {
-        let base = self.base;
+        let me = std::ptr::from_ref(self) as usize;
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
-            // No longer found by its address before another mapping can take it.
-            blocks().retain(|e| e.0 != base);
+            // No longer found by its address before another mapping can take it; an outer ledger of the same memory
+            // (a lease's) stays.
+            blocks().retain(|e| e.2.as_ptr() as usize != me);
             release()
         });
         let now = {
@@ -421,6 +510,48 @@ impl Ledger {
     }
 }
 
+/// A value that owns memory a kernel may bind and that is no block's (a device pool's lease): held as a block's memory
+/// is, by a ledger found at its address. A command buffer that binds its bytes holds it (`Fence::uses_address`), and
+/// when dropped it goes (`T`'s drop: back to its pool) only once that work completes (R5): the next holder's host
+/// writes are never ordered before a queued kernel's reads.
+pub struct Tracked<T: Send + 'static> {
+    value: Option<T>,
+    ledger: Arc<Ledger>,
+}
+
+impl<T: Send + 'static> Tracked<T> {
+    /// `value`, whose memory is the `len` bytes at `base`: found by any address in them while it lives.
+    pub fn new(value: T, base: *mut u8, len: usize) -> Tracked<T> {
+        let ext = Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
+        Tracked { value: Some(value), ledger: Ledger::new(base, len.max(1), false, ext) }
+    }
+
+    /// Its ledger: what a fence's use of its bytes holds.
+    pub fn ledger(&self) -> &Arc<Ledger> {
+        &self.ledger
+    }
+}
+
+impl<T: Send + 'static> std::ops::Deref for Tracked<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value.as_ref().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> std::ops::DerefMut for Tracked<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.value.as_mut().expect("a tracked value lives until dropped")
+    }
+}
+
+impl<T: Send + 'static> Drop for Tracked<T> {
+    fn drop(&mut self) {
+        let value = self.value.take();
+        self.ledger.let_go(Box::new(move || drop(value)));
+    }
+}
+
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
 /// to be a block's (`Fence::uses_address`), whoever made the buffer.
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
@@ -430,12 +561,12 @@ fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>>
     BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The ledger of the live block whose memory holds `addr`.
+/// The ledger of the live block whose memory holds `addr`: the innermost, where one ledger's memory lies in
+/// another's (a block over a pooled lease: the block's, registered after the lease's).
 pub fn of_address(addr: usize) -> Option<Arc<Ledger>> {
     let live = blocks();
-    let i = live.partition_point(|e| e.0 <= addr).checked_sub(1)?;
-    let (start, end, l) = &live[i];
-    (*start <= addr && addr < *end).then(|| l.upgrade()).flatten()
+    let i = live.partition_point(|e| e.0 <= addr);
+    live[..i].iter().rev().filter(|(start, end, _)| *start <= addr && addr < *end).find_map(|(_, _, l)| l.upgrade())
 }
 
 /// A command buffer's uses of blocks: registered before its work is encoded, completed by its completion handler
@@ -447,12 +578,14 @@ pub struct Fence {
     done: AtomicBool,
     /// Its command buffer is committed: a wait for it ends (`mark_committed`).
     committed: AtomicBool,
+    /// The regions its binds by address pinned (`region::bind_address`), by address and access: each once.
+    pinned: Mutex<Vec<(usize, bool)>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -473,6 +606,16 @@ impl Fence {
         if !known {
             self.add(&l, Access::Write, None);
         }
+        true
+    }
+
+    /// Whether `key` (a region, with its access) is pinned on it for the first time now.
+    pub(crate) fn first_pin(&self, key: usize, write: bool) -> bool {
+        let mut p = self.pinned.lock().unwrap_or_else(|e| e.into_inner());
+        if p.contains(&(key, write)) {
+            return false;
+        }
+        p.push((key, write));
         true
     }
 
@@ -576,8 +719,8 @@ mod tests {
     fn allocating_over_a_live_chunk_fails() {
         let b = listed();
         let at = b.try_alloc_chunk(4096, 64).unwrap();
-        assert!(fails(|| b.ledger().taken(at + 64, 64)), "inside a live chunk");
-        assert!(fails(|| b.ledger().taken(at - 64, 128)), "across a live chunk's start");
+        assert!(fails(|| b.ledger().take(at + 64, 64, true)), "inside a live chunk");
+        assert!(fails(|| b.ledger().take(at - 64, 128, true)), "across a live chunk's start");
         // The ledger is not poisoned by a refusal; small allocations from the front may share 64 bytes.
         assert!(b.try_alloc_chunk(64, 64).is_some());
         let (x, y) = (b.alloc(8, 8), b.alloc(8, 8));
@@ -685,6 +828,63 @@ mod tests {
         (Box::new(Watched { base: crate::mem::reserve(len), len, gone: gone.clone() }), gone)
     }
 
+    /// R5 for memory of no block's (a pool's lease, `Tracked`): a fence that binds its bytes, found by address, holds it;
+    /// dropped meanwhile, it goes only when the fence completes. Unbound, it goes at once.
+    #[test]
+    fn a_tracked_lease_bound_by_address_goes_after_its_fence() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        let mem = vec![0u8; 4096];
+        let base = mem.as_ptr().cast_mut();
+        let gone = Arc::new(AtomicBool::new(false));
+        let t = Tracked::new(Lease(gone.clone()), base, 4096);
+        let f = Fence::new();
+        assert!(f.uses_address(base as usize + 100), "found by an address inside it");
+        drop(t);
+        assert!(!gone.load(SeqCst), "held by the queued work");
+        f.complete();
+        assert!(gone.load(SeqCst), "gone once its work completes");
+        assert!(!Fence::new().uses_address(base as usize + 100), "no longer found once gone");
+        let gone = Arc::new(AtomicBool::new(false));
+        drop(Tracked::new(Lease(gone.clone()), base, 4096));
+        assert!(gone.load(SeqCst), "unbound: at once");
+        drop(mem);
+    }
+
+    /// R9: memory one ledger holds made another's (a pooled lease made a block's, `Block::over`): its address finds the
+    /// inner ledger while it lives, a bind holds the inner, and the inner gone, the outer is found again. Each goes
+    /// only once the work that bound it completes, the outer after the inner.
+    #[test]
+    fn a_ledger_inside_another_is_the_one_its_address_finds() {
+        struct Lease(Arc<AtomicBool>);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(true, SeqCst);
+            }
+        }
+        let mem = vec![0u8; 8192];
+        let base = mem.as_ptr().cast_mut();
+        let (outer_gone, inner_gone) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let outer = Tracked::new(Lease(outer_gone.clone()), base, 8192);
+        let inner = Tracked::new(Lease(inner_gone.clone()), base, 8192);
+        assert!(Arc::ptr_eq(&of_address(base as usize + 4100).expect("found"), inner.ledger()), "the inner ledger is found");
+        let f = Fence::new();
+        assert!(f.uses_address(base as usize + 4100));
+        assert!(!inner.ledger().quiet() && outer.ledger().quiet(), "the bind holds the inner");
+        drop(inner);
+        assert!(!inner_gone.load(SeqCst), "held by the queued work");
+        f.complete();
+        assert!(inner_gone.load(SeqCst));
+        assert!(Arc::ptr_eq(&of_address(base as usize + 4100).expect("found"), outer.ledger()), "the outer stays, found again");
+        drop(outer);
+        assert!(outer_gone.load(SeqCst) && of_address(base as usize).is_none());
+        drop(mem);
+    }
+
     /// R5: a block dropped while a GPU use of it is queued keeps its memory until the use completes.
     #[test]
     fn a_block_dropped_under_a_queued_gpu_use_keeps_its_memory() {
@@ -702,25 +902,34 @@ mod tests {
         assert!(gone.load(SeqCst));
     }
 
-    /// R6: no page that holds a live byte goes to the OS.
+    /// R6: no page that holds a live byte goes to the OS: a chunk freed beside a live one in its page leaves the page,
+    /// and a retiring chunk's pages wait for its GPU work.
     #[test]
     fn a_page_with_a_live_byte_is_never_given_back() {
         let b = listed();
         let small = b.try_alloc_chunk(64, 64).unwrap();
-        let page = small / PAGE * PAGE;
-        assert!(fails(|| { b.ledger().give_back(page, 2 * PAGE); }), "the page holds a live chunk");
+        let beside = b.try_alloc_chunk(4096, 64).unwrap();
+        assert_eq!(small / PAGE, beside / PAGE, "one page");
+        unsafe { *b.ptr::<u64>(small) = 7 };
+        b.free_chunk(beside, 4096);
+        assert_eq!(unsafe { *b.ptr::<u64>(small) }, 7);
+        #[cfg(target_vendor = "apple")]
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "the live chunk's page kept");
         // A retiring chunk's pages wait too, and its neighbours' pages are not given back when it finishes.
         let big = b.try_alloc_chunk(2 * PAGE, 64).unwrap();
         let after = b.try_alloc_chunk(64, 64).unwrap();
         unsafe { *b.ptr::<u64>(after) = 9 };
+        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 2 * PAGE) };
         let f = Fence::new();
         f.reads(&b);
         b.free_chunk(big, 2 * PAGE);
-        assert!(fails(|| { b.ledger().give_back(big, 2 * PAGE); }), "a retiring chunk is live");
+        #[cfg(target_vendor = "apple")]
+        assert!(crate::mem::tests::modified(b.ptr::<u8>(big)), "a retiring chunk's pages wait");
         f.complete();
-        // Its byte is read back everywhere; that its page was not given back is read from the page's modified bit,
-        // which only macOS's `mincore` has (a page given back as reusable has it cleared).
+        #[cfg(target_vendor = "apple")]
+        assert!(!crate::mem::tests::modified(b.ptr::<u8>(big)), "and go once its GPU work completes");
         assert_eq!(unsafe { *b.ptr::<u64>(after) }, 9);
+        // The page's modified bit is macOS's `mincore` alone; elsewhere the byte read back says it.
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
     }
@@ -729,7 +938,10 @@ mod tests {
     /// use does; once the block's memory is gone, its address is no block's.
     #[test]
     fn a_bound_buffers_block_is_found_by_its_address() {
-        let (slab, gone) = watched();
+        // The slab is the first 4 pages of 16 reserved here: the pages past it are no other test's block.
+        let gone = Arc::new(AtomicBool::new(false));
+        let range = crate::mem::reserve(16 * PAGE);
+        let slab = Box::new(Watched { base: range, len: 4 * PAGE, gone: gone.clone() });
         let b = Block::over(kind::FACTS, slab);
         let addr = b.base_ptr() as usize + 100;
         let f = Fence::new();
@@ -740,6 +952,8 @@ mod tests {
         drop(f);
         assert!(gone.load(SeqCst));
         assert!(of_address(addr).is_none(), "gone, its address is no block's");
+        // SAFETY: the reservation's pages past the slab's, which the slab's drop left.
+        unsafe { crate::mem::release(range.add(4 * PAGE), 12 * PAGE) };
     }
 
     /// R7: a block is not moved while a GPU use of it is queued.

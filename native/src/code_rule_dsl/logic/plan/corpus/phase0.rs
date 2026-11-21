@@ -542,11 +542,10 @@ impl Graph {
             if seen_rules.contains(&from) {
                 for (_, n, path) in self.includes.get(&from).into_iter().flatten() {
                     candidate(&from, n);
-                    if let Some(d) = self.digests.get(path) {
-                        if !g.digests.contains_key(path) {
+                    if let Some(d) = self.digests.get(path)
+                        && !g.digests.contains_key(path) {
                             g.rules.insert(path.clone(), *d);
                         }
-                    }
                     let next = path.to_string_lossy().into_owned();
                     if seen_rules.insert(next.clone()) && !seen.contains(&next) {
                         pending.push(next);
@@ -631,7 +630,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",
         crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options, Some(&mut image), Default::default());
     drop(phase_0);
-    let result = run.and_then(|report| {
+    run.and_then(|report| {
         use crate::code_rule_dsl::logic::plan::output::Value as V;
         let mut g = Graph { plans: report.plans, ..Graph::default() };
         // The outputs' image, read where it is: each value typed, nothing parsed.
@@ -678,8 +677,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
             }
         }
         Ok(g)
-    });
-    result
+    })
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the

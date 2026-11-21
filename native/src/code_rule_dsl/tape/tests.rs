@@ -422,6 +422,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };
@@ -2112,7 +2113,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2326,7 +2330,7 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
     // without it, which is as long.
     let text =
-        without_trailing_commas(source);
+        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(source);
     let tree = parser.parse(&text, None).unwrap();
     let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false)
         .unwrap()
@@ -2542,7 +2546,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2602,55 +2609,6 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
         "{equal} files ({bytes} bytes) equal tree-sitter-json's tapes; {corrected} where tree-sitter finds an error; {refused} refused"
     );
     assert!(equal > 1000, "{equal} files");
-}
-
-/// `source` with a space for each trailing comma (a `,` after a value and before `]` or `}`, comments between),
-/// outside strings and comments: the text whose tree-sitter-json tape a JSONC file's simdjson tape is (decision
-/// 0158). A comma with no value before it (`{,}`, `[1,,]`) stays: simdjson refuses the file.
-fn without_trailing_commas(source: &str) -> String {
-    let b = source.as_bytes();
-    let mut out = b.to_vec();
-    // The last byte outside strings, comments and whitespace (a string's closing quote for a string).
-    let mut last = None;
-    // The end of the string, comment or whitespace run at `i`, or `i` where none starts there.
-    let skip = |i: usize| -> usize {
-        match (b[i], b.get(i + 1)) {
-            (b'/', Some(b'/')) => b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n),
-            (b'/', Some(b'*')) => source[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2),
-            (c, _) if c.is_ascii_whitespace() => i + 1,
-            _ => i,
-        }
-    };
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'"' {
-            i += 1;
-            while i < b.len() && b[i] != b'"' {
-                i += if b[i] == b'\\' { 2 } else { 1 };
-            }
-            i += 1;
-            last = Some(b'"');
-            continue;
-        }
-        let after = skip(i);
-        if after != i {
-            i = after;
-            continue;
-        }
-        if b[i] == b',' {
-            let mut j = i + 1;
-            while j < b.len() && skip(j) != j {
-                j = skip(j);
-            }
-            if j < b.len() && matches!(b[j], b']' | b'}') && last.is_some_and(|c| !matches!(c, b'{' | b'[' | b',')) {
-                out[i] = b' ';
-            }
-        }
-        last = Some(b[i]);
-        i += 1;
-    }
-    // Only an ASCII comma became a space: the bytes are still the source's UTF-8.
-    String::from_utf8(out).expect("UTF-8")
 }
 
 /// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
@@ -2836,7 +2794,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3017,7 +2978,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -7622,7 +7586,7 @@ fn the_lean_parsers_write_each_format_directly() {
     // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
     #[allow(unused_mut)]
-    let mut cases: Vec<(GrammarDialect, String, Encode)> = vec![
+    let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
         (GrammarDialect::TypeScript, many("interface A{i} { x?: number }\nconst x{i}: A{i} = {};\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
@@ -7638,13 +7602,10 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
-    ];
-    // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma. Not on MSVC,
-    // which builds no simdjson.
-        cases.extend::<[(GrammarDialect, String, Encode); 2]>([
+        // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
-    ]);
+    ];
     let mut direct = Vec::new();
     for (lang, source, encode) in cases {
         eprintln!("{lang:?}: {} bytes", source.len());
@@ -7844,7 +7805,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             assert_eq!(view.nodes, n);
             for i in 0..n {
                 let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
-                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                let code = codes[reads.one("tape_number", tape, view, i as usize) as usize];
                 assert_eq!(
                     (code.kind, code.field, code.flags),
                     (
@@ -7857,52 +7818,52 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 );
                 let end = doc.transducer_descendants(i).end;
                 assert_eq!(
-                    reads.one("tape_end_of", tape, &view, i as usize),
+                    reads.one("tape_end_of", tape, view, i as usize),
                     end,
                     "{}",
                     at("subtree")
                 );
                 let span = doc.transducer_span(i);
                 assert_eq!(
-                    reads.one("tape_start", tape, &view, i as usize) as usize,
+                    reads.one("tape_start", tape, view, i as usize) as usize,
                     span.start,
                     "{}",
                     at("start")
                 );
                 assert_eq!(
-                    reads.one("tape_end", tape, &view, i as usize) as usize,
+                    reads.one("tape_end", tape, view, i as usize) as usize,
                     span.end,
                     "{}",
                     at("end")
                 );
                 assert_eq!(
-                    reads.one("tape_parent", tape, &view, i as usize),
+                    reads.one("tape_parent", tape, view, i as usize),
                     none(doc.transducer_parent(i)),
                     "{}",
                     at("parent")
                 );
                 assert_eq!(
-                    reads.one("tape_next", tape, &view, i as usize),
+                    reads.one("tape_next", tape, view, i as usize),
                     none(doc.transducer_next_sibling(i, false)),
                     "{}",
                     at("next")
                 );
                 let kids = doc.transducer_children(i).collect::<Vec<_>>();
                 assert_eq!(
-                    reads.one("tape_child_count", tape, &view, i as usize) as usize,
+                    reads.one("tape_child_count", tape, view, i as usize) as usize,
                     kids.len(),
                     "{}",
                     at("children")
                 );
                 assert_eq!(
-                    reads.one("tape_first_child", tape, &view, i as usize),
+                    reads.one("tape_first_child", tape, view, i as usize),
                     none(kids.first().copied()),
                     "{}",
                     at("first child")
                 );
                 for (k, &kid) in kids.iter().enumerate().take(8) {
                     assert_eq!(
-                        reads.two("tape_child", tape, &view, i as usize, k as u32),
+                        reads.two("tape_child", tape, view, i as usize, k as u32),
                         kid,
                         "{}",
                         at("a child")
@@ -7913,13 +7874,16 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
     }
 }
 
+/// A grammar's encoder of a text, stopped where its callback says: its tape, or why it refused the text.
+type Encode<E> = fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>;
+
 /// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
 /// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
 /// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
 /// parser's; a file it refuses goes to tree-sitter.
 fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     dialect: GrammarDialect,
-    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    encode: Encode<E>,
     sources: &[&str],
     invalid: &[&str],
 ) {
@@ -8168,7 +8132,7 @@ fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
     let grammar = Grammar::new(GrammarDialect::Python).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
     let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start as usize)).collect()
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
 }
 
 /// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is

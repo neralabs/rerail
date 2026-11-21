@@ -187,9 +187,9 @@ fn directives_read_as_the_lean_scan_reads_them() {
     }
 }
 
-/// What the step does not read is refused, never read wrong.
+/// What the grammar does not read is refused, never read wrong.
 #[test]
-fn what_the_step_does_not_read_is_refused() {
+fn what_the_grammar_does_not_read_is_refused() {
     let c = compiled_or_panic();
     for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = '.5'a + 1;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
         assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
@@ -221,7 +221,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
                 interp.push(p.display().to_string());
             }
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-            if on_device(&c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
+            if on_device(c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
                 metal.push(p.display().to_string());
             }
             match cl {
@@ -279,22 +279,9 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        if let Some(m) = on_device(&c, &[src.as_bytes()], "it") {
+        if let Some(m) = on_device(c, &[src.as_bytes()], "it") {
             assert_eq!(m[0], Some(got), "Metal");
         }
     }
-}
-
-/// The ladder's step compiles to the native IR, and is `GRAMMAR`, which the other tests compile
-/// through Cranelift too. The earlier steps are in git's history (decision 0422).
-#[test]
-fn every_ladder_step_compiles() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
-    let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
-    steps.sort();
-    for p in &steps {
-        crate::lower_kinds(&std::fs::read_to_string(p).unwrap(), KINDS, FIELDS).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    }
-    assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
 }
 

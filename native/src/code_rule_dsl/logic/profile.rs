@@ -410,7 +410,7 @@ pub struct GpuTotal {
     pub arena_reruns: u64,
     /// Stages whose grids the device sized.
     pub sized: u64,
-    /// Stages screened by their relation's kept filter (decision 0506).
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
 }
 
@@ -667,8 +667,9 @@ fn hold() {
 /// This thread's records, to add to. What is read from them is this thread's alone: a reader of the run's takes
 /// `merged`.
 pub fn state() -> Held {
-    hold();
+    // The run's records first: a read outside any run (`local`'s panic in a test build) leaves the thread unheld.
     let records = local::<Records>();
+    hold();
     Held::Own(SHARD.with(|s| {
         let mut s = s.borrow_mut();
         if !std::ptr::eq(s.0.as_ptr(), std::sync::Arc::as_ptr(&records)) {
@@ -682,8 +683,9 @@ pub fn state() -> Held {
 
 /// Every thread's records, merged: each shard's taken into the run's (an ended thread's shard then dropped).
 pub fn merged() -> Held {
-    hold();
+    // The run's records first: a read outside any run (`local`'s panic in a test build) leaves the thread unheld.
     let records = local::<Records>();
+    hold();
     let mut all = records.merged.lock_arc();
     let mut shards = records.shards.lock();
     for s in shards.iter() {
@@ -1523,9 +1525,8 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way on this machine (`waves`): what a run did not read before its first wave it does not read from
-/// SQLite, and under the strict mode SQL meanwhile ends the process. Read only by a thread with no run's context
-/// (decision 0442: the machine's, as every run on it counts in it).
+/// Waves under way on this machine (`waves`): SQL from a wave's thread meanwhile is a hazard. Read only by a thread
+/// with no run's context (decision 0442: the machine's, as every run on it counts in it).
 #[derive(Default)]
 struct WavesUnderWay(std::sync::atomic::AtomicUsize);
 
@@ -3048,6 +3049,7 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        // The test's run with its context (`job_run`: the switch `set` bound), as a job carries it.
         let run = job_run();
         let holder = std::thread::Builder::new()
             .name("holder".into())
@@ -3096,7 +3098,7 @@ pub struct Report {
     pub arena_reruns: u32,
     /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
     pub sized: u32,
-    /// Stages screened by their relation's kept filter (decision 0506).
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u32,
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
     pub per_symbol: u32,

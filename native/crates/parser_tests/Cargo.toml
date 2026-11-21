@@ -21,6 +21,8 @@ tree-sitter-json = "=0.24.8"
 
 [dev-dependencies]
 rerail-context = { path = "../context", features = ["test-hooks"] }
+# Kotlin's shipped prover answers (`shipped_answers`, decision 0414), for its step in the AOT test.
+rerail-kotlin-parser = { path = "../kotlin_parser" }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-parser-tests = { path = ".", features = ["test-hooks"] }
 # Loading tier 2's Rust, built by rustc, in place of the JIT's code (`simdjson_forms_rust_trees_are_the_jits`).
@@ -32,3 +34,5 @@ libc = "0.2.189"
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
 # The OS's library loader, for the ladder's ahead-of-time libraries (`aot_tests`).
 rerail-device = { path = "../../../gpu/device" }
+# simdjson itself, the measure the simdjson form is timed against (`simdjson_form_against_simdjson`).
+rerail-simdjson-native = { path = "../simdjson_native" }

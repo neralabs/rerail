@@ -94,7 +94,7 @@ DEFINE_KERNEL2(lattice, lattice_queue,
 {
   (void)worker;
   UKL_COHERENT uint8_t* cells=(UKL_COHERENT uint8_t*)values;
-  UklWorkQueue q={slots,control,args.capacity};
+  UklWorkQueue q={slots,control,args.capacity,0u};
   uint32_t polls=0u,visits=0u,retries=0u,cell=0u;
   for(uint32_t turn=0u;turn<UKL_WQ_TURNS;turn++){
     if(!ukl_wq_take(q,&cell)){

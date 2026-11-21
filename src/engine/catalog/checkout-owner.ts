@@ -3,7 +3,7 @@
  * confirms as a checkout's top level, found the same way from the file's lexical and real paths. Whether that
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
-import { lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -155,10 +155,9 @@ export class CheckoutOwners {
   readonly #database: RerailDatabase | undefined;
 
   /** `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer. */
-  /** Over the recorded checkouts of `source`, a database, or of whatever a version reader stands for (a test's). */
-  constructor(source?: RerailDatabase | (() => string)) {
-    this.#database = typeof source === "function" ? undefined : source;
-    this.#recordedVersion = typeof source === "function" ? source : source === undefined ? undefined : recordedCheckoutsVersionReader(source);
+  constructor(database?: RerailDatabase) {
+    this.#database = database;
+    this.#recordedVersion = database === undefined ? undefined : recordedCheckoutsVersionReader(database);
   }
 
   /**

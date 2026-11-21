@@ -1,5 +1,4 @@
 .policy "ruff-pt016-pytest-fail-without-message" revision 1
-.guests off
 .description "Pass a non-empty message to pytest.fail calls; a bare failure gives no hint why the test failed."
 .language python
 .mode steer

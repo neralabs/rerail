@@ -1,5 +1,4 @@
 .policy "ruff-pt017-pytest-assert-in-except" revision 1
-.guests off
 .description "Assert on an exception with pytest.raises instead of inside an except block; the test silently passes when nothing is raised."
 .language python
 .mode steer

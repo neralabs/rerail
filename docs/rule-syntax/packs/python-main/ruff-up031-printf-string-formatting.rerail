@@ -1,5 +1,4 @@
 .policy "ruff-up031-printf-string-formatting" revision 1
-.guests off
 .description "Prefer an f-string or str.format() over printf-style percent formatting; it is more readable and avoids tuple-versus-value surprises."
 .language python
 .mode steer

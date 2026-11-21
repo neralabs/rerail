@@ -89,6 +89,27 @@ pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(
         return None;
     };
     let mut candidates = over::candidates(&f, placed, model);
+    // A relation that depends on an answer whose rows are a part of the chunk's inputs (decision 0431 §8: a tape
+    // value's `parse_of` or `parsed`, its nodes and text admitted with it) is not demanded: its readers' bodies less it
+    // (`pre_<i>`) would read those inputs before the answer, and find nothing of the value (Q325).
+    let grown: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).filter(|p| f.is_input(p)).collect();
+    if !grown.is_empty() {
+        let v = &placed.v;
+        let mut above: BTreeSet<&str> = grown;
+        loop {
+            let before = above.len();
+            for r in v.rules() {
+                let head = v.rel_name(r.head().rel());
+                if !above.contains(head) && r.reads().any(|a| above.contains(v.rel_name(a.rel()))) {
+                    above.insert(head);
+                }
+            }
+            if above.len() == before {
+                break;
+            }
+        }
+        candidates.retain(|c| !above.contains(*c));
+    }
     if candidates.is_empty() {
         return None;
     }

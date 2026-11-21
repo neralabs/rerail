@@ -508,6 +508,11 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
 /// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
 /// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
 pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    module_into(src, finish, lex::lex_joined)
+}
+
+/// A module's tape, its text lexed by `lex` (a file's, or a pattern's with metavariables as names).
+fn module_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>, lex: fn(&[u8], &[u32]) -> Result<lex::Lexed, Refusal>) -> Result<T, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
@@ -515,7 +520,7 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
     // there), and the text read again.
     let mut joins: Vec<u32> = Vec::new();
     loop {
-        let lexed = lex::lex_joined(src, &joins)?;
+        let lexed = lex(src, &joins)?;
         match parse::parse(src, &lexed, &joins, finish) {
             Ok(t) => return Ok(t),
             Err(Ok(parse::Relex::Join(at))) => joins.insert(joins.partition_point(|&j| j < at), at),
@@ -524,8 +529,9 @@ pub fn tape_into<T>(src: &[u8], finish: &mut dyn rerail_tape_format::Sink<T>) ->
     }
 }
 
-/// The node kinds a parse may start at (decision 0466), by name: a file's `module`, and a `type`.
-pub const STARTS: &[&str] = &["module", "type"];
+/// The node kinds a parse may start at (decision 0466), by name: a file's `module`, a `type`, and a rule's pattern
+/// (decision 0495 §3): `pattern_module`, a `module` whose metavariables (`$X`, `$$$X`, `$_`) are names.
+pub const STARTS: &[&str] = &["module", "type", "pattern_module"];
 
 /// The tape of `src` parsed from the node kind `start` (one of [`STARTS`]): its root a node of that kind, with no
 /// node above it. A `type` is read as if in parentheses: its line ends are blanks.
@@ -537,6 +543,7 @@ pub fn tape_from(src: &[u8], start: &str) -> Result<Tape, Refusal> {
 pub fn tape_from_into<T>(src: &[u8], start: &str, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
     match start {
         "module" => tape_into(src, finish),
+        "pattern_module" => module_into(src, finish, lex::lex_pattern),
         "type" => {
             if src.len() >= u32::MAX as usize / 2 {
                 return Err(Refusal::TooLarge);

@@ -47,7 +47,7 @@ const READ_RUN: usize = 256;
 /// The fixed hash every string key uses: the interner's table, and the dependency keys of
 /// probes (`Engine::probe`), which must agree for strings that are not (yet) interned.
 pub fn hash_str(s: &str) -> u64 {
-    foldhash::quality::FixedState::with_seed(0x5EED_71).hash_one(s)
+    foldhash::quality::FixedState::with_seed(0x005E_ED71).hash_one(s)
 }
 
 /// The atoms a process holds: the store's, read where they lie in its mapped blocks (decision 0401, `Stored`), and
@@ -178,6 +178,11 @@ impl Interner {
     /// One past the last id: the database's (as far as this process knows) and the pending ones.
     pub fn len(&self) -> usize {
         self.pending.last().map_or(self.base, |b| b.end().max(self.base)) as usize
+    }
+
+    /// No ids, in the database or pending.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Where the pending atoms start: ids below it are in the database.
@@ -331,7 +336,10 @@ pub struct Atoms {
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
 #[derive(Default)]
-struct Identities(Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>);
+struct Identities(Mutex<HashMap<String, (FileIdentity, Option<i64>)>>);
+
+/// A database file's (device, inode, creation time).
+type FileIdentity = (u64, u64, u128);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
@@ -340,7 +348,7 @@ pub(crate) fn forget_identity(path: &str) {
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
-    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
+    static RESERVING: std::cell::RefCell<Option<Reserving>> = const { std::cell::RefCell::new(None) };
 }
 
 /// An arena's atoms reserved by components not yet retired (`Atoms::reserved`): pending, but no row a commit writes
@@ -385,10 +393,8 @@ pub const TEXT_MOST: usize = 4096;
 // and the most they keep.
 const _: () = assert!(rerail_clif::view::cache::LEN == 12 && rerail_clif::view::cache::PAYLOAD == 16 && TEXT_MOST == 4096);
 
-/// A verdict (`rerail_clif::verdict_reads`): none yet, the symbol fails, it passes.
-pub const UNKNOWN: u32 = 0;
-pub const FAILS: u32 = 1;
-pub const PASSES: u32 = 2;
+/// A verdict (`rerail_clif::view::cache`'s, the reads'): none yet, the symbol fails, it passes.
+pub use rerail_clif::view::cache::{FAILS, PASSES, UNKNOWN};
 
 // SAFETY: the cache's words are read and written by its reads' atomics alone.
 unsafe impl Send for Kept {}
@@ -420,7 +426,7 @@ impl Kept {
     /// Test `test`'s verdict for `sym`: `PASSES`, `FAILS` or `UNKNOWN`.
     pub fn get(&self, test: u32, sym: u32) -> u32 {
         // SAFETY: a cache `new` made, in the block it keeps.
-        unsafe { rerail_blocks::generated_reads::verdict_get(self.cache(), test, sym) }
+        unsafe { rerail_clif::view::cache::verdict_get(self.cache(), test, sym) }
     }
 
     /// The text functions `fns` (`text::automata::text_functions`) made of `sym`, if kept.
@@ -428,7 +434,7 @@ impl Kept {
         use rerail_clif::view::cache::{LEN, PAYLOAD};
         // SAFETY: as `get`'s; an entry found is complete, and its bytes are read before this returns.
         unsafe {
-            let r = rerail_blocks::generated_reads::text_find(self.cache(), fns, sym);
+            let r = rerail_clif::view::cache::text_find(self.cache(), fns, sym);
             if r & 3 != 0 {
                 return None;
             }
@@ -447,21 +453,41 @@ impl Kept {
         }
         // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
         unsafe {
-            let r = rerail_blocks::generated_reads::text_open(self.cache(), fns, sym, text.len() as u32);
+            let r = rerail_clif::view::cache::text_open(self.cache(), fns, sym, text.len() as u32);
             if r & 3 != rerail_clif::view::cache::TAKEN as u64 {
                 return false;
             }
             let e = (r & !3) as *mut u8;
             std::ptr::copy_nonoverlapping(text.as_ptr(), e.add(PAYLOAD as usize), text.len());
-            rerail_blocks::generated_reads::cache_done(self.cache(), r);
+            rerail_clif::view::cache::done(self.cache(), r);
         }
         true
+    }
+
+    /// The cache's header word at `at` (`view::cache`'s counts and modes), which its reads keep with atomics.
+    fn header(&self, at: i32) -> &std::sync::atomic::AtomicU32 {
+        // SAFETY: a u32 of the cache's header, in the block `self` keeps, aligned as the header is.
+        unsafe { &*self.cache().add(at as usize).cast::<std::sync::atomic::AtomicU32>() }
+    }
+
+    /// Keeps the cache's statistics too (hits, waits, duplicates), for a test or a tuning run.
+    pub fn count_statistics(&self) {
+        self.header(rerail_clif::view::cache::STATS).store(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The cache's counts, named: lookups with no room, misses, entries promoted, generations turned, and (with
+    /// `count_statistics`) hits, waits and duplicates.
+    pub fn counts(&self) -> String {
+        use rerail_clif::view::cache as c;
+        [("failed", c::FAILED), ("misses", c::MISSES), ("promoted", c::PROMOTED), ("rotated", c::ROTATED), ("hits", c::HITS), ("waited", c::WAITED), ("duplicates", c::DUPLICATES)]
+            .map(|(name, at)| format!("{name} {}", self.header(at).load(std::sync::atomic::Ordering::Relaxed)))
+            .join(", ")
     }
 
     /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
     pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
         // SAFETY: as `get`'s.
-        unsafe { rerail_blocks::generated_reads::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) != 0 }
+        unsafe { rerail_clif::view::cache::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) }
     }
 }
 
@@ -471,7 +497,10 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>);
+pub struct Reservation(Option<Reserving>);
+
+/// A reservation under way: its arena (by address), and each reserved set with the atoms made in it.
+type Reserving = (usize, Vec<(ReservedSet, Vec<Sym>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -501,6 +530,10 @@ impl Reserved {
 
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|(_, ids)| ids.is_empty())
     }
 }
 
@@ -823,6 +856,10 @@ impl Atoms {
 
     pub fn len(&self) -> usize {
         self.state.read().atoms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state.read().atoms.is_empty()
     }
 
     /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom it may meet is

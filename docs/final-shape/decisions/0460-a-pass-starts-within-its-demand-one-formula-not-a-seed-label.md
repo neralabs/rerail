@@ -1,6 +1,6 @@
 # 0460. A pass starts within its demand: one formula read in its anchor, not a seed label
 
-Status: accepted (2026-11-18). Numbered 0406 until the hub merge (on q178 too), 0460 on final-rerail-shape-rr-align until the sync branch's roll-up of it, and 0425 on the sync branch and benchmarks-on-integration until its merge into CUDA-support (2026-11-20). Supersedes 0459 item 5's seed labels. Follows Q288 (numbered Q187 where it was
+Status: accepted (2026-11-18; 0406 on q178, renumbered in the roll-up). Supersedes 0459 item 5's seed labels. Follows Q288 (numbered Q187 where it was
 written; the hub's Q187 is another item).
 
 ## Intro

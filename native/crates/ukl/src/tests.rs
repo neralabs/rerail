@@ -4,7 +4,7 @@ use std::process::Command;
 
 /// `forest/src`, where MLDB's tree is.
 fn forest() -> String {
-    format!("{}/../../../forest/src", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/../../../forest/src", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
 }
 
 /// The tokens of preprocessed text, its `#` lines (line markers, pragmas) left out.
@@ -37,7 +37,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
     c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
+    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -65,7 +65,7 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 /// Each library header alone, for each backend: it takes what it needs by `#include`, and preprocesses as clang does.
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
@@ -79,7 +79,7 @@ fn every_library_header_stands_alone_on_every_backend() {
 /// front end accepts: with the SIMD group emulated (width 32), and at width 1.
 #[test]
 fn every_library_header_is_opencl_c_1_2() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let tmp = std::env::temp_dir().join(format!("rerail-ukl-cl-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     for width in ["32u", "8u", "1u"] {
@@ -149,13 +149,14 @@ fn an_in_memory_kernel_gets_its_backends_shim() {
     assert!(metal.contains("threadgroup_barrier(mem_flags::mem_threadgroup)"), "{metal}");
 }
 
-/// A hand-written MSL kernel that takes the generated reads (decision 0440 §3.3): the Metal front end's own headers
-/// left to it, the reads' hooks as the kernel defines them, and the tape's two sets of reads refused together.
+/// A hand-written MSL kernel that takes the tape's reads (decision 0440 §3.3): the Metal front end's own headers left
+/// to it, the reads' hooks as the kernel defines them, and the tape's two sets of reads refused together.
 #[test]
-fn a_metal_kernel_takes_the_generated_reads() {
+fn a_metal_kernel_takes_the_tapes_reads() {
     let k = "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE device\n#define clif_view(v, a) the_kernels_view(v, a)\n#include <ukl/reads/tape.h>\nkernel void k() {}\n";
     let out = crate::metal_source("k.metal", k).unwrap_or_else(|e| panic!("{e}"));
-    assert!(out.contains("clif_tape_number(device const uint8_t* t,device const uint32_t* v"), "the view where the kernel reads it");
+    let squeezed: String = out.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(squeezed.contains("clif_tape_number(deviceconstuint8_t*t,deviceconstuint32_t*v"), "the view where the kernel reads it");
     assert!(out.contains("the_kernels_view(v,") || out.contains("the_kernels_view(v ,"), "the kernel's load of the view");
     assert!(!out.contains("metal_stdlib"), "the front end's own header, left to it");
     assert!(crate::takes_library(k) && !crate::takes_library("#include <metal_stdlib>\n"));
@@ -175,4 +176,17 @@ fn a_long_literal_is_long_long_where_long_is_32_bits() {
     for same in ["1ull", "2ll", "5u", "9", "1.0", "1e5", "0x1p3", "x1ul", "2.5l"] {
         assert_eq!(w(same), None, "{same}");
     }
+}
+
+/// The fingerprint computed when the crate is compiled is the hash it was computed as at each call: FNV-1a over each
+/// carried file's name and text, each followed by a 0. A changed value would key every stored kernel anew.
+#[test]
+fn the_fingerprint_is_fnv_over_the_carried_files() {
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (name, text) in HEADERS.iter().chain(LIBRARY) {
+        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    assert_eq!(fingerprint(), h);
 }

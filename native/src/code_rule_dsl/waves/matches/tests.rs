@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 const WS: &str = "/slice";
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -196,7 +196,7 @@ fn the_wave_dumps_as_rir_and_assembles_back() {
     }
     let tables = wave.dump(false, false).unwrap();
     assert!(!tables.contains("\nplan\n") && !tables.contains("\ngroup ") && !tables.contains("\nsetplan") && tables.contains("\nprogram "));
-    let golden = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
+    let golden = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/waves/matches/wave.rir");
     if std::env::var_os("RERAIL_BLESS").is_some() {
         std::fs::write(&golden, &dump).unwrap();
     }

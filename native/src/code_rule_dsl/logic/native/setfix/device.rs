@@ -589,6 +589,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 i += span;
             }
+            // A min or max bounded by its probe (decision 0511): the device has no fold that reads the bound, so the
+            // stratum stays on the CPU. Folding it as a plain min or max gave the group's extreme past the bound.
+            Step::Scalar { bound: Some(_), .. } => return Err("an aggregate bounded by its probe (decision 0511)".into()),
             Step::Scalar { src, keys, tests, col, kind, out, bind, .. } => {
                 // An aggregate: each binding's matching rows folded where they lie, in the relation's sort by the
                 // keys (one row out per binding with a value). A sum past 64 bits is refused at run time.
@@ -720,7 +723,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     }
                     match (doc, src) {
                         (false, Key::Const(c)) => known.insert(out, c),
-                        (false, Key::Slot(x)) => known.get(&x).copied().map(|c| known.insert(out, c)).flatten(),
+                        (false, Key::Slot(x)) => known.get(&x).copied().and_then(|c| known.insert(out, c)),
                         _ => known.remove(&out),
                     };
                     n += 1;
@@ -928,12 +931,11 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Key::Slot(x) => known.get(&x).copied(),
                 };
                 let mut kind = kind;
-                if ntexts > 0 {
-                    if let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
+                if ntexts > 0
+                    && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
                         kind = Kind::RowText { auto: RowAuto::None, kept: id };
                         kept_texts.insert(*out, chain);
                     }
-                }
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
                 }
@@ -1125,7 +1127,7 @@ fn owner_col(rel: &InRel, c: usize) -> usize {
     }
 }
 
-/// The screen of a stage of `rel` (decision 0506): the kept filter of the first of `d`'s keys' columns (the
+/// The screen of a stage of `rel` (decision 0488): the kept filter of the first of `d`'s keys' columns (the
 /// relation's own, before `narrowed`) whose sketch keeps one, where its sketches count every row (as the CPU's screen
 /// borrows it: `join_filter`), bound where it lies in its block. `None` for a view's rows, or no such key.
 fn screen_of(rel: &InRel, d: &mj::Stage) -> Result<Option<mj::Screen>, String> {
@@ -1223,7 +1225,7 @@ struct Run<'p> {
     places: Vec<Option<Vec<u32>>>,
     /// Per witness stage, its probes' relations, sorts and descriptors (their columns where the copies hold them).
     probes: Vec<Option<Vec<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, mj::Stage)>>>,
-    /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0506).
+    /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0488).
     screens: Vec<Option<mj::Screen>>,
     /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
     /// count is `totals`' last word.
@@ -1254,7 +1256,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
-        batch.keeps(dev.clone());
         rep.in_place += 1;
         // Every column of the owner, at its own place.
         let place: Vec<u32> = (0..rel.k).map(|c| owner_col(rel, c) as u32).collect();
@@ -1271,7 +1272,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
     let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1]);
     if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
         let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
-        batch.keeps(dev.clone());
         rep.in_place += 1;
         crate::code_rule_dsl::prof::count("device.view_read.has", 1);
         let place: Vec<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
@@ -1372,7 +1372,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         }
     };
     let dev = Rc::new(dev);
-    batch.keeps(dev.clone());
     let place: Vec<u32> = (0..rel.k).map(|c| held.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
     if cols.is_empty() {
         return Ok((dev, None, place));
@@ -1522,7 +1521,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], screens: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1881,9 +1880,10 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
-        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
-        // which the wave keeps until it is done (back in the pool, another job's would be written).
-        with_open::<Wave, _>(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers.
+        // They go now: the wave's submissions' fences hold them until that work completes (decision 0491 step 2), so
+        // none goes back to the pool while the GPU writes it.
+        drop(runs);
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
@@ -1941,7 +1941,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     let runs = encode_runs(rules, &mut batch, rep, names)?;
     drop(room);
     finish_timed(&mut batch, rep)?;
-    complete(runs, &rules[..], store, names, fresh, rep)
+    complete(runs, rules, store, names, fresh, rep)
 }
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
@@ -1958,19 +1958,10 @@ fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batc
         if !runs.is_empty() && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
             break;
         }
-        let mut r = match Run::new(plan) {
-            Ok(r) => r,
-            Err(e) => {
-                batch.hold(Box::new(runs));
-                return Err(e);
-            }
-        };
-        if let Err(e) = r.encode(0, batch, rep, &mut Own::default(), names) {
-            // The runs encoded so far (and this one's stages before the refusal) are in the batch: their buffers stay
-            // with it until it is done.
-            batch.hold(Box::new((runs, r)));
-            return Err(e);
-        }
+        // On a refusal the runs encoded so far go, with this one's stages before it: the passes that bind their
+        // buffers hold them until their work completes (decision 0491 step 2).
+        let mut r = Run::new(plan)?;
+        r.encode(0, batch, rep, &mut Own::default(), names)?;
         bytes += r.bytes();
         runs.push(r);
     }
@@ -2097,9 +2088,11 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             rep.made += strs.len() as u64;
             Ok(Some(vals.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect()))
         }).collect::<Result<_, _>>()?;
-        for x in 0..distinct {
+        // Each column's values by row, read in step (a constant head's column is not read).
+        let mut values: Vec<_> = cols.iter().map(|col| col.iter().copied()).collect();
+        for _ in 0..distinct {
             for (c, h) in plan.head.iter().enumerate() {
-                row[c] = h.unwrap_or_else(|| cols[c][x]);
+                row[c] = h.unwrap_or_else(|| values[c].next().expect("a value at each distinct row"));
                 if let Some(m) = &arena[c] {
                     row[c] = m[&row[c]];
                 }

@@ -138,7 +138,7 @@ impl Delta {
         Some((f.w, unsafe { std::slice::from_raw_parts(f.at, f.len) }))
     }
     fn rows(&self, e: u32) -> u32 {
-        self.flat(e).map_or(0, |(w, f)| if w == 0 { 0 } else { (f.len() / w) as u32 })
+        self.flat(e).map_or(0, |(w, f)| f.len().checked_div(w).unwrap_or(0) as u32)
     }
     /// Input column `c` of entry `e`'s row `r`.
     fn value(&self, (e, r): (u32, u32), c: usize) -> i64 {

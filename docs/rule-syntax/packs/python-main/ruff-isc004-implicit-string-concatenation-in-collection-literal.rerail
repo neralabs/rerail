@@ -1,5 +1,4 @@
 .policy "ruff-isc004-implicit-string-concatenation-in-collection-literal" revision 1
-.guests off
 .description "Add the missing comma, or wrap the strings in parentheses, where adjacent strings concatenate inside a list, tuple or set literal; the merge usually hides a forgotten comma."
 .language python
 .mode steer

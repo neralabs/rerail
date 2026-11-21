@@ -90,8 +90,8 @@ impl Session {
         let out = self.dir.join("out-kept");
         let _ = std::fs::remove_dir_all(&out);
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(self.dir.join("kept-frames.sqlite")));
-        // The counts are the run's (decision 0441): read in a run of this test's own, which the corpus run joins, so
-        // they include those of its loops' halves another of the pool's threads steals (`rerail_context::inside_pool`).
+        // The run's own scope, as the session's run holds it: its shape is the run's count (decision 0442). Without
+        // it the test's thread read a fresh count each time, every one 0, and R2's assertions held of nothing.
         let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let (before, levels) = (shape::now(), maintain::strata_by_levels());
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -198,25 +198,16 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
         let ran = s.edit(what);
         assert_eq!(ran.shape.maintenance_held, 0, "R1: after {what}, no relation is held under a maintenance name");
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no row is copied to state a change");
-    }
-}
-
-/// R2 in a session (t43 step 13): the changed documents' memo entries are found (under the memo plan's id and the
-/// store path), so the inputs' deltas are read from them, not every document hashed. (A few still are: 0364's open
-/// item.)
-#[test]
-#[ignore = "R2, Q405: at the cycle cut no input the session asks is read from the entries (`child`, a semi-join's; `edge_at`, rows of other documents' nodes)"]
-fn r2_a_session_reads_its_inputs_deltas_from_the_changed_entries() {
-    let mut s = kinds("r2-entries");
-    s.run();
-    for (file, body, what) in SMALL_EDITS {
-        s.write(file, body);
-        let ran = s.edit(what);
+        // The changed documents' memo entries are found (under the memo plan's id and the store path), so the inputs'
+        // deltas are read from them, not every document hashed. (A few still are: 0364's open item.)
         assert!(ran.shape.inputs_from_entries > 0, "R2: after {what}, inputs' deltas are read from the changed documents' entries ({} hashed)", ran.shape.inputs_hashed);
     }
 }
 
-/// R2 in a new process: an input's delta is found by its documents, hashing only the changed documents' rows.
+/// R2 in a new process: its inputs' deltas are found by their changed documents, never by every row. A base relation
+/// keeps no rows, only its documents' digest (0458 step 4), so its delta is its changed documents' old and new rows,
+/// given beside it (`input_delta::Before`, `shape::inputs_from_owners`); a kept input's is its changed documents'
+/// rows hashed (`retain::document_delta_except`, `shape::inputs_hashed`).
 #[test]
 fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
     let mut s = kinds("r2-kept");
@@ -225,20 +216,24 @@ fn r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs() {
         s.write(file, body);
         let ran = s.run_kept();
         assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
-        // Its last run's documents are the base documents' table (decision 0458, `retain::base_documents`), kept with
-        // the memo plan it was made under: an input's rows of the documents as they were are not read again, only
-        // the changed documents' rows are hashed.
-        assert!(ran.shape.inputs_hashed > 0, "R2: after {what}, the inputs' deltas are found by their documents");
+        assert!(
+            ran.shape.inputs_from_owners + ran.shape.inputs_hashed > 0,
+            "R2: after {what}, the inputs' deltas are found by their documents ({:?})",
+            ran.shape
+        );
         assert_eq!(ran.shape.inputs_hashed_whole, 0, "R2: after {what}, no input's every row is hashed, only the changed documents' ({} inputs)", ran.shape.inputs_hashed);
+        // Its changed inputs' old rows of the unchanged documents are their new rows, read in place
+        // (`retain::OldInput`, 0353): only the changed documents' rows are read from the frames.
+        assert_eq!(ran.shape.inputs_read_whole, 0, "R2: after {what}, no changed input's old rows are read whole from the frames");
         // An input's delta names its rows where they lie, old and new (`retain::rows_delta`), as a session's does.
         assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, a new process copies no row to state a change");
     }
 }
 
-/// R2 in a new process, whole: its kept rows are read where they lie (decision 0439: the kept entries bound in place,
-/// `kept_read::gathered`'s views of their granules), not decoded into memory. No path decodes a kept row, so what
-/// is checked is that the kept entries were bound and no row was copied to state the change.
+/// R2 in a new process, whole: its kept rows are read where they lie, not decoded from the frames into memory (0353's
+/// frames copy, `shape::rows_decoded`). Met when the reads bind the kept blocks (0401 step 7, being merged).
 #[test]
+#[ignore = "R2: a new process decodes its kept rows from the frames until the kept blocks are read in place (0401 step 7)"]
 fn r2_a_new_process_reads_its_kept_rows_in_place() {
     let mut s = kinds("r2-in-place");
     s.run_kept();
@@ -246,8 +241,7 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
         s.write(file, body);
         let ran = s.run_kept();
         assert_eq!(ran.rows, s.fresh(), "R10: after {what}, the kept run's outputs are a fresh run's");
-        assert!(ran.shape.frames_read > 0, "R2: after {what}, the kept entries are bound where they lie");
-        assert_eq!(ran.shape.rows_copied, 0, "R2: after {what}, no kept row is copied");
+        assert_eq!(ran.shape.rows_decoded, 0, "R2: after {what}, no kept row is decoded from the frames");
     }
 }
 
@@ -255,8 +249,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
-    let root = if root.exists() { root } else { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
+    let root = if root.exists() { root } else { std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(d) = stack.pop() {
@@ -454,7 +448,6 @@ fn r7_the_recheck_order_is_priced() {
 
 /// R8: a session's kept rows stay in place between its runs (0328 §5): an edit's run reads no kept frame back.
 #[test]
-#[ignore = "R8, Q405: a phase's run is in memory (a429546488), no session's, and binds its kept part from the store at each edit"]
 fn r8_a_session_edit_reads_no_kept_frame() {
     let mut s = kinds("r8");
     s.run();

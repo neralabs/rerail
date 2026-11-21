@@ -608,8 +608,8 @@ impl<'a> P<'a> {
                     while self.kind_at(k + 1) == T::Dot && self.kind_at(k + 2) == T::Name && self.adjacent(k) && self.adjacent(k + 1) {
                         k += 2;
                     }
-                    if self.kind_at(k + 1) == T::Lt && self.adjacent(k) {
-                        if let Some(close) = self.type_args_end(k + 1) {
+                    if self.kind_at(k + 1) == T::Lt && self.adjacent(k)
+                        && let Some(close) = self.type_args_end(k + 1) {
                             let args = self.kind_at(close + 1) == T::LParen && self.adjacent(close);
                             let lambda = self.kind_at(close + 1) == T::LBrace && !self.no_lambda;
                             if (args || lambda) && self.comparisons_fail(k + 1, close) {
@@ -627,7 +627,6 @@ impl<'a> P<'a> {
                                 return Ok(());
                             }
                         }
-                    }
                 }
                 // A generic type's constructor: `Name<…>(`.
                 if self.kind_at(1) == T::Lt && self.adjacent(0)

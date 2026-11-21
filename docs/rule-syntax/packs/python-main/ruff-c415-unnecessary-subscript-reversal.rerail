@@ -1,5 +1,4 @@
 .policy "ruff-c415-unnecessary-subscript-reversal" revision 1
-.guests off
 .description "Don't reverse an iterable with a slice before passing it to set, sorted or reversed; each of them reorders or reverses it again anyway."
 .language python
 .mode steer

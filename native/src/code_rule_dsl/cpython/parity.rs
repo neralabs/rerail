@@ -216,11 +216,12 @@ fn syntax_error_parity() {
             let want = oracle(&python, "syntax", &corpus.files);
             let texts = sources(&corpus.files);
             let engine = |s: &str| {
-                super::syntax::syntax_error(s).unwrap_or_else(|r| Some(super::syntax::SyntaxError { line: 1, msg: r.class.to_owned() }))
+                super::syntax::syntax_error(s).unwrap_or_else(|r| Some(super::syntax::SyntaxError { line: 1, msg: r.class.to_owned(), at: None }))
             };
             let got: Vec<Option<(Option<super::syntax::SyntaxError>, bool)>> =
                 crate::code_rule_dsl::logic::profile::on_cores(|| texts.par_iter().map(|s| s.as_ref().map(|s| (engine(s), tree_sitter_error(s)))).collect());
             let (mut verdict, mut line, mut msg, mut tree) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
+            let mut span = Tally::default();
             for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
                 let (Some(source), Some((got, ts)), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
                 let cpython = row["e"].as_array().map(|e| (e[0].as_u64().map_or(1, |l| l as usize), e[1].as_str().unwrap_or_default().to_owned()));
@@ -230,6 +231,16 @@ fn syntax_error_parity() {
                 if let (Some((l, m)), Some(g)) = (&cpython, got) {
                     line.add(*l == g.line, || format!("{} {}", show_both(), excerpt(source, *l)));
                     msg.add(*m == g.msg, || format!("{} {}", show_both(), excerpt(source, *l)));
+                    // `offset`, `text`, `end_lineno`, `end_offset` (the module's `syntax_error`), where the line and
+                    // the message agree.
+                    if *l == g.line && *m == g.msg {
+                        let e = &row["e"];
+                        let want = (e[0].as_u64(), e[2].as_i64(), e[3].as_str().map(str::to_owned), e[4].as_u64(), e[5].as_i64());
+                        let got = g.at.as_ref().map_or((None, None, None, None, None), |a| {
+                            (Some(a.lineno as u64), Some(a.offset), Some(a.text.clone()), Some(a.end_lineno as u64), Some(a.end_offset))
+                        });
+                        span.add(want == got, || format!("{shown}: {:?}: CPython {want:?}, engine {got:?} {}", g.msg, excerpt(source, *l)));
+                    }
                 }
             }
             let rejected = want.values().filter(|r| r["e"].is_array()).count();
@@ -237,6 +248,7 @@ fn syntax_error_parity() {
             verdict.report("verdict (Ruff)");
             line.report("line, where both reject");
             msg.report("message, where both reject");
+            span.report("offset, text, end, where the line and message agree");
             tree.report("verdict (tree-sitter's ERROR/MISSING)");
         }
     }

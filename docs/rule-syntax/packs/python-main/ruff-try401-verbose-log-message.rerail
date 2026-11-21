@@ -1,5 +1,4 @@
 .policy "ruff-try401-verbose-log-message" revision 1
-.guests off
 .description "Don't include the caught exception object in an exception log message; the exception call already records it with its traceback."
 .language python
 .mode steer

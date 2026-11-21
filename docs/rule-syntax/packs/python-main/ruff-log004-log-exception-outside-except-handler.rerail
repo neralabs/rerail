@@ -1,5 +1,4 @@
 .policy "ruff-log004-log-exception-outside-except-handler" revision 1
-.guests off
 .description "Use error instead of exception for logging calls made outside an except handler; there is no active exception to record there."
 .language python
 .mode steer

@@ -70,7 +70,7 @@ fn every_part() -> Arc<Version> {
 }
 
 fn pack_files() -> Vec<std::path::PathBuf> {
-    let packs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs");
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rerail")).collect();
     files.sort();
     files
@@ -534,7 +534,7 @@ fn a_delta_is_the_size_of_its_edit() {
         for k in 0..9 {
             for r in small.rules() {
                 let head = format!("{}_{k}", small.rel_name(r.head().rel()));
-                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(&small, r, t)).collect();
+                let args: Vec<T<'_>> = r.head().args().map(|t| super::t_of(r, t)).collect();
                 let mut w = b.rule().head(head.as_str(), &args);
                 for l in r.body() {
                     w = w.lit(&small, r, l);
@@ -613,7 +613,7 @@ fn passes_hold(v: &Arc<Version>) {
     use super::fields::ProgramFields;
     use super::passes;
     use std::collections::BTreeSet;
-    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let Ok((nv, ns)) = passes::normalize(v) else { return };
     let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
     let lattice = ProgramFields::lattice(&**v);
     let nullary = ProgramFields::nullary(&**v);
@@ -629,7 +629,7 @@ fn passes_hold(v: &Arc<Version>) {
     }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if !Arc::ptr_eq(&nv, &v) {
+    if !Arc::ptr_eq(&nv, v) {
         for r in nv.rules() {
             let s = r.source().expect("a derived rule's source");
             assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
@@ -709,6 +709,28 @@ fn the_planners_passes_over_a_version_hold() {
         b.finish().unwrap().0
     };
     assert!(super::passes::normalize(&two).is_err());
+}
+
+/// A version's analyses are dropped with it (decision 0281 §2), the forms made over it among them: its normal form and
+/// that form's stated-apart form are made over twins (`manager::twin`), so neither holds the version it is held by, and
+/// the version, with the image it reads in place, goes with its last holder (Q377).
+#[test]
+fn a_version_with_its_normal_and_apart_forms_drops_with_its_last_holder() {
+    use super::manager::analysis;
+    use super::passes::{ApartForm, NormalForm};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(
+        ".decl e(x: number)\n.input e\n.decl a(x: number)\n.decl b()\na(x) :- e(x).\nb() :- a(_).\na(1).\n.output a, b\n",
+    )
+    .unwrap();
+    let (normal, apart) = {
+        let n = analysis::<NormalForm>(&p).unwrap();
+        let a = analysis::<ApartForm>(&n.v).unwrap();
+        (Arc::downgrade(&n.v), Arc::downgrade(&a.v))
+    };
+    let held = Arc::downgrade(&p);
+    assert!(analysis::<NormalForm>(&p).is_ok_and(|n| Arc::ptr_eq(&n.v, &normal.upgrade().unwrap())), "the form is held, made once");
+    drop(p);
+    assert_eq!((held.strong_count(), normal.strong_count(), apart.strong_count()), (0, 0, 0), "the version and its forms are gone");
 }
 
 /// A rule rewritten as it is copied keeps what the rewrite does not change, records its source, and takes more
@@ -895,7 +917,7 @@ fn fields_agree(v: &Arc<Version>) {
         assert!(f.request(req) && f.answer(req));
     }
     // Gates, in order.
-    // A gate's key, source, relation, level, and its two lists.
+    // A gate's key, source, relation, level, quiet relations and dependencies.
     type Gate = (String, Option<String>, String, usize, Vec<String>, Vec<String>);
     let gates: Vec<Gate> = f.gates().iter().map(|g| (f.text(g.key).to_owned(), g.src.map(|s| f.text(s).to_owned()), g.rel.map_or("", |r| f.rel_name(r)).to_owned(), g.level, g.quiet.iter().map(|&r| f.rel_name(r).to_owned()).collect(), g.deps.iter().map(|&r| f.rel_name(r).to_owned()).collect())).collect();
     let want: Vec<_> = pgates.iter().map(|(k, g)| (k.clone(), g.src.clone(), g.rel.clone(), g.level, g.quiet.clone(), g.deps.clone())).collect();
@@ -1135,7 +1157,7 @@ fn a_pass_that_writes_for_a_kept_rule_fails() {
     }
     let mut p = super::manager::Pipeline::new("test", managed());
     p.rules(&mut Liar);
-    let e = p.finish().err().expect("refused");
+    let e = p.finish().expect_err("refused");
     assert!(e.contains("liar") && e.contains("kept"), "{e}");
 }
 
@@ -2063,4 +2085,40 @@ fn facts_in_another_order_are_the_same_program() {
     // Other rows are another program.
     let other = with_k(&rows[..rows.len() - 1]);
     assert_ne!(Placed::whole(prog.clone()).digest(), Placed::whole(other).digest());
+}
+
+/// A made step (`Pipeline::made`: a version built whole from a program, its rules numbered anew, as the deferred
+/// joins' and node products' steps make theirs) hands on the record its program states: a rule step after it reads
+/// the record by the made version's rules, not the input's (decision 0488: every `rr_value_req` rule was then read
+/// as serving only itself).
+#[test]
+fn a_made_steps_request_record_is_carried_by_its_own_rules() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    let asked = |text: &str, record: &super::about::Asked| {
+        let base = crate::code_rule_dsl::logic::rr::parse_version(text).map_err(|e| format!("{e:?}"))?;
+        let mut b = Builder::on(&base);
+        b.fields().set_asked(record);
+        Ok::<_, String>(b.finish()?.0)
+    };
+    let v = asked(text, &super::about::Asked::from([("q".to_owned(), vec![by("r1"), by("r2"), by("r3")])])).unwrap();
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    // Made again with two rules of another relation first: every rule of `q` is numbered anew.
+    let before = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl s(x: number)\n.output s\n\
+                  .decl q(x: number)\n.output q\ns(x) :- a(x).\ns(x) :- b(x).\nq(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    pipe.made("rules before q's", 1, &[], |v| Ok((asked(before, &v.asked())?, Vec::new())));
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "q's readers by its rules after the made step");
 }

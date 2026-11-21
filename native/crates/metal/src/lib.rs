@@ -41,24 +41,26 @@ pub use rerail_compiler::Error;
 /// The pool's hooks into this crate, installed before the process's device is first used through it (by
 /// `METAL_DEVICE` or the device layer's `lane::device`): whatever its backend, the pool counts the ledger's
 /// reservations and evicts the residency's slabs.
-static POOL_HOOKS: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
-    // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
-    rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
-    // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
-    rerail_accel::gpu::shared::set_evictor(slabs::evict);
-});
+/// A machine object (decision 0442), as the pool it hooks into is.
+#[derive(Default)]
+struct PoolHooks(std::sync::OnceLock<()>);
 
 /// The process's one device as Metal's (`rerail_accel::gpu::shared`, decision 0100 §2), for what is Metal's own:
 /// its compiler's probes, its residency's measures.
 #[cfg(target_os = "macos")]
 pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(|| {
-    std::sync::LazyLock::force(&POOL_HOOKS);
+    pool_hooks();
     rerail_accel::gpu::shared::get().map(|s| s.device.clone())
 });
 
-/// Installs the pool's hooks (`POOL_HOOKS`).
+/// Installs the pool's hooks (`PoolHooks`), once a machine.
 pub(crate) fn pool_hooks() {
-    std::sync::LazyLock::force(&POOL_HOOKS);
+    rerail_context::machine::<PoolHooks>().0.get_or_init(|| {
+        // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
+        rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
+        // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
+        rerail_accel::gpu::shared::set_evictor(slabs::evict);
+    });
 }
 
 /// The process's one device (`METAL_DEVICE`), or `UnsupportedBackend` without one.

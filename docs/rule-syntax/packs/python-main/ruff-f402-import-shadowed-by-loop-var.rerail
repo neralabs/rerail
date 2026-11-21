@@ -1,5 +1,4 @@
 .policy "ruff-f402-import-shadowed-by-loop-var" revision 1
-.guests off
 .description "Don't reuse an imported name as a for-loop variable; the loop silently overwrites the import."
 .language python
 .mode steer

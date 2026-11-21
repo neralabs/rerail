@@ -1,5 +1,4 @@
 .policy "ruff-perf203-try-except-in-loop" revision 1
-.guests off
 .description "Avoid wrapping each loop iteration in its own try-except before Python 3.11; move the loop into one try block or check the condition first."
 .language python
 .mode steer

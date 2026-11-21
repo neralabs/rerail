@@ -116,7 +116,7 @@ pub(super) fn lower(v: &Arc<Version>, inherited: &[String], dependencies: &BTree
             if !stated.insert(shown) {
                 continue;
             }
-            let ks: Vec<T<'_>> = keys.iter().map(|k| t_of(v, r, *k)).collect();
+            let ks: Vec<T<'_>> = keys.iter().map(|k| t_of(r, *k)).collect();
             let mut ask = b.rule().head(request.as_str(), &ks);
             for l in domain {
                 ask = ask.lit(v, r, l);
@@ -128,7 +128,7 @@ pub(super) fn lower(v: &Arc<Version>, inherited: &[String], dependencies: &BTree
             b.remove(r.id());
             let mut guarded = b.rewrite(v, r, &mut Same);
             for (complete, keys) in &guards {
-                let ks: Vec<T<'_>> = keys.iter().map(|k| t_of(v, r, *k)).collect();
+                let ks: Vec<T<'_>> = keys.iter().map(|k| t_of(r, *k)).collect();
                 guarded = guarded.atom(complete.as_str(), &ks);
             }
             guarded.finish().map_err(Error::Syntax)?;

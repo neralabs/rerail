@@ -1,5 +1,4 @@
 .policy "ruff-f524-string-dot-format-missing-arguments" revision 1
-.guests off
 .description "Pass an argument for every placeholder in a str.format() string; a missing one raises IndexError or KeyError at runtime."
 .language python
 .mode steer

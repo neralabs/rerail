@@ -40,7 +40,17 @@ pub fn defines() -> Vec<(&'static str, String)> {
     if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
         v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
     }
+    if strict_simd() {
+        v.push(("UKL_CPU_SIMD_STRICT", "1".to_string()));
+    }
     v
+}
+
+/// `RERAIL_CPU_SIMD_STRICT=1`: a SIMD group's lanes meet only at the same operation reached by the same path
+/// (`ukl_cpu_shim.h`'s `__ukl_cpu_site`), compiled without optimization so that none is duplicated: a kernel with a
+/// SIMD-group operation some lanes skip fails, naming where each waits.
+pub fn strict_simd() -> bool {
+    std::env::var("RERAIL_CPU_SIMD_STRICT").is_ok_and(|v| v == "1")
 }
 
 /// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
@@ -252,7 +262,7 @@ impl CpuComputeFunctionLibrary {
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {
@@ -283,8 +293,12 @@ impl CpuComputeFunctionLibrary {
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
             let tmp = dir.join(format!("{own}.{LIB_EXTENSION}"));
+            // `-O0` last before `-o`: it overrides the flags' `-O1`.
+            let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
-                .args(CXX_FLAGS)
+                .args(flags)
+                .args(strict_simd().then_some("-O0"))
+                .args(out)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
@@ -716,6 +730,7 @@ mod tests {
 
     const KERNELS: &str = r#"
 #include <ukl/backend.h>
+#include <ukl/simd.h>
 
 struct Args {
     uint32_t n;
@@ -738,6 +753,18 @@ DEFINE_KERNEL2(t, t_group,
     for (uint32_t d = 16u; d > 0u; d >>= 1u)
         v += ukl_sg_shuffle_xor(v, d);
     out[g * lsz + lid] = v;
+}
+
+// Lane 0 ends straight after a reduction: the CPU runs a group's lanes one after another, so the others read the
+// reduction's values after lane 0 is done, and it is in the reduction still.
+DEFINE_KERNEL2(t, t_ends_after,
+               RWBUFFER, uint32_t, out, "[32]",
+               LID0,     uint32_t, lid, )
+{
+    uint32_t m = ukl_sg_min(lid == 0u ? 7u : 100u + lid);
+    if (lid == 0u)
+        return;
+    out[lid] = m;
 }
 
 // A SIMD group split: half its lanes at a threadgroup barrier, half at a shuffle that needs them all.
@@ -787,6 +814,18 @@ DEFINE_KERNEL2(t, t_divergent,
         }
     }
 
+    /// A lane that ends after a SIMD-group reduction is in it for the lanes that read it after: each lane's minimum
+    /// is lane 0's 7, not the least of the lanes from it on.
+    #[test]
+    fn a_lane_done_after_a_reduction_is_in_it() {
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
+        let f = lib.get_function(&device, "t_ends_after").unwrap();
+        let out = alloc_uninitialized_array_sync::<u32>(&device, 32);
+        run(&device, &f, &out, None, 1, 32).unwrap();
+        let got = transfer_to_host_sync::<u32>(&out, 32);
+        assert_eq!(&got[1..], &[7u32; 31][..]);
+    }
+
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
     fn a_barrier_no_thread_can_pass_is_an_error() {
@@ -795,7 +834,7 @@ DEFINE_KERNEL2(t, t_divergent,
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
         let e = run(&device, &f, &out, None, 1, 64).unwrap_err();
         assert!(e.contains("no barrier can be passed"), "{e}");
-        assert!(e.contains("thread 0 at a threadgroup barrier;") && e.contains("thread 16 at a SIMD-group operation;"), "{e}");
-        assert!(!e.contains("thread 32 "), "the second SIMD group's shuffle passed, and it returned: {e}");
+        assert!(e.contains("threads 0 to 15 at a threadgroup barrier;") && e.contains("threads 16 to 31 at a SIMD-group operation;"), "{e}");
+        assert!(!e.contains("thread 32 ") && !e.contains("threads 32 "), "the second SIMD group's shuffle passed, and it returned: {e}");
     }
 }

@@ -1,5 +1,4 @@
 .policy "ruff-g010-logging-warn" revision 1
-.guests off
 .description "Call the warning logging method instead of warn; warn is a deprecated alias of warning."
 .language python
 .mode steer

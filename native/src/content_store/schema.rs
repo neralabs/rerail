@@ -27,12 +27,14 @@ pub(super) const SCHEMA_VERSION: i64 = 9;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
 pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 9: two lines' floors joined (2026-11-19), each of which named its
-/// store `content-v7`: a space's kept facts are a chain of packed files and there are no frames (decisions 0456,
-/// 0439), a kept column may be a node id split at its granule, and every source, tape, check result, call summary
-/// and tree page is in a segment, as it is, its row naming its range (decisions 0295 step 5, 0450 step 2). A binary
-/// of either line would read a store that keeps nothing, wrong values, or a row with no frame. Before: 8 (results
-/// in segments), 7 (no object's bytes in a row; on the other line, the kept facts' chain); 6: the atoms are blocks in files beside the store (decision 0401:
+/// The floor `STORE_FILE_NAME` was introduced at. 9: a space's kept facts are a chain of packed files (decision 0456),
+/// and there are no frames (decision 0439), which an older binary would read as a store that keeps nothing, and a
+/// kept column may be a node id split at its granule, which it would read as wrong values (7 on
+/// final-rerail-shape-rr-align, joined with 8 and 7 below on sync-integration-hub-tape); 8: every check result, call
+/// summary and tree page is in a segment, as it is, its row naming its range (decision 0450 step 2, 2026-11-19), which
+/// an older binary would read as a row with no frame; 7: every source and tape is in a segment, as it is, and no row
+/// holds an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
+/// frame; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
@@ -98,6 +100,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg INTEGER NOT NULL DEFAULT 0,
     seg_at INTEGER NOT NULL DEFAULT 0,
     seg_len INTEGER NOT NULL DEFAULT 0,
+    -- The file's programs (decision 0431 step 6): the number of its `file_documents` rows, written in the transaction
+    -- that writes them; -1 where not known (a tape stored without its programs).
+    programs INTEGER NOT NULL DEFAULT -1,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
 -- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
@@ -119,6 +124,9 @@ CREATE TABLE IF NOT EXISTS file_documents (
     document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
     source_map BLOB NOT NULL,
     host_errors BLOB NOT NULL,
+    -- The parent's bytes the document stands at, where they are not its text's (`tape::DerivedImage::at`).
+    at_start INTEGER,
+    at_end INTEGER,
     PRIMARY KEY (tape_id, ordinal)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS file_documents_by_document ON file_documents(document_tape_id);
@@ -1100,6 +1108,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "programs", "INTEGER NOT NULL DEFAULT -1"),
+    ("file_documents", "at_start", "INTEGER"),
+    ("file_documents", "at_end", "INTEGER"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).

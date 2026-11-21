@@ -108,6 +108,13 @@ fn library_names() -> (&'static [&'static str], Vec<String>) {
     }
 }
 
+/// A symbol `dlsym` found, as the function pointer type `F` its field declares.
+fn sym_as<F>(p: *mut c_void) -> F {
+    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+    // SAFETY: `F` is the symbol's C function pointer type, the size of a pointer (checked above).
+    unsafe { std::mem::transmute_copy(&p) }
+}
+
 /// The driver and NVRTC, opened once; `Err` says what is missing.
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
@@ -130,7 +137,7 @@ fn api() -> Result<&'static Api, String> {
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
-                unsafe { std::mem::transmute::<*mut c_void, _>(p) }
+                sym_as(p)
             }};
         }
         Ok(Api {
@@ -658,7 +665,7 @@ impl CudaComputeFunctionLibrary {
         let text = self.global(&format!("{function_name}__ukl_params"))?;
         let text = CStr::from_bytes_until_nul(&text).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
         let rows = self.global(&format!("{function_name}__ukl_rows"))?;
-        let rows: Vec<u64> = rows.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let rows: Vec<u64> = rows.as_chunks::<8>().0.iter().map(|&c| u64::from_le_bytes(c)).collect();
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // The shared memory a launch may take beyond the kernel's static storage.
         let a = self.device.current();
@@ -737,7 +744,8 @@ impl CudaQueueRoot {
 }
 
 /// A queue of operations (`MetalComputeQueue`): launches, copies and fills in order on one of its root's streams. `flush`
-/// records an event to await; `finish` flushes and waits.
+/// records an event to await; `finish` flushes and waits. A queue dropped without a flush runs nothing (a Metal command
+/// buffer never committed): its operations and the buffers they would use are dropped with it.
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
@@ -748,6 +756,12 @@ pub struct CudaComputeQueue {
     /// The buffers the work since the last flush uses that nothing else may hold (staging): kept to the event.
     keep: RefCell<Vec<CudaBuffer>>,
 }
+
+// SAFETY: the stream is its root's (which is `Send` and `Sync`), and the functions its launches name are the device's;
+// the driver is called only in `flush`, on the thread that flushes, after `CudaDevice::current` makes the device's
+// context current there. The queue moves between threads (a forest's scratch behind its mutex); it is not `Sync`:
+// its cells are its owner's.
+unsafe impl Send for CudaComputeQueue {}
 
 /// The bytes a staging buffer holds (a larger copy gets its own).
 const STAGING_BYTES: u64 = 64 << 10;
@@ -868,9 +882,6 @@ fn issue(a: &Api, stream: Ptr, op: Op) -> Result<(), String> {
         Op::WaitValue { at, value } => ck(unsafe { (a.cu_stream_wait_value64)(stream, at, value, CU_STREAM_WAIT_VALUE_GEQ) }, "cuStreamWaitValue64"),
     }
 }
-
-/// A queue dropped without a flush runs nothing (a Metal command buffer never committed): its operations and the
-/// buffers they would use are dropped with it.
 
 /// Work dropped before it completed (an event not awaited), and the buffers it uses: Metal keeps a command buffer's
 /// resources until it completes; here they go back to the pool once `end` has passed.

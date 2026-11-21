@@ -1,5 +1,4 @@
 .policy "ruff-pyi030-unnecessary-literal-union" revision 1
-.guests off
 .description "Merge the Literal members of a union into a single Literal listing all the values; it means the same thing and is shorter."
 .language python
 .mode steer

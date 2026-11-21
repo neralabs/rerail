@@ -211,14 +211,18 @@ fn scalar_inputs(v: &Version, r: RuleRef<'_>) -> Vec<scalars::Scalar> {
         if keys.is_empty() {
             keys.push(E::Integer(1));
         }
+        // A bounded aggregate's value depends on its probe's bound (decision 0511): no summary of the group alone.
+        if let AggRef::Bounded { bound, .. } = op {
+            predicates.push(E::Opaque(format!("bounded by {}", name(v, r, bound))));
+        }
         predicates.sort();
         result.push(scalars::Scalar {
             kind: match op {
                 AggRef::Count => Kind::Count,
                 AggRef::Sum => Kind::Sum,
                 AggRef::Product => Kind::Product,
-                AggRef::Min => Kind::Min,
-                AggRef::Max => Kind::Max,
+                AggRef::Min | AggRef::Bounded { max: false, .. } => Kind::Min,
+                AggRef::Max | AggRef::Bounded { max: true, .. } => Kind::Max,
                 AggRef::Join { .. } => Kind::OrderedJoin,
             },
             source: v.rel_name(atom.rel()).to_owned(),

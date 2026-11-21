@@ -28,7 +28,7 @@ pub fn reserve(len: usize) -> *mut u8 {
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE | crate::RESERVE_ONLY, -1, 0)
         };
-        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed");
+        assert!(p != libc::MAP_FAILED, "mmap of {len} bytes failed ({}), {} reserved", std::io::Error::last_os_error(), reserved());
         p.cast()
     }
     #[cfg(windows)]

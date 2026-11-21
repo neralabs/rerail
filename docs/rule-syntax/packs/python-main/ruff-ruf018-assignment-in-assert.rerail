@@ -1,5 +1,4 @@
 .policy "ruff-ruf018-assignment-in-assert" revision 1
-.guests off
 .description "Avoid assignment expressions in assert statements when the name is used outside asserts; the assignment is lost when assertions are disabled."
 .language python
 .mode steer

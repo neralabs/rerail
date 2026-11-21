@@ -1,5 +1,4 @@
-# JSON for the token loop (decision 0177): the ladder's step 14 (`compiler/bitlex_ladder/
-# 14-json.bitlex`), its tokens told by the rules a lexer ends them by (`run`, `pair`, `read`),
+# JSON for the token loop (decision 0177): `json-rfc.bitlex`, its tokens told by the rules a lexer ends them by (`run`, `pair`, `read`),
 # so that tier 1 on the CPU is a token loop, as a lean lexer's. Same language, same tree.
 #
 # The tokens, as a lexer reads them:
@@ -9,10 +8,10 @@
 #   - a word (a number, `true`, `false`, `null`): a run of the bytes that are none of the above
 #     and no white space, checked as a number or looked up as a keyword.
 #
-# From step 14:
-# Step 14: JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
+# From `json-rfc.bitlex`:
+# JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
 #
-# After the made-up languages, the same constructs for a real one. It accepts what simdjson's
+# It accepts what simdjson's
 # parser accepts and refuses what it refuses (a refused file goes to tree-sitter), and writes
 # tree-sitter-json's named nodes, as the engine's named-only tapes hold them: the tokens
 #   '{' '}' '[' ']' ',' ':' '"'

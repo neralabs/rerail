@@ -1,5 +1,4 @@
 .policy "ruff-f706-return-outside-function" revision 1
-.guests off
 .description "Keep return inside a function; at module level or directly in a class body it is a Python syntax error."
 .language python
 .mode steer

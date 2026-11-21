@@ -86,6 +86,9 @@ pub struct CodeRuleSqlExecutor {
     #[napi(skip)] pub live_inputs: BTreeMap<String, Arc<live::Live>>,
     #[napi(skip)] pub documents: Option<documents::Documents>,
     #[napi(skip)] pub scratch: scratch::Pool,
+    /// The session's run (decision 0442): its relations' blocks, its records and settings are this run's, entered
+    /// by every call (`profiled`, `profiled_read`). The run of the thread that made it, else one of its own.
+    run: super::logic::profile::Caller,
     #[napi(skip)] pub versions: versions::Store,
     next_trace: usize,
     stats_ready: std::cell::Cell<bool>,
@@ -106,6 +109,9 @@ pub struct CodeRuleSqlExecutor {
 impl CodeRuleSqlExecutor {
     #[napi(constructor)]
     pub fn new(store_path: String) -> Result<Self> {
+        let run = super::logic::profile::caller();
+        let entered = run.clone();
+        let _run = entered.enter();
         let store = ContentStore::open(Path::new(&store_path)).map_err(error)?;
         let db = Database::open_admitted(&store).map_err(error)?;
         super::logic::native::register(&db).map_err(error)?;
@@ -130,6 +136,7 @@ impl CodeRuleSqlExecutor {
             live_inputs: BTreeMap::new(),
             documents: None,
             scratch,
+            run,
             versions: versions::Store::default(),
             next_trace: 0,
             stats_ready: std::cell::Cell::new(false),
@@ -397,7 +404,7 @@ impl CodeRuleSqlExecutor {
             let decl: Vec<(String, String)> = serde_json::from_value(decl).map_err(error)?;
             let columns = if decl.is_empty() { vec!["__presence".to_owned()] } else { catalog::view_columns(&decl) };
             self.check_input(rel, &columns, decl.len())?;
-            let types = decl.iter().map(|(_, t)| t.clone()).map(String::from).collect();
+            let types = decl.iter().map(|(_, t)| t.clone()).collect();
             let source = corpus::Corpus::new(Arc::clone(&run), rel, columns, types, form, self.store.atoms_handle());
             let bound_types = source.bound_types();
             bound.insert(rel.clone(), json!(if form == corpus::Form::Lines { "lines" } else { "rows" }));
@@ -621,7 +628,7 @@ impl CodeRuleSqlExecutor {
 }
 
 /// A program as a session runs it: its node attributes (`value`, `node_text`, `token`) the inputs the snapshot binds
-/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undone_on_request`). Answered, each
+/// for every node, not answered on request (decision 0174's rewrite undone, `lower::undo_on_request`). Answered, each
 /// is a relation of the program beside the session's input of that name, though no rule reads it ("value: SQL output
 /// already exists"). Then pruned (`producers::prune`).
 fn session_program(program: std::sync::Arc<Version>) -> Result<std::sync::Arc<Version>> {

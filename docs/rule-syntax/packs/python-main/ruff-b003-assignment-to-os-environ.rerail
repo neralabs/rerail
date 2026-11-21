@@ -1,5 +1,4 @@
 .policy "ruff-b003-assignment-to-os-environ" revision 1
-.guests off
 .description "Don't assign a new value to os.environ; it doesn't change the real process environment, so update or clear the existing mapping instead."
 .language python
 .mode steer

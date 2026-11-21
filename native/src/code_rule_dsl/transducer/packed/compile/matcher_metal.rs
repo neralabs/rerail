@@ -424,50 +424,69 @@ fn apart<'a>(
         if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
-        let plan = Plan {
-            labels,
-            counts,
-            patterns: patterns.clone(),
-            steps: std::mem::take(&mut segment.0),
-            chains: std::mem::take(&mut segment.1),
-            // The labels so far, none before the first run (`Plan::initial`).
-            initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
-            rows: Some(&rows),
-            buffers: Some(&kept),
-            roots: if last { roots } else { None },
-            w_cost,
-        };
-        crate::code_rule_dsl::prof::release();
-        let before = crate::code_rule_dsl::prof::footprint_mb();
-        mark("plan");
-        let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
-        if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-            eprintln!(
-                "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
-                crate::code_rule_dsl::prof::footprint_mb(),
-                crate::code_rule_dsl::prof::max_footprint_mb(),
-                crate::code_rule_dsl::prof::live_heap_mb(),
-                crate::code_rule_dsl::prof::resident_heap_mb(),
-                crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-            );
-            if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
-                eprintln!("RUN holding, pid {}", std::process::id());
-                while !std::path::Path::new(&path).exists() {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+        // The segment's steps as runs, in order (a stack, the next on top). A run past its evaluation's launches
+        // (`label_passes`: its plan's bound, or its submission's where a group did not fuse) with more than one step
+        // is two runs, of its halves: the first's labels start the second, as a host sweep's do. A step's launches
+        // do not shrink with the files, so splitting the wave's tapes alone could not make it fit.
+        let mut pieces = vec![(std::mem::take(&mut segment.0), std::mem::take(&mut segment.1))];
+        while let Some((steps, chains)) = pieces.pop() {
+            let plan = Plan {
+                labels,
+                counts,
+                patterns: patterns.clone(),
+                steps,
+                chains,
+                // The labels so far, none before the first run (`Plan::initial`).
+                initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
+                rows: Some(&rows),
+                buffers: Some(&kept),
+                roots: if last && pieces.is_empty() { roots } else { None },
+                w_cost,
+            };
+            crate::code_rule_dsl::prof::release();
+            let before = crate::code_rule_dsl::prof::footprint_mb();
+            mark("plan");
+            let ran = match crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes)) {
+                Err(Error::BackendLaunchLimit) if plan.steps.len() > 1 => {
+                    crate::code_rule_dsl::prof::count("labels.launch_split", 1);
+                    // A refused run leaves its starting labels in the plan (`Plan::initial`).
+                    outcome.labels = plan.initial.take().unwrap_or_default();
+                    let (mut steps, mut chains) = (plan.steps, plan.chains);
+                    let half = steps.len() / 2;
+                    pieces.push((steps.split_off(half), chains.split_off(half)));
+                    pieces.push((steps, chains));
+                    continue;
+                }
+                ran => ran?,
+            };
+            if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+                eprintln!(
+                    "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
+                    crate::code_rule_dsl::prof::footprint_mb(),
+                    crate::code_rule_dsl::prof::max_footprint_mb(),
+                    crate::code_rule_dsl::prof::live_heap_mb(),
+                    crate::code_rule_dsl::prof::resident_heap_mb(),
+                    crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+                );
+                if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
+                    eprintln!("RUN holding, pid {}", std::process::id());
+                    while !std::path::Path::new(&path).exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
                 }
             }
+            crate::code_rule_dsl::prof::peak("3b.gpu");
+            outcome.labels = ran.labels;
+            if !ran.records.is_empty() {
+                outcome.records = ran.records;
+            }
+            outcome.command_buffers += ran.command_buffers;
+            outcome.dispatches += ran.dispatches;
+            outcome.unfinished.extend(ran.unfinished);
+            outcome.replanned += ran.replanned;
+            outcome.rounds = outcome.rounds.max(ran.rounds);
+            (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         }
-        crate::code_rule_dsl::prof::peak("3b.gpu");
-        outcome.labels = ran.labels;
-        if !ran.records.is_empty() {
-            outcome.records = ran.records;
-        }
-        outcome.command_buffers += ran.command_buffers;
-        outcome.dispatches += ran.dispatches;
-        outcome.unfinished.extend(ran.unfinished);
-        outcome.replanned += ran.replanned;
-        outcome.rounds = outcome.rounds.max(ran.rounds);
-        (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
     };
     for ((step, chain), (recursive, levels)) in steps.into_iter().zip(chains).zip(&host) {

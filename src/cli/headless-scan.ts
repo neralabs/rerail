@@ -26,12 +26,12 @@ import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { textRealPath } from "../engine/catalog/checkout-control.js";
 import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
+import type { DeclaredRuleConfig } from "../engine/catalog/packs-file/pack-config.js";
 import type { RrPolicySource, RuleCatalog, RuleSetting } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { resolveRrModes, setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
-import type { DeclaredRuleConfig } from "../engine/catalog/packs-file/pack-config.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
@@ -694,7 +694,7 @@ async function scanRrRules(
   loadedRr?: NativeLoadedRrPolicies,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[]; failures: ScanFailure[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync({ paths: inputs, root, store, output, ...(paths === null ? {} : { sourcePaths: paths }) }, analysisRun, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
   const failures: ScanFailure[] = [];

@@ -71,13 +71,26 @@ fn layered(rng: &mut Rng, n: usize, deg: u64, layers: usize) -> (Arc<[u32]>, Arc
     (off.into(), dst.into())
 }
 
-fn gpu() -> GpuBackend {
-    gpu_backend().expect("this machine has a Metal device")
+/// The process's device: on a Mac, one it must have; elsewhere (a Linux host, whose CUDA device may be absent or
+/// held), none skips the test, as `shared::layer()` does.
+fn gpu() -> Option<GpuBackend> {
+    let g = gpu_backend();
+    #[cfg(target_os = "macos")]
+    assert!(g.is_some(), "this machine has a Metal device");
+    g
+}
+
+/// Whether the process has a device; on a Mac it must.
+fn has_device() -> bool {
+    let has = shared::layer().is_some();
+    #[cfg(target_os = "macos")]
+    assert!(has, "this machine has a Metal device");
+    has
 }
 
 /// Every kernel through one submission, compared with the reference.
 fn check(ks: &[Kernel]) -> Stats {
-    let g = gpu();
+    let Some(g) = gpu() else { return Stats::default() };
     for (i, k) in ks.iter().enumerate() {
         assert!(g.can(k), "launch {i} ({}) refused", k.form().name());
     }
@@ -141,7 +154,9 @@ fn histogram_counts() {
     check(&ks);
     // A code at or above the width is an error, not a count.
     let k = Kernel::Histogram { off: vec![0, 2].into(), codes: vec![1, 9].into(), width: 4 };
-    assert!(gpu().submit(&[&k]).unwrap_err().contains("not below the width"));
+    if let Some(g) = gpu() {
+        assert!(g.submit(&[&k]).unwrap_err().contains("not below the width"));
+    }
 }
 
 #[test]
@@ -205,7 +220,7 @@ fn a_mixed_batch_is_one_command_buffer_through_the_executor() {
 
 #[test]
 fn page_aligned_inputs_are_not_copied() {
-    let g = gpu();
+    let Some(g) = gpu() else { return };
     let page = g.gpu.page;
     let n = page / 4 * 3;
     // Three pages, page-aligned, given back at the end.
@@ -229,7 +244,7 @@ fn page_aligned_inputs_are_not_copied() {
 
 #[test]
 fn can_is_honest_about_shapes() {
-    let g = gpu();
+    let Some(g) = gpu() else { return };
     let mut rng = Rng(1);
     let (a, b) = (bits(&mut rng, 4, 64, 4), bits(&mut rng, 4, 128, 4));
     assert!(!g.can(&Kernel::BitProduct { a: a.clone(), b, min: None }), "different widths");
@@ -247,7 +262,7 @@ fn can_is_honest_about_shapes() {
 #[test]
 #[ignore]
 fn timing_on_spike_sized_inputs() {
-    let g = gpu();
+    let Some(g) = gpu() else { return };
     let mut rng = Rng(42);
     // W1: 13,088 documents' name bits against 444 rules, 12 words a row.
     let w1 = Kernel::BitProduct { a: bits(&mut rng, 13088, 768, 1), b: bits(&mut rng, 444, 768, 1), min: None };
@@ -305,7 +320,7 @@ fn timing_on_spike_sized_inputs() {
 /// levels) are freed and their addresses reused between launches, and must never be taken for another's.
 #[test]
 fn concurrent_submissions_are_exact() {
-    let g = gpu();
+    let Some(g) = gpu() else { return };
     let mut rng = Rng(5);
     let mut ks: Vec<Kernel> = Vec::new();
     for (n, deg) in [(2, 1), (60, 1), (150, 2), (300, 1), (129, 8), (150, 2), (2, 1)] {
@@ -337,6 +352,9 @@ fn concurrent_submissions_are_exact() {
 /// distinct values, sums of counts squared and cubed, and the most common values with their counts.
 #[test]
 fn column_statistics_of_resident_columns_are_read_in_place() {
+    if !has_device() {
+        return;
+    }
     let mut rng = Rng(0x5eed_0223);
     // Two columns of one column-major buffer: a node-like key (a narrow span far from zero), and one whose span passes
     // 32 bits (made again, 64 bits wide).
@@ -354,6 +372,9 @@ fn column_statistics_of_resident_columns_are_read_in_place() {
 
 #[test]
 fn column_statistics_on_the_device_are_the_exact_counts() {
+    if !has_device() {
+        return;
+    }
     use std::collections::HashMap;
     let mut rng = Rng(0x5eed_0209);
     // A skewed wide key (node-like ids), a narrow one, one value, and none.
@@ -374,4 +395,33 @@ fn column_statistics_on_the_device_are_the_exact_counts() {
         assert_eq!(g.top.iter().map(|t| t.1).collect::<Vec<_>>(), by.iter().take(16).copied().collect::<Vec<_>>());
         for (v, n) in &g.top { assert_eq!(counts.get(v), Some(n), "value {v}"); }
     }
+}
+
+/// Decision 0491 step 2: a pooled buffer of the join's (`join::Held`) is found by its address as a block's memory
+/// is, so a pass that binds it holds it; dropped meanwhile, it goes back to the pool only once that work completes.
+#[test]
+fn a_pooled_held_buffer_is_found_by_its_address() {
+    if shared::layer().is_none() {
+        return;
+    }
+    let held = join::Held::new(100).expect("a pooled buffer");
+    let at = held.buffer.contents() as usize;
+    let f = rerail_blocks::ledger::Fence::new();
+    assert!(f.uses_address(at), "a bind of a pooled buffer is the ledger's");
+    assert!(f.uses_address(at + 64), "found by any address in it");
+    drop(held);
+    assert!(rerail_blocks::ledger::Fence::new().uses_address(at), "held by the queued work after its drop");
+    f.complete();
+    assert!(!rerail_blocks::ledger::Fence::new().uses_address(at), "back to the pool once the work completed");
+}
+
+/// Decision 0491 step 4: the process's device names the memory domain its kernels read. Apple's GPU reads the host's
+/// memory in place: domain 0, so a region needs no mirror there.
+#[test]
+fn the_device_names_its_memory_domain() {
+    let Some(layer) = shared::layer() else { return };
+    #[cfg(target_os = "macos")]
+    assert_eq!(layer.device.domain(), 0, "Apple's unified memory is the host's");
+    #[cfg(not(target_os = "macos"))]
+    assert!(layer.device.domain() <= 1);
 }

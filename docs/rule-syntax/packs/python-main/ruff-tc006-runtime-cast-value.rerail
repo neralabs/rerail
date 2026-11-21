@@ -1,5 +1,4 @@
 .policy "ruff-tc006-runtime-cast-value" revision 1
-.guests off
 .description "Quote the type expression passed to typing.cast; a quoted type is not evaluated at runtime and every cast call reads the same."
 .language python
 .mode steer

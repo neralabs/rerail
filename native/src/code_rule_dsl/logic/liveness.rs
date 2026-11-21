@@ -110,7 +110,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             };
             wild.push(read.map(|a| a.args().map(|t| matches!(t, TermRef::Wild).then(|| { names.push(name()); names.len() - 1 })).collect()).unwrap_or_default());
         }
-        let head_args: Vec<T<'_>> = head.iter().map(|(t, n, _)| match n { Some(k) => T::Var(&names[*k]), None => t_of(v, r, t.expect("a term")) }).collect();
+        let head_args: Vec<T<'_>> = head.iter().map(|(t, n, _)| match n { Some(k) => T::Var(&names[*k]), None => t_of(r, t.expect("a term")) }).collect();
         for (i, l) in lits.iter().enumerate() {
             let (read, negated, aggregated) = match l.view() {
                 Lit::Atom(a) => (a, a.neg(), false),
@@ -121,7 +121,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             if !declared(rel) {
                 continue;
             }
-            let args: Vec<T<'_>> = read.args().zip(&wild[i]).map(|(t, n)| match n { Some(k) => T::Var(&names[*k]), None => t_of(v, r, t) }).collect();
+            let args: Vec<T<'_>> = read.args().zip(&wild[i]).map(|(t, n)| match n { Some(k) => T::Var(&names[*k]), None => t_of(r, t) }).collect();
             let live_rel = live(rel);
             let live_h = live(h);
             let mut rule = b.rule().head(live_rel.as_str(), &args);
@@ -140,7 +140,7 @@ pub fn program(v: &Version) -> Result<Arc<Version>, String> {
             if !negated {
                 for (k, (t, n, call)) in head.iter().enumerate() {
                     if *call {
-                        rule = rule.cmp(head_args[k].clone(), CmpOp::Eq, t_of(v, r, t.expect("a call")));
+                        rule = rule.cmp(head_args[k].clone(), CmpOp::Eq, t_of(r, t.expect("a call")));
                         let _ = n;
                     }
                 }

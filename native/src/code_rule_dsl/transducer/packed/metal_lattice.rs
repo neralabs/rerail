@@ -207,7 +207,7 @@ mod tests {
             match next() % 4 {
                 0 => copies.push((c, c - 1)),
                 1 => copies.push((c, next() % n)),
-                2 => bins.push((c, [b'+', b'-', b'*', b'/'][(next() % 4) as usize], next() % c, next() % c)),
+                2 => bins.push((c, b"+-*/"[(next() % 4) as usize], next() % c, next() % c)),
                 _ => {}
             }
         }

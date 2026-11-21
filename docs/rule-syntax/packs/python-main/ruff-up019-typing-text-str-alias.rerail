@@ -1,5 +1,4 @@
 .policy "ruff-up019-typing-text-str-alias" revision 1
-.guests off
 .description "Use str instead of typing.Text; Text is an alias of str that only exists for Python 2 compatibility and is deprecated."
 .language python
 .mode steer

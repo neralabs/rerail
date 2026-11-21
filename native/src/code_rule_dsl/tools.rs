@@ -26,11 +26,10 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     let span = super::logic::profile::span(||"SQL extension request".into());
     let result = sql_request(store,request);
     drop(span);
-    if profiling {
-        if let Some(directory) = super::logic::profile::directory() {
+    if profiling
+        && let Some(directory) = super::logic::profile::directory() {
             super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
-    }
     result
 }
 
@@ -240,7 +239,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
             Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
-                .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
+                .and_then(super::logic::plan::corpus::preparation::pruned)
                 .and_then(|pruned| super::logic::plan::lower::domains_of(&pruned).map(|_| ()).map_err(|e| e.to_string())) =>
             {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
@@ -269,7 +268,6 @@ pub fn run_rr(
     let mut options = options.clone();
     let mut run = PolicyInvocation::from_options(root, &mut options)?;
     let (program, files) = read_policy(path)?;
-    let _sources = super::logic::rr::profile_join_sources(&[path]);
     let mut report = run.evaluate(|root| run_program_checked(program.clone(), &files, root, out, &options))?;
     run.report(&mut report, true);
     Ok(report)
@@ -670,15 +668,11 @@ pub fn run_policies(
     };
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
     for group in groups.iter().filter(|g| g.members.len() > 1) {
-        // A failed pack can still contain policies that succeed on their own; with `strict`, its error is the batch's.
-        match invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
-            Ok(Some(each)) => {
-                for (&k, found) in group.members.iter().zip(each) {
-                    done[k] = Some(found);
-                }
+        // A failed pack can still contain policies that succeed on their own.
+        if let Ok(Some(each)) = invocation.evaluate(|root| run_pack(paths, &texts, group, root, out, options)) {
+            for (&k, found) in group.members.iter().zip(each) {
+                done[k] = Some(found);
             }
-            Err(error) if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") => return Err(error),
-            Ok(None) | Err(_) => {}
         }
     }
     let mut succeeded = true;
@@ -792,10 +786,14 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
+/// A pack's member's run (`run_pack`): its findings, and its run's record.
+type MemberRun = (Vec<serde_json::Value>, serde_json::Value);
+
 /// One group's policies run as one pack into `out/pack-<first>` (a dialect after the first into its own directory
 /// below it, as `run_program` places a policy's), and each one's findings written to its own `out/<k>` (its
 /// `rr_diagnostic`, in `outputs.rro`): per member, its findings and its run's record. `None` when a pack's run fails
-/// or a finding names no member's id: the group's policies then run alone, each with its own error.
+/// or a finding names no member's id: the group's policies then run alone, each with its own error (with
+/// `RERAIL_BATCH_PACK=strict`, the pack's error instead).
 fn run_pack(
     paths: &[std::path::PathBuf],
     texts: &[String],
@@ -803,7 +801,7 @@ fn run_pack(
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
-) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, ProgramRunError> {
+) -> Result<Option<Vec<MemberRun>>, ProgramRunError> {
     use super::{logic::plan::corpus, typing::file_local::Binding};
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
@@ -815,10 +813,10 @@ fn run_pack(
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
-    // With `RERAIL_BATCH_PACK=strict`, a failed group returns its error rather than running its policies alone.
-    let fallback = |reason: String| -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, ProgramRunError> {
+    // `RERAIL_BATCH_PACK=strict`: a failed pack returns its error, not `None`.
+    let fallback = |reason: String| {
         if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
-            Err(format!("combined run of {} policies failed: {reason}", texts.len()).into())
+            Err(ProgramRunError::Evaluation(format!("combined run of {} policies failed: {reason}", texts.len())))
         } else {
             Ok(None)
         }
@@ -839,9 +837,10 @@ fn run_pack(
         }
         let report = match corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) {
             Ok(report) => report,
+            // A store that fails is the invocation's to recover from (`PolicyInvocation::evaluate`): it runs again in memory.
             Err(error) => match ProgramRunError::from(error) {
-                cache @ ProgramRunError::Cache(_) => return Err(cache),
-                other => return fallback(other.to_string()),
+                ProgramRunError::Evaluation(reason) => return fallback(reason),
+                cache => return Err(cache),
             },
         };
         files += report.files;
@@ -940,17 +939,14 @@ pub fn flatten_lowered(path: &std::path::Path) -> Result<String, String> {
     super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
-/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
-/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
-/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
-/// findings. T's facts reproduce one program's run only.
-/// `settings` are `--env key=value`s ([`settings`]).
-#[allow(clippy::too_many_arguments)]
+/// A run `logic` makes (`dialect_runs`): its dialect (`None`: as written), and its programs.
+type DialectRun = (Option<&'static str>, Vec<String>);
+
 /// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
 /// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
 /// its language set to the dialect by the run (the `dialect` option, `corpus::added`), its text as written. The
 /// corpus is listed once for all of them.
-fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, ProgramRunError> {
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<DialectRun>, ProgramRunError> {
     use super::language::CodeRuleLanguage;
     use super::logic::plan::corpus;
     let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
@@ -1005,11 +1001,27 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
     Ok(runs)
 }
 
-pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
-    logic_checked(programs, root, t_facts, out, modes, metal, chunk_nodes, settings).map_err(|error| error.to_string())
+/// How `logic` runs its programs: the SQL executor's modes, on Metal or the CPU, the chunk's nodes, and the
+/// `--env key=value` settings ([`settings`]).
+#[derive(Clone, Copy)]
+pub struct LogicRun<'a> {
+    pub modes: &'a str,
+    pub metal: bool,
+    pub chunk_nodes: usize,
+    pub settings: &'a [String],
 }
 
-fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, ProgramRunError> {
+/// `programs` (`.rerail` texts) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS. Several programs run as
+/// one (decision 0051): each file is parsed and batched once for all of them, and `violation` holds every one's
+/// findings. T's facts reproduce one program's run only.
+/// `run`'s settings are `--env key=value`s ([`settings`]).
+pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, String> {
+    logic_checked(programs, root, t_facts, out, run).map_err(|error| error.to_string())
+}
+
+fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
     if programs.len() > 1 && t_facts.is_some() {
@@ -1126,7 +1138,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1317,20 +1329,21 @@ fn repeat_script_command(args: &[String]) -> Result<String, String> {
 }
 
 /// `run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]`.
-/// `--revision` and `--analysis-scope`, taken from the command line, are added to its options by `with`.
-fn run_rr_command(args: &[String], with: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
+/// `revision` adds the command's `--revision` and `--analysis-scope` to the options.
+fn run_rr_command(args: &[String], revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
     let options = match args {
         [_, _, _] => serde_json::Value::Null,
         [_, _, _, file] => serde_json::from_str(&read(file)?).map_err(|e| e.to_string())?,
         _ => return Err(USAGE.into()),
     };
-    policy_command_report(crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &with(options))?)
+    policy_command_report(crate::tools::run_rr(Path::new(&args[0]), Path::new(&args[1]), Path::new(&args[2]), &revision(options))?)
 }
 
 /// `run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...`: several policies over one
 /// repository, each over its own language's files (O105). `--tool-calls`: the tool calls the run is given (`[{"id",
 /// "tool", "input"}]`, the `toolCalls` option: `corpus::added`), which `.scope tool_calls` policies read.
-fn run_policies_command(args: &[String], with: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
+/// `revision` adds the command's `--revision` and `--analysis-scope` to the options.
+fn run_policies_command(args: &[String], revision: &dyn Fn(serde_json::Value) -> serde_json::Value) -> Result<String, String> {
     let usage = "usage: rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...";
     let (mut positional, mut options) = (Vec::new(), serde_json::Value::Null);
     let mut rest = args.iter();
@@ -1342,7 +1355,7 @@ fn run_policies_command(args: &[String], with: &dyn Fn(serde_json::Value) -> ser
     }
     let [root, out, first, more @ ..] = positional.as_slice() else { return Err(usage.into()) };
     let paths: Vec<std::path::PathBuf> = std::iter::once(first).chain(more).map(|p| std::path::PathBuf::from(p.as_str())).collect();
-    policy_command_report(crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &with(options))?)
+    policy_command_report(crate::tools::run_policies(&paths, Path::new(root.as_str()), Path::new(out.as_str()), &revision(options))?)
 }
 
 /// The run's options of the tool calls in `file`, once they are of their shape (`added::tool_call_rows`).
@@ -1663,7 +1676,7 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         return Err("--analysis-scope requires --revision".into());
     }
     let eval = |root: &Path| {
-        let run = || logic_checked(&programs, root, facts, Path::new(out), &modes, metal, chunk, &env);
+        let run = || logic_checked(&programs, root, facts, Path::new(out), &crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env });
         if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
     };
     let mut invocation = PolicyInvocation::begin(Path::new(root), revision.as_deref(), analysis_scope.as_deref())?;
@@ -2167,12 +2180,6 @@ mod settings_tests {
 mod git_revision_tests {
     use super::*;
 
-    /// A command as the process runs one, in a run of its own (`cli` takes the process's machine).
-    fn cli(args: &[String]) -> (Result<String, String>, Option<String>) {
-        let shared = crate::code_rule_dsl::logic::run::Shared::new();
-        super::cli_in(args, &mut Default::default(), &shared)
-    }
-
     #[test]
     fn a_nested_working_tree_batch_leaves_publication_to_its_caller() {
         use super::super::logic::plan::corpus;
@@ -2365,7 +2372,7 @@ Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l,
 "#).unwrap();
         let args = vec!["run-rr".to_owned(), policy.display().to_string(), root.display().to_string(),
             fixture.path().join("commit-out").display().to_string(), "--analysis-scope".to_owned(), "review".to_owned(), "--revision".to_owned(), commit];
-        let result: serde_json::Value = serde_json::from_str(&cli(&args).0.unwrap()).unwrap();
+        let result: serde_json::Value = serde_json::from_str(&cli_in(&args, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap()).unwrap();
         let diagnostics = result["diagnostics"].as_array().unwrap();
         assert_eq!(diagnostics.len(), 1, "{result}");
         assert_eq!(diagnostics[0]["code"], "Seen");
@@ -2390,7 +2397,7 @@ Seen(@place(p, l), text, tree) :- doc(d, p, _), split_line(d, l, text), git_rev(
         assert!(root.join("untracked.py").exists());
         let mut missing = args.clone();
         missing.pop();
-        assert!(cli(&missing).0.unwrap_err().contains("--revision requires"));
+        assert!(cli_in(&missing, &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap_err().contains("--revision requires"));
     }
 
     #[test]
@@ -2418,8 +2425,8 @@ subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
 .output subject
 "#).unwrap();
         let output = fixture.path().join("metadata-out");
-        cli(&["logic".into(), policy.display().to_string(), root.display().to_string(), output.display().to_string(),
-            "--revision".into(), commit, "--analysis-scope".into(), "review".into()]).0.unwrap();
+        cli_in(&["logic".into(), policy.display().to_string(), root.display().to_string(), output.display().to_string(),
+            "--revision".into(), commit, "--analysis-scope".into(), "review".into()], &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
         let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
         assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
     }

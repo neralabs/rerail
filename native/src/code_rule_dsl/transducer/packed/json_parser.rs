@@ -1,4 +1,4 @@
-//! JSON's parser: the ladder's JSONC grammar (`crates/compiler/bitlex_ladder/15-jsonc.bitlex`, JSON with `//` and
+//! JSON's parser: the JSONC grammar (`crates/json_parser/jsonc.bitlex`, JSON with `//` and
 //! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
@@ -10,8 +10,8 @@
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 
-/// The grammar: the ladder's JSONC step.
-const GRAMMAR: &str = include_str!("../../../../crates/compiler/bitlex_ladder/15-jsonc.bitlex");
+/// The grammar: JSONC.
+const GRAMMAR: &str = include_str!("../../../../crates/json_parser/jsonc.bitlex");
 
 /// The compiled parser.
 struct Compiled {
@@ -62,6 +62,9 @@ pub mod tape;
 // writes the tape in place (0134). On MSVC its C++ is compiled by clang-cl (`rerail-simdjson-native`).
 #[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
+// What simdjson refuses: the Bitlex parser, then tree-sitter-json past trailing commas.
+#[cfg(not(target_family = "wasm"))]
+pub mod fallback;
 
 pub fn image(src: &str) -> Option<Vec<u8>> {
     compiled().ok()?.parser.image(src.as_bytes()).ok()

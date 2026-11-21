@@ -7,6 +7,7 @@ use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
+mod reference_stage_tests;
 
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
@@ -163,7 +164,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
-    // The reference graph the corpus runner binds (`logic::plan::corpus::references`): the policy's, one per policy.
+    // The reference graph `python/references.rerail` derives, under the `.references` setting: the policy's, one per policy.
     let graphs = reference_graphs(&document);
     if graphs.len() > 1 {
         return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));
@@ -1785,7 +1786,7 @@ struct Baseline {
 
 impl Baseline {
     fn path() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
+        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/convert/replay_baseline.txt")
     }
 
     /// The recorded baseline, or why it does not read.

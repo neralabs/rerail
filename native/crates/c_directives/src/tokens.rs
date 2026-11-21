@@ -70,11 +70,11 @@ pub fn read(image: &[u8], src: &[u8]) -> Result<Vec<Tok>, String> {
             bol = true;
             continue;
         }
-        let start = v.start(i) as u32;
+        let start = v.start(i);
         // A byte order mark is no white space.
         let space = start > end && !line_break_before(src, start as usize) && !(start == 3 && src.starts_with(b"\xef\xbb\xbf"));
-        out.push(Tok { kind, start, end: v.end(i) as u32, flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
-        (bol, end) = (false, v.end(i) as u32);
+        out.push(Tok { kind, start, end: v.end(i), flags: if bol { BOL } else { 0 } | if space { SPACE } else { 0 } });
+        (bol, end) = (false, v.end(i));
     }
     Ok(out)
 }
@@ -111,13 +111,17 @@ mod tests {
         if interp != image {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
-        // The device runs it wherever there is one: always on macOS; on Linux where a GPU is (CI's has none).
+        // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
+        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device, and is then
+        // skipped.
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        if cfg!(target_os = "macos") || rerail_metal::lane::device().is_ok() {
-            let m = c.metal_images(&[src]).map_err(|e| format!("the device runs it: {e:?}"))?;
-            if m[0] != image {
-                return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
-            }
+        if let Some(m) = match c.metal_images(&[src]) {
+            Ok(m) => Some(m),
+            Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),
+            Err(_) => None,
+        } && m[0] != image
+        {
+            return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some()));
         }
         let Some(image) = image else { return Ok(false) };
         let (got, want) = (read(&image, src)?, lean(src, cpp));
@@ -152,7 +156,6 @@ mod tests {
         ];
         for cpp in [false, true] {
             for src in cases {
-                let src = src.replace('\u{feff}', "\u{feff}");
                 assert_eq!(check(src.as_bytes(), cpp), Ok(true), "{src:?} (C++ {cpp})");
             }
         }

@@ -1,5 +1,4 @@
 .policy "ruff-ruf058-starmap-zip" revision 1
-.guests off
 .description "Pass the iterables straight to map instead of calling starmap on zip; zipping only to unpack each tuple again is unnecessary."
 .language python
 .mode steer

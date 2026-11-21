@@ -1,5 +1,4 @@
 .policy "ruff-c417-unnecessary-map" revision 1
-.guests off
 .description "Use a comprehension or generator expression instead of map with a lambda; it avoids a function call for each item."
 .language python
 .mode steer

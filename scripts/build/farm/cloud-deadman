@@ -1,0 +1,21 @@
+#!/bin/sh
+# A cloud guest's own drop-dead switch (guest.py, README "Cloud cost"): installed on the VM by the
+# farm at each start, run every minute by a systemd timer there. It powers the VM off (a stop: its
+# billing for the machine ends, its disk stays) once nothing has touched the farm's heartbeat file
+# for MINUTES, and the VM has been up that long. The farm's watcher on the Mac touches the file every
+# minute while it runs: so a VM outlives the Mac that runs it (a crash, a closed lid, the network
+# gone) by MINUTES at most, whoever started it. The provider's own limit (`max-run-duration`, set
+# by the farm before each start) bounds it again, whatever happens on the VM.
+#
+#   cloud-deadman MINUTES        (by its timer)
+set -eu
+minutes=${1:-30}
+beat=/var/tmp/rerail-farm-heartbeat
+up=$(cut -d. -f1 /proc/uptime)
+[ "$up" -ge $((minutes * 60)) ] || exit 0
+if [ -e "$beat" ]; then
+  age=$(( $(date +%s) - $(stat -c %Y "$beat") ))
+  [ "$age" -ge $((minutes * 60)) ] || exit 0
+fi
+logger -t rerail-farm "no heartbeat from the farm for ${minutes} min: powering off"
+systemctl poweroff

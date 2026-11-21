@@ -1,5 +1,4 @@
 .policy "ruff-d212-multi-line-summary-first-line" revision 1
-.guests off
 .description "Start a multi-line docstring's summary right after the opening quotes, on the first line."
 .language python
 .mode steer

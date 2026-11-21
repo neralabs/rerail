@@ -211,6 +211,7 @@ UKL_INLINE UklWorkQueue test_queue(UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32
     q.slots = slots;
     q.control = control;
     q.capacity = 4u * nodes;
+    q.ring = 0u;
     return q;
 }
 
@@ -325,9 +326,10 @@ DEFINE_KERNEL2(tests, t_grid_seg,
     UklGrid g;
     g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
     ukl_grid_seg_scan_n(g, args.w >> 16, ukl_atomic_load((UKL_GLOBAL uint32_t*)count), (UKL_COHERENT const uint32_t*)in,
-                        (UKL_COHERENT const uint32_t*)heads, (UKL_COHERENT uint32_t*)out, (UKL_COHERENT uint32_t*)sums, sv, sf, flag);
+                        (UKL_COHERENT const uint32_t*)heads, (UKL_COHERENT uint32_t*)out, (UKL_COHERENT uint32_t*)sums, sv, sf, flag __UKL_ARGS);
 }
 
+#if UKL_SIMD_WIDTH >= 8
 // ukl/grid.h's sort: `keys`' first `count[0]` by their low `(w >> 16) & 0xff` bits, those below `w >> 24` known in
 // order already, the values their indexes before it.
 DEFINE_KERNEL2(tests, t_grid_sort,
@@ -361,3 +363,4 @@ DEFINE_KERNEL2(tests, t_grid_sort,
                       (UKL_COHERENT uint32_t*)values, (UKL_COHERENT uint64_t*)keys2, (UKL_COHERENT uint32_t*)values2,
                       (UKL_COHERENT uint32_t*)hist, (UKL_COHERENT uint32_t*)sums, l, scratch, flag __UKL_ARGS);
 }
+#endif

@@ -1,5 +1,4 @@
 .policy "bandit-b103-set-bad-file-permissions" revision 1
-.guests off
 .description "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files."
 .language python
 .mode steer

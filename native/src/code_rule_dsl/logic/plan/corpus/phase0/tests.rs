@@ -34,7 +34,7 @@
             assert_eq!(graph, builtin, "{text}");
         }
         // A text made from a program file keeps the graph a run of `bootstrap.rerail` would give it (`keep_text`).
-        let programs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+        let programs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
         for file in [programs.join("calls_cx.rerail"), lib.join("python/conditions.rerail")] {
             let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
@@ -43,7 +43,7 @@
             assert_eq!(kept.digest(), derived.digest(), "{}:\nkept {}\nderived {}", file.display(), kept.describe(), derived.describe());
         }
         // A name with no file is refused as before.
-        let err = crate::code_rule_dsl::logic::rr::parse_version("#include \"no/such.rerail\"\n").err().expect("refused").to_string();
+        let err = crate::code_rule_dsl::logic::rr::parse_version("#include \"no/such.rerail\"\n").expect_err("refused").to_string();
         assert!(err.contains("no such file in the library"), "{err}");
     }
 

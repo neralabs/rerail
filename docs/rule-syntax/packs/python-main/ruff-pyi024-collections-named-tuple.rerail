@@ -1,5 +1,4 @@
 .policy "ruff-pyi024-collections-named-tuple" revision 1
-.guests off
 .description "Use typing.NamedTuple instead of collections.namedtuple; it lets each field carry a type annotation that type checkers can analyze."
 .language python
 .mode steer

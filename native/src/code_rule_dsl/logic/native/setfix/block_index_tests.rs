@@ -88,9 +88,9 @@ fn a_relations_index_holds_no_table_of_its_own() {
 
 /// A relation `Rel` derived of `n` rows `(id % 7, id)`, asked for an order on column 1 too, frozen into an input.
 fn frozen(n: usize) -> std::sync::Arc<InRel> {
-    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
+    let mut rel = super::Rel::new("edge", b"ii");
     rel.want(&[1]);
-    for r in rows(n).chunks_exact(2) {
+    for r in rows(n).as_chunks::<2>().0 {
         rel.push(r);
     }
     std::sync::Arc::new(InRel::moved(rel))
@@ -114,7 +114,7 @@ fn a_frozen_relations_orders_are_in_its_blocks_directory() {
     let r = ib.relation();
     // Column 1 asked for, the dedup order became `[1, 0]` (`Rel::want`): one order, found by its key.
     let i = r.find_order(&[1, 0], n as u32).expect("the order on [1, 0] in the directory");
-    assert_eq!(rerail_blocks::relation::Relation::order_rows(r.index(i)), n, "every row, in one run");
+    assert_eq!(rerail_blocks::relation::Relation::order_rows(r.index_at(i)), n, "every row, in one run");
     assert_eq!(r.orders().count(), rel.chains.len(), "every order kept is in the directory");
     assert!(!rel.chains.is_empty() && rel.chains.iter().all(|o| o.runs() == 1 && o.borrowed()), "handles to the block's orders, one run each");
     // A probe through the order on column 1 finds its row.
@@ -132,7 +132,7 @@ fn a_based_relation_reads_its_old_orders_in_the_block() {
     let n = 3000;
     let old = frozen(n);
     let at: Vec<*const u32> = old.chains.iter().map(|o| o.first_ids()).collect();
-    let based = super::Rel::based("edge", &[b'i', b'i'], &old, None).expect("based on the old relation");
+    let based = super::Rel::based("edge", b"ii", &old, None).expect("based on the old relation");
     assert_eq!(based.idx.iter().map(|o| o.first_ids()).collect::<Vec<_>>(), at, "the same ids, where they lie");
 }
 
@@ -143,7 +143,7 @@ fn a_frozen_relations_known_sorted_ranges_are_in_its_block() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
     let n = 4000;
-    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
+    let mut rel = super::Rel::new("edge", b"ii");
     let cols = rel.idx[0].cols.clone();
     for id in 0..n as i64 {
         rel.push(&[0, id]);
@@ -166,8 +166,8 @@ fn a_frozen_relations_dead_rows_are_its_blocks_and_the_devices() {
     // A run of its own (decision 0442): its open blocks and counts are the run's.
     let _run = crate::code_rule_dsl::logic::profile::test_run();
     let n = 1000;
-    let mut rel = super::Rel::new("edge", &[b'i', b'i']);
-    for r in rows(n).chunks_exact(2) {
+    let mut rel = super::Rel::new("edge", b"ii");
+    for r in rows(n).as_chunks::<2>().0 {
         rel.push(r);
     }
     for id in (0..n as u32).step_by(5) {
@@ -220,7 +220,7 @@ fn an_inputs_value_counts_and_statistics_are_in_a_block() {
     use crate::code_rule_dsl::facts::vtab::Source;
     let n = 700;
     let rel = std::sync::Arc::new(InRel::from_flat(rows(n), n, vec![b'i'; 2]));
-    let src = super::Derived::new(std::sync::Arc::clone(&rel), None);
+    let src = super::Derived::source(std::sync::Arc::clone(&rel), None);
     let want = |v: i64| (0..n as i64).filter(|id| id % 7 == v).count() as i64;
     assert_eq!(src.value_counts(&[(0, 3), (0, 6), (0, 9)]), Some(vec![want(3), want(6), 0]));
     {

@@ -1,6 +1,6 @@
 # 0473. A formula's group is as wide as its file's words need
 
-Status: superseded by 0475 (2026-11-19; numbered 0459 on final-rerail-shape and the sync branch until 2026-11-20, as the hub has its own 0459): `label_formula` is removed, and with it the size classes. Was accepted
+Status: superseded by 0475 (2026-11-19): `label_formula` is removed, and with it the size classes. Was accepted Numbered 0459 on final-rerail-shape (renumbered in the roll-up: the hub has its own 0459).
 (2026-11-19). Follows 0449 and 0440 (merged). The first measure of the plan for the label DAG on
 the work queue (0027).
 

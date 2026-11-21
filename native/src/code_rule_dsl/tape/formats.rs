@@ -257,7 +257,7 @@ impl TreeOps {
             }
         }
         sorted[..count].sort_unstable();
-        let flags = u8::from(v.extra) * super::CODE_EXTRA | u8::from(v.error) * super::CODE_ERROR | u8::from(v.missing) * super::CODE_MISSING;
+        let flags = (u8::from(v.extra) * super::CODE_EXTRA) | (u8::from(v.error) * super::CODE_ERROR) | (u8::from(v.missing) * super::CODE_MISSING);
         let code = Code { kf: v.kf, flags, alias, class_count: count as u8, classes: sorted };
         if let Some(&n) = self.numbers.get(&code) {
             return Ok(n);
@@ -270,7 +270,7 @@ impl TreeOps {
     }
 
     /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
-    pub(super) fn finish(self) -> Option<f16::Finished> {
+    pub(super) fn finish(mut self) -> Option<f16::Finished> {
         let why = match self.bad {
             Some(why) => why,
             None => match self.w.finish() {
@@ -430,7 +430,7 @@ impl TapeImage {
 /// writer, as `lean` writes the other languages', else format 15's image.
 pub(super) enum RrTape {
     Image(Vec<u8>),
-    Written(f16::Finished),
+    Written(Box<f16::Finished>),
 }
 
 /// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
@@ -458,7 +458,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
         if w.writes_16() {
             match w.finish_16()? {
-                Ok(f) => return Ok(RrTape::Written(f)),
+                Ok(f) => return Ok(RrTape::Written(Box::new(f))),
                 Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
             // As `Lean`'s: the parse runs again for format 15.

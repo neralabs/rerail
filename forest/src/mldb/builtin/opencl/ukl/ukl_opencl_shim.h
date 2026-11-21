@@ -329,13 +329,20 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
     { Type __ukl_e; __ukl_out[__ukl_k++] = sizeof(Type); __ukl_out[__ukl_k++] = __alignof__(Type); \
       __ukl_out[__ukl_k++] = __UKL_KIND(__ukl_e); }
 
+// A scalar's kind from arithmetic on its type: NVIDIA's OpenCL compiler accepts `_Generic` but always takes its
+// `default` (probed on a GB10's, 580.95), so an `ARGS` field, which is a scalar (`rows::struct_type`), is not
+// measured with it: bool where 2 converts to 1, floating where 1 / 2 is not 0, signed where -1 is below 0.
+#define __UKL_SCALAR_KIND(e) ((__typeof__(e))2 == (__typeof__(e))1 ? 'b' \
+    : (__typeof__(e))1 / (__typeof__(e))2 != (__typeof__(e))0 ? (sizeof(e) == 8 ? 'd' : 'f') \
+    : (__typeof__(e))-1 < (__typeof__(e))0 ? 'i' : 'u')
+
 // A structure passed by value (an `ARGS` row), reflected for the host: a one-thread kernel writes its size and
 // alignment, each field's offset, size and kind (measured on an instance), then the fields' names as text.
 // One field's three numbers, an expression (the fields are joined by commas).
 #define __UKL_FIELD_LAYOUT(Type, Field) \
     (__ukl_out[__ukl_k++] = (ulong)((char *)&__ukl_v.Field - (char *)&__ukl_v), \
      __ukl_out[__ukl_k++] = sizeof(__ukl_v.Field), \
-     __ukl_out[__ukl_k++] = __UKL_KIND(__ukl_v.Field))
+     __ukl_out[__ukl_k++] = __UKL_SCALAR_KIND(__ukl_v.Field))
 #define UKL_REFLECT_STRUCT(Type, ...) \
     __kernel void Type ## __ukl_layout(__global ulong * __ukl_out) \
     { \

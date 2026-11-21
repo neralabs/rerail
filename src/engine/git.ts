@@ -986,7 +986,7 @@ function gitEnvironment(executable: string, overrides: RunGitOptions["env"] = {}
   // which would override -C, in batch reads too: this process's are left out ({@link repositoryEnvironment}).
   const inherited: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (gitInherits(key)) inherited[key] = value;
+    if (!repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) inherited[key] = value;
   }
   return { ...processGit.startEnvironment(executable, { ...inherited, ...overrides }), GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
 }
@@ -1007,11 +1007,6 @@ const repositoryEnvironment = new Set([
   "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_SHALLOW_FILE",
   "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE",
 ]);
-
-/** Whether Rerail's Git calls see this process's `name`: every variable but {@link repositoryEnvironment}'s. */
-export function gitInherits(name: string): boolean {
-  return !repositoryEnvironment.has(process.platform === "win32" ? name.toUpperCase() : name);
-}
 
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch

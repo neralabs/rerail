@@ -1,5 +1,4 @@
 .policy "ruff-c406-unnecessary-literal-dict" revision 1
-.guests off
 .description "Write a dict literal instead of passing a list or tuple of pairs to dict(); the call builds a throwaway sequence first."
 .language python
 .mode steer

@@ -415,7 +415,7 @@ fn git_check_ignore(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {
     let text = String::from_utf8(output.stdout).unwrap();
     let fields = text.split('\0').collect::<Vec<_>>();
     fields
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|record| {
             let (source, line, pattern) = (record[0], record[1], record[2]);
             if source.is_empty() || pattern.starts_with('!') {
@@ -715,7 +715,7 @@ fn read_damaged(work: &Path, outcomes: &mut Outcomes, label: &str) {
     let ignored = text
         .split('\0')
         .collect::<Vec<_>>()
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|record| !record[0].is_empty() && !record[2].starts_with('!'))
         .collect::<Vec<_>>();
     if ignored != engine {

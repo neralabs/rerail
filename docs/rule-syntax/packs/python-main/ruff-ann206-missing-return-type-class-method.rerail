@@ -1,5 +1,4 @@
 .policy "ruff-ann206-missing-return-type-class-method" revision 1
-.guests off
 .description "Annotate the return type of class methods; the annotation documents what they return and lets a type checker verify it."
 .language python
 .mode steer

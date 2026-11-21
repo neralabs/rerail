@@ -29,10 +29,10 @@
 // The words of a line: its tokens (`count`: a test's operands' leaves, a macro-form include's
 // name's), the first one's node (`first`), and its kind (`kind`: 0 where the word is no active
 // `#if`, `#elif` or macro-form include, nor an include past the depth's bound).
-UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes,
-                            UKL_GLOBAL const PpNode* nodes, uint32_t max_depth, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
-                            UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL uint32_t* count, UKL_GLOBAL uint32_t* first, UKL_GLOBAL uint32_t* kind, UKL_GLOBAL uint32_t* inst,
-                            UKL_GLOBAL const uint32_t* latest, UKL_GLOBAL const uint32_t* latestn, UKL_GLOBAL uint32_t* iline, UKL_GLOBAL uint32_t* ilinen, uint32_t w) {
+UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes,
+                            PP_GLOBAL const PpNode* nodes, uint32_t max_depth, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const PpDir* rows,
+                            PP_GLOBAL const uint32_t* dactive, PP_GLOBAL uint32_t* count, PP_GLOBAL uint32_t* first, PP_GLOBAL uint32_t* kind, PP_GLOBAL uint32_t* inst,
+                            PP_GLOBAL const uint32_t* latest, PP_GLOBAL const uint32_t* latestn, PP_GLOBAL uint32_t* iline, PP_GLOBAL uint32_t* ilinen, uint32_t w) {
     if (w >= n_dirs[0]) return;
     count[w] = 0u;
     first[w] = PP_NONE;
@@ -71,7 +71,7 @@ UKL_INLINE void p1_if_count(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uin
 }
 
 // The kind of the operator named `key` (0: none).
-UKL_INLINE uint32_t p1_if_opk(UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, uint64_t key) {
+UKL_INLINE uint32_t p1_if_opk(PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds, uint32_t n_ops, uint64_t key) {
     for (uint32_t k = 0u; k < n_ops && k < 256u; k++) {
         if (op_keys[k] == key) return op_kinds[k];
     }
@@ -90,9 +90,9 @@ UKL_INLINE bool p1_defined_operand(Ux u, uint32_t g, uint32_t s, uint32_t lo, ui
 
 // Top token `s` of the tests' lines: its node, its mark, and its meaning at its directive's slot
 // as `in_if` reads it (an operator or a raw operand is no name).
-UKL_INLINE void p1_if_tokens(Ux u, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL const uint32_t* first, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* n_dirs,
-                             UKL_GLOBAL const uint32_t* total, UKL_GLOBAL const uint32_t* dslot, uint64_t defined_key, UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds, uint32_t n_ops,
-                             UKL_GLOBAL uint32_t* if_nodes, UKL_GLOBAL uint32_t* ops, UKL_GLOBAL uint32_t* lookups, UKL_GLOBAL uint32_t* flags, UKL_GLOBAL uint32_t* bad, uint32_t s) {
+UKL_INLINE void p1_if_tokens(Ux u, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs,
+                             PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* dslot, uint64_t defined_key, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds, uint32_t n_ops,
+                             PP_GLOBAL uint32_t* if_nodes, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, PP_GLOBAL uint32_t* flags, PP_GLOBAL uint32_t* bad, uint32_t s) {
     if (s >= total[0]) return;
     uint32_t j = pb_item_of(at, n_dirs[0], s);
     uint32_t lo = at[j], g = first[j] + (s - lo), end = lo + count[j];
@@ -127,8 +127,8 @@ UKL_INLINE void p1_if_tokens(Ux u, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL 
 // A test's operand's end (its `)` + 1, or its line's end), for the reach's max scan.
 // A header test's operand that starts with neither `"…"` nor `<` is expanded first
 // (`Pp::header_of`): it is read as text is.
-UKL_INLINE void p1_if_has_ends(Ux u, UKL_GLOBAL const uint32_t* if_nodes, UKL_GLOBAL const uint32_t* ops, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* total, UKL_GLOBAL const uint32_t* depth,
-                               UKL_GLOBAL const uint64_t* closes, UKL_GLOBAL const uint32_t* n_close, UKL_GLOBAL uint32_t* hend, uint32_t s) {
+UKL_INLINE void p1_if_has_ends(Ux u, PP_GLOBAL const uint32_t* if_nodes, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* depth,
+                               PP_GLOBAL const uint64_t* closes, PP_GLOBAL const uint32_t* n_close, PP_GLOBAL uint32_t* hend, uint32_t s) {
     uint32_t n = total[0];
     if (s >= n) return;
     hend[s] = 0u;
@@ -146,7 +146,7 @@ UKL_INLINE void p1_if_has_ends(Ux u, UKL_GLOBAL const uint32_t* if_nodes, UKL_GL
 }
 
 // A test's operand's tokens are read raw (`Pp::builtin_operand`): no names.
-UKL_INLINE void p1_if_mask(UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* total, UKL_GLOBAL const uint32_t* reach, UKL_GLOBAL uint32_t* ops, UKL_GLOBAL uint32_t* lookups, uint32_t s) {
+UKL_INLINE void p1_if_mask(PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* reach, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, uint32_t s) {
     if (s >= total[0] || s == 0u) return;
     uint32_t j = pb_item_of(at, n_dirs[0], s);
     if (s > at[j] && reach[s - 1u] > s) {
@@ -212,7 +212,7 @@ UKL_INLINE bool eo_binary(uint32_t op) { return op >= EO_OROR && op <= EO_PERCEN
 UKL_INLINE bool eo_unary(uint32_t op) { return op >= EO_UPLUS && op <= EO_UBANG; }
 
 // A punctuator's operator, by its bytes.
-UKL_INLINE uint32_t eo_punct(UKL_GLOBAL const uint8_t* p, uint32_t n) {
+UKL_INLINE uint32_t eo_punct(PP_GLOBAL const uint8_t* p, uint32_t n) {
     uint8_t a = p[0], b = n > 1u ? p[1] : ((uint8_t)(0));
     if (n == 1u) {
         switch (a) {
@@ -407,17 +407,23 @@ UKL_INLINE bool sy_end(UKL_PRIVATE IfSy* y) {
 
 // A token's phase-2 bytes into `b` (its line splices left out): their count, `IF_TOKB + 1` past
 // the buffer.
+// The loop counts the bytes written, and each is written at that count: Q367, on an M1 Max (macOS
+// 26.2) bytes stored at a second counter (`b[n++] = p[i++]`) read back wrong.
 UKL_INLINE uint32_t if_bytes(Span r, UKL_PRIVATE uint8_t* b) {
-    uint32_t n = 0u;
-    for (uint32_t i = 0u; i < r.len;) {
-        if (r.p[i] == ((uint8_t)('\\'))) {
+    uint32_t i = 0u;
+    for (uint32_t n = 0u; n <= IF_TOKB; n++) {
+        // Past the line splices here.
+        for (uint32_t k = 0u; k < r.len && i < r.len && r.p[i] == ((uint8_t)('\\')); k++) {
             uint32_t e = splice_end(r.p, i, r.len);
-            if (e != i) { i = e; continue; }
+            if (e == i) break;
+            i = e;
         }
-        if (n >= IF_TOKB) return IF_TOKB + 1u;
-        b[n++] = r.p[i++];
+        if (i >= r.len) return n;
+        if (n == IF_TOKB) break;
+        b[n] = r.p[i];
+        i++;
     }
-    return n;
+    return IF_TOKB + 1u;
 }
 
 UKL_INLINE uint32_t if_digit(uint8_t c) {
@@ -431,49 +437,67 @@ UKL_INLINE uint32_t if_digit(uint8_t c) {
 #define SFX2(a, b) ((uint32_t)(a) | ((uint32_t)(b) << 8))
 #define SFX3(a, b, c) ((uint32_t)(a) | ((uint32_t)(b) << 8) | ((uint32_t)(c) << 16))
 
-// An integer constant's value (`expr::number`): false for a floating constant, a bad suffix, or
-// a value past 64 bits.
-UKL_INLINE bool if_number(UKL_PRIVATE const uint8_t* t, uint32_t n, UKL_PRIVATE uint64_t* bits, UKL_PRIVATE uint32_t* f) {
-    uint8_t s[IF_TOKB];
+// A constant's value, as the readers below return it: its bits and flags, and whether it is one.
+// The readers read the token in place, its digit separators skipped as they come, rather than
+// through a copy stored at a second counter (`if_bytes`'s Q367).
+typedef struct IfVal { uint64_t bits; uint32_t f; bool ok; } IfVal;
+
+UKL_INLINE IfVal if_val(bool ok, uint64_t bits, uint32_t f) {
+    IfVal r;
+    r.ok = ok; r.bits = bits; r.f = f;
+    return r;
+}
+
+// An integer constant's value (`expr::number`): none for a floating constant, a bad suffix, or a
+// value past 64 bits.
+UKL_INLINE IfVal if_number(UKL_PRIVATE const uint8_t* t, uint32_t n) {
+    // The first two characters, the radix's prefix.
+    uint8_t c0 = 0u, c1 = 0u;
     uint32_t m = 0u;
-    for (uint32_t k = 0u; k < n; k++) {
-        if (t[k] != ((uint8_t)('\''))) s[m++] = t[k];
+    for (uint32_t k = 0u; k < n && m < 2u; k++) {
+        if (t[k] == ((uint8_t)('\''))) continue;
+        if (m == 0u) c0 = t[k]; else c1 = t[k];
+        m++;
     }
-    uint32_t radix = 10u, i = 0u;
-    if (m >= 2u && s[0] == '0' && (s[1] | 0x20u) == 'x') { radix = 16u; i = 2u; }
-    else if (m >= 2u && s[0] == '0' && (s[1] | 0x20u) == 'b') { radix = 2u; i = 2u; }
-    else if (m >= 1u && s[0] == '0') { radix = 8u; i = 1u; }
-    uint32_t d0 = i;
+    uint32_t radix = 10u, skip = 0u;
+    if (m >= 2u && c0 == '0' && (c1 | 0x20u) == 'x') { radix = 16u; skip = 2u; }
+    else if (m >= 2u && c0 == '0' && (c1 | 0x20u) == 'b') { radix = 2u; skip = 2u; }
+    else if (m >= 1u && c0 == '0') { radix = 8u; skip = 1u; }
+    // The digits, then the suffix (at most three characters).
     uint64_t v = 0ul;
-    for (; i < m; i++) {
-        uint32_t d = if_digit(s[i]);
-        if (d >= radix) break;
-        if (v > (0xfffffffffffffffful - (uint64_t)(d)) / (uint64_t)(radix)) return false;
-        v = v * (uint64_t)(radix) + (uint64_t)(d);
-    }
-    if (radix != 10u && radix != 8u && i == d0) return false;
-    uint32_t k = m - i;
-    if (k > 3u) return false;
-    uint32_t sfx = 0u;
-    for (uint32_t q = 0u; q < k; q++) {
-        uint8_t c = s[i + q];
+    uint32_t j = 0u, digits = 0u, k = 0u, sfx = 0u;
+    for (uint32_t p = 0u; p < n; p++) {
+        uint8_t c = t[p];
+        if (c == ((uint8_t)('\''))) continue;
+        if (j++ < skip) continue;
+        if (k == 0u) {
+            uint32_t d = if_digit(c);
+            if (d < radix) {
+                if (v > (0xfffffffffffffffful - (uint64_t)(d)) / (uint64_t)(radix)) return if_val(false, 0ul, 0u);
+                v = v * (uint64_t)(radix) + (uint64_t)(d);
+                digits++;
+                continue;
+            }
+        }
+        if (k >= 3u) return if_val(false, 0ul, 0u);
         if (c >= 'A' && c <= 'Z') c = (uint8_t)(c | 0x20u);
-        sfx |= ((uint32_t)(c)) << (8u * q);
+        sfx |= ((uint32_t)(c)) << (8u * k);
+        k++;
     }
+    if (radix != 10u && radix != 8u && digits == 0u) return if_val(false, 0ul, 0u);
     bool u;
     if (sfx == 0u || sfx == SFX1('l') || sfx == SFX2('l', 'l') || sfx == SFX1('z') || sfx == SFX2('w', 'b')) u = false;
     else if (sfx == SFX1('u') || sfx == SFX2('u', 'l') || sfx == SFX2('l', 'u') || sfx == SFX3('u', 'l', 'l') || sfx == SFX3('l', 'l', 'u') || sfx == SFX2('u', 'z') || sfx == SFX2('z', 'u')
              || sfx == SFX3('u', 'w', 'b') || sfx == SFX3('w', 'b', 'u')) u = true;
-    else return false;
+    else return if_val(false, 0ul, 0u);
     // A decimal past `intmax_t` is unsigned.
     if (radix == 10u && v > 0x7ffffffffffffffful) u = true;
-    *bits = v;
-    *f = u ? VF_U : 0u;
-    return true;
+    return if_val(true, v, u ? VF_U : 0u);
 }
 
-// The UTF-8 character at `b[i..n)`: its code point and length (0: not one).
-UKL_INLINE uint32_t if_utf8(UKL_PRIVATE const uint8_t* b, uint32_t i, uint32_t n, UKL_PRIVATE uint32_t* cp) {
+// The UTF-8 character at `b[i..n)`: its code point (low 21 bits) and length (the top bits; 0: not
+// one).
+UKL_INLINE uint32_t if_utf8(UKL_PRIVATE const uint8_t* b, uint32_t i, uint32_t n) {
     uint32_t c = b[i], len, lo = 0x80u, hi = 0xbfu, v;
     if (c >= 0xc2u && c <= 0xdfu) { len = 2u; v = c & 0x1fu; }
     else if (c >= 0xe0u && c <= 0xefu) { len = 3u; v = c & 0x0fu; if (c == 0xe0u) lo = 0xa0u; if (c == 0xedu) hi = 0x9fu; }
@@ -485,15 +509,15 @@ UKL_INLINE uint32_t if_utf8(UKL_PRIVATE const uint8_t* b, uint32_t i, uint32_t n
         if (x < (k == 1u ? lo : 0x80u) || x > (k == 1u ? hi : 0xbfu)) return 0u;
         v = (v << 6) | (x & 0x3fu);
     }
-    *cp = v;
-    return len;
+    return len << 24 | v;
 }
 
-// A character constant's value (`expr::char_value`).
-UKL_INLINE bool if_char(UKL_PRIVATE const uint8_t* t, uint32_t n, UKL_PRIVATE uint64_t* bits) {
+// A character constant's value (`expr::char_value`): none for a string, which is no operand.
+UKL_INLINE IfVal if_char(UKL_PRIVATE const uint8_t* t, uint32_t n) {
+    IfVal none = if_val(false, 0ul, 0u);
     uint32_t q = 0u;
-    while (q < n && t[q] != ((uint8_t)('\''))) q++;
-    if (q >= n || n < q + 2u) return false;
+    while (q < n && t[q] != ((uint8_t)('\'')) && t[q] != ((uint8_t)('"'))) q++;
+    if (q >= n || t[q] != ((uint8_t)('\'')) || n < q + 2u) return none;
     // The prefix: none, `u8`, `u`, `L`, `U`.
     uint32_t pre;
     if (q == 0u) pre = 0u;
@@ -501,54 +525,56 @@ UKL_INLINE bool if_char(UKL_PRIVATE const uint8_t* t, uint32_t n, UKL_PRIVATE ui
     else if (q == 1u && t[0] == 'u') pre = 2u;
     else if (q == 1u && t[0] == 'L') pre = 3u;
     else if (q == 1u && t[0] == 'U') pre = 4u;
-    else return false;
+    else return none;
+    // Every value is a 32-bit one, sign- or zero-extended, so the reading is in 32 bits (a longer
+    // escape's low bits are the same).
     uint32_t b0 = q + 1u, end = n - 1u, chars = 0u;
-    uint64_t first = 0ul;
+    uint32_t first = 0u;
     uint32_t packed = 0u;
     for (uint32_t i = b0; i < end;) {
-        uint64_t v;
+        uint32_t v;
         uint8_t c = t[i];
         if (c != ((uint8_t)('\\'))) {
             if (c >= 0x80u && pre != 0u) {
-                uint32_t cp = 0u, len = if_utf8(t, i, end, &cp);
-                if (len == 0u) return false;
-                v = cp;
+                uint32_t cu = if_utf8(t, i, end), len = cu >> 24;
+                if (len == 0u) return none;
+                v = cu & 0xffffffu;
                 i += len;
             } else {
                 v = c;
                 i++;
             }
         } else {
-            if (i + 1u >= end) return false;
+            if (i + 1u >= end) return none;
             uint8_t e = t[i + 1u];
             i += 2u;
-            if (e == 'n') v = 10ul;
-            else if (e == 't') v = 9ul;
-            else if (e == 'r') v = 13ul;
-            else if (e == 'a') v = 7ul;
-            else if (e == 'b') v = 8ul;
-            else if (e == 'f') v = 12ul;
-            else if (e == 'v') v = 11ul;
-            else if (e == 'e' || e == 'E') v = 27ul;
+            if (e == 'n') v = 10u;
+            else if (e == 't') v = 9u;
+            else if (e == 'r') v = 13u;
+            else if (e == 'a') v = 7u;
+            else if (e == 'b') v = 8u;
+            else if (e == 'f') v = 12u;
+            else if (e == 'v') v = 11u;
+            else if (e == 'e' || e == 'E') v = 27u;
             else if (e >= '0' && e <= '7') {
-                v = (uint64_t)(e - '0');
-                for (uint32_t k = 0u; k < 2u && i < end && t[i] >= '0' && t[i] <= '7'; k++) v = v * 8ul + (uint64_t)(t[i++] - '0');
+                v = (uint32_t)(e - '0');
+                for (uint32_t k = 0u; k < 2u && i < end && t[i] >= '0' && t[i] <= '7'; k++) v = v * 8u + (uint32_t)(t[i++] - '0');
             } else if (e == 'x') {
                 uint32_t s = i;
-                v = 0ul;
-                while (i < end && if_digit(t[i]) < 16u) v = v * 16ul + (uint64_t)(if_digit(t[i++]));
-                if (i == s) return false;
+                v = 0u;
+                while (i < end && if_digit(t[i]) < 16u) v = v * 16u + if_digit(t[i++]);
+                if (i == s) return none;
             } else if (e == 'u' || e == 'U') {
                 // `u64::from_str_radix` of the next 4 or 8 bytes: hex digits, a `+` first allowed.
                 uint32_t len = e == 'u' ? 4u : 8u;
-                if (i + len > end) return false;
+                if (i + len > end) return none;
                 uint32_t k = t[i] == '+' ? 1u : 0u;
-                if (k == len) return false;
-                v = 0ul;
+                if (k == len) return none;
+                v = 0u;
                 for (; k < len; k++) {
                     uint32_t d = if_digit(t[i + k]);
-                    if (d >= 16u) return false;
-                    v = v * 16ul + (uint64_t)(d);
+                    if (d >= 16u) return none;
+                    v = v * 16u + d;
                 }
                 i += len;
             } else {
@@ -556,38 +582,40 @@ UKL_INLINE bool if_char(UKL_PRIVATE const uint8_t* t, uint32_t n, UKL_PRIVATE ui
             }
         }
         if (chars == 0u) first = v;
-        packed = (packed << 8) | (uint32_t)((uint8_t)(v));
+        packed = (packed << 8) | (v & 0xffu);
         chars++;
     }
-    if (chars == 0u) return false;
-    int64_t r;
-    if (pre == 0u) r = chars == 1u ? (int64_t)((int8_t)((uint8_t)(first))) : (int64_t)((int32_t)(packed));
-    else if (pre == 1u) r = (int64_t)((uint8_t)(first));
-    else if (pre == 2u) r = (int64_t)((uint16_t)(first));
-    else if (pre == 3u) r = (int64_t)((int32_t)((uint32_t)(first)));
-    else r = (int64_t)((uint32_t)(first));
-    *bits = (uint64_t)(r);
-    return true;
+    if (chars == 0u) return none;
+    // The value's low word, and its high word: the low word's sign where it is signed.
+    uint32_t w;
+    bool sign;
+    if (pre == 0u) { w = chars == 1u ? (uint32_t)((int32_t)((int8_t)((uint8_t)(first)))) : packed; sign = true; }
+    else if (pre == 1u) { w = first & 0xffu; sign = false; }
+    else if (pre == 2u) { w = first & 0xffffu; sign = false; }
+    else if (pre == 3u) { w = first; sign = true; }
+    else { w = first; sign = false; }
+    uint64_t high = sign && (w & 0x80000000u) != 0u ? 0xffffffff00000000ul : 0ul;
+    return if_val(true, high | (uint64_t)(w), 0u);
 }
 
 // What a test reads of the unit's files: the file table, the files' search entries, each unit's
 // first file, and where requests go.
 typedef struct IfFiles {
-    UKL_GLOBAL const uint64_t* ft_keys; UKL_GLOBAL const uint32_t* ft_files; uint32_t n_ft;
-    UKL_GLOBAL const uint32_t* found_by; UKL_GLOBAL const uint32_t* unit_file;
-    UKL_GLOBAL PpReq* reqs; UKL_GLOBAL uint32_t* n_reqs; uint32_t req_cap;
-    UKL_GLOBAL uint32_t* flags;
+    PP_GLOBAL const uint64_t* ft_keys; PP_GLOBAL const uint32_t* ft_files; uint32_t n_ft;
+    PP_GLOBAL const uint32_t* found_by; PP_GLOBAL const uint32_t* unit_file;
+    PP_GLOBAL PpReq* reqs; PP_GLOBAL uint32_t* n_reqs; uint32_t req_cap;
+    PP_GLOBAL uint32_t* flags;
 } IfFiles;
 
 // A header name, spelled from tokens already expanded (`Pp::header_of`): `"…"`'s bytes inside
 // its quotes, or the tokens after `<` to `>`, each after the first with a blank where space was
-// before it (the output's flags, `out[out_cap + k]`).
+// before it (the output's flags, `ov_ref(u, out, out_cap + k)`).
 typedef struct HName { uint32_t p0, close; bool angle; } HName;
 
 // The header name `out[p0..p1)` spells, if any.
-UKL_INLINE bool p1_header_of(Ux u, UKL_GLOBAL const uint32_t* out, uint32_t p0, uint32_t p1, UKL_PRIVATE HName* h) {
+UKL_INLINE bool p1_header_of(Ux u, Ov out, uint32_t p0, uint32_t p1, UKL_PRIVATE HName* h) {
     if (p0 >= p1) return false;
-    Span r = ref_span(u, out[p0]);
+    Span r = ref_span(u, ov_ref(u, out, p0));
     h->p0 = p0;
     if (r.kind == K_LITERAL && r.len >= 2u && r.p[0] == ((uint8_t)('"'))) {
         h->angle = false;
@@ -596,7 +624,7 @@ UKL_INLINE bool p1_header_of(Ux u, UKL_GLOBAL const uint32_t* out, uint32_t p0, 
     }
     if (r.kind != K_PUNCT || r.len != 1u || r.p[0] != ((uint8_t)('<'))) return false;
     for (uint32_t k = p0 + 1u; k < p1; k++) {
-        if (ref_is(u, out[k], ((uint8_t)('>')))) {
+        if (ref_is(u, ov_ref(u, out, k), ((uint8_t)('>')))) {
             h->angle = true;
             h->close = k;
             return true;
@@ -607,7 +635,7 @@ UKL_INLINE bool p1_header_of(Ux u, UKL_GLOBAL const uint32_t* out, uint32_t p0, 
 
 // A span's phase-2 bytes (its line splices left out), after `n` bytes: counted (`mode` 0), into
 // a key (1), or written at `dst` (2). The count after them.
-UKL_INLINE uint32_t p1_bytes(Span r, uint32_t mode, UKL_PRIVATE KeyAcc* ka, UKL_GLOBAL uint8_t* dst, uint32_t n) {
+UKL_INLINE uint32_t p1_bytes(Span r, uint32_t mode, UKL_PRIVATE KeyAcc* ka, PP_GLOBAL uint8_t* dst, uint32_t n) {
     for (uint32_t i = 0u; i < r.len;) {
         if (r.p[i] == ((uint8_t)('\\'))) {
             uint32_t e = splice_end(r.p, i, r.len);
@@ -622,27 +650,27 @@ UKL_INLINE uint32_t p1_bytes(Span r, uint32_t mode, UKL_PRIVATE KeyAcc* ka, UKL_
 }
 
 // The name's bytes, as `p1_bytes` reads a span.
-UKL_INLINE uint32_t p1_header_bytes(Ux u, UKL_GLOBAL const uint32_t* out, uint32_t out_cap, HName h, uint32_t mode, UKL_PRIVATE KeyAcc* ka, UKL_GLOBAL uint8_t* dst) {
+UKL_INLINE uint32_t p1_header_bytes(Ux u, Ov out, HName h, uint32_t mode, UKL_PRIVATE KeyAcc* ka, PP_GLOBAL uint8_t* dst) {
     if (!h.angle) {
-        Span r = ref_span(u, out[h.p0]);
+        Span r = ref_span(u, ov_ref(u, out, h.p0));
         r.p += 1u;
         r.len -= 2u;
         return p1_bytes(r, mode, ka, dst, 0u);
     }
     uint32_t n = 0u;
     for (uint32_t k = h.p0 + 1u; k < h.close; k++) {
-        if (k > h.p0 + 1u && (out[out_cap + k] & T_SPACE) != 0u) {
+        if (k > h.p0 + 1u && (ov_flags(u, out, k) & T_SPACE) != 0u) {
             if (mode == 1u) ka_byte(ka, ((uint8_t)(' ')));
             else if (mode == 2u) dst[n] = ((uint8_t)(' '));
             n++;
         }
-        n = p1_bytes(ref_span(u, out[k]), mode, ka, dst, n);
+        n = p1_bytes(ref_span(u, ov_ref(u, out, k)), mode, ka, dst, n);
     }
     return n;
 }
 
 // Where the requests' names go (`RNAMES`: bytes, their top and room).
-typedef struct IfNames { UKL_GLOBAL uint8_t* bytes; UKL_GLOBAL uint32_t* top; uint32_t cap; } IfNames;
+typedef struct IfNames { PP_GLOBAL uint8_t* bytes; PP_GLOBAL uint32_t* top; uint32_t cap; } IfNames;
 
 // The file a header name names from file `f` of unit `unit` (its key: the name's, whether it is
 // `<…>`, the including file for a quoted name, the search entry for `#include_next`), as the
@@ -674,27 +702,27 @@ UKL_INLINE uint32_t p1_request(IfFiles x, IfNames nm, uint64_t base, uint32_t f,
 
 // The file the header name `out` spells names (`h`), from file `f` of unit `unit`: as
 // `p1_find`, and a request with the name's bytes where the table has no row.
-UKL_INLINE uint32_t p1_find_header(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const uint32_t* out, uint32_t out_cap, HName h, bool next, uint32_t f, uint32_t unit, UKL_PRIVATE bool* found) {
+UKL_INLINE uint32_t p1_find_header(Ux u, IfFiles x, IfNames nm, Ov out, HName h, bool next, uint32_t f, uint32_t unit, UKL_PRIVATE bool* found) {
     KeyAcc ka = ka_new(0u);
-    uint32_t n = p1_header_bytes(u, out, out_cap, h, 0u, &ka, nm.bytes);
+    uint32_t n = p1_header_bytes(u, out, h, 0u, &ka, nm.bytes);
     ka = ka_new(n);
-    p1_header_bytes(u, out, out_cap, h, 1u, &ka, nm.bytes);
+    p1_header_bytes(u, out, h, 1u, &ka, nm.bytes);
     uint64_t base;
     uint32_t file = p1_find(x, ka_end(ka), h.angle, next, f, unit, found, &base);
     if (*found) return file;
     uint32_t b = p1_request(x, nm, base, f, n, h.angle, next);
-    if (b != PP_NONE) p1_header_bytes(u, out, out_cap, h, 2u, &ka, nm.bytes + b);
+    if (b != PP_NONE) p1_header_bytes(u, out, h, 2u, &ka, nm.bytes + b);
     return PP_NONE;
 }
 
 // `__has_include`, `__has_include_next` or `__has_embed` of the operand `out[p0..p1)` in file `f`
 // of unit `unit` (the main file's instance where `main_root`): its value (`Pp::find`: 1 found;
 // `__has_embed` 2 where the file is empty). A request meanwhile is 0: the round ends with it.
-UKL_INLINE uint64_t p1_if_has_include(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const uint32_t* out, uint32_t out_cap, uint32_t p0, uint32_t p1, uint32_t kind, uint32_t f, uint32_t unit, bool main_root) {
+UKL_INLINE uint64_t p1_if_has_include(Ux u, IfFiles x, IfNames nm, Ov out, uint32_t p0, uint32_t p1, uint32_t kind, uint32_t f, uint32_t unit, bool main_root) {
     HName h;
     if (!p1_header_of(u, out, p0, p1, &h)) return 0ul;
     bool found;
-    uint32_t file = p1_find_header(u, x, nm, out, out_cap, h, kind == OPK_HAS_INCLUDE_NEXT && !main_root, f, unit, &found);
+    uint32_t file = p1_find_header(u, x, nm, out, h, kind == OPK_HAS_INCLUDE_NEXT && !main_root, f, unit, &found);
     if (!found || file == PP_NONE) return 0ul;
     return kind == OPK_HAS_EMBED && u.files[file].source_len == 0u ? 2ul : 1ul;
 }
@@ -703,12 +731,14 @@ UKL_INLINE uint64_t p1_if_has_include(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL co
 // `PP_NONE`), a request where the table has no row; an active `#pragma once`'s first slot for its
 // file; the refused directives flagged. A macro-form include's name is its line's output (its
 // tokens expanded as a top of the tests' lines).
-UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const PpNode* nodes,
-                            UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows, UKL_GLOBAL const uint32_t* acts, UKL_GLOBAL const uint32_t* dactive, UKL_GLOBAL const uint32_t* dslot,
-                            uint32_t max_depth, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* total,
-                            UKL_GLOBAL const uint32_t* out, UKL_GLOBAL const uint32_t* obase, UKL_GLOBAL const uint32_t* vtotal, uint32_t out_cap,
-                            UKL_GLOBAL uint32_t* cand, UKL_GLOBAL uint32_t* once, uint32_t w) {
+UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes,
+                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const PpDir* rows, PP_GLOBAL const uint32_t* acts, PP_GLOBAL const uint32_t* dactive, PP_GLOBAL const uint32_t* dslot,
+                            uint32_t max_depth, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
+                            PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint32_t out_cap,
+                            PP_GLOBAL uint32_t* cand, PP_GLOBAL uint32_t* once, uint32_t w) {
     if (w >= n_dirs[0]) return;
+    // The output (decision 0520 §3), read through its pieces.
+    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
     cand[w] = PP_NONE;
     if (dactive[w] == 0u) return;
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
@@ -733,7 +763,7 @@ UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const PpInst
         uint32_t o0 = obase[s0], o1 = s1 < total[0] ? obase[s1] : vtotal[0];
         HName h;
         if (!p1_header_of(u, out, o0, o1, &h)) return;
-        file = p1_find_header(u, x, nm, out, out_cap, h, next, f, unit, &found);
+        file = p1_find_header(u, x, nm, out, h, next, f, unit, &found);
     } else {
         uint32_t k = node_kind(t, j), s = node_start(t, j), e = node_end(t, j);
         bool angle = k == K_HEADER;
@@ -759,12 +789,14 @@ UKL_INLINE void p1_inc_find(Ux u, IfFiles x, IfNames nm, UKL_GLOBAL const PpInst
 // Directive word `w`'s test value (`IF_VAL`): its line's output (`out`, from the place of its
 // first top token), evaluated as `expr::eval` evaluates it, with `defined` and the `__has_*`
 // tests answered where they stand.
-UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const PpNode* nodes, UKL_GLOBAL const uint32_t* dir_bases,
-                           UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL const uint32_t* first, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* total,
-                           UKL_GLOBAL const uint32_t* dslot, UKL_GLOBAL const uint32_t* ops, UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const uint32_t* out, UKL_GLOBAL const uint32_t* obase,
-                           UKL_GLOBAL const uint32_t* vtotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, UKL_GLOBAL const uint64_t* op_keys, UKL_GLOBAL const uint32_t* op_kinds,
-                           uint32_t n_ops, UKL_GLOBAL const uint64_t* feat_keys, UKL_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, UKL_GLOBAL uint32_t* vals, UKL_GLOBAL uint32_t* bad, uint32_t w) {
+UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const PpNode* nodes, PP_GLOBAL const uint32_t* dir_bases,
+                           PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* first, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
+                           PP_GLOBAL const uint32_t* dslot, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase,
+                           PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint64_t defined_key, uint64_t true_key, uint32_t true_is_one, PP_GLOBAL const uint64_t* op_keys, PP_GLOBAL const uint32_t* op_kinds,
+                           uint32_t n_ops, PP_GLOBAL const uint64_t* feat_keys, PP_GLOBAL const uint64_t* feat_vals, uint32_t n_feat, PP_GLOBAL uint32_t* vals, PP_GLOBAL uint32_t* bad, uint32_t w) {
     if (w >= n_dirs[0]) return;
+    // The output (decision 0520 §3), read through its pieces.
+    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
     vals[w] = 0u;
     if (kinds[w] != IL_TEST || count[w] == 0u) return;
     uint32_t i;
@@ -778,7 +810,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
     y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
     uint8_t b[IF_TOKB];
     for (uint32_t o = o0; o < o1 && !y.bad && !y.big;) {
-        uint32_t g = out[o++];
+        uint32_t g = ov_ref(u, out, o++);
         // A top token of the line, read raw: its mark.
         uint32_t mark = 0u;
         if ((g & SCRATCH) == 0u && g >= g0 && g < g0 + count[w]) {
@@ -791,8 +823,8 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
             uint32_t n = PP_NONE;
             bool paren = false;
             if (o < o1) {
-                n = out[o++];
-                if (ref_is(u, n, ((uint8_t)('(')))) { paren = true; n = o < o1 ? out[o++] : PP_NONE; }
+                n = ov_ref(u, out, o++);
+                if (ref_is(u, n, ((uint8_t)('(')))) { paren = true; n = o < o1 ? ov_ref(u, out, o++) : PP_NONE; }
             }
             bool v = n != PP_NONE && ref_kind(u, n) == K_IDENTIFIER
                      && visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ref_key(u, n), slot, bad) != L_NONE;
@@ -804,7 +836,7 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
             // The test's `(`, its operand to the `)` at its depth, read raw.
             uint32_t kind = mark - IO_HAS, p0 = o + 1u, p1 = p0, depth = 0u;
             for (; p1 < o1; p1++) {
-                uint32_t d = paren_delta(u, out[p1]);
+                uint32_t d = paren_delta(u, ov_ref(u, out, p1));
                 if (d == 1u) depth++;
                 else if (d == 0xffffffffu) { if (depth == 0u) break; depth--; }
             }
@@ -814,14 +846,14 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
                 // By the test's name and its operand's tokens spelled together.
                 uint32_t n = 0u;
                 KeyAcc ka = ka_new(0u);
-                for (uint32_t k = p0; k < p1; k++) n += ka_span(&ka, ref_span(u, out[k]), true);
+                for (uint32_t k = p0; k < p1; k++) n += ka_span(&ka, ref_span(u, ov_ref(u, out, k)), true);
                 ka = ka_new(n);
-                for (uint32_t k = p0; k < p1; k++) ka_span(&ka, ref_span(u, out[k]), false);
+                for (uint32_t k = p0; k < p1; k++) ka_span(&ka, ref_span(u, ov_ref(u, out, k)), false);
                 uint64_t key = key_mix(ref_key(u, g), ka_end(ka));
                 uint32_t c = pb_lower_bound(feat_keys, n_feat, key);
                 v = c < n_feat && feat_keys[c] == key ? feat_vals[c] : (kind == OPK_IS_IDENTIFIER ? 1ul : 0ul);
             } else {
-                v = p1_if_has_include(u, x, nm, out, out_cap, p0, p1, kind, f, unit, main_root);
+                v = p1_if_has_include(u, x, nm, out, p0, p1, kind, f, unit, main_root);
             }
             sy_feed(&y, 0u, v, 0u);
             continue;
@@ -837,19 +869,15 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, UKL_GL
         } else if (r.kind == K_NUMBER) {
             uint32_t n = if_bytes(r, b);
             if (n > IF_TOKB) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
-            uint64_t v;
-            uint32_t fl;
-            if (!if_number(b, n, &v, &fl)) { y.bad = true; break; }
-            sy_feed(&y, 0u, v, fl);
+            IfVal c = if_number(b, n);
+            if (!c.ok) { y.bad = true; break; }
+            sy_feed(&y, 0u, c.bits, c.f);
         } else if (r.kind == K_LITERAL) {
             uint32_t n = if_bytes(r, b);
             if (n > IF_TOKB) { ukl_atomic_or(x.flags, P1_IF_BIG); return; }
-            uint64_t v;
-            // A string is no operand.
-            uint32_t q = 0u;
-            while (q < n && b[q] != ((uint8_t)('\'')) && b[q] != ((uint8_t)('"'))) q++;
-            if (q >= n || b[q] != ((uint8_t)('\'')) || !if_char(b, n, &v)) { y.bad = true; break; }
-            sy_feed(&y, 0u, v, 0u);
+            IfVal c = if_char(b, n);
+            if (!c.ok) { y.bad = true; break; }
+            sy_feed(&y, 0u, c.bits, 0u);
         } else if (r.kind == K_PUNCT && r.len >= 1u) {
             sy_feed(&y, eo_punct(r.p, r.len), 0ul, 0u);
         } else {
@@ -872,7 +900,7 @@ UKL_INLINE uint32_t ds_next(UKL_PRIVATE const uint8_t* p, uint32_t i, uint32_t n
 
 // The literal of a string's content destringized from `from` (`__FILE__`'s: `"`, the bytes with
 // `"` and `\` escaped, `"`): its length, written at `dst` where it is not null.
-UKL_INLINE uint32_t ds_literal(UKL_PRIVATE const uint8_t* p, uint32_t from, uint32_t n, UKL_GLOBAL uint8_t* dst, bool write) {
+UKL_INLINE uint32_t ds_literal(UKL_PRIVATE const uint8_t* p, uint32_t from, uint32_t n, PP_GLOBAL uint8_t* dst, bool write) {
     uint32_t m = 0u;
     if (write) dst[m] = ((uint8_t)('"'));
     m++;
@@ -894,12 +922,14 @@ UKL_INLINE uint32_t ds_literal(UKL_PRIVATE const uint8_t* p, uint32_t from, uint
 // `lctl[2]`, `lb_cap` bytes). `lval` and `lvaln` the scans' values: `w + 1` for a row, and for
 // a row with a file; `lhead` an instance's first word. A row unlike the last iteration's (its
 // key, `lkey`) is a change: the iterations go on.
-UKL_INLINE void p1_line_row(Ux u, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL const PpInst* insts, UKL_GLOBAL const uint32_t* n_nodes, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const PpDir* rows,
-                            UKL_GLOBAL const uint32_t* n_dirs, UKL_GLOBAL const uint32_t* count, UKL_GLOBAL const uint32_t* at, UKL_GLOBAL const uint32_t* total,
-                            UKL_GLOBAL const uint32_t* out, UKL_GLOBAL const uint32_t* obase, UKL_GLOBAL const uint32_t* vtotal,
-                            UKL_GLOBAL uint32_t* ldelta, UKL_GLOBAL uint64_t* lkey, UKL_GLOBAL uint32_t* lval, UKL_GLOBAL uint32_t* lvaln, UKL_GLOBAL uint32_t* lhead,
-                            UKL_GLOBAL uint32_t* lctl, uint32_t lb_cap, UKL_GLOBAL PxScratch* stoks, UKL_GLOBAL uint8_t* sbytes, UKL_GLOBAL uint32_t* changed, UKL_GLOBAL uint32_t* flags, uint32_t w) {
+UKL_INLINE void p1_line_row(Ux u, PP_GLOBAL const uint32_t* kinds, PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const PpDir* rows,
+                            PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* count, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* total,
+                            PP_GLOBAL const uint32_t* outc, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* vtotal, PP_GLOBAL const uint32_t* ptotal, uint32_t out_cap,
+                            PP_GLOBAL uint32_t* ldelta, PP_GLOBAL uint64_t* lkey, PP_GLOBAL uint32_t* lval, PP_GLOBAL uint32_t* lvaln, PP_GLOBAL uint32_t* lhead,
+                            PP_GLOBAL uint32_t* lctl, uint32_t lb_cap, PP_GLOBAL PxScratch* stoks, PP_GLOBAL uint8_t* sbytes, PP_GLOBAL uint32_t* changed, PP_GLOBAL uint32_t* flags, uint32_t w) {
     if (w >= n_dirs[0]) return;
+    // The output (decision 0520 §3), read through its pieces.
+    Ov out; out.cols = outc; out.cap = out_cap; out.np = ptotal[0];
     uint32_t i, r = p1_row_of(insts, n_nodes[0], dir_bases, w, &i);
     lhead[w] = w == insts[i].dir_first ? 1u : 0u;
     bool on = false, named = false;
@@ -909,22 +939,21 @@ UKL_INLINE void p1_line_row(Ux u, UKL_GLOBAL const uint32_t* kinds, UKL_GLOBAL c
         uint32_t s0 = at[w], s1 = s0 + count[w];
         uint32_t o0 = obase[s0], o1 = s1 < total[0] ? obase[s1] : vtotal[0];
         uint8_t b[IF_TOKB];
-        if (o0 < o1 && ref_kind(u, out[o0]) == K_NUMBER) {
-            uint32_t n = if_bytes(ref_span(u, out[o0]), b);
-            uint64_t v;
-            uint32_t fl;
-            if (n <= IF_TOKB && if_number(b, n, &v, &fl)) {
+        if (o0 < o1 && ref_kind(u, ov_ref(u, out, o0)) == K_NUMBER) {
+            uint32_t n = if_bytes(ref_span(u, ov_ref(u, out, o0)), b);
+            IfVal c = n <= IF_TOKB ? if_number(b, n) : if_val(false, 0ul, 0u);
+            if (c.ok) {
                 on = true;
                 // The physical line after the directive's (from 1).
                 PpDir d = rows[r];
                 Tape t = tape_at(u.data, u.files, insts[i].file);
                 uint32_t e = node_end(t, d.node);
                 uint32_t phys = tape_line_of(t, e > 0u ? e - 1u : 0u) + 2u;
-                delta = ((uint32_t)(v)) - phys;
+                delta = ((uint32_t)(c.bits)) - phys;
             }
         }
         if (on && o0 + 1u < o1) {
-            Span sr = ref_span(u, out[o0 + 1u]);
+            Span sr = ref_span(u, ov_ref(u, out, o0 + 1u));
             uint32_t n = if_bytes(sr, b);
             uint32_t q = 0u;
             while (q < n && q < 4u && b[q] != ((uint8_t)('"')) && b[q] != ((uint8_t)('\''))) q++;

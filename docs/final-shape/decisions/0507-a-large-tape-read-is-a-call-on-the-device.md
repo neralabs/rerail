@@ -71,3 +71,11 @@ run, as the joins' are.
   `device_tape` on the device (nextest, `--features metal-tests`: 297 pass).
 - The headers are written again by `RERAIL_WRITE_READS=1 cargo test -p rerail-clif`; the clif crate's tests check
   that the checked-in headers are the ones the reads make.
+
+## Since 0524 (2026-11-21)
+
+Decision 0524 (merged here from the hub, 2026-11-21) writes the kernels' tape reads by hand: `<ukl/reads/tape_body.h>`,
+behind `tape.h` and `tape_z.h`, is no longer generated from the CLIF. This decision now covers the reads that still are
+generated (`view.h`, `ids.h`, `relation.h`): one of those past `DEVICE_INLINE` statements is written `UKL_COLD`, the
+rest stay inlined. The handwritten tape reads keep 0463's walks (each walk steps on, whatever it is asked), as the
+generated ones did; `every_walk_ends_whatever_it_is_asked` holds the direct Rust reads (0534) to them.

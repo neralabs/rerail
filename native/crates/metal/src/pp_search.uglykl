@@ -5,7 +5,7 @@
 // --- Search and expand -------------------------------------------------------------------------------
 
 // The first place in `sorted[0..n)` whose key is at least `q`.
-UKL_INLINE uint32_t pb_lower_bound(UKL_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t q) {
+UKL_INLINE uint32_t pb_lower_bound(PP_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t q) {
     uint32_t lo = 0u, hi = n;
     for (uint32_t k = 0u; k < 32u && lo < hi; k++) {
         uint32_t mid = (lo + hi) / 2u;
@@ -16,7 +16,7 @@ UKL_INLINE uint32_t pb_lower_bound(UKL_GLOBAL const uint64_t* sorted, uint32_t n
 
 // The item that output element `j` comes from: the last of `n` items whose first (`offsets`,
 // an exclusive scan of their counts) is at or before `j`.
-UKL_INLINE uint32_t pb_item_of(UKL_GLOBAL const uint32_t* offsets, uint32_t n, uint32_t j) {
+UKL_INLINE uint32_t pb_item_of(PP_GLOBAL const uint32_t* offsets, uint32_t n, uint32_t j) {
     uint32_t lo = 0u, hi = n;
     for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
         uint32_t mid = (lo + hi) / 2u;

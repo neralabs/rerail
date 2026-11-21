@@ -4,7 +4,7 @@ Date: 2026-11-20. Status: decided (the user, 2026-11-20, on Q337: "We need to un
 writers and reference counts over blocks, what is borrowed, etc on the CPU and the GPU, of each and every block, and
 have the memory management be accurate and taken care of by the system in a single place, not by each part of our
 code doing cowboy memory management. We need tight invariants where any attempt to do something that won't work
-fails."). Step 1 built; step 2 built for accel's `Pass`.
+fails."). Steps 1-4 built (step 2 for accel's `Pass` first, then every queue, 2026-11-20).
 
 ## Intro
 
@@ -72,6 +72,14 @@ it, and a kernel that was still queued reads the new rows. Nothing reports it; a
 - **R8** A buffer bound for a kernel is found to be its block's by its address, whoever made the buffer, and its use
   holds the block as any use does; a block's memory gone, its address is no block's
   (`a_bound_buffers_block_is_found_by_its_address`).
+- **R9** Memory one ledger holds made another's (a pooled lease made a block's, `Block::over`; a scratch region over a
+  lease) is found by its address as the inner ledger's while that lives, and as the outer's again once it goes
+  (`a_ledger_inside_another_is_the_one_its_address_finds`).
+- **R10** What the process's queue reaches is held with no caller registering it: a pooled lease a fill reaches,
+  dropped before the work completes, goes back to the pool only after (`a_lease_the_queue_reaches_goes_back_after_its_work`).
+- **R11** A scratch region's reset, or a use's end, with GPU work that binds its bytes queued fails, and a region
+  dropped under it keeps its memory until the work completes (`a_scratch_reset_under_a_queued_gpu_use_fails`); a
+  deferrable slab sealed under queued work fails (`a_seal_under_a_queued_gpu_use_fails`).
 
 ## Steps
 
@@ -87,4 +95,29 @@ it, and a kernel that was still queued reads the new rows. Nothing reports it; a
 4. **CPU access through the ledger.** A chunk's owner (BlockVec, a relation's rows) asks the ledger before it writes a
    chunk the GPU may hold (R4's check at each write's start, not each value).
 
-Until step 2, no GPU use is registered, so R3-R5 and R7 hold only where a fence is used.
+## Built
+
+- **Step 2** (2026-11-20). The device layer's `ComputeQueue` takes a `Watch` (`ComputeQueue::watched`), which sees
+  every buffer the queue's work reaches as it is enqueued: a kernel's bound rows (read or written as the kernel
+  declares the row, `MemoryRegionAccess`), its resident buffers (`use_buffer`, or `use_buffer_read` for one it only
+  reads), an indirect launch's counts, a copy's source and destination and a fill's. The device layer knows nothing
+  of blocks. `rerail_accel::gpu::shared::Queue` is the one constructor of a queue on the process's device (the
+  layer's queue root is the crate's own): its watch binds each buffer by address on the submission's fence
+  (`region::bind_address`), and `Queue::flush` gives a `Flushed` that completes the fence when its work has (at its
+  wait, or at its drop, which waits first). Accel's `Pass`, its relational lane (`gpu::execute`, with the UKL
+  library's launches) and `rerail-metal`'s `Command` (the syntax side's passes, the block programs, the matcher's
+  waves) submit through it, so no encoder binds a buffer unheld. `Batch`'s lists went with 0491 step 2; the
+  `Submitted::reading` columns stay, as the CPU side's holders of what a submission's caller reads back.
+- **Step 3** (2026-11-20). Every pooled lease has a ledger of its own from its lease (`Pooled::of`): a bind of its
+  bytes holds it, and its return to the pool (`Back`) waits for that work, so the `Tracked` wrappers its holders
+  made (accel's scratch sets, `Held`, a staged column) are gone. A block or a scratch region over a lease is the
+  inner ledger (R9). `Scratch` has a ledger, refuses a reset under queued work and keeps its memory past its drop
+  (R11); a deferrable slab's seal checks its block's ledger (R11). The residency slabs' `retire` keeps its count of
+  a tapes' slab's holders: that is the CPU's holders of tapes placed there, not a guess at the GPU, whose work on
+  a slab its block's ledger holds now that every bind is seen. `Pooled::after` stays for Metal's own command buffers
+  in a test.
+- **Step 4** (2026-11-20). A relation's arrays check the ledger at each read and write (`BlockVec::check`, R4, with
+  0491's regions); a relation's rows refuse a CPU write while their room is lent to the device (`Rows::extend_from_slice`).
+  Still not seen: a CPU write of rows a kernel reads through a whole-block bind, which registers no chunk.
+
+The forest's own Metal work (`rerail_forest`'s cost model and trainer) has its own queue and buffers, no block's.

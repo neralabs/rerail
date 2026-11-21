@@ -310,12 +310,7 @@ impl ThreadConnection {
     pub(super) fn new(database_path: PathBuf, identity: i64, flush: Flush) -> Self {
         let connections = connections();
         *connections.handles.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, connections, identity, flush, pinned: None }
-    }
-
-    /// How the store's writes reach the disk.
-    pub(super) fn flush(&self) -> Flush {
-        self.flush
+        Self { database_path, connections, identity, pinned: None, flush }
     }
 
     /// Keep the verified file open for all phases of collection, including after a path replacement.
@@ -325,8 +320,13 @@ impl ThreadConnection {
         counted
     }
 
-    pub(super) fn memory(connection: Connection, identity: i64) -> Self {
-        Self { database_path: PathBuf::new(), connections: connections(), identity, flush: Flush::None, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))) }
+    pub(super) fn memory(connection: Connection, identity: i64, flush: Flush) -> Self {
+        Self { database_path: PathBuf::new(), connections: connections(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))), flush }
+    }
+
+    /// How the store's writes reach the disk.
+    pub(super) fn flush(&self) -> Flush {
+        self.flush
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).

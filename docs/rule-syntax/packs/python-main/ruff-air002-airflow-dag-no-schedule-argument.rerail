@@ -1,5 +1,4 @@
 .policy "ruff-air002-airflow-dag-no-schedule-argument" revision 1
-.guests off
 .description "Give every Airflow Dag an explicit schedule; the implicit default changed from daily to none in Airflow 3, silently stopping Dags that relied on it."
 .language python
 .mode steer

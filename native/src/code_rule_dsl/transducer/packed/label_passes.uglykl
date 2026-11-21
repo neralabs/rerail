@@ -33,8 +33,7 @@ UKL_INLINE void mark(UKL_GLOBAL uint32_t* bits,uint32_t node){ukl_atomic_or(&bit
 #define MARK(b,n) {uint32_t mark_n=(n);if(NODE_OK(mark_n))mark(b,mark_n);else NODE_PAST}
 #define TALLY(t,n) TALLY_BY(t,n,1u)
 #define TALLY_BY(t,n,k) {uint32_t tally_n=(n);if(NODE_OK(tally_n))ukl_atomic_add(&(t)[tally_n],(k));else NODE_PAST}
-// A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch (Q189: the scans'
-// marks are bounded as the strata's are).
+// A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch.
 #define MARK_WINDOW(row,b,out) {uint32_t window_b=(b);uint64_t window_out=(out);if(NODE_OK(window_b)){uint32_t w0=(uint32_t)(window_out),w1=(uint32_t)(window_out>>32u);if(w0!=0u)ukl_atomic_or(&(row)[window_b/32u],w0);if(w1!=0u)ukl_atomic_or(&(row)[window_b/32u+1u],w1);}else NODE_PAST}
 
 DEFINE_KERNEL2(label_passes, label_sink,
@@ -249,7 +248,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
   uint64_t mask=0ul;uint32_t pass=0u,file=0u,group=0u;
   SimdRoots r=simd_roots(0ul,lane __UKL_ARGS);
   bool walking=true,fresh=true;
-  UklWorkQueue wq={q.slots,q.control,q.capacity};
+  UklWorkQueue wq={q.slots,q.control,q.capacity,0u};
   uint32_t polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
   while(true){
     uint32_t p=0u,f=0u,start=0u,depth0=0u;
@@ -324,7 +323,7 @@ UKL_INLINE bool spill_give(MicroQ q,MicroFrame give,uint32_t start){
   uint32_t w[MICRO_ITEM]={give.pc,give.node,give.resume,give.named,give.next,give.end,give.cursors[0],give.cursors[1],give.cursors[2],give.cursors[3],give.cursors[4],give.cursors[5],give.cursors[6],give.cursors[7],give.capture0,give.capture1,give.captured,start,q.pass,q.doc};
   for(uint32_t k=0u;k<MICRO_ITEM;k++)ukl_atomic_store(&item[k],w[k]);
   ukl_fence_device();
-  UklWorkQueue wq={q.slots,q.control,q.capacity};
+  UklWorkQueue wq={q.slots,q.control,q.capacity,0u};
   return ukl_wq_push(wq,at);
 }
 

@@ -1,5 +1,4 @@
 .policy "ruff-pth119-os-path-basename" revision 1
-.guests off
 .description "Use the name property of a Path object instead of os.path.basename; pathlib reads better than string-based os.path functions."
 .language python
 .mode steer

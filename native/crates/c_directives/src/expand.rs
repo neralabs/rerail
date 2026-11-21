@@ -75,10 +75,13 @@ pub fn chains(read: &crate::Read, toks: &[Tok]) -> Option<Vec<(u32, u32)>> {
     Some(out)
 }
 
+/// A file's tokens (C++'s where told), or `None` where its lexer refuses it.
+pub type Lexer = dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>;
+
 /// How a TU's files are lexed and their directives read: by the compiled grammars, or (tests) by
 /// their interpreter.
 pub struct Grammars<'a> {
-    pub tokens: &'a dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>,
+    pub tokens: &'a Lexer,
     pub read: &'a dyn Fn(&[u8]) -> Option<crate::Read>,
 }
 
@@ -264,8 +267,8 @@ pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &
     on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
-/// The words on the process's device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch runner of
-/// `expand_tus_with`.
+/// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
+/// runner of `expand_tus_with`.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();

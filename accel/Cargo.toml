@@ -50,7 +50,7 @@ cc = "=1.11.1"
 [lints.rust]
 # objc 0.2's `msg_send!` tests a `cargo-clippy` feature in the calling crate.
 # `gpu_lane`: the `gpu` feature on a target with the device layer (`build.rs`).
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))', 'cfg(gpu_lane)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))', 'cfg(gpu_lane)', 'cfg(sme_lane)'] }
 
 [dev-dependencies]
 rerail-context = { path = "../native/crates/context", features = ["test-hooks"] }

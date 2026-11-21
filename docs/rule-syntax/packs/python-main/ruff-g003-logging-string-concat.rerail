@@ -1,5 +1,4 @@
 .policy "ruff-g003-logging-string-concat" revision 1
-.guests off
 .description "Pass values to a logging call as arguments instead of building its message by string concatenation; the logger then formats only records it emits."
 .language python
 .mode steer

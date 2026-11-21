@@ -1,5 +1,4 @@
 .policy "ruff-up012-unnecessary-encode-utf8" revision 1
-.guests off
 .description "Use a bytes literal instead of encoding an ASCII string literal, and omit a redundant UTF-8 encoding argument; UTF-8 is already the default."
 .language python
 .mode steer

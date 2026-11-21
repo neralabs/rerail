@@ -79,7 +79,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     let policy = statements
         .iter()
         .find_map(|s| match s.what()? {
-            S::Setting { key, text } if key == "policy" => text.split('"').nth(1).map(str::to_owned),
+            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
             _ => None,
         })
         .unwrap_or_default();
@@ -1058,7 +1058,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut lowering_tail::Declared);
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
+        p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
         p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
@@ -1254,14 +1254,12 @@ fn resolve_shared(statements: Vec<Stmt>) -> Result<(SharedFiles, Vec<Stmt>), Err
     Ok((files, own))
 }
 
-/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-
 /// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
 /// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
 /// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
 pub fn phases_named(statements: &[Stmt]) -> Vec<String> {
     let own = statements.iter().find_map(|s| match s.what()? {
-        S::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        S::Setting { key: "phase", text } => Some(text.trim().to_owned()),
         _ => None,
     });
     let mut out: Vec<String> = statements
@@ -1425,6 +1423,8 @@ impl LibraryFile {
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
+/// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
+pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -1742,7 +1742,7 @@ pub struct GuestAsks {
     /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
     pub settings: Vec<String>,
     /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
-    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// Else the library files whose clauses ask (`asks`): an included file's asking clauses are kept
     /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
     pub files: Option<Vec<PathBuf>>,
     /// Its own clauses ask too: what it asks for is its own.
@@ -1761,8 +1761,8 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         Some(S::Setting { key: "guests", text }) => Some(text.to_owned()),
         _ => None,
     }).collect();
-    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of, or an
-    // `embed`): its heads' arguments', its body's and its edits' names.
+    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of): its
+    // heads' arguments', its body's and its edits' names.
     let read = |st: &Stmt| -> BTreeSet<String> {
         let (t, n) = st.tape();
         let mut out = BTreeSet::new();
@@ -1834,7 +1834,11 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
                 Some(S::Clause) => s.heads(),
                 _ => Vec::new(),
             };
-            if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
+            // A relation one library file derives (`DERIVED_BY`) that file's clauses may derive; it declares none.
+            let derives = |n: &str| {
+                DERIVED_BY.iter().any(|(rel, by)| *rel == n && library().join(by).canonicalize().is_ok_and(|by| by == **file))
+            };
+            if let Some(name) = names.into_iter().find(|n| engine.contains(n) && !(matches!(s.what(), Some(S::Clause)) && derives(n))) {
                 return Err(Error::Syntax(format!("{}:{}: {name} is core.rerail's: a program reads it and cannot declare or derive it", file.display(), s.line())));
             }
         }
@@ -1924,11 +1928,13 @@ pub fn read(path: &Path) -> Result<(Vec<Stmt>, LibraryFile), Error> {
 fn read_shared(path: &Path) -> Result<(std::sync::Arc<RrFile>, LibraryFile), Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+    // A file of a Git revision is read from its tree (bounded), not the checkout.
     if crate::git_workspace::snapshot::contains(path) {
         use sha2::Digest as _;
         let bytes = crate::git_workspace::snapshot::read_bounded(path, 1024 * 1024)
             .map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
         let file = LibraryFile { path: path.to_owned(), sha256: Some(sha2::Sha256::digest(&bytes).into()) };
+        noted(&file);
         let src = String::from_utf8(bytes).map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
         return Ok((RrFile::read(src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?, file));
     }
@@ -2065,21 +2071,18 @@ pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_jo
         for file in files {
             if file != own && !indexed.insert(file.clone()) { continue; }
             let Ok((rr_file, _)) = read_shared(&file) else { continue };
-            for st in rr_file.statements().iter().filter(|st| st.what() == Some(S::Clause)) {
-                let (f, n) = (st.file(), st.node());
-                let body = check::body_of(f, n);
-                if body.is_empty() {
-                    continue;
-                }
+            for s in rr_file.statements() {
+                if s.what() != Some(S::Clause) || !s.has_body() { continue; }
+                let line = s.line();
                 let mut reads = Vec::new();
-                check::clause_reads(f, &body, &mut reads);
-                let line = st.line();
-                for name in st.heads() {
-                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.to_owned() };
+                check::clause_reads(&rr_file, &check::clause_body(&rr_file, s.node()), &mut reads);
+                for name in s.heads() {
+                    let name = &name.to_owned();
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.clone() };
                     for read in &reads {
                         locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
                     }
-                    locations.definitions.entry(key).or_insert_with(|| (name.to_owned(), BTreeSet::new())).1.insert((file.clone(), line));
+                    locations.definitions.entry(key).or_insert_with(|| (name.clone(), BTreeSet::new())).1.insert((file.clone(), line));
                 }
             }
         }

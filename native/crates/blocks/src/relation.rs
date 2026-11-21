@@ -88,6 +88,24 @@ pub struct Given {
     pub kept: usize,
 }
 
+/// An order's rows: listed, a chunk of the block (`ORDER`), or the rows `lo..hi` themselves, already in the key's
+/// order (`ORDER_ROWS`).
+#[derive(Clone, Copy, Debug)]
+pub enum OrderRows {
+    Listed(Given),
+    Range(u32, u32),
+}
+
+/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences, tags and prints,
+/// each a chunk of the block written already.
+#[derive(Clone, Copy, Debug)]
+pub struct GivenOrder {
+    pub rows: OrderRows,
+    pub fences: Given,
+    pub tags: Given,
+    pub prints: Given,
+}
+
 structure! {
     pub struct ColStats { pub min: i64, pub max: i64 }
 }
@@ -240,12 +258,21 @@ impl Relation {
         if self.continues() { self.base_rows + self.rows.len() } else { self.rows.len() }
     }
 
-    /// Row `id`'s value in column `c`, by the read written once (`rel_get`): a continuation's id below `base_rows`
-    /// read in its base, its own rows from `base_rows` on (a delta's own ids count from its base's too).
+    /// Row `id`'s value in column `c` (the CLIF's `rel_get`, the kernels' and the JIT's): a continuation's id below
+    /// `base_rows` read in its base, down the chain of bases (a fork of a fork) to the one whose own rows hold it;
+    /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        // SAFETY: a live descriptor; the read finds the row where it lies.
-        unsafe { crate::generated_reads::rel_get(std::ptr::from_ref(self).cast(), id, c as u32) as i64 }
+        let mut rel = self;
+        loop {
+            let off = rel.base_off.load(Relaxed);
+            if id >= rel.base_rows || off == 0 {
+                break;
+            }
+            // SAFETY: a continuation's base lies in its block `off` bytes from it, kept while it is (its holder's).
+            rel = unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>() };
+        }
+        rel.rows.get(id.wrapping_sub(rel.base_rows), c)
     }
 
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
@@ -350,30 +377,28 @@ impl Relation {
         self.rows.get(id - self.base_rows, c)
     }
 
-    /// Whether the dead bits mark row `id`: the read written once (`rel_dead`, decision 0325).
+    /// Whether the dead bits mark row `id` (the CLIF's `rel_dead`, decision 0325): none past the bits.
     #[inline]
     pub fn dead_bit(&self, id: u32) -> bool {
-        // SAFETY: a live descriptor; the read checks `id` against the bits' length.
-        unsafe { crate::generated_reads::rel_dead(std::ptr::from_ref(self).cast(), id) != 0 }
+        self.dead.as_slice().get((id >> 6) as usize).is_some_and(|w| w >> (id & 63) & 1 != 0)
     }
 
     #[inline]
-    #[allow(clippy::should_implement_trait, reason = "the relation's index `i` of its sorted orders, by number: not `ops::Index`")]
-    pub fn index(&self, i: usize) -> &Index {
+    pub fn index_at(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket, found
-    /// by the read written once (`rel_group`, decision 0325).
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket (the
+    /// CLIF's `rel_group`, decision 0325). None for an index of no buckets.
     #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
-        // SAFETY: a live descriptor; index `i` is one of its indexes.
-        let g = unsafe { crate::generated_reads::rel_group(std::ptr::from_ref(self).cast(), i as u32, h) };
-        let (start, len) = ((g >> 32) as usize, (g & 0xffff_ffff) as usize);
-        if len == 0 {
+        let ix = self.index_at(i);
+        let offs = ix.offs.as_slice();
+        if offs.is_empty() {
             return &[];
         }
-        &self.index(i).rows.as_slice()[start..start + len]
+        let b = (h & ix.mask) as usize;
+        &ix.rows.as_slice()[offs[b] as usize..offs[b + 1] as usize]
     }
 
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
@@ -482,29 +507,37 @@ impl Relation {
         }
     }
 
-    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): its rows listed (`ids`) or the rows
-    /// `lo..hi` themselves (`range`), and its fences, tags and prints, each a chunk of `block` written already. The
-    /// relation keeps them from now on and gives them back when its indexes are forgotten. Its number; `None` when
-    /// its directory has no room (the chunks are then still the caller's).
+    /// The number of this relation's next directory entry, its directory made first where it has none
+    /// (`ADDED_INDEXES` entries, a chunk of `block`); `None` when the directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change.
+    unsafe fn next_entry(&self, block: &Block) -> Option<usize> {
+        if self.indexes.is_empty() {
+            let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+            let me = std::ptr::from_ref(self).cast_mut();
+            // SAFETY: the caller's.
+            unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
+            self.flags.fetch_or(ADDED, Release);
+        }
+        let i = self.nindex.load(Relaxed) as usize;
+        (i < self.indexes.len()).then_some(i)
+    }
+
+    /// Gives this relation a sorted order on `cols` (decision 0478 step 5b): `order`'s rows, and its fences, tags
+    /// and prints, each a chunk of `block` written already. The relation keeps them from now on and gives them back
+    /// when its indexes are forgotten. Its number; `None` when its directory has no room (the chunks are then still
+    /// the caller's).
     ///
     /// # Safety
     /// As `try_reserve_index`'s; each chunk lies in `block` and is the caller's to give, written, and nothing writes
     /// it after.
-    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], ids: Option<Given>, range: Option<(u32, u32)>, fences: Given, tags: Given, prints: Given) -> Option<usize> {
+    pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], order: GivenOrder) -> Option<usize> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
-        assert!(ids.is_some() != range.is_some(), "an order's rows listed or a range, one of them");
+        let GivenOrder { rows, fences, tags, prints } = order;
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
-                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
-                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
-                self.flags.fetch_or(ADDED, Release);
-            }
-            let i = self.nindex.load(Relaxed) as usize;
-            if i >= self.indexes.len() {
-                return None;
-            }
+            let i = self.next_entry(block)?;
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
             (*ix).ncols = 0;
             let mut key = [0u16; MAX_KEY];
@@ -519,29 +552,26 @@ impl Relation {
                 }
             }
             clear(&raw mut (*ix).offs);
-            let ids = ids.unwrap_or_default();
-            match range {
-                Some((lo, hi)) => {
+            let ids = match rows {
+                OrderRows::Range(lo, hi) => {
                     (*ix).ordered = ORDER_ROWS;
-                    (*ix).mask = u64::from(lo) << 32 | u64::from(hi);
+                    (*ix).mask = (u64::from(lo) << 32) | u64::from(hi);
                     clear(&raw mut (*ix).rows);
+                    Given::default()
                 }
-                None => {
+                OrderRows::Listed(ids) => {
                     (*ix).ordered = ORDER;
                     (*ix).mask = 0;
                     Span::set(&raw mut (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
+                    ids
                 }
-            }
+            };
             fn set<T>(block: &Block, dst: *mut Span<T>, g: Given) {
-                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block` (or none).
                 if g.len == 0 {
-                    // SAFETY: as below.
-                    unsafe {
-                        (*dst).off.store(0, Relaxed);
-                        (*dst).len.store(0, Relaxed);
-                    }
+                    clear(dst);
                     return;
                 }
+                // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block`.
                 unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
             }
             set(block, &raw mut (*ix).fences, fences);
@@ -577,16 +607,7 @@ impl Relation {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
-                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
-                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
-                self.flags.fetch_or(ADDED, Release);
-            }
-            let i = self.nindex.load(Relaxed) as usize;
-            if i >= self.indexes.len() {
-                return None;
-            }
+            let i = self.next_entry(block)?;
             let cap = keys.min(n as usize).next_power_of_two().max(1);
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.
@@ -1230,7 +1251,7 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        let ix = self.top.index(i);
+        let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
             let own = leading(self.top, cols, key);

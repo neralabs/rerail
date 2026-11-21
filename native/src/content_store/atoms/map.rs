@@ -542,7 +542,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("facts_completions", &["source_id", "fact_schema", "set_digest", "words", "codec_id", "raw_length", "counts"]),
     ("facts_plan_sets", &["set_digest", "ordinal", "plan_digest"]),
     ("facts_results", &["source_id", "fact_schema", "plan_digest", "codec_id", "raw_length", "frame"]),
-    ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors"]),
+    ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
     ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw", "framed"]),
     ("memo_packs", &["pack"]),
@@ -586,7 +586,7 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("store_state", &["singleton", "generation", "analysis_acquisitions"]),
     ("strings", &["string_id", "domain_id", "content_hash_id", "collision_ordinal"]),
     ("tape_kind_counts", &["tape_id", "kind", "n", "size", "postings"]),
-    ("tape_objects", &["tape_id", "source_id", "canonical_hash_id", "grammar_id", "grammar_version", "tape_format_version", "codec_id", "raw_length", "frame", "created_generation", "seg", "seg_at", "seg_len"]),
+    ("tape_objects", &["tape_id", "source_id", "canonical_hash_id", "grammar_id", "grammar_version", "tape_format_version", "codec_id", "raw_length", "frame", "created_generation", "seg", "seg_at", "seg_len", "programs"]),
     ("term_coverage", &["tape_id", "kind", "bad", "residue", "missing"]),
     ("term_freq", &["lang", "n"]),
     ("term_kind_freq", &["kind", "n"]),

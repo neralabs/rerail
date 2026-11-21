@@ -1121,7 +1121,7 @@ mod tests {
         let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
         assert!(workspace.overlays.iter().any(|overlay| overlay.path == "native/src/lib.rs"), "the edit is an overlay");
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {

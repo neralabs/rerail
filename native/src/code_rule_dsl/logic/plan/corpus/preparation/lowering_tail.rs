@@ -95,11 +95,10 @@ impl ProgramPass for WidenCyclicContexts {
                 let mut types: BTreeMap<Slot, &str> = BTreeMap::new();
                 let mut head_vars: BTreeMap<String, Slot> = BTreeMap::new();
                 for (k, t) in rule.head().args().enumerate() {
-                    if let Some(s) = t.var() {
-                        if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
+                    if let Some(s) = t.var()
+                        && let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
                             types.insert(s, ty.as_str());
                         }
-                    }
                     let mut vs = VarSet::new();
                     crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut vs);
                     for s in vs.iter() {
@@ -435,7 +434,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let mut rb = b.rule().source(r.id()).head_from(input, r, r.head());
     if let Some((demand, positions)) = p.prefix.get(&r.id()) {
-        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, r, t)).collect();
+        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(r, t)).collect();
         rb = rb.atom(demand.as_str(), &args);
     }
     for l in r.body() {
@@ -444,7 +443,7 @@ fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
         }
         rb = match (anti.contains(&l.node()), l.view()) {
             (true, L::Agg { atom, .. }) => {
-                let args: Vec<T<'_>> = atom.args().map(|t| t_of(input, r, t)).collect();
+                let args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
                 rb.atom_with(input.rel_name(atom.rel()), &args, true, atom.gated())
             }
             _ => rb.lit(input, r, l),
@@ -458,7 +457,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
     use crate::code_rule_dsl::logic::program_image::build::t_of;
     let src = input.rule(d.src).expect("a rule of the input");
     let L::Agg { atom, .. } = lit_at(input, d.src, d.agg).view() else { return Err("a demand's aggregate".into()) };
-    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(input, src, t)).collect();
+    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(src, t)).collect();
     let mut rb = b.rule().source(d.src).head(d.demand.as_str(), &args);
     for &i in &d.body {
         rb = match i {
@@ -466,7 +465,7 @@ fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>,
             Item::Placed(r) => {
                 let rule = input.rule(r).expect("a rule");
                 let (demand, positions) = &p.prefix[&r];
-                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, rule, t)).collect();
+                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(rule, t)).collect();
                 rb.atom(demand.as_str(), &args)
             }
         };
@@ -894,7 +893,7 @@ impl ProgramPass for OrderNodes {
             let kk = ord(*k);
             let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
             head_args.push(T::Var(&kk));
-            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(&input, r, t)).collect();
+            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(r, t)).collect();
             b.rule()
                 .source(*id)
                 .head(names[*helper].as_str(), &head_args)
@@ -1027,6 +1026,7 @@ impl ProgramPass for ScopeGlobs {
 /// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
 /// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
 /// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+///
 /// (A set of nodes is read as climbs where it is given, `node_axis`.)
 pub struct KindSets {
     pub sets: BTreeSet<String>,
@@ -1240,7 +1240,7 @@ impl ProgramPass for KindSets {
                             (Some((n, a)), _) => vec![T::VarAtom(r.var(n)), T::VarAtom(r.var(a))],
                             (None, L::Atom(a)) => {
                                 let xs: Vec<TermRef<'_>> = a.args().collect();
-                                x.args.iter().map(|&k| t_of(&input, r, xs[k])).collect()
+                                x.args.iter().map(|&k| t_of(r, xs[k])).collect()
                             }
                             _ => return Err("an axis atom".into()),
                         };
@@ -1462,12 +1462,19 @@ impl ProgramPass for CoreDecls {
 /// findings, which the lowerer hands on.
 pub struct Findings {
     pub pending: crate::code_rule_dsl::logic::rr::lower::PendingFindings,
+    /// The linked library of a module lowered in its scope (`rr::Library::version`): its rules may read the guests a
+    /// finding of this module's is at (`RulesSeen::reads_guests`).
+    pub library: Option<std::sync::Arc<Version>>,
 }
 
 impl ProgramPass for Findings {
     const NAME: &'static str = "findings";
     fn settings(&self) -> Vec<u8> {
-        self.pending.key()
+        let mut key = self.pending.key();
+        if let Some(library) = &self.library {
+            key.extend_from_slice(&library.digest().to_le_bytes());
+        }
+        key
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings::{findings_on, findings_write}, is_place_call};
@@ -1487,12 +1494,21 @@ impl ProgramPass for Findings {
                         _ => false,
                     })
             }),
-            reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
             reads_tool_call: v.rules().flat_map(|r| r.body()).find_map(|l| match l.view() {
                 L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
                 _ => None,
             }),
             heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
+            reads_guests: {
+                let reads = |v: &Version| {
+                    v.rules().flat_map(|r| r.body()).any(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => super::super::guests::READS.contains(&v.rel_name(a.rel())),
+                        _ => false,
+                    })
+                };
+                let declared = |rel: &str| v.declares(rel) || self.library.as_ref().is_some_and(|l| l.declares(rel));
+                (reads(v) || self.library.as_deref().is_some_and(reads)) && declared("guest_place") && declared("tape_of")
+            },
         };
         let input = std::sync::Arc::clone(w.input());
         if !findings_write(&*input, &self.pending) {
@@ -1513,7 +1529,7 @@ impl ProgramPass for Findings {
                 b.keep(&input, r);
                 continue;
             }
-            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(r, t)).collect();
             args.push(T::Int(0));
             let mut rb = b.rule().source(r.id()).head("violation", &args);
             for l in r.body() {

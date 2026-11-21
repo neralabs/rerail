@@ -1,5 +1,4 @@
 .policy "ruff-n807-dunder-function-name" revision 1
-.guests off
 .description "Don't name a function with leading and trailing double underscores; that naming is reserved for Python's special methods."
 .language python
 .mode steer

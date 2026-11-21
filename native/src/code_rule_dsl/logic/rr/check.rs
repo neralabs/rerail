@@ -204,7 +204,8 @@ fn inner_needs(f: &RrFile, lits: &[LitAt], bound: &BTreeSet<String>) -> BTreeSet
 }
 
 /// Clause `c`'s body, read off its tape.
-pub fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
+/// Clause `c`'s body literals.
+pub fn clause_body(f: &RrFile, c: u32) -> Vec<LitAt> {
     f.tape().get(c, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0))
 }
 
@@ -212,7 +213,7 @@ pub fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(f: &RrFile, c: u32, given: &BTreeSet<String>) -> Vec<String> {
     let heads = f.heads_at(c);
-    let body = body_of(f, c);
+    let body = clause_body(f, c);
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(|a| vars_of(f, a))).collect();
     // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
     // `a = top` binds `a`.
@@ -400,7 +401,7 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
-/// Relations in a clause's literals `lits`, with nested groups' and aggregate bodies'.
+/// The relations a clause body reads, aggregates' and groups' bodies included (in order, with repeats).
 pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
     fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
         match f.tv(t) {
@@ -450,7 +451,7 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
             continue;
         }
         let mut read = Vec::new();
-        clause_reads(f, &body_of(f, n), &mut read);
+        clause_reads(f, &clause_body(f, n), &mut read);
         let head = s.heads().first().map_or("", |h| *h).to_owned();
         for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
             out.insert(format!("line {}: relation {rel} is read by the rule for {head} and not declared", s.line()));
@@ -480,7 +481,7 @@ pub fn strata(statements: &[&Stmt]) -> Vec<String> {
                 if f.check_clause(n).is_err() {
                     continue;
                 }
-                let (heads, body) = (f.heads_at(n), body_of(f, n));
+                let (heads, body) = (f.heads_at(n), clause_body(f, n));
                 let mut scopes = vec![Scope::new()];
                 binary_atoms(f, &body, &mut scopes[0]);
                 let mut ds = Vec::new();

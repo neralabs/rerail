@@ -1,5 +1,4 @@
 .policy "ruff-f509-percent-format-unsupported-format-character" revision 1
-.guests off
 .description "Use only valid conversion characters in Python %-format strings; an unsupported one raises ValueError at runtime."
 .language python
 .mode steer

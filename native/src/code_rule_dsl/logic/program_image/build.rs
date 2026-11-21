@@ -25,6 +25,10 @@ use crate::code_rule_dsl::logic::front::{ast::Value, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
+/// What an edit's finish gives (`finish_placing`): the version, what it made, and where it folded, each rule's id in
+/// the folded version by its id in the edit.
+pub type Placing = (Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>);
+
 /// A term to write, by text or by id.
 #[derive(Clone, Debug, PartialEq)]
 pub enum T<'a> {
@@ -43,8 +47,8 @@ pub enum T<'a> {
     CallAtom(AtomId, Vec<T<'a>>),
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids (one on `v`, or derived from it).
-pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
+/// A term of rule `r`, to write into a builder under its version's ids (one on that version, or derived from it).
+pub fn t_of<'v>(r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -52,7 +56,7 @@ pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(r, a)).collect()),
     }
 }
 
@@ -401,6 +405,7 @@ impl<'p> Builder<'p> {
             AggOp::Sum => 3,
             AggOp::Product => 4,
             AggOp::Join { .. } => 5,
+            AggOp::Bounded { .. } => 6,
         };
         let a = self.enc.atom(var);
         let s = self.enc.slot_of(a);
@@ -415,6 +420,11 @@ impl<'p> Builder<'p> {
             }
             let a = self.enc.atom(sep);
             self.enc.leaf(kind::STR, a);
+        }
+        // A bounded aggregate's bound, then its flags: 1 a max, 2 strict (decision 0511, `AggRef::Bounded`).
+        if let AggOp::Bounded { max, bound, strict } = op {
+            self.enc.var(bound);
+            self.enc.leaf(kind::INT, u32::from(*max) | u32::from(*strict) << 1);
         }
         self.put_atom_node(rel.into(), args, 0);
         self.enc.close(at);
@@ -804,10 +814,10 @@ impl<'p> Builder<'p> {
     /// The version the edit makes (`finish`), and where it folded, each rule's id in the folded version by its id in
     /// the edit: a fold numbers the rules from 0, in the edit's order (the parent's kept, then the added). A pass that
     /// keeps its rules in an order of its own (`Placed`'s) reads its order back through it.
-    pub fn finish_placing(self) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+    pub fn finish_placing(self) -> Result<Placing, String> {
         self.finish_as(true)
     }
-    fn finish_as(mut self, placing: bool) -> Result<(Arc<Version>, Made, Option<std::collections::BTreeMap<RuleId, RuleId>>), String> {
+    fn finish_as(mut self, placing: bool) -> Result<Placing, String> {
         let Some(parent) = self.parent else {
             return Ok((Version::of_image(self.image()?)?, Made::Folded, None));
         };
@@ -956,7 +966,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
-    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator.
+    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator; a bounded one's bound
+    /// and its flags.
     pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
@@ -967,6 +978,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             AggOp::Sum => 3,
             AggOp::Product => 4,
             AggOp::Join { .. } => 5,
+            AggOp::Bounded { .. } => 6,
         };
         let s = match var {
             T::Var(v) => {
@@ -990,6 +1002,11 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             }
             let a = self.b.enc.atom(sep);
             self.b.enc.leaf(kind::STR, a);
+        }
+        // A bounded aggregate's bound, then its flags: 1 a max, 2 strict (decision 0511, `AggRef::Bounded`).
+        if let AggOp::Bounded { max, bound, strict } = op {
+            self.term(&T::Var(bound));
+            self.b.enc.leaf(kind::INT, u32::from(*max) | u32::from(*strict) << 1);
         }
         self.atom_node(rel.into(), args, 0);
         self.b.enc.close(at);

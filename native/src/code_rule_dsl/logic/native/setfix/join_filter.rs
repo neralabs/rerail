@@ -1,4 +1,4 @@
-//! A negative membership test for a scan followed by a keyed probe (decision 0506): insurance against a join whose
+//! A negative membership test for a scan followed by a keyed probe (decision 0488): insurance against a join whose
 //! probes mostly miss, cheap enough to be on wherever a walk has that shape.
 //!
 //! - The filter is the probe side's own, kept with its column as its rows were counted (`Sketch::keys`): a walk
@@ -84,7 +84,7 @@ impl Screening {
         refused
     }
 
-    /// A screened scan's candidates `ids` (decision 0506), the ones `f` passes, in order: their keys (`key`, the
+    /// A screened scan's candidates `ids` (decision 0488), the ones `f` passes, in order: their keys (`key`, the
     /// scan's column `JoinFilter::scan_col`) a block of 64 at a time, each block hashed in one loop and tested
     /// (`Kept::may_hold_each`). A selection pass, the device's shape, in place of a test a binding at the screened
     /// step. While the screen backs off, ids pass unread and untested.
@@ -265,7 +265,7 @@ impl JoinFilter {
         let what = || format!(
             "{} probe rows, {} build rows ({}), HLL overlap {overlap:?}, {rejects}/{SAMPLES} sampled probes rejected, use filter {use_filter}",
             outer.len, inner.len, if kept { "its filter kept" } else { "a filter built" });
-        crate::code_rule_dsl::logic::profile::decision("join Bloom filter", || what());
+        crate::code_rule_dsl::logic::profile::decision("join Bloom filter", what);
         if !use_filter {
             if trace {
                 eprintln!("join screen: {}", what());

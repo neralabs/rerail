@@ -248,7 +248,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
-    /// The probed relation's screen (decision 0506): its key `screen - 1`'s column's kept filter, a
+    /// The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a
     /// `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer (the filter's block, bound where it
     /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
     pub(in crate::code_rule_dsl) screen: u32,
@@ -262,7 +262,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) v_nset: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>().is_multiple_of(16));
 
 impl Default for Stage {
     fn default() -> Self {
@@ -451,7 +451,7 @@ impl DevRel {
     /// A handle to `part`, a relation of the device's own of `cols` columns and `rows` rows (`Part::for_device`'s).
     fn of_part(part: crate::code_rule_dsl::facts::rows::Part, cols: usize, rows: usize) -> Result<DevRel, Error> {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let buffer = Held::kept(part.facts().block.device_buffer(device)?, Box::new(part.facts().clone()));
+        let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
         Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
@@ -556,7 +556,7 @@ impl DevRel {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
-        let buffer = Held::kept(b.facts.block.device_buffer(device)?, Box::new(b.clone()));
+        let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
     }
 
@@ -790,10 +790,16 @@ impl DevIndex {
 /// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
 fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
     let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-    Ok(Held::kept(home.block.device_buffer(device)?, Box::new(home.clone())))
+    held_block(device, home, Box::new(home.clone()))
 }
 
-/// A stage's screen (decision 0506, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
+/// The buffer of `facts`' block as it is now, `keep` kept with it, and the block held by its own region (decision
+/// 0491 step 3): a launch that binds it pins that region by the kernel's access.
+fn held_block(device: &rerail_device::device::Device, facts: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, keep: Box<dyn std::any::Any + Send + Sync>) -> Result<Held, Error> {
+    Ok(Held::of_block(facts.block.device_buffer(device)?, rerail_blocks::region::whole(&facts.block), keep))
+}
+
+/// A stage's screen (decision 0488, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
 /// `rerail_blocks::bloom::Bloom` at byte `at` of `held` (the filter's block, bound where it lies: nothing copied).
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Screen {
@@ -1057,7 +1063,7 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
     /// Stages whose grids were sized on the device (`Scan::size`).
     pub(in crate::code_rule_dsl) sized: u32,
-    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0506).
+    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
     pub(in crate::code_rule_dsl) screened: u32,
 }
 
@@ -1068,16 +1074,6 @@ pub(in crate::code_rule_dsl) struct Batch {
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
-    /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
-    /// by the host when handed out again, and no host write is ordered after a device read).
-    keep: Vec<Held>,
-    /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
-    /// maker once the next pass is encoded, and a relation's texts go with its resident entry, which a later upload
-    /// may trim: their buffers must not be reused while the GPU reads them).
-    read: Vec<std::rc::Rc<DevRel>>,
-    /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
-    /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
-    held: Vec<Box<dyn std::any::Any>>,
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
@@ -1112,9 +1108,7 @@ impl Batch {
         if self.atoms.as_ref().is_some_and(|a| a.end() >= end) {
             return Ok(());
         }
-        if let Some(old) = self.atoms.take() {
-            self.held.push(Box::new(old));
-        }
+        // The one before goes: a pass that binds its buffers holds them until its work completes (decision 0491 step 2).
         self.atoms = Some(std::rc::Rc::new(make()?));
         Ok(())
     }
@@ -1127,11 +1121,6 @@ impl Batch {
         Ok(())
     }
 
-    /// Keeps `rel` (a handle a stratum made for its work) until this batch's work completes.
-    pub(in crate::code_rule_dsl) fn keeps(&mut self, rel: std::rc::Rc<DevRel>) {
-        self.read.push(rel);
-    }
-
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -1140,7 +1129,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
+        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1167,24 +1156,18 @@ impl Batch {
             .collect()
     }
 
-    /// `stage` screened by `screen` (decision 0506), its buffer kept until the batch is done: the buffer to bind as
-    /// the stage's `F` (the batch's dummy for none).
+    /// `stage` screened by `screen` (decision 0488): the buffer to bind as the stage's `F` (the batch's dummy for
+    /// none), held by the pass that binds it (decision 0491 step 2).
     fn screen(&mut self, stage: &mut Stage, screen: Option<&Screen>) -> Buffer {
         match screen {
             Some(f) if (f.key as usize) < stage.nkeys as usize => {
                 stage.screen = f.key + 1;
                 stage.screen_at = f.at;
-                self.held.push(Box::new(f.held.clone()));
                 self.done.screened += 1;
                 f.held.buffer.clone()
             }
             _ => self.dummy.buffer.clone(),
         }
-    }
-
-    /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
-    pub(in crate::code_rule_dsl) fn hold(&mut self, what: Box<dyn std::any::Any>) {
-        self.held.push(what);
     }
 
     /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
@@ -1216,13 +1199,11 @@ impl Batch {
         Ok(self.pass.as_ref().expect("an open pass"))
     }
 
-    /// `bytes` in a buffer of their own, kept until the batch's work completes: a parameter block a kernel reads (a
-    /// stage's, a copy's), past what a launch's own parameters hold on every backend.
-    fn block(&mut self, bytes: &[u8]) -> Result<Buffer, Error> {
-        let held = Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?;
-        let buffer = held.buffer.clone();
-        self.keep.push(held);
-        Ok(buffer)
+    /// `bytes` in a buffer of their own: a parameter block a kernel reads (a stage's, a copy's), past what a launch's
+    /// own parameters hold on every backend. A launch that binds it holds it until its work completes (decision 0491
+    /// step 2), so its holder may drop it once the launch is encoded.
+    fn block(&mut self, bytes: &[u8]) -> Result<Held, Error> {
+        Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)
     }
 
     /// Commits the open submission (`Pass::commit`, checked against the launch budget).
@@ -1267,9 +1248,6 @@ impl Batch {
         if failed > 0 {
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
             self.building.clear();
-            self.keep.clear();
-            self.read.clear();
-            self.held.clear();
             return Err(Error::BackendFailure);
         }
         for b in self.building.drain(..) {
@@ -1278,9 +1256,6 @@ impl Batch {
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { (*b.rel).index_built(&b.room) };
         }
-        self.keep.clear();
-        self.read.clear();
-        self.held.clear();
         Ok(std::mem::take(&mut self.done))
     }
 
@@ -1353,7 +1328,6 @@ impl Batch {
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
-                self.read.push(fresh.clone());
                 let ix = self.index(&fresh, cols)?;
                 return Ok(DevIndex { moved: Some(fresh), ..ix });
             }
@@ -1362,7 +1336,6 @@ impl Batch {
             const MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
             MOVED.copied(8 * rel.cols * rel.rows);
             let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
-            self.read.push(copy.clone());
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
             let ix = self.index(&copy, cols)?;
@@ -1376,7 +1349,7 @@ impl Batch {
             let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
             let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
-            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask as u64, cols: [0; 8], dir: 0, kind: 0 };
+            let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
             for (k, &c) in cols.iter().enumerate() {
                 ix.cols[k] = c as u32;
             }
@@ -1390,17 +1363,15 @@ impl Batch {
             // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
             // until its submission is done: dropped here, it would go back to the pool at once.
             rel.resident_in(pass);
-            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params], &[], groups(n));
+            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params.buffer], &[], groups(n));
             let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
                 Ok(parts) => parts,
                 Err(e) => {
-                    self.keep.push(words);
                     return Err(e.into());
                 }
             };
             pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32],
                      &[room.offs as i64, room.rows as i64], groups(n));
-            self.keep.extend([words, parts.perm, parts.starts, parts.rkeys, parts.nruns]);
         }
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
@@ -1424,7 +1395,7 @@ impl Batch {
         if out.rows > 0 {
             let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
             let pass = self.pass(1)?;
-            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params], &[], groups(out.rows));
+            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
         }
         Ok(())
     }
@@ -1466,9 +1437,9 @@ impl Batch {
                 index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
             }
             let lbuf: &Buffer = &left.buffer.buffer;
-            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb], &[], groups(n));
+            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb.buffer], &[], groups(n));
             scan.encode(pass, &counts)?;
-            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb], &[], groups(n));
+            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
             return Ok(());
         }
         let n = left.cap + 1;
@@ -1499,9 +1470,9 @@ impl Batch {
             }
             None => (&dummy, 0),
         };
-        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb, 0)];
+        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
         let scatter_bufs: [(&Buffer, u64); 10] =
-            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb, 0)];
+            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work); at most the table's.
@@ -1510,7 +1481,6 @@ impl Batch {
             scan.encode_sized(pass, &counts, &sizes)?;
             pass.run_bytes_indirect_at(&scatter, &scatter_bufs, &[], &sizes.buffer, 4 * 32, groups(n));
             self.done.sized += 1;
-            self.keep.push(sizes);
             return Ok(());
         }
         pass.run_bytes_at(&count, &count_bufs, &[], groups(n));
@@ -1572,12 +1542,11 @@ impl Batch {
         let mut count_bufs: Vec<&Buffer> = vec![lbuf, &a, &totals.buffer.buffer, &counts, &held.buffer];
         count_bufs.extend(bufs.iter());
         count_bufs.push(&fbuf);
-        count_bufs.push(&sb);
+        count_bufs.push(&sb.buffer);
         pass.run_bytes(&count, &count_bufs, &[], groups(n));
         scan.encode(pass, &counts)?;
-        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb];
+        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb.buffer];
         pass.run_bytes(&scatter, &scatter_bufs, &[], groups(n));
-        self.keep.push(held);
         Ok(())
     }
 
@@ -1619,13 +1588,12 @@ impl Batch {
         // A SIMD group a row, a threadgroup each.
         pass.run_bytes_simd_at(
             &text,
-            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb, 0)],
+            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb.buffer, 0)],
             &[],
             ngroups,
         );
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb], &[], groups(n));
-        self.keep.extend([work, p, values]);
+        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1655,12 +1623,11 @@ impl Batch {
         let db = self.block(bytes)?;
         let pass = self.pass(12)?;
         let t: &Buffer = &table.buffer.buffer;
-        pass.run_bytes(&clear, &[&p.buffer, &db], &[], groups(places));
-        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db], &[], groups(table.cap));
-        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts, &db], &[], groups(n));
+        pass.run_bytes(&clear, &[&p.buffer, &db.buffer], &[], groups(places));
+        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db.buffer], &[], groups(table.cap));
+        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts, &db.buffer], &[], groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer, &db], &[], groups(n));
-        self.keep.push(p);
+        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer, &db.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1677,7 +1644,6 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
         self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
-        self.keep.push(dst.buffer);
         Ok(())
     }
 
@@ -1725,7 +1691,7 @@ impl Batch {
         if let Some(r) = view {
             r.resident_in(pass);
         }
-        pass.run_bytes(&copy, &[&s, &d, &totals, &cb], &[], groups(n));
+        pass.run_bytes(&copy, &[&s, &d, &totals, &cb.buffer], &[], groups(n));
         Ok(())
     }
 
@@ -1738,7 +1704,7 @@ impl Batch {
         stage.nslots = table.slots as u32;
         let sb = self.block(stage.bytes())?;
         let pass = self.pass(1)?;
-        pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb], &[], groups(table.cap));
+        pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb.buffer], &[], groups(table.cap));
         Ok(())
     }
 }
@@ -1772,9 +1738,34 @@ pub mod tests {
             .collect()
     }
 
+    /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
+    /// the kernel's declared access: a copy into a relation moves its block's version once the batch's work is done,
+    /// and the block it reads from, bound read-only, keeps its version.
+    #[test]
+    fn a_kernels_write_moves_its_blocks_version_and_a_read_does_not() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 300;
+        let src = DevRel::upload(2, n, |v| for (i, x) in v.iter_mut().enumerate() { *x = i as i64 }).unwrap();
+        let dst = DevRel::empty(2, n).unwrap();
+        let (sb, db) = (src.home.clone().unwrap(), dst.home.clone().unwrap());
+        let (s0, d0) = (rerail_blocks::region::whole(&sb.block).region().version(), rerail_blocks::region::whole(&db.block).region().version());
+        let mut batch = Batch::new().unwrap();
+        batch.copy_rows(Rows::Rel(&src), n, &[Col::From(0), Col::From(1)], Rows::Rel(&dst), 0).unwrap();
+        batch.finish().unwrap();
+        let d1 = rerail_blocks::region::whole(&db.block).region().version();
+        assert!(d1 > d0, "the written block's version moved ({d0} to {d1})");
+        if !std::sync::Arc::ptr_eq(&sb, &db) {
+            assert_eq!(rerail_blocks::region::whole(&sb.block).region().version(), s0, "the block only read keeps its version");
+        }
+    }
+
     /// Q265: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
     /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
-    /// its relation, and the index the batch marks built is still its own.
+    /// its relation, and the index the batch marks built is still its own. The batch holds it as the index it builds
+    /// (`Building`, which `finish` checks against the descriptor as it was reserved); its buffers, as every launch's,
+    /// its passes' fences hold (decision 0491 step 2).
     #[test]
     fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
         if rerail_accel::gpu::join::device().is_err() {
@@ -1794,8 +1785,10 @@ pub mod tests {
             }
         }
         let moved = moved.expect("a key past the relation's directory moves it");
-        assert!(std::rc::Rc::strong_count(&moved) >= 2, "the batch keeps the relation it moved");
+        assert_eq!(std::rc::Rc::strong_count(&moved), 1, "no handle of the stage's is left but this one");
         drop(moved);
+        // A relation made meanwhile takes the room a moved relation given back would have left.
+        let _after = DevRel::upload(4, n, |v| v.fill(-1)).unwrap();
         batch.finish().expect("its index built into the relation it moved, still held");
     }
 
@@ -1892,7 +1885,7 @@ pub mod tests {
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
     }
 
-    /// Decision 0506: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
+    /// Decision 0488: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
     /// relations, bound where it lies) makes the rows it makes unscreened: a join, an anti-join and a semi-join, each
     /// keyed by a column whose filter holds every key of it. A filter of none of the keys refuses every binding: the
     /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
@@ -2023,7 +2016,7 @@ pub mod tests {
                 }
                 room.index
             };
-            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
             if std::ptr::eq(dev, &placed) {
                 let end = dev.home.as_ref().unwrap().block.offset_of(d.rows.as_slice().as_ptr()) + 4 * n;
                 assert!(end as u64 > placed.buffer.buffer.length(), "the case: the index past the buffer its relation was bound by");
@@ -2093,7 +2086,7 @@ pub mod tests {
                 }
                 room.index
             };
-            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
             assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
             assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
         }
@@ -2258,7 +2251,7 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
                                                  first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
-        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && delta.cap == n);
+        assert!(nkeys < MAX_KEYS && u.cap == n && delta.cap == n);
         assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
@@ -2279,7 +2272,6 @@ impl Batch {
                 let ob = bound(old.home)?;
                 let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
                 pass.run_bytes(&rehash, &[&r.buffer.buffer, &ob.buffer, &hb.buffer], lat_bytes(&p), groups(old.places));
-                self.keep.push(ob);
             }
         }
         let bytes = lat_bytes(&p);
@@ -2297,7 +2289,6 @@ impl Batch {
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
         pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
         pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r.buffer.buffer, &hb.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
-        self.keep.extend([places, chosen, flags, hb]);
         Ok(())
     }
 }

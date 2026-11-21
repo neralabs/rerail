@@ -158,6 +158,9 @@ pub mod z {
 /// for no thread: two that miss one key both compute it. Every loop is bounded; a lookup that finds no room
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
+    mod lookup;
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
     pub const GENS: i32 = 4;
@@ -315,7 +318,7 @@ pub mod cache {
             let max = word(MAX)?;
             let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
             spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
-            if spec.gens < 3 || max == 0 || max as usize % ALIGN != 0 || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];

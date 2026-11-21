@@ -1,5 +1,4 @@
 .policy "ruff-g202-logging-redundant-exc-info" revision 1
-.guests off
 .description "Remove exc_info from exception logging calls inside exception handlers; the exception method already logs the traceback."
 .language python
 .mode steer

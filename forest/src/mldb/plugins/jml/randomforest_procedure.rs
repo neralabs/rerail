@@ -28,6 +28,7 @@
 //! - the bootstrap's generator is seeded apart from the shuffle's (upstream seeded both with the same number, so the
 //!   draws were the shuffle's), and the feature samplings' seeds are distinct (upstream's `bag + 371 + i` gives bag
 //!   b's tree i + 1 and bag b + 1's tree i the same features once the proportion's branch runs).
+//!
 //! The RNG is MT19937 as upstream; the shuffles are Fisher-Yates over `rng() % n` and the uniform draws `rng() /
 //! 2^32`, as `std::shuffle` and `uniform_real_distribution` are not the same across C++ libraries.
 
@@ -404,6 +405,9 @@ enum Trained {
     Flat(FlatTree),
 }
 
+/// The trees a thread trained, by bag in its order: each bag and its trees.
+type BagTrees = Vec<(usize, Vec<Trained>)>;
+
 /// The fewest rows a bag the device draws expects (its proportion of the rows): fewer, and the host draws the bags.
 const DEVICE_BAG_MIN_ROWS: f64 = 256.0;
 
@@ -518,12 +522,12 @@ fn train_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig
         .start_handler(move |_| set_qos(qos))
         .build()
         .map_err(|e| e.to_string())?;
-    let trained: Vec<Result<Vec<(usize, Vec<Trained>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
+    let trained: Vec<Result<BagTrees, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
         let mine: Vec<Vec<i32>> = chunk.iter().flat_map(|&b| samplings[b].iter().cloned()).collect();
         let mut partition = FeatureSamplingTrainerPartition::allocate(&trainer, &mine, "forest")?;
         let mut in_flight = std::collections::VecDeque::new();
-        let mut out: Vec<(usize, Vec<Trained>)> = Vec::new();
-        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Trained>)>| -> Result<(), String> {
+        let mut out: BagTrees = Vec::new();
+        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut BagTrees| -> Result<(), String> {
             scheduled.event.await_()?;
             let err = |e: String| format!("error training bag {b}: {e}");
             let tree = match &cols {

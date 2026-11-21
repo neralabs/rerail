@@ -3096,8 +3096,6 @@ dependencies = [
 [[package]]
 name = "rayon-core"
 version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
@@ -3271,6 +3269,7 @@ dependencies = [
  "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -3280,6 +3279,7 @@ dependencies = [
  "libc",
  "parking_lot",
  "rayon",
+ "rayon-core",
  "rerail-context",
  "rustc-hash",
 ]
@@ -3354,6 +3354,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-device",
  "rerail-device-metal",
@@ -3485,6 +3486,7 @@ dependencies = [
  "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-tree-watch",
  "rerail-vue-lean",
  "rerail-w",
  "roaring",
@@ -3516,6 +3518,7 @@ name = "rerail-facts"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
@@ -4321,9 +4324,11 @@ dependencies = [
  "rerail-compiler",
  "rerail-context",
  "rerail-device",
+ "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",
@@ -4843,6 +4848,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-tree-watch"
+version = "0.1.0"
+dependencies = [
+ "dunce",
+ "indexmap",
+ "libc",
+ "napi",
+ "napi-derive",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rerail-ukl"
 version = "0.1.0"
 dependencies = [
@@ -4909,6 +4926,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tree-watch",
  "rerail-w",
  "ruff_python_ast",
  "ruff_python_parser",

@@ -1,5 +1,4 @@
 .policy "ruff-c416-unnecessary-comprehension" revision 1
-.guests off
 .description "Pass the iterable to list, set or dict directly instead of a comprehension that rebuilds it unchanged."
 .language python
 .mode steer

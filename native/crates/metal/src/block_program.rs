@@ -38,9 +38,16 @@ pub mod serial;
 /// look-backs, for the lane word the source defines in front of it (`head`).
 const COMMON: &str = include_str!("block_common.uglykl");
 /// The interpreter's source at each lane width (`LaneWidth::ALL`): the shared code, then its
-/// kernel.
-static INTERPRETER: std::sync::LazyLock<[String; 3]> =
-    std::sync::LazyLock::new(|| LaneWidth::ALL.map(|w| format!("{}{}", head(w), include_str!("block_program.uglykl"))));
+/// kernel. Made once on this machine (decision 0442: its head reads the machine's device, `poll_rmw`).
+#[derive(Default)]
+struct Interpreter([std::sync::OnceLock<String>; 3]);
+
+/// [`Interpreter`]'s source at `width`.
+fn interpreter_source(width: LaneWidth) -> std::sync::Arc<Interpreter> {
+    let made = rerail_context::machine::<Interpreter>();
+    made.0[width.index()].get_or_init(|| format!("{}{}", head(width), include_str!("block_program.uglykl")));
+    made
+}
 
 /// A source's head at lane width `width`: its word (`BW`, `BM`), how a poll reads
 /// (`poll_rmw`), and the shared code. Every source starts with it, the interpreter's and each generated one.
@@ -260,13 +267,6 @@ const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 #[derive(Default)]
 pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
-/// Whether a program starts a file's stream late: a prefix (decision 0335), its positions
-/// (`prefix`) and the token loop's first state past it. `run_batch` generates it (opcode 18);
-/// the serial path (`block_serial`) does not yet, and refuses it there.
-pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
-}
-
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
 /// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`
@@ -435,7 +435,8 @@ pub fn run_batch(
             for (name, block) in ["programs", "steps", "outs", "scratch"].into_iter().zip(&interpreter) {
                 buffers.push((name, block.device_buffer().clone()));
             }
-            ("block_batch", lane::kernel_fixed(&INTERPRETER[width.index()], "block_batch", None))
+            let source = interpreter_source(width);
+            ("block_batch", lane::kernel_fixed(source.0[width.index()].get().map_or("", String::as_str), "block_batch", None))
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();

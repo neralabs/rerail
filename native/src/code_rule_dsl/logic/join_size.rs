@@ -1,4 +1,4 @@
-//! A join's size from its columns' count sketches (decision 0506): the AMS estimate (Alon, Matias and Szegedy; Alon,
+//! A join's size from its columns' count sketches (decision 0488): the AMS estimate (Alon, Matias and Szegedy; Alon,
 //! Gibbons, Matias and Szegedy's "tug of war"), from counters every column's sketch keeps already
 //! (`native::setfix::sketch::Sketch`), as its rows come, at no cost a probe pays.
 //!
@@ -26,15 +26,157 @@ pub fn bucket(h: u64) -> (usize, i32) {
     (((h >> 8) & 0xff) as usize, if h & 1 == 0 { 1 } else { -1 })
 }
 
-/// A column's counts as the planner reads them: its counters, its rows and sum of squared rows a value (`F2`), and
-/// its values' exact counts while it has at most `EXACT`.
-#[derive(Clone, Debug)]
+/// A column's join-size counts, in a block (decision 0478 step 6c): its counters (`BUCKETS`) and, while it has at
+/// most `EXACT` values, each value's rows (`[value, rows]`). Its sketch (`native::setfix::sketch::Sketch`) is its one
+/// writer, as the rows come; the planner's `JoinCounts` and the statistics' keys (`bloom::Keys::Few`) read it where
+/// it lies, held by both (decision 0353: read in place, never copied). Every cell is read and written as an atomic of
+/// its width, relaxed: the writer's stores are plain stores, and a reader on another thread reads a value whole.
+pub struct Counts {
+    counters: crate::code_rule_dsl::facts::rows::BlockVec<i32>,
+    few: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>,
+    /// `few`'s values in use, or `PAST` once the column has had more than `EXACT`.
+    len: std::sync::atomic::AtomicU32,
+}
+
+/// `Counts::len` once its values outgrew `EXACT`: the counters alone tell its joins.
+const PAST: u32 = u32::MAX;
+
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicI32, AtomicI64};
+
+impl Counts {
+    /// No rows: its arrays at their full size, in a block, so they never move while they are read.
+    pub fn new() -> Counts {
+        let mut counters = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        counters.resize(BUCKETS, 0i32);
+        let mut few = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        few.resize(EXACT, [0i64; 2]);
+        Counts { counters, few, len: std::sync::atomic::AtomicU32::new(0) }
+    }
+
+    fn counter(&self, b: usize) -> &AtomicI32 {
+        assert!(b < BUCKETS);
+        // SAFETY: counter `b` of the array, which lives and stays where it is while `self` does; an `i32`'s layout
+        // is an `AtomicI32`'s, and every access to it is atomic.
+        unsafe { &*self.counters.as_ptr().cast::<AtomicI32>().add(b) }
+    }
+
+    fn few_cell(&self, i: usize) -> &[AtomicI64; 2] {
+        assert!(i < EXACT);
+        // SAFETY: as `counter`, for entry `i` of `few`.
+        unsafe { &*self.few.as_ptr().cast::<[AtomicI64; 2]>().add(i) }
+    }
+
+    /// Adds a row of the key whose hash is `h` to its counter. Its one writer only.
+    #[inline(always)]
+    pub fn count(&self, h: u64) {
+        let (b, s) = bucket(h);
+        let c = self.counter(b);
+        c.store(c.load(Relaxed) + s, Relaxed);
+    }
+
+    /// Adds a row of value `v` to the exact counts, while they are kept: false when `v` would be value `EXACT + 1`
+    /// (nothing changed: the writer then ends them, `end_few`, once it has read them). Its one writer only.
+    pub fn add_few(&self, v: i64) -> bool {
+        let n = self.len.load(Relaxed);
+        if n == PAST {
+            return false;
+        }
+        for i in 0..n as usize {
+            let e = self.few_cell(i);
+            if e[0].load(Relaxed) == v {
+                e[1].store(e[1].load(Relaxed) + 1, Relaxed);
+                return true;
+            }
+        }
+        if n as usize == EXACT {
+            return false;
+        }
+        let e = self.few_cell(n as usize);
+        e[0].store(v, Relaxed);
+        e[1].store(1, Relaxed);
+        // Released: a reader that sees the length sees the entry.
+        self.len.store(n + 1, std::sync::atomic::Ordering::Release);
+        true
+    }
+
+    /// Ends the exact counts: past `EXACT` values, the counters alone tell its joins. Its one writer only.
+    pub fn end_few(&self) {
+        self.len.store(PAST, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Each value's rows (`[value, rows]`), while it keeps them, read where they lie.
+    pub fn few(&self) -> Option<impl Iterator<Item = [i64; 2]> + '_> {
+        let n = self.len.load(std::sync::atomic::Ordering::Acquire);
+        (n != PAST).then(|| (0..n as usize).map(|i| self.few_cell(i)).map(|e| [e[0].load(Relaxed), e[1].load(Relaxed)]))
+    }
+
+    /// Its values while it keeps them: how many.
+    pub fn few_len(&self) -> Option<usize> {
+        let n = self.len.load(std::sync::atomic::Ordering::Acquire);
+        (n != PAST).then_some(n as usize)
+    }
+
+    /// Its counters, read where they lie.
+    pub fn counters(&self) -> impl Iterator<Item = i32> + '_ {
+        (0..BUCKETS).map(|b| self.counter(b).load(Relaxed))
+    }
+
+    /// Its arrays' bytes.
+    pub fn bytes(&self) -> usize {
+        4 * BUCKETS + 16 * EXACT
+    }
+
+    /// Whether its arrays are in a block (decision 0478 step 6c).
+    pub fn in_blocks(&self) -> bool {
+        self.counters.facts().is_some() && self.few.facts().is_some()
+    }
+}
+
+/// A new writer's own counts, from these (a sketch's clone at its first add: its filter is made so too, `Kept`'s
+/// `Clone`): written once, by that writer, in a block of its own.
+impl Clone for Counts {
+    fn clone(&self) -> Counts {
+        let made = Counts::new();
+        for (b, c) in self.counters().enumerate() {
+            made.counter(b).store(c, Relaxed);
+        }
+        match self.few() {
+            Some(few) => {
+                let mut n = 0;
+                for (i, [v, r]) in few.enumerate() {
+                    let e = made.few_cell(i);
+                    e[0].store(v, Relaxed);
+                    e[1].store(r, Relaxed);
+                    n = i + 1;
+                }
+                made.len.store(n as u32, Relaxed);
+            }
+            None => made.end_few(),
+        }
+        made
+    }
+}
+
+impl Default for Counts {
+    fn default() -> Counts {
+        Counts::new()
+    }
+}
+
+/// A column's counts as the planner reads them: its sketch's `Counts`, read where they lie, with its rows and sum
+/// of squared rows a value (`F2`) as the statistics read them.
+#[derive(Clone)]
 pub struct JoinCounts {
-    counters: Box<[i32; BUCKETS]>,
-    /// By value.
-    exact: Option<Box<[(i64, u32)]>>,
+    counts: std::sync::Arc<Counts>,
     pub rows: f64,
     pub f2: f64,
+}
+
+impl std::fmt::Debug for JoinCounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JoinCounts {{ rows: {}, f2: {}, few: {:?} }}", self.rows, self.f2, self.counts.few_len())
+    }
 }
 
 /// A join's rows, estimated, and the estimate's standard error.
@@ -52,39 +194,36 @@ impl Joined {
 }
 
 impl JoinCounts {
-    /// From a sketch's counters, its exact counts where it keeps few, its rows and its `F2`.
-    pub fn new(counters: &[i32; BUCKETS], exact: Option<&[(i64, u32)]>, rows: u64, f2: u64) -> JoinCounts {
-        let exact = exact.filter(|e| e.len() <= EXACT).map(|e| {
-            let mut e: Box<[(i64, u32)]> = e.into();
-            e.sort_unstable_by_key(|t| t.0);
-            e
-        });
-        JoinCounts { counters: Box::new(*counters), exact, rows: rows as f64, f2: f2 as f64 }
+    /// A sketch's counts, held (not copied), with its rows and its `F2`.
+    pub fn new(counts: std::sync::Arc<Counts>, rows: u64, f2: u64) -> JoinCounts {
+        JoinCounts { counts, rows: rows as f64, f2: f2 as f64 }
     }
 
-    /// A column's counts, from its values (the sketch's adds, for tests and columns the engine does not sketch).
+    /// A column's counts, from its values (as a sketch's adds make them: for tests and columns the engine does not
+    /// sketch).
     pub fn of(values: impl IntoIterator<Item = i64>) -> JoinCounts {
-        let mut counters = [0i32; BUCKETS];
-        let mut counts: std::collections::HashMap<i64, u32> = std::collections::HashMap::new();
+        let counts = Counts::new();
+        let mut each: std::collections::HashMap<i64, u64> = std::collections::HashMap::new();
         for v in values {
-            let (b, s) = bucket(super::bloom::hash(v));
-            counters[b] += s;
-            *counts.entry(v).or_default() += 1;
+            counts.count(super::bloom::hash(v));
+            if !counts.add_few(v) {
+                counts.end_few();
+            }
+            *each.entry(v).or_default() += 1;
         }
-        let rows = counts.values().map(|&n| u64::from(n)).sum();
-        let f2 = counts.values().map(|&n| u64::from(n).pow(2)).sum();
-        let exact: Vec<(i64, u32)> = counts.into_iter().collect();
-        JoinCounts::new(&counters, Some(&exact), rows, f2)
+        let rows = each.values().sum();
+        let f2 = each.values().map(|&n| n * n).sum();
+        JoinCounts::new(std::sync::Arc::new(counts), rows, f2)
     }
 
     /// Value `v`'s rows: exact where its counts are kept, else its counter's, signed (unbiased; others of its
     /// bucket add their noise).
     fn point(&self, v: i64) -> f64 {
-        match &self.exact {
-            Some(e) => e.binary_search_by_key(&v, |t| t.0).map_or(0.0, |i| f64::from(e[i].1)),
+        match self.counts.few() {
+            Some(mut few) => few.find(|e| e[0] == v).map_or(0.0, |e| e[1] as f64),
             None => {
                 let (b, s) = bucket(super::bloom::hash(v));
-                f64::from(self.counters[b] * s)
+                f64::from(self.counts.counter(b).load(Relaxed) * s)
             }
         }
     }
@@ -94,17 +233,14 @@ impl JoinCounts {
     /// any join of the two has (none, and `sqrt(F2 F2)` by Cauchy-Schwarz).
     pub fn join(&self, other: &JoinCounts) -> Joined {
         let bound = (self.f2 * other.f2).sqrt();
-        let (rows, err) = match (&self.exact, &other.exact) {
-            (Some(a), Some(_)) => (a.iter().map(|&(v, n)| f64::from(n) * other.point(v)).sum(), 0.0),
-            (Some(e), None) | (None, Some(e)) => {
-                let o = if self.exact.is_some() { other } else { self };
-                let j: f64 = e.iter().map(|&(v, n)| f64::from(n) * o.point(v)).sum();
-                (j, (bound * bound / BUCKETS as f64).sqrt())
-            }
-            (None, None) => {
-                let j: f64 = self.counters.iter().zip(other.counters.iter()).map(|(&a, &b)| f64::from(a) * f64::from(b)).sum();
-                (j, ((bound * bound + j * j) / BUCKETS as f64).sqrt())
-            }
+        let exact = |c: &JoinCounts, o: &JoinCounts| -> Option<f64> { Some(c.counts.few()?.map(|[v, n]| n as f64 * o.point(v)).sum()) };
+        let (rows, err) = if self.counts.few_len().is_some() && other.counts.few_len().is_some() {
+            (exact(self, other).unwrap_or(0.0), 0.0)
+        } else if let Some(j) = exact(self, other).or_else(|| exact(other, self)) {
+            (j, (bound * bound / BUCKETS as f64).sqrt())
+        } else {
+            let j: f64 = self.counts.counters().zip(other.counts.counters()).map(|(a, b)| f64::from(a) * f64::from(b)).sum();
+            (j, ((bound * bound + j * j) / BUCKETS as f64).sqrt())
         };
         Joined { rows: rows.clamp(0.0, bound), err }
     }

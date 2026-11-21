@@ -1,5 +1,4 @@
 .policy "ruff-pt010-pytest-raises-without-exception" revision 1
-.guests off
 .description "Name the expected exception when using pytest.raises; a call with no exception, match or check fails at runtime."
 .language python
 .mode steer

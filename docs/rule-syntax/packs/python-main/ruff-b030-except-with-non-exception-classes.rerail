@@ -1,5 +1,4 @@
 .policy "ruff-b030-except-with-non-exception-classes" revision 2
-.guests off
 .description "Use only exception classes, or tuples of them, in except clauses; other values such as literals or expressions are not valid exception types."
 .language python
 .mode steer

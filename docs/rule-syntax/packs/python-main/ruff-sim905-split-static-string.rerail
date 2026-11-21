@@ -1,5 +1,4 @@
 .policy "ruff-sim905-split-static-string" revision 1
-.guests off
 .description "Use a list literal instead of calling split() or rsplit() on a string literal; the result is known in advance."
 .language python
 .mode steer

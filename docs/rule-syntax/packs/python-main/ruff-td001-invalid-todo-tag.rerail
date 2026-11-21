@@ -1,5 +1,4 @@
 .policy "ruff-td001-invalid-todo-tag" revision 1
-.guests off
 .description "Label open-work comments with the TODO tag rather than FIXME or XXX; a single tag keeps outstanding work easy to find."
 .language python
 .mode steer
