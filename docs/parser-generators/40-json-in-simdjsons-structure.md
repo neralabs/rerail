@@ -632,7 +632,7 @@ source the compiler writes. The order is the order of the fixes: what one unbloc
 
 1. Tier 2 tests no token twice. Done (decision 0581).
 2. Tier 2 writes each rule used at several places once, as a method, as `primitive` and `string`. Done (decision 0582).
-3. Tier 2's walk: a loop a container's cycle; a close returns by the container's kind at its depth.
+3. Tier 2's walk: a loop a container's cycle; a close returns by the container's kind at its depth. Done (decision 0583).
 4. Tier 2 reads its tokens as `take!()`, and writes its nodes without a commit each.
 5. Tier 1 makes the strings and the masks made of them in its pass, and writes the structurals there.
 6. Tier 1 writes no codes tier 2 does not read, and keeps no mask that tier 2 can read from the bytes, as `walk`

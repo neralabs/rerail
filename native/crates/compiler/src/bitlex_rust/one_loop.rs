@@ -639,6 +639,34 @@ impl Lp<'_, '_> {
         Ok(format!("e = {name}(src, starts, m, d, &mut i, [{}])?;\n", args.join(", ")))
     }
 
+    /// `a` then `star` as a list `A (sep A)*`: its separator's parts.
+    fn list_sep<'g>(a: &Gram, star: &'g Gram) -> Option<&'g [Gram]> {
+        let Gram::Star(b) = star else { return None };
+        let Gram::Seq(bs) = &**b else { return None };
+        let (last, sep) = bs.split_last()?;
+        (last == a && !sep.is_empty()).then_some(sep)
+    }
+
+    /// A list `a (sep a)*`, then `rest`, then `k`: its head (`a`, its first token tested there) and its cycle (a
+    /// decision on the separator, going on to the head, and on what follows, going on to `rest`), one place each.
+    fn list(&self, a: &Gram, sep: &[Gram], rest: &[Gram], k: K) -> Result<usize, String> {
+        let (head, cycle) = (self.place(String::new()), self.place(String::new()));
+        let (sep, rest, none) = (Gram::Seq(sep.to_vec()), Gram::Seq(rest.to_vec()), Key::default());
+        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.walk(&sep, &none, K::Go(head), t)))];
+        let (_, empty) = self.g.first(&rest)?;
+        let otherwise = if empty {
+            Self::go(self.to_place(K::Code(self.walk(&rest, &none, k, T::No)?)))
+        } else {
+            arms.extend(self.walk_arms(&rest, &none, k)?);
+            "return Err(at(src, starts, i));\n".to_owned()
+        };
+        let code = self.decide(&arms, &otherwise)?;
+        self.places.borrow_mut()[cycle] = code;
+        let code = self.walk(a, &none, K::Go(cycle), T::No)?;
+        self.places.borrow_mut()[head] = code;
+        Ok(head)
+    }
+
     /// The most nodes `g` holds open at once inside its level (a node rule written where it is used, around what
     /// it holds), a level's call not counted (it is its own level's).
     fn open_in(&self, g: &Gram, depth: u32) -> Result<usize, String> {
@@ -787,7 +815,17 @@ impl Lp<'_, '_> {
                 _ => return self.err(format!("`{n}`: a nested choice is not written yet")),
             },
             Gram::Seq(gs) => {
-                let (mut k, none) = (k, Key::default());
+                let none = Key::default();
+                // A list `A (sep A)*`: A one place, its cycle one place (the lean parser's `object_field` and
+                // `object_continue`). Not first where a decision found its token or it has a key: its head reads none.
+                let list = (0..gs.len().saturating_sub(1)).find(|&p| Self::list_sep(&gs[p], &gs[p + 1]).is_some() && (p > 0 || (t == T::No && key.field == 0 && key.classes.is_empty())));
+                let (gs, mut k) = match list {
+                    Some(p) => {
+                        let sep = Self::list_sep(&gs[p], &gs[p + 1]).expect("a list");
+                        (&gs[..p], K::Go(self.list(&gs[p], sep, &gs[p + 2..], k)?))
+                    }
+                    None => (&gs[..], k),
+                };
                 for (j, g) in gs.iter().enumerate().rev() {
                     k = K::Code(self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No })?);
                 }
@@ -835,6 +873,24 @@ impl Lp<'_, '_> {
         let first = self.place(String::new());
         self.levels.borrow_mut().insert(rule.to_owned(), first);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
+        // Bracketed, `O [M] C`: each call took `O C` as the level empty, so here `M` is there.
+        let there;
+        let body = match body {
+            Gram::Seq(gs) if gs.len() == 3 && self.brackets(rule)?.is_some() => match &gs[1] {
+                Gram::Opt(m) => {
+                    let mut parts = vec![gs[0].clone()];
+                    match &**m {
+                        Gram::Seq(ms) => parts.extend(ms.iter().cloned()),
+                        m => parts.push(m.clone()),
+                    }
+                    parts.push(gs[2].clone());
+                    there = Gram::Seq(parts);
+                    &there
+                }
+                _ => body,
+            },
+            _ => body,
+        };
         let end = "close(d, e as u64);\nst = match stack.pop() {\nSome(p) => p,\nNone => return Err(at(src, starts, i)),\n};\ncontinue 'run;\n".to_owned();
         let code = self.walk(body, &Key::default(), K::Code(end), T::Byte)?;
         self.places.borrow_mut()[first] = code;

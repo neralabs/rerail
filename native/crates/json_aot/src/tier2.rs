@@ -381,102 +381,10 @@ return Ok(());
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-match peek(src, starts, i) {
-0x22 => {
-open(d, 8, at(src, starts, i) as u64);
-commit(d);
-e = string(src, starts, m, d, &mut i, [18])?;
-match peek(src, starts, i) {
-0x3a => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-e = value(src, starts, m, d, &mut i, [9, 10, 11, 12, 13])?;
-st = 9;
-continue 'run;
-}
-0x7b => {
-if stack.len() == DEPTH {
-return Err(at(src, starts, i));
-}
-if peek(src, starts, i + 1) == 0x7d {
-// `object`, empty.
-let s = starts[i] as usize;
-e = starts[i + 1] as usize + 1;
-i += 2;
-leaf(d, 14, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-open(d, 14, at(src, starts, i) as u64);
-commit(d);
-stack.push(9);
-st = 2;
-continue 'run;
-}
-0x5b => {
-if stack.len() == DEPTH {
-return Err(at(src, starts, i));
-}
-if peek(src, starts, i + 1) == 0x5d {
-// `array`, empty.
-let s = starts[i] as usize;
-e = starts[i + 1] as usize + 1;
-i += 2;
-leaf(d, 17, s as u64, e as u64);
-commit(d);
-st = 9;
-continue 'run;
-}
-open(d, 17, at(src, starts, i) as u64);
-commit(d);
-stack.push(9);
-st = 6;
-continue 'run;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
 st = 3;
 continue 'run;
 }
-}
-}
 3 => {
-match peek(src, starts, i) {
-0x7d => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-close(d, e as u64);
-st = match stack.pop() {
-Some(p) => p,
-None => return Err(at(src, starts, i)),
-};
-continue 'run;
-}
-4 => {
-match peek(src, starts, i) {
-0x2c => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
 open(d, 8, at(src, starts, i) as u64);
 commit(d);
 match peek(src, starts, i) {
@@ -545,9 +453,28 @@ return Err(at(src, starts, i));
 }
 }
 }
-_ => {
+4 => {
+match peek(src, starts, i) {
+0x2c => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
 st = 3;
 continue 'run;
+}
+0x7d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+st = match stack.pop() {
+Some(p) => p,
+None => return Err(at(src, starts, i)),
+};
+continue 'run;
+}
+_ => {
+return Err(at(src, starts, i));
 }
 }
 }
@@ -560,6 +487,10 @@ continue 'run;
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
+st = 7;
+continue 'run;
+}
+7 => {
 match peek(src, starts, i) {
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
 e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
@@ -607,28 +538,9 @@ st = 6;
 continue 'run;
 }
 _ => {
-st = 7;
-continue 'run;
-}
-}
-}
-7 => {
-match peek(src, starts, i) {
-0x5d => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
-}
-_ => {
 return Err(at(src, starts, i));
 }
 }
-close(d, e as u64);
-st = match stack.pop() {
-Some(p) => p,
-None => return Err(at(src, starts, i)),
-};
-continue 'run;
 }
 8 => {
 match peek(src, starts, i) {
@@ -636,67 +548,24 @@ match peek(src, starts, i) {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
-match peek(src, starts, i) {
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
-st = 8;
-continue 'run;
-}
-0x7b => {
-if stack.len() == DEPTH {
-return Err(at(src, starts, i));
-}
-if peek(src, starts, i + 1) == 0x7d {
-// `object`, empty.
-let s = starts[i] as usize;
-e = starts[i + 1] as usize + 1;
-i += 2;
-leaf(d, 15, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-open(d, 15, at(src, starts, i) as u64);
-commit(d);
-stack.push(8);
-st = 2;
-continue 'run;
-}
-0x5b => {
-if stack.len() == DEPTH {
-return Err(at(src, starts, i));
-}
-if peek(src, starts, i + 1) == 0x5d {
-// `array`, empty.
-let s = starts[i] as usize;
-e = starts[i + 1] as usize + 1;
-i += 2;
-leaf(d, 16, s as u64, e as u64);
-commit(d);
-st = 8;
-continue 'run;
-}
-open(d, 16, at(src, starts, i) as u64);
-commit(d);
-stack.push(8);
-st = 6;
-continue 'run;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-_ => {
 st = 7;
 continue 'run;
 }
-}
-}
-9 => {
+0x5d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
 close(d, e as u64);
-st = 4;
+st = match stack.pop() {
+Some(p) => p,
+None => return Err(at(src, starts, i)),
+};
 continue 'run;
+}
+_ => {
+return Err(at(src, starts, i));
+}
+}
 }
 _ => unreachable!(),
 }
