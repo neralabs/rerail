@@ -64,13 +64,12 @@ pub struct Input<'a> {
     /// The marks that tell an extra's record (`Records::extra`): the first, of the first extra
     /// kind, then each later kind's own bit.
     pub extra_bits: Vec<(u8, String)>,
-    /// Tier 1's fallback totals (`EMPTY`), the first `empties`: the file goes to tree-sitter
-    /// unless each is 0.
-    pub empties: u16,
     /// Each row's soft keywords (`Lowering::soft`).
     pub soft: &'a [(String, Vec<Vec<u8>>)],
-    /// The records' readers: those whose regions tier 2 splits (`Split::Tier2`) it reads in parts.
-    pub readers: &'a [crate::records::Reader],
+    /// The lexer's statements: the regions tier 2 reads in parts (`bitlex_lex_rust::readers`).
+    pub lexer: &'a [Stmt],
+    /// Each token row's own record kind, where its start gives it (`bitlex_lex_rust::Input`).
+    pub row_kinds: &'a [Option<u8>],
     /// Each byte's record kind as a token's first byte (`Records::kinds`).
     pub kinds: &'a [u8],
 }
@@ -1099,44 +1098,56 @@ impl<'a> G<'a> {
     /// `split_R` a reader; `word_in`, a piece's word; `KINDS`, a byte's record kind.
     fn splits(&self, out: &mut String, free: &mut String) -> Result<(), String> {
         let mut at = String::new();
-        for (r, rd) in self.x.readers.iter().enumerate() {
-            if rd.split != crate::records::Split::Tier2 || rd.parts.is_empty() {
-                continue;
-            }
-            let [a] = rd.arms.as_slice() else {
-                return Err(format!("reader {r}: a region split by tier 2 with {} arms", rd.arms.len()));
-            };
-            let _ = write!(at, "        if self.bit({}, s) {{\n            return self.split_{r}(j);\n        }}\n", a.opener);
-            let content = match rd.content {
-                Some(k) => format!("{k}"),
-                None => "u32::from(KINDS[usize::from(self.src[at])])".to_owned(),
-            };
+        let kind_or = |k: Option<u8>, at: &str| match k {
+            Some(k) => format!("{k}"),
+            None => format!("u32::from(KINDS[usize::from(self.src[{at}])])"),
+        };
+        for (r, rd) in crate::bitlex_lex_rust::readers(self.x.lexer).iter().enumerate() {
+            let piece = |name: &str, closes: bool| crate::bitlex_lex_rust::piece_kind(self.x.lexer, self.x.row_kinds, &rd.kind, name, closes);
+            let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+            let content = kind_or(piece(&rd.content, false), "at");
             let mut parts = String::new();
             let mut lasts = String::new();
-            for (i, p) in rd.parts.iter().enumerate() {
-                let _ = write!(parts, "            if let Some(e) = self.first_bit({}, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {}, {}) < (q.0, q.1, q.2)) {{\n                    part = Some((e, {}, {}, {i}));\n                }}\n            }}\n", p.start, p.bytes, p.start, p.bytes, p.start);
-                let last = match p.last {
-                    Some(o) => format!("match self.first_bit({o}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
-                    None => format!("e + {}", usize::from(p.bytes).saturating_sub(1)),
+            for (i, (name, start, len, last)) in rd.parts.iter().enumerate() {
+                let bytes = match len {
+                    ::bitlex::syntax::PartLen::Bytes(b) => *b,
+                    ::bitlex::syntax::PartLen::Last(_) => 0,
                 };
-                let kind = match p.kind {
-                    Some(k) => format!("{k}"),
-                    None => "u32::from(KINDS[usize::from(self.src[e])])".to_owned(),
+                let _ = write!(parts, "            // `{name}`\n            if let Some(e) = first_bit(&m.{start}, at).filter(|&e| e < c) {{\n                if part.is_none_or(|q| (e, {bytes}, {i}) < q) {{\n                    part = Some((e, {bytes}, {i}));\n                }}\n            }}\n");
+                let l = match last {
+                    Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
+                    None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
                 };
-                let _ = write!(lasts, "                        {i} => ({last}, {kind}),\n");
+                let _ = write!(lasts, "                        {i} => ({l}, {}),\n", kind_or(piece(name, false), "e"));
             }
-            let last = match a.last {
-                Some(o) => format!("match self.first_bit({o}, c) {{\n                        Some(l) => l,\n                        None => return self.refuse(),\n                    }}"),
-                None => format!("(c as isize + {}) as usize", a.off),
+            // The closer: one of a kind of its own (`closes`), else its region's own, its bytes.
+            let own = kind_or(piece(&rd.kind, true), "c");
+            let region_last = |q: usize| {
+                let g = &rd.regions[q];
+                match (&rd.region_or[q], &g.or) {
+                    (Some(f), Some((_, m2))) => format!("if bit(&m.{f}, c) {{ c + {} }} else {{ c + {} }}", m2 - 1, g.bytes - 1),
+                    _ => format!("c + {}", g.bytes - 1),
+                }
             };
-            let mut closers = String::new();
-            for &(b, k) in &rd.closers {
-                let _ = write!(closers, "                        {b:#04x} => {k},\n");
+            let mut closer = String::new();
+            for (k, f, b) in &rd.closes {
+                let _ = write!(closer, "if bit(&m.{f}, c) {{\n                        (c + {}, {})\n                    }} else ", b - 1, kind_or(piece(k, true), "c"));
             }
+            if rd.regions.len() == 1 {
+                let _ = write!(closer, "{{\n                        ({}, {own})\n                    }}", region_last(0));
+            } else {
+                for q in 0..rd.regions.len() {
+                    let test = if q + 1 == rd.regions.len() { String::new() } else { format!("if bit(&m.{}, s) ", rd.region_open[q]) };
+                    let _ = write!(closer, "{test}{{\n                        // `{}`\n                        ({}, {own})\n                    }}{}", rd.regions[q].kind, region_last(q), if test.is_empty() { "" } else { " else " });
+                }
+            }
+            let regions: Vec<&str> = rd.regions.iter().map(|g| g.kind.as_str()).collect();
             let _ = write!(
                 out,
-                "    /// Reader {r}'s region, record `j`: the opener's byte, each part, each run of bytes between, the closer.\n    fn split_{r}(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = self.first_bit({closer}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, u16, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let l = {last};\n                    let kind = match self.src[c] {{\n{closers}                        b => u32::from(KINDS[usize::from(b)]),\n                    }};\n                    self.piece(c, l, kind);\n                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
-                closer = a.closer
+                "    /// `{kind}`'s region (`read {regions} parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.\n    fn split_{r}(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
+                kind = rd.kind,
+                regions = regions.join(" | "),
+                close = rd.close
             );
         }
         let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
@@ -1277,7 +1288,7 @@ impl<'a> G<'a> {
         out.push_str(&readings);
         out.push_str(&split);
         out.push_str("}\n");
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code), its outputs (the masks a region's parts are found by) and its totals, or the byte it was refused at.\npub fn parse(src: &[u8], starts: &[u32], lasts: &[u32], codes: &[u32], outputs: &[Vec<u64>], totals: &[u64]) -> Result<rerail_tape_format::Columns, u32> {{\n    // Tier 1's fallback totals: where one is not 0, tier 1 sends the file to tree-sitter.\n    if totals.iter().take({}).any(|&t| t != 0) {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, starts, lasts, codes, outputs, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", self.x.empties, rule_fn(self.order.first().ok_or("no rule")?));
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", rule_fn(self.order.first().ok_or("no rule")?));
         Ok(out)
     }
 }
@@ -1285,6 +1296,22 @@ impl<'a> G<'a> {
 /// The parser's own code: the tokens, the tree, the comments.
 const RUNTIME: &str = r#"
 type R<X = ()> = Result<X, u32>;
+
+/// Mask `x`'s first bit at or after byte `from`, a word at a time.
+fn first_bit(x: &[u64], from: usize) -> Option<usize> {
+    let mut q = from / 64;
+    let mut w = x.get(q)? & (!0u64 << (from % 64));
+    while w == 0 {
+        q += 1;
+        w = *x.get(q)?;
+    }
+    Some(64 * q + w.trailing_zeros() as usize)
+}
+
+/// Whether mask `x` holds at byte `i`.
+fn bit(x: &[u64], i: usize) -> bool {
+    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
+}
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
@@ -1299,8 +1326,8 @@ pub struct P<'a> {
     starts: &'a [u32],
     lasts: &'a [u32],
     codes: &'a [u32],
-    /// Tier 1's outputs, a bit a byte: the masks a region's parts are found by (`split`).
-    outputs: &'a [Vec<u64>],
+    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
+    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
     i: usize,
@@ -1336,9 +1363,10 @@ pub struct P<'a> {
 
 #[allow(dead_code)]
 impl<'a> P<'a> {
-    fn new(src: &'a [u8], starts: &'a [u32], lasts: &'a [u32], codes: &'a [u32], outputs: &'a [Vec<u64>], widths: Widths) -> R<Self> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
+        let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, outputs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -1352,23 +1380,6 @@ impl<'a> P<'a> {
             self.split(self.i)?;
         }
         Ok(())
-    }
-
-    /// Output `o`'s first bit at or after byte `from`.
-    fn first_bit(&self, o: usize, from: usize) -> Option<usize> {
-        let w = self.outputs.get(o).map_or(&[][..], |v| v.as_slice());
-        let mut q = from / 64;
-        let mut x = w.get(q)? & (!0u64 << (from % 64));
-        while x == 0 {
-            q += 1;
-            x = *w.get(q)?;
-        }
-        Some(64 * q + x.trailing_zeros() as usize)
-    }
-
-    /// Whether output `o` has byte `i`'s bit.
-    fn bit(&self, o: usize, i: usize) -> bool {
-        self.outputs.get(o).and_then(|v| v.get(i / 64)).is_some_and(|w| w >> (i % 64) & 1 == 1)
     }
 
     /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.

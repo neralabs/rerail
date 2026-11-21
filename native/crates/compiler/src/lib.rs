@@ -11,6 +11,7 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 
+pub mod bitlex_lex_rust;
 pub mod bitlex_masks;
 pub mod bitlex_prove;
 pub mod bitlex_rust;

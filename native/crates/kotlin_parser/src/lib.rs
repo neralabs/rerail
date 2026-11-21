@@ -63,9 +63,10 @@ fn field(name: &str) -> Option<u16> {
     lean::FIELDS.iter().position(|&f| f == name).filter(|&i| i > 0).map(|i| i as u16)
 }
 
-/// Tier 2 of `grammar` as Rust, as the Bitlex compiler writes it from the tree rules
-/// (`bitlex_rust`), without tier 2's words lowered or either tier compiled.
-pub fn tier2_rust(grammar: &str) -> Result<String, String> {
+/// Tier 1 and tier 2 of `grammar` as Rust, as the Bitlex compiler writes them from the lexer's
+/// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier
+/// compiled.
+pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
     let stmts = ::bitlex::syntax::parse(grammar)?;
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
@@ -77,7 +78,9 @@ pub fn tier2_rust(grammar: &str) -> Result<String, String> {
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default())?;
-    compiled.rust.ok_or_else(|| "no tree section".to_owned())?
+    let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
+    let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
+    Ok((tier1, tier2))
 }
 
 /// `grammar` compiled: a Bitlex grammar's text.

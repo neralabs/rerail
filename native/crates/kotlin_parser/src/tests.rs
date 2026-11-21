@@ -26,9 +26,12 @@ fn same(texts: &[&str]) {
         let nodes = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
         let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, text.as_bytes());
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
-        // Tier 2 as Rust, over the JIT's tier 1: the same tape.
-        let aot = aot_text(c, text).unwrap_or_else(|at| panic!("tier 2 as Rust refuses {text:?} at byte {at}"));
-        assert_eq!(aot, want, "tier 2 as Rust, {text:?}");
+        // Tier 1 as Rust: the interpreter's records; tier 2 as Rust over them: the same tape.
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
+        let aot = aot_text(text).unwrap_or_else(|at| panic!("the parser as Rust refuses {text:?} at byte {at}"));
+        assert_eq!(aot, want, "the parser as Rust, {text:?}");
     }
 }
 
@@ -40,24 +43,56 @@ fn refused(texts: &[&str]) {
     }
 }
 
-/// Tier 2 as Rust (`rerail_kotlin_aot`, its `tier2.rs`) is the Bitlex compiler's output for the
-/// grammar (`tier2_rust`); `RERAIL_BLESS=1` writes it again.
+/// The parser as Rust (`rerail_kotlin_aot`, its `tier1.rs` and `tier2.rs`) is the Bitlex
+/// compiler's output for the grammar (`tiers_rust`); `RERAIL_BLESS=1` writes it again.
 #[test]
-fn tier2_rust_is_current() {
-    let rust = crate::tier2_rust(crate::GRAMMAR).unwrap_or_else(|e| panic!("tier 2 as Rust: {e}"));
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../kotlin_aot/src/tier2.rs");
-    if std::env::var_os("RERAIL_BLESS").is_some() {
-        std::fs::write(path, &rust).expect("writes");
+fn rust_is_current() {
+    let (tier1, tier2) = crate::tiers_rust(crate::GRAMMAR).unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../kotlin_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "kotlin_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
-    assert!(std::fs::read_to_string(path).is_ok_and(|have| have == rust), "kotlin_aot's tier2.rs is not the compiler's: RERAIL_BLESS=1");
 }
 
-/// `text`'s tape from tier 2 as Rust (`rerail_kotlin_aot`) over tier 1's records and outputs, as text.
-fn aot_text(c: &Compiled, text: &str) -> Result<String, u32> {
-    // Tier 1's records and outputs (the masks a string's parts are found by), the interpreter's.
-    let run = c.program.block_programs[0].run(text.as_bytes());
-    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &run.positions[0], &run.positions[1], &run.codes, &run.outputs, &run.totals)?;
+/// `text`'s tape from the parser as Rust (`rerail_kotlin_aot`: tier 1, then tier 2), as text.
+fn aot_text(text: &str) -> Result<String, u32> {
+    let tape = rerail_kotlin_aot::parse(text.as_bytes())?;
     Ok(lean::tape_text(&tape))
+}
+
+/// Where tier 1 as Rust (`rerail_kotlin_aot::lex`) is not the interpreter's tier 1: whether it
+/// sends the file to tree-sitter, and where neither does, each token's first and last byte and
+/// code.
+fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
+    let run = c.program.block_programs[0].run(text.as_bytes());
+    let lx = rerail_kotlin_aot::lex(text.as_bytes());
+    let refused = run.totals.first().is_some_and(|&t| t != 0);
+    // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
+    // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
+    // the escape. Either way the file is refused.
+    if lx.refused && !refused && c.parser.image(text.as_bytes()).is_err() {
+        return None;
+    }
+    if refused != lx.refused {
+        return Some(format!("refused: the interpreter {refused}, tier 1 as Rust {}", lx.refused));
+    }
+    if refused {
+        return None;
+    }
+    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    let n = starts.len().max(lx.starts.len());
+    for k in 0..n {
+        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
+        if theirs != ours {
+            let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
+            return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
+        }
+    }
+    None
 }
 
 #[test]
@@ -676,6 +711,7 @@ fn corpus() {
     let c = compiled().expect("compiles");
     let (mut same, mut refused, mut differ, mut lean_refused) = (0, 0, 0, 0);
     let mut aot = (0, 0, 0);
+    let mut tier1 = 0;
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
     paths.sort();
     for p in &paths {
@@ -685,8 +721,15 @@ fn corpus() {
             assert!(c.image(&text).is_none(), "{}: accepted a file the lean parser refuses", p.display());
             continue;
         };
-        // Tier 2 as Rust: the lean parser's tape, or refused.
-        match aot_text(c, &text) {
+        // Tier 1 as Rust: the interpreter's records.
+        if let Some(why) = tier1_differs(c, &text) {
+            tier1 += 1;
+            if tier1 <= 10 {
+                eprintln!("tier 1 as Rust differs: {}: {why}", p.display());
+            }
+        }
+        // The parser as Rust: the lean parser's tape, or refused.
+        match aot_text(&text) {
             Ok(t) if t == want => aot.0 += 1,
             Ok(t) => {
                 aot.2 += 1;
@@ -694,7 +737,7 @@ fn corpus() {
                 let (have, wanted): (Vec<&str>, Vec<&str>) = (t.lines().collect(), want.lines().collect());
                 let at = have.iter().zip(&wanted).position(|(a, b)| a != b).unwrap_or(have.len().min(wanted.len()));
                 let from = at.saturating_sub(6);
-                eprintln!("tier 2 as Rust differs: {}\n  context:\n    {}\n  tier 2 as Rust:\n    {}\n  lean:\n    {}", p.display(), wanted[from..at].join("\n    "), have[at..(at + 4).min(have.len())].join("\n    "), wanted[at..(at + 4).min(wanted.len())].join("\n    "));
+                eprintln!("the parser as Rust differs: {}\n  context:\n    {}\n  the parser as Rust:\n    {}\n  lean:\n    {}", p.display(), wanted[from..at].join("\n    "), have[at..(at + 4).min(have.len())].join("\n    "), wanted[at..(at + 4).min(wanted.len())].join("\n    "));
             }
             Err(_) => aot.1 += 1,
         }
@@ -738,9 +781,10 @@ fn corpus() {
         }
     }
     eprintln!("kotlin corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
-    eprintln!("tier 2 as Rust: {} the same, {} refused, {} differ", aot.0, aot.1, aot.2);
+    eprintln!("the parser as Rust: {} the same, {} refused, {} differ; tier 1's records differ in {tier1}", aot.0, aot.1, aot.2);
     assert_eq!(differ, 0);
-    assert_eq!(aot.2, 0, "tier 2 as Rust: a wrong tape");
+    assert_eq!(aot.2, 0, "the parser as Rust: a wrong tape");
+    assert_eq!(tier1, 0, "tier 1 as Rust: records not the interpreter's");
 }
 
 /// The lean parser's tape for each file in `RERAIL_KOTLIN_SHOW` (paths, `:`-separated), and the
@@ -1396,3 +1440,5 @@ fn walk_lemmas_keep_the_tapes() {
         assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
     }
 }
+
+

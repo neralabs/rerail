@@ -611,6 +611,22 @@ fn extra_kind(code: u32) -> u16 {
 
 type R<X = ()> = Result<X, u32>;
 
+/// Mask `x`'s first bit at or after byte `from`, a word at a time.
+fn first_bit(x: &[u64], from: usize) -> Option<usize> {
+    let mut q = from / 64;
+    let mut w = x.get(q)? & (!0u64 << (from % 64));
+    while w == 0 {
+        q += 1;
+        w = *x.get(q)?;
+    }
+    Some(64 * q + w.trailing_zeros() as usize)
+}
+
+/// Whether mask `x` holds at byte `i`.
+fn bit(x: &[u64], i: usize) -> bool {
+    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
+}
+
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
 /// The kind of a node open whose kind its rule gives later (`retag`).
@@ -624,8 +640,8 @@ pub struct P<'a> {
     starts: &'a [u32],
     lasts: &'a [u32],
     codes: &'a [u32],
-    /// Tier 1's outputs, a bit a byte: the masks a region's parts are found by (`split`).
-    outputs: &'a [Vec<u64>],
+    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
+    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
     i: usize,
@@ -661,9 +677,10 @@ pub struct P<'a> {
 
 #[allow(dead_code)]
 impl<'a> P<'a> {
-    fn new(src: &'a [u8], starts: &'a [u32], lasts: &'a [u32], codes: &'a [u32], outputs: &'a [Vec<u64>], widths: Widths) -> R<Self> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
+        let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, outputs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -677,23 +694,6 @@ impl<'a> P<'a> {
             self.split(self.i)?;
         }
         Ok(())
-    }
-
-    /// Output `o`'s first bit at or after byte `from`.
-    fn first_bit(&self, o: usize, from: usize) -> Option<usize> {
-        let w = self.outputs.get(o).map_or(&[][..], |v| v.as_slice());
-        let mut q = from / 64;
-        let mut x = w.get(q)? & (!0u64 << (from % 64));
-        while x == 0 {
-            q += 1;
-            x = *w.get(q)?;
-        }
-        Some(64 * q + x.trailing_zeros() as usize)
-    }
-
-    /// Whether output `o` has byte `i`'s bit.
-    fn bit(&self, o: usize, i: usize) -> bool {
-        self.outputs.get(o).and_then(|v| v.get(i / 64)).is_some_and(|w| w >> (i % 64) & 1 == 1)
     }
 
     /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.
@@ -9105,42 +9105,48 @@ impl P<'_> {
         self.reread(root, Self::reading_assignable, Self::reading_field_assignable)
     }
 
-    /// Reader 0's region, record `j`: the opener's byte, each part, each run of bytes between, the closer.
+    /// `"`'s region (`read str | rstr parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
     fn split_0(&mut self, j: usize) -> R {
         let s = self.starts[j] as usize;
         self.sub.clear();
         self.k = 0;
         self.sub.push((s as u32, s as u32, self.codes[j]));
+        let m = self.m;
         let mut at = s + 1;
         loop {
-            let Some(c) = self.first_bit(23, at) else {
+            let Some(c) = first_bit(&m.rd0_close, at) else {
                 return self.refuse();
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte.
-            let mut part: Option<(usize, u8, u16, usize)> = None;
-            if let Some(e) = self.first_bit(24, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 2, 24) < (q.0, q.1, q.2)) {
-                    part = Some((e, 2, 24, 0));
+            let mut part: Option<(usize, u8, usize)> = None;
+            // `""`
+            if let Some(e) = first_bit(&m.rd0_part0, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 0) < q) {
+                    part = Some((e, 2, 0));
                 }
             }
-            if let Some(e) = self.first_bit(25, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 25) < (q.0, q.1, q.2)) {
-                    part = Some((e, 0, 25, 1));
+            // `string_content`
+            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 1) < q) {
+                    part = Some((e, 0, 1));
                 }
             }
-            if let Some(e) = self.first_bit(27, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 27) < (q.0, q.1, q.2)) {
-                    part = Some((e, 1, 27, 2));
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 2) < q) {
+                    part = Some((e, 1, 2));
                 }
             }
-            if let Some(e) = self.first_bit(28, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 28) < (q.0, q.1, q.2)) {
-                    part = Some((e, 0, 28, 3));
+            // `interpolated_identifier`
+            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 3) < q) {
+                    part = Some((e, 0, 3));
                 }
             }
-            if let Some(e) = self.first_bit(30, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 30) < (q.0, q.1, q.2)) {
-                    part = Some((e, 1, 30, 4));
+            // `string_content`
+            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 4) < q) {
+                    part = Some((e, 1, 4));
                 }
             }
             let to = part.map_or(c, |q| q.0);
@@ -9148,15 +9154,15 @@ impl P<'_> {
                 self.piece(at, to - 1, 19);
             }
             match part {
-                Some((e, _, _, i)) => {
+                Some((e, _, i)) => {
                     let (l, kind) = match i {
                         0 => (e + 1, 16),
-                        1 => (match self.first_bit(26, e) {
+                        1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 19),
                         2 => (e + 0, 20),
-                        3 => (match self.first_bit(29, e) {
+                        3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
@@ -9167,14 +9173,14 @@ impl P<'_> {
                     at = l + 1;
                 }
                 None => {
-                    let l = match self.first_bit(21, c) {
-                        Some(l) => l,
-                        None => return self.refuse(),
-                    };
-                    let kind = match self.src[c] {
-                        0x22 => 18,
-                        0x24 => 17,
-                        b => u32::from(KINDS[usize::from(b)]),
+                    let (l, kind) = if bit(&m.t_dollar, c) {
+                        (c + 1, 17)
+                    } else if bit(&m.o_str, s) {
+                        // `str`
+                        (c + 0, 18)
+                    } else {
+                        // `rstr`
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 18)
                     };
                     self.piece(c, l, kind);
                     return Ok(());
@@ -9183,93 +9189,42 @@ impl P<'_> {
         }
     }
 
-    /// Reader 1's region, record `j`: the opener's byte, each part, each run of bytes between, the closer.
+    /// `interpolation_expression_end`'s region (`read tail | rtail parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
     fn split_1(&mut self, j: usize) -> R {
         let s = self.starts[j] as usize;
         self.sub.clear();
         self.k = 0;
         self.sub.push((s as u32, s as u32, self.codes[j]));
+        let m = self.m;
         let mut at = s + 1;
         loop {
-            let Some(c) = self.first_bit(32, at) else {
+            let Some(c) = first_bit(&m.rd1_close, at) else {
                 return self.refuse();
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte.
-            let mut part: Option<(usize, u8, u16, usize)> = None;
-            if let Some(e) = self.first_bit(33, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 2, 33) < (q.0, q.1, q.2)) {
-                    part = Some((e, 2, 33, 0));
+            let mut part: Option<(usize, u8, usize)> = None;
+            // `string_content`
+            if let Some(e) = first_bit(&m.r_start, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 0) < q) {
+                    part = Some((e, 0, 0));
                 }
             }
-            if let Some(e) = self.first_bit(34, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 4, 34) < (q.0, q.1, q.2)) {
-                    part = Some((e, 4, 34, 1));
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 1) < q) {
+                    part = Some((e, 1, 1));
                 }
             }
-            if let Some(e) = self.first_bit(35, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 2, 35) < (q.0, q.1, q.2)) {
-                    part = Some((e, 2, 35, 2));
+            // `interpolated_identifier`
+            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 2) < q) {
+                    part = Some((e, 0, 2));
                 }
             }
-            let to = part.map_or(c, |q| q.0);
-            if to > at {
-                self.piece(at, to - 1, 13);
-            }
-            match part {
-                Some((e, _, _, i)) => {
-                    let (l, kind) = match i {
-                        0 => (e + 1, 14),
-                        1 => (e + 3, 11),
-                        2 => (e + 1, 12),
-                        _ => unreachable!(),
-                    };
-                    self.piece(e, l, kind);
-                    at = l + 1;
-                }
-                None => {
-                    let l = (c as isize + 0) as usize;
-                    let kind = match self.src[c] {
-                        0x27 => 21,
-                        b => u32::from(KINDS[usize::from(b)]),
-                    };
-                    self.piece(c, l, kind);
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    /// Reader 4's region, record `j`: the opener's byte, each part, each run of bytes between, the closer.
-    fn split_4(&mut self, j: usize) -> R {
-        let s = self.starts[j] as usize;
-        self.sub.clear();
-        self.k = 0;
-        self.sub.push((s as u32, s as u32, self.codes[j]));
-        let mut at = s + 1;
-        loop {
-            let Some(c) = self.first_bit(47, at) else {
-                return self.refuse();
-            };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte.
-            let mut part: Option<(usize, u8, u16, usize)> = None;
-            if let Some(e) = self.first_bit(25, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 25) < (q.0, q.1, q.2)) {
-                    part = Some((e, 0, 25, 0));
-                }
-            }
-            if let Some(e) = self.first_bit(27, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 27) < (q.0, q.1, q.2)) {
-                    part = Some((e, 1, 27, 1));
-                }
-            }
-            if let Some(e) = self.first_bit(28, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 28) < (q.0, q.1, q.2)) {
-                    part = Some((e, 0, 28, 2));
-                }
-            }
-            if let Some(e) = self.first_bit(30, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 30) < (q.0, q.1, q.2)) {
-                    part = Some((e, 1, 30, 3));
+            // `string_content`
+            if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 3) < q) {
+                    part = Some((e, 1, 3));
                 }
             }
             let to = part.map_or(c, |q| q.0);
@@ -9277,14 +9232,14 @@ impl P<'_> {
                 self.piece(at, to - 1, 19);
             }
             match part {
-                Some((e, _, _, i)) => {
+                Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (match self.first_bit(26, e) {
+                        0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 19),
                         1 => (e + 0, 20),
-                        2 => (match self.first_bit(29, e) {
+                        2 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
@@ -9295,15 +9250,76 @@ impl P<'_> {
                     at = l + 1;
                 }
                 None => {
-                    let l = match self.first_bit(45, c) {
-                        Some(l) => l,
-                        None => return self.refuse(),
+                    let (l, kind) = if bit(&m.rd1_closes0, c) {
+                        (c + 0, 18)
+                    } else if bit(&m.rd1_closes1, c) {
+                        (c + 2, 18)
+                    } else if bit(&m.t_dollar, c) {
+                        (c + 1, 17)
+                    } else if bit(&m.o_tail, s) {
+                        // `tail`
+                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
+                    } else {
+                        // `rtail`
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
                     };
-                    let kind = match self.src[c] {
-                        0x22 => 18,
-                        0x24 => 17,
-                        0x7d => 10,
-                        b => u32::from(KINDS[usize::from(b)]),
+                    self.piece(c, l, kind);
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    /// `'`'s region (`read chr parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
+    fn split_2(&mut self, j: usize) -> R {
+        let s = self.starts[j] as usize;
+        self.sub.clear();
+        self.k = 0;
+        self.sub.push((s as u32, s as u32, self.codes[j]));
+        let m = self.m;
+        let mut at = s + 1;
+        loop {
+            let Some(c) = first_bit(&m.sq_close, at) else {
+                return self.refuse();
+            };
+            // The part first after `at`, before the closer: the earliest, the shortest at one byte.
+            let mut part: Option<(usize, u8, usize)> = None;
+            // `\u`
+            if let Some(e) = first_bit(&m.c_uesc, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 0) < q) {
+                    part = Some((e, 2, 0));
+                }
+            }
+            // `uni_digits`
+            if let Some(e) = first_bit(&m.rd2_part1, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 4, 1) < q) {
+                    part = Some((e, 4, 1));
+                }
+            }
+            // `character_escape_seq`
+            if let Some(e) = first_bit(&m.rd2_part2, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 2, 2) < q) {
+                    part = Some((e, 2, 2));
+                }
+            }
+            let to = part.map_or(c, |q| q.0);
+            if to > at {
+                self.piece(at, to - 1, 13);
+            }
+            match part {
+                Some((e, _, i)) => {
+                    let (l, kind) = match i {
+                        0 => (e + 1, 14),
+                        1 => (e + 3, 11),
+                        2 => (e + 1, 12),
+                        _ => unreachable!(),
+                    };
+                    self.piece(e, l, kind);
+                    at = l + 1;
+                }
+                None => {
+                    let (l, kind) = {
+                        (c + 0, 21)
                     };
                     self.piece(c, l, kind);
                     return Ok(());
@@ -9316,14 +9332,14 @@ impl P<'_> {
     #[inline(always)]
     fn split(&mut self, j: usize) -> R {
         let s = self.starts[j] as usize;
-        if self.bit(22, s) {
+        if bit(&self.m.rd0_open, s) {
             return self.split_0(j);
         }
-        if self.bit(31, s) {
+        if bit(&self.m.rd1_open, s) {
             return self.split_1(j);
         }
-        if self.bit(46, s) {
-            return self.split_4(j);
+        if bit(&self.m.o_chr, s) {
+            return self.split_2(j);
         }
         let _ = s;
         Ok(())
@@ -9331,15 +9347,15 @@ impl P<'_> {
 
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code), its outputs (the masks a region's parts are found by) and its totals, or the byte it was refused at.
-pub fn parse(src: &[u8], starts: &[u32], lasts: &[u32], codes: &[u32], outputs: &[Vec<u64>], totals: &[u64]) -> Result<rerail_tape_format::Columns, u32> {
-    // Tier 1's fallback totals: where one is not 0, tier 1 sends the file to tree-sitter.
-    if totals.iter().take(1).any(|&t| t != 0) {
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.
+pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
+    // Where tier 1 sends the file to tree-sitter.
+    if lx.refused {
         return Err(0);
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P::new(src, starts, lasts, codes, outputs, widths)?;
+        let mut p = P::new(src, lx, widths)?;
         p.source_file()?;
         match p.w.finish_columns() {
             Ok(c) => return Ok(c),

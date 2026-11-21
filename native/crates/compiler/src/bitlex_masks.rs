@@ -115,6 +115,8 @@ pub struct Compiled {
     pub proofs: Vec<(Vec<u8>, bitlex_prove::Answer)>,
     /// Tier 2 as Rust, written from the tree rules (`bitlex_rust`), or why it is not yet.
     pub rust: Option<Result<String, String>>,
+    /// Tier 1 as Rust, written from the lexer's statements (`bitlex_lex_rust`), or why it is not yet.
+    pub lexer_rust: Option<Result<String, String>>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -419,6 +421,8 @@ pub struct Lowering {
     pub costs: Vec<(String, usize, usize)>,
     /// Tier 2 as Rust (`Compiled::rust`).
     pub rust: Option<Result<String, String>>,
+    /// Tier 1 as Rust (`Compiled::lexer_rust`).
+    pub lexer_rust: Option<Result<String, String>>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -429,8 +433,12 @@ pub struct RustTables {
     pub tokens: Vec<(u8, String)>,
     pub mark_bits: Vec<(Option<u8>, u16)>,
     pub extra_bits: Vec<(u8, String)>,
-    /// Tier 1's fallback totals (`EMPTY`): the file goes to tree-sitter unless each is 0.
-    pub empties: u16,
+    /// Each token row's own record kind, where its start gives it, not its first byte (a moved
+    /// row, decision 0509), the rows in their statements' order (`bitlex_lex_rust`).
+    pub row_kinds: Vec<Option<u8>>,
+    /// The code's token marks (decision 0407): each its bit, what its mask is made of and the
+    /// word it needs (0 for any), as `Records::marks` has them.
+    pub token_bits: Vec<(u8, crate::bitlex_lex_rust::CodeMask, u16)>,
 }
 
 
@@ -552,6 +560,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         soft: Vec::new(),
         costs: Vec::new(),
         rust: None,
+        lexer_rust: None,
         rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
@@ -759,9 +768,18 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), empties: t.empties, readers: &r.readers, kinds: &r.kinds };
+            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
+            // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
+            let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();
+            let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
+                Err("tier 1 as Rust: a mark of one word is not written yet".to_owned())
+            } else {
+                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits };
+                crate::bitlex_lex_rust::tier1(&x)
+            };
+            low.lexer_rust = Some(lexer);
         }
     }
     low.program.delay = delay;
@@ -810,7 +828,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
     let proofs = std::mem::take(&mut low.proofs.made);
     let rust = low.rust.take();
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust })
+    let lexer_rust = low.lexer_rust.take();
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust })
 }
 
 /// The operations the provers read: the prefix's value zero (it is stripped before the passes,
@@ -3540,9 +3559,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // A row read inside a region (`inside`, a string's content) is left out: marks are of the
     // grammar's tokens in code, and none holds inside a region read in parts (`Reader::quiet`).
     let mut grammar_starts: Option<Val> = None;
+    let mut grammar_rows: Vec<usize> = Vec::new();
     for (r, (kind, start, _)) in token_rows.iter().enumerate() {
         let is_extra = low.extra.contains(kind) || low.inside.get(r).copied().unwrap_or(false);
         if !is_extra {
+            grammar_rows.push(r);
             grammar_starts = Some(match grammar_starts {
                 Some(g) => low.or(g, *start)?,
                 None => *start,
@@ -3567,6 +3588,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     let mut mark_masks = Vec::new();
+    // Each token mark's mask as tier 1 as Rust makes it, from its rows' starts (`token_bits`).
+    let mut code_masks: HashMap<usize, crate::bitlex_lex_rust::CodeMask> = HashMap::default();
     let mut marks = Vec::new();
     // The local checks (`CHECK`): each its token kinds, the mark whose refusing levels alone
     // check it (or none: everywhere), its mask `A` and its check.
@@ -3587,14 +3610,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // A token mark: its bit at every grammar token (its first element's word's, where it is
         // one word), the rest tier 2's; its bytes, its first element's.
         if let Some((before, seq)) = low.token_marks.get(&k).cloned() {
+            use crate::bitlex_lex_rust::CodeMask;
             if k >= code_marks {
                 // Past the code's: no bit, no mask.
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
+                code_masks.insert(k, CodeMask::Zero);
             } else if looped && matches!(seq[0].as_slice(), [TokenElem::Word(_)]) {
                 alone[k] = true;
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
+                code_masks.insert(k, CodeMask::Zero);
             } else if looped && !refusing_alone[k] {
                 // In the code only because a mark after it is: no bit, its tokens tier 2's alone
                 // (`Records::alone`), as a token mark's past the code's. A bit at every token
@@ -3603,13 +3629,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 token_alone |= 1 << k;
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
+                code_masks.insert(k, CodeMask::Zero);
             } else if seq[0].iter().all(|c| matches!(c, TokenElem::Kind(_))) {
                 // A first element of kinds: its bit at those rows' grammar starts, not at every
                 // token's (tier 2 tests the whole run either way).
                 let mut own: Option<Val> = None;
+                let mut own_rows = Vec::new();
                 for c in &seq[0] {
                     let TokenElem::Kind(name) = c else { continue };
-                    for (_, s, _) in token_rows.iter().filter(|t| &t.0 == name) {
+                    for (r, (_, s, _)) in token_rows.iter().enumerate().filter(|t| &t.1 .0 == name) {
+                        own_rows.push(r);
                         own = Some(match own {
                             Some(o) => low.or(o, *s)?,
                             None => *s,
@@ -3617,12 +3646,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                 }
                 let own = match own {
-                    Some(o) => low.and(o, gs)?,
-                    None => low.leaf(BlockOp::Const(0), false),
+                    Some(o) => {
+                        code_masks.insert(k, CodeMask::Rows(own_rows, grammar_rows.clone()));
+                        low.and(o, gs)?
+                    }
+                    None => {
+                        code_masks.insert(k, CodeMask::Zero);
+                        low.leaf(BlockOp::Const(0), false)
+                    }
                 };
                 mark_masks.push(own);
             } else {
                 mark_masks.push(gs);
+                code_masks.insert(k, CodeMask::Rows(grammar_rows.clone(), Vec::new()));
             }
             let mut first: ByteSet = [0; 4];
             for c in &seq[0] {
@@ -5007,7 +5043,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         })
         .collect();
     let extra_bits = extra_mark.map(|e| std::iter::once((e, low.extra[0].clone())).chain(extra_kind_bits.iter().map(|(k, b)| (*b, k.clone()))).collect()).unwrap_or_default();
-    low.rust_tables = Some(RustTables { tokens: names.tokens.clone(), mark_bits, extra_bits, empties });
+    let row_kinds = (0..rows.len()).map(|r| moved.iter().find(|m| m.0 == r).map(|&(_, f)| records.kinds[usize::from(f)])).collect();
+    let token_bits = (0..records.marks.len())
+        .filter_map(|j| {
+            let m = marks.get(j).filter(|m: &&bitlex_tier2::Mark| m.tokens.is_some())?;
+            let (o, w) = records.marks[j];
+            let mask = if o == crate::records::WORD_ALONE { crate::bitlex_lex_rust::CodeMask::WordAlone } else { code_masks.get(&usize::from(m.mask))?.clone() };
+            Some((j as u8, mask, w))
+        })
+        .collect();
+    low.rust_tables = Some(RustTables { tokens: names.tokens.clone(), mark_bits, extra_bits, row_kinds, token_bits });
     let mut text = lowered.text;
     crate::rir_text::name_rows(&mut text, &names);
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))
