@@ -88,9 +88,11 @@ mod tests {
     }
 
     /// A block no device reads is host memory, counted while it lives and not after; one that churns keeps a
-    /// free list, whose bytes the ledger names.
+    /// free list, whose bytes the ledger names. On a machine of its own (decision 0442): the tests' machine counts
+    /// every test's blocks, made while this one runs.
     #[test]
     fn a_host_block_is_counted_while_it_lives() {
+        let _own = rerail_context::within(rerail_context::Shared::new());
         let (before, _) = host_held();
         let b = policy(&need(Writes::Churn, Device::No)).unwrap();
         assert!(!b.in_slab() && b.has_free_list());
@@ -108,12 +110,15 @@ mod tests {
     /// twice what it holds. Without a device, the first is refused.
     #[test]
     fn a_block_the_device_may_read_is_host_memory_wrapped_by_its_used_extent() {
+        // Its device leases are counted in the pool's budget, which the pool's tests count.
+        #[cfg(gpu_lane)]
+        let _leases = crate::gpu::shared::big_leases();
         let must = policy(&need(Writes::Once, Device::Must));
         let may = policy(&need(Writes::Churn, Device::May)).unwrap();
         assert!(may.has_free_list());
         assert!(!may.in_slab(), "host memory, though the budget has room");
-        // The process's device, whatever its backend (decision 0440 step C); the pool is macOS's.
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        // The process's device, whatever its backend (decision 0440 step C).
+        #[cfg(gpu_lane)]
         if let Some(layer) = crate::gpu::shared::layer() {
             assert!(must.unwrap().in_slab(), "a device block is a slab");
             let at = may.try_alloc_chunk(3 << 20, 1 << 14).unwrap();
@@ -130,12 +135,15 @@ mod tests {
     /// size, not a slab's least; an exact block no device reads is host memory of its size.
     #[test]
     fn an_exact_device_block_in_a_joins_budget_is_its_size() {
+        // Its device leases are counted in the pool's budget, which the pool's tests count.
+        #[cfg(gpu_lane)]
+        let _leases = crate::gpu::shared::big_leases();
         let exact = |device| Need { kind: kind::FACTS, bytes: 40 << 10, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join };
         let host = policy(&exact(Device::No)).unwrap();
         assert!(!host.in_slab());
         let page = rerail_blocks::block::PAGE;
         assert_eq!(host.reserved(), (40usize << 10).max(rerail_blocks::alloc::EXACT_MIN).div_ceil(page) * page, "its need, in whole pages");
-        #[cfg(all(feature = "gpu", target_os = "macos"))]
+        #[cfg(gpu_lane)]
         if crate::gpu::shared::layer().is_some() {
             let b = policy(&exact(Device::Must)).unwrap();
             assert!(b.in_slab(), "a pooled buffer");

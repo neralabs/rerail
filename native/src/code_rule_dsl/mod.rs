@@ -775,7 +775,7 @@ mod demand {
     }
 }
 // Metal as the engine's device (`rerail-device-metal`): registered as the library loads (`install_devices`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub use rerail_device_metal::code_rule_dsl::device_metal;
 #[cfg_attr(test, path = "embed")]
 mod embed {
@@ -3264,7 +3264,7 @@ mod residency {
         }
     }
     // The slabs' tests store parsed documents: they run where the languages are registered.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub mod slabs {
         pub use rerail_device_metal::code_rule_dsl::residency::slabs::*;
         #[cfg(test)]
@@ -3766,7 +3766,7 @@ mod transducer {
         pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
         pub mod compile_matcher {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::transducer::packed::*;
@@ -3783,7 +3783,7 @@ mod transducer {
         // Read by simdjson's registration (not wasm: `install_languages`) and the tests.
         #[cfg(any(test, feature = "test-hooks", not(target_family = "wasm")))]
         pub use rerail_lang_json::code_rule_dsl::transducer::packed::json_parser;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub mod metal_backend {
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_backend::*;
@@ -3791,10 +3791,10 @@ mod transducer {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
         #[allow(unused_imports)]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         #[cfg_attr(test, path = ".")]
         pub mod metal_program_backend {
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_program_backend::*;
@@ -3804,11 +3804,11 @@ mod transducer {
             pub mod tape_tests;
         }
         // Metal's semantic fixtures parse documents: they run where the languages are registered.
-        #[cfg(all(test, any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
         pub mod metal_semantic_conformance;
-        #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;
-        #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_sort;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tape::TapeDoc;
@@ -3839,21 +3839,21 @@ mod transducer {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
         #[allow(unused_imports)]
-        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+        #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
         pub(super) use crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope as MetalTestScope;
         #[allow(unused_imports)]
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::set_steps;
         #[allow(unused_imports)]
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::lattice as metal_lattice;
         #[allow(unused_imports)]
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::nearest as metal_nearest;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{RootJobs, RootsFound};
         #[allow(unused_imports)]
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
@@ -4919,9 +4919,12 @@ pub(crate) fn install_languages() {
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
-            // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(target_family = "wasm"))]
+            // (`json_parser::tape::Bitlex`) is not yet the product's. MSVC builds no simdjson: its
+            // fallback reads a file as simdjson's route does (`json_parser::fallback`).
+            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
+            #[cfg(all(windows, target_env = "msvc"))]
+            parsers.push(transducer::packed::json_parser::fallback::registration());
         }
         tape::install_parsers(parsers);
     }
@@ -4932,7 +4935,7 @@ pub(crate) fn install_languages() {
 /// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
 /// `transducer::packed::device`). Called as the library loads, before any run.
 pub(crate) fn install_devices() {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device_metal::register();
 }
 

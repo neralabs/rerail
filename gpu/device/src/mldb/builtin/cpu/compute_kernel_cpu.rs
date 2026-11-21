@@ -25,7 +25,7 @@
 
 use crate::compute_kernel::*;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -61,14 +61,27 @@ const STACK_BYTES: usize = 256 << 10;
 fn compiler() -> Result<&'static str, String> {
     static CXX: OnceLock<Result<String, String>> = OnceLock::new();
     CXX.get_or_init(|| {
-        let cxx = std::env::var("RERAIL_CPU_CXX").unwrap_or_else(|_| "c++".to_string());
-        match std::process::Command::new(&cxx).arg("--version").output() {
-            Ok(o) if o.status.success() => Ok(cxx),
-            _ => Err(format!("no C++ compiler ({cxx}; set RERAIL_CPU_CXX)")),
+        let runs = |cxx: &str| std::process::Command::new(cxx).arg("--version").output().is_ok_and(|o| o.status.success());
+        if let Ok(cxx) = std::env::var("RERAIL_CPU_CXX") {
+            return if runs(&cxx) { Ok(cxx) } else { Err(format!("no C++ compiler ({cxx}, RERAIL_CPU_CXX)")) };
         }
+        // Windows: clang (the shim's assembly and builtins are clang's), on the path or Visual Studio's own.
+        let candidates: Vec<String> = if cfg!(windows) { std::iter::once("clang++".to_string()).chain(visual_studio_clang()).collect() } else { vec!["c++".to_string()] };
+        candidates.iter().find(|c| runs(c)).cloned().ok_or_else(|| format!("no C++ compiler ({}; set RERAIL_CPU_CXX)", candidates.join(", ")))
     })
     .as_deref()
     .map_err(Clone::clone)
+}
+
+/// The clang Visual Studio installs (its "C++ Clang tools" component), as its installer's `vswhere` finds it.
+fn visual_studio_clang() -> Option<String> {
+    let programs = std::env::var("ProgramFiles(x86)").ok()?;
+    let vswhere = format!("{programs}\\Microsoft Visual Studio\\Installer\\vswhere.exe");
+    let o = std::process::Command::new(vswhere)
+        .args(["-latest", "-products", "*", "-find", "VC\\Tools\\Llvm\\x64\\bin\\clang++.exe"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&o.stdout).lines().next().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string)
 }
 
 /// The CPU device: the host, with its C++ compiler.
@@ -204,15 +217,22 @@ pub fn gpu_seconds_awaited() -> f64 {
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded.
 pub struct CpuComputeFunctionLibrary {
-    handle: *mut c_void,
+    lib: crate::os::Lib,
     name: String,
 }
 
 unsafe impl Send for CpuComputeFunctionLibrary {}
 unsafe impl Sync for CpuComputeFunctionLibrary {}
 
-/// The compiler's options for a kernel library.
+/// The compiler's options for a kernel library. On Windows a DLL has no position-independent option, and no stack
+/// probes: Windows' probe walks down from the thread's own stack's limit, past which a coroutine's stack can lie.
+#[cfg(not(windows))]
 const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-fPIC", "-shared", "-fno-exceptions", "-w", "-o"];
+#[cfg(windows)]
+const CXX_FLAGS: [&str; 8] = ["-std=c++20", "-O1", "-g", "-mno-stack-arg-probe", "-shared", "-fno-exceptions", "-w", "-o"];
+
+/// A kernel library's file extension: `so` (macOS's `dlopen` takes it too), Windows' `dll`.
+const LIB_EXTENSION: &str = if cfg!(windows) { "dll" } else { "so" };
 
 /// What names the compiler's build: its `--version` (a store's key holds it, so an upgrade compiles again).
 fn compiler_version(cxx: &str) -> &'static str {
@@ -220,16 +240,11 @@ fn compiler_version(cxx: &str) -> &'static str {
     V.get_or_init(|| std::process::Command::new(cxx).arg("--version").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default())
 }
 
-/// The kernel library at `lib`, loaded.
-fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
-    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
-    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("loading {}: {e}", lib.display()));
-    }
-    Ok(handle)
+/// The kernel library at `lib`, loaded, its symbols its own (`Scope::Local`): every library defines the shim's names.
+fn open_library(lib: &std::path::Path) -> Result<crate::os::Lib, String> {
+    // A library a compiler made from UKL; it runs no initializers of its own.
+    let path = lib.to_string_lossy();
+    crate::os::Lib::open(&[path.as_ref()], crate::os::Scope::Local).ok_or_else(|| format!("loading {}: {}", lib.display(), crate::os::Lib::error()))
 }
 
 impl CpuComputeFunctionLibrary {
@@ -238,22 +253,22 @@ impl CpuComputeFunctionLibrary {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
         let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
-        let lib = match crate::store::path("cpu", &k, "so") {
+        let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
             None => {
                 let dir = std::env::temp_dir().join("rerail-ukl-cpu");
                 std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                dir.join(format!("{k}.so"))
+                dir.join(format!("{k}.{LIB_EXTENSION}"))
             }
         };
         let dir = lib.parent().expect("a library's directory").to_path_buf();
         let kept = lib.exists();
         if kept {
             match open_library(&lib) {
-                Ok(handle) => {
+                Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() });
+                    return Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -267,7 +282,7 @@ impl CpuComputeFunctionLibrary {
             let own = format!("{k}.{}.{}", std::process::id(), crate::store::unique());
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
-            let tmp = dir.join(format!("{own}.so"));
+            let tmp = dir.join(format!("{own}.{LIB_EXTENSION}"));
             let o = std::process::Command::new(cxx)
                 .args(CXX_FLAGS)
                 .arg(&tmp)
@@ -275,24 +290,27 @@ impl CpuComputeFunctionLibrary {
                 .output()
                 .map_err(|e| format!("{cxx}: {e}"))?;
             let _ = std::fs::remove_file(&src);
+            // The linker's import library and exports file beside a Windows DLL: nothing links against it.
+            for side in ["lib", "exp", "ilk"].iter().filter(|_| cfg!(windows)) {
+                let _ = std::fs::remove_file(tmp.with_extension(side));
+            }
             if !o.status.success() {
                 let log = String::from_utf8_lossy(&o.stderr);
                 let errors: Vec<&str> = log.lines().filter(|l| l.contains("error")).take(20).collect();
                 return Err(format!("{cxx} compiling {file_name_to_appear_in_error_messages} for the CPU: {}", errors.join("\n")));
             }
             // Another process may have made it meanwhile: either is the same library. Its debug information (macOS's
-            // `.dSYM`, beside it) goes with it, where a debugger looks.
-            let sym = |p: &std::path::Path| p.with_extension("so.dSYM");
+            // `.dSYM`, Windows' `.pdb`, beside it) goes with it, where a debugger looks.
+            let sym = |p: &std::path::Path| p.with_extension(if cfg!(windows) { "pdb" } else { "so.dSYM" });
             let _ = std::fs::rename(sym(&tmp), sym(&lib));
             std::fs::rename(&tmp, &lib).map_err(|e| format!("{}: {e}", lib.display()))?;
         }
-        let handle = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { handle, name: file_name_to_appear_in_error_messages.to_string() })
+        let opened = open_library(&lib)?;
+        Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() })
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let c = CString::new(name).unwrap();
-        let p = unsafe { libc::dlsym(self.handle, c.as_ptr()) };
+        let p = self.lib.sym(name);
         if p.is_null() {
             return Err(format!("{}: no {name}", self.name));
         }
@@ -406,8 +424,7 @@ struct Done {
 
 /// The root's thread's own: the threads' stacks, kept across launches.
 struct Worker {
-    stacks: *mut u8,
-    stacks_len: usize,
+    stacks: Option<crate::os::Stacks>,
     page: usize,
     sched: Vec<u64>,
 }
@@ -416,21 +433,12 @@ impl Worker {
     /// Stacks for `n` threads, each `STACK_BYTES` with a guard page below it; their base and stride.
     fn stacks(&mut self, n: usize) -> (*mut u8, usize) {
         let stride = STACK_BYTES + self.page;
-        if self.stacks_len < n * stride {
-            if !self.stacks.is_null() {
-                unsafe { libc::munmap(self.stacks.cast(), self.stacks_len) };
-            }
-            let len = n.max(64) * stride;
-            // SAFETY: anonymous memory; the guards are made inaccessible below.
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-            assert!(p != libc::MAP_FAILED, "no memory for the CPU backend's thread stacks");
-            for k in 0..len / stride {
-                unsafe { libc::mprotect(p.cast::<u8>().add(k * stride).cast(), self.page, libc::PROT_NONE) };
-            }
-            self.stacks = p.cast();
-            self.stacks_len = len;
+        if self.stacks.as_ref().is_none_or(|s| s.len() < n * stride) {
+            // The old ones first: both at once could be more than the system has.
+            self.stacks = None;
+            self.stacks = Some(crate::os::Stacks::new(n.max(64), stride).expect("no memory for the CPU backend's thread stacks"));
         }
-        (self.stacks, stride)
+        (self.stacks.as_ref().expect("made above").base(), stride)
     }
 }
 
@@ -445,8 +453,7 @@ impl CpuQueueRoot {
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
-                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
+                let mut w = Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();
                     let mut r = Ok(());

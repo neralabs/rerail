@@ -4320,6 +4320,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-device",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",

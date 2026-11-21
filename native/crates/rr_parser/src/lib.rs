@@ -158,7 +158,7 @@ pub fn compiled_tape(src: &str) -> Option<Vec<u8>> {
 /// the device left them; without a device, `tape` file by file.
 pub fn tapes(files: &[&str]) -> Vec<Vec<u8>> {
     let mut out = Vec::with_capacity(files.len());
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if let Ok(c) = compiled() {
         if metal_tapes(c, files, &mut out) {
             return out;
@@ -172,12 +172,12 @@ pub fn tapes(files: &[&str]) -> Vec<Vec<u8>> {
 }
 
 /// Tier 1's segments on the device: 29 blocks and a warm-up block each side, a SIMD group.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 const SEGMENTS: rerail_metal::block_program::serial::Segments = rerail_metal::block_program::serial::Segments { blocks: 29, warm: 1 };
 
 /// `tapes` on Metal: halves while the device refuses the batch for capacity; `false` when it
 /// cannot run it at all.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Vec<u8>>) -> bool {
     use rerail_metal::block_program::serial::run_resident;
     let mut batch = Vec::with_capacity(files.len());
@@ -474,7 +474,7 @@ pub mod tests {
     /// mask the CPU does not make (its lasts are by the end rules, decision 0177: the contract
     /// between the tiers is the records). Prints the GPU time.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "the corpus on Metal: run by hand"]
     fn tier1_on_metal_equals_cranelift() {
         use rerail_compiler::block;
@@ -526,7 +526,7 @@ pub mod tests {
     /// token refused (decision 0177, "A refusal leaves the loop"), as the CPU's loop does. Its
     /// codes end there and are the CPU's; the same tokens without the refusal are all coded.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn a_refused_files_records_stop_on_metal() {
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
@@ -582,7 +582,7 @@ pub mod tests {
         let long = "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n".repeat(200);
         let files = ["r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n", "r(x) :- ````a````.", ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".", deep.as_str(), "", long.as_str()];
         let got = super::tapes(&files);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             let mut on = Vec::new();
             assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
@@ -1053,7 +1053,7 @@ pub mod tests {
 
     /// Where a Metal run's wall time goes: two runs in a row over the corpus's first files.
     #[test]
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[ignore = "a probe: run by hand"]
     fn rr_metal_probe() {
         use rerail_metal::block_program::serial::run_resident;
@@ -1925,7 +1925,7 @@ pub mod tests {
 
     /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
     /// the token that refused. Metal's check against the CPU's reads it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
         short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
     }
@@ -2359,7 +2359,7 @@ pub mod tests {
             }
             assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
@@ -2399,7 +2399,7 @@ pub mod tests {
             cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
             cases.push((format!("{head}a(1.2.3).\n"), false));
         }
-        #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_variables))]
+        #[cfg_attr(not(any(target_os = "macos", target_os = "linux", windows)), allow(unused_variables))]
         let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
@@ -2410,7 +2410,7 @@ pub mod tests {
     }
 
     /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
@@ -2422,8 +2422,8 @@ pub mod tests {
         }
     }
 
-    /// No GPU lane off macOS and Linux.
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    /// No GPU lane off macOS, Linux and Windows.
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
     /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on
@@ -2809,7 +2809,7 @@ pub mod tests {
         };
         eprintln!("{} files, {mb:.2} MB, {} reader nodes", files.len(), tokens);
         eprintln!("  {:<44} {:>10} {:>10} {:>8}", "", "CPU/pass", "wall/pass", "MB/s CPU");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             use rerail_metal::block_program::serial::Resident;
             // Tier 1 on Metal over `files`, halved while the device refuses it for capacity (as
@@ -3397,6 +3397,8 @@ mod json_probe {
     /// `RERAIL_JSON_ASM=<path>`, its machine code.
     #[test]
     #[ignore = "a benchmark: run by hand"]
+    // Against simdjson, which does not build on MSVC (`rerail-simdjson`).
+    #[cfg(not(all(windows, target_env = "msvc")))]
     fn json_tier1_by_pass() {
         use rerail_compiler::records::Split;
         let retired = rerail_compiler::native_cpu_codegen::retired;

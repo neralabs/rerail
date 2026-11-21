@@ -1,4 +1,4 @@
-//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA on Linux, an OpenCL
+//! The device layer (decision 0440): one interface over the backends, Metal on macOS and CUDA elsewhere, an OpenCL
 //! GPU when `RERAIL_GPU=opencl`, or the CPU when `RERAIL_GPU=cpu` (`device`); MLDB's compute-kernel runtime (the
 //! argument types, the grid launcher that binds a kernel's parameters by name, and each backend's runtime, at their
 //! upstream paths under `mldb/`); and the process's shared device (`shared`).
@@ -7,7 +7,7 @@
 //! and the library's calls are `rerail-gpu`'s, which re-exports this crate. So the blocks (`rerail-blocks`), below
 //! the preprocessor, bind their memory through it (decision 0440 step B).
 
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 #[path = "mldb/block/compute_kernel.rs"]
 pub mod compute_kernel;
@@ -16,7 +16,7 @@ pub mod compute_kernel_grid;
 #[cfg(target_os = "macos")]
 #[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
 pub mod compute_kernel_metal;
-#[cfg(target_os = "linux")]
+#[cfg(not(target_os = "macos"))]
 #[path = "mldb/builtin/cuda/compute_kernel_cuda.rs"]
 pub mod compute_kernel_cuda;
 #[path = "mldb/builtin/cpu/compute_kernel_cpu.rs"]
@@ -24,6 +24,7 @@ pub mod compute_kernel_cpu;
 #[path = "mldb/builtin/opencl/compute_kernel_opencl.rs"]
 pub mod compute_kernel_opencl;
 pub mod device;
+pub mod os;
 mod rows;
 pub mod store;
 
@@ -117,7 +118,7 @@ pub mod shared {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "macos"))]
     fn open() -> Option<Shared> {
         use crate::compute_kernel_cuda::{CudaDevice, CudaQueueRoot};
         let device = CudaDevice::system_default()?;

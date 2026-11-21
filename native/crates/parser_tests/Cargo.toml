@@ -26,7 +26,9 @@ rerail-parser-tests = { path = ".", features = ["test-hooks"] }
 # Loading tier 2's Rust, built by rustc, in place of the JIT's code (`simdjson_forms_rust_trees_are_the_jits`).
 libc = "0.2.189"
 
-# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # The block programs' Metal backend, for the Metal checks (`metal_tests`).
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
+# The OS's library loader, for the ladder's ahead-of-time libraries (`aot_tests`).
+rerail-device = { path = "../../../gpu/device" }

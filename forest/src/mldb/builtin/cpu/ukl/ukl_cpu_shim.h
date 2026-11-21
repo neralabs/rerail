@@ -114,6 +114,30 @@ __asm__(".text\n.p2align 2\n.globl " __UKL_SYM(__ukl_cpu_switch) "\n" __UKL_HIDE
         ".globl " __UKL_SYM(__ukl_cpu_start) "\n" __UKL_HIDE(__ukl_cpu_start)
         __UKL_SYM(__ukl_cpu_start) ":\n"
         "  mov x0, x19\n  bl " __UKL_SYM(__ukl_cpu_entry) "\n  brk #0\n");
+#elif defined(__x86_64__) && defined(_WIN32)
+// Windows x64: the callee-saved registers are rbx, rbp, rdi, rsi, r12-r15 and xmm6-xmm15, the arguments in rcx and
+// rdx, and a call leaves 32 bytes of shadow space above its return address. COFF has no hidden symbols.
+#  define __UKL_CPU_FRAME 232
+#  define __UKL_CPU_ARG_SLOT 26
+#  define __UKL_CPU_RET_SLOT 28
+#  define __UKL_SYM(x) #x
+// The frame: xmm6-xmm15 (20 slots), r15 r14 r13 r12 rsi rdi rbx rbp, then the return address.
+__asm__(".text\n.p2align 4\n.globl " __UKL_SYM(__ukl_cpu_switch) "\n"
+        __UKL_SYM(__ukl_cpu_switch) ":\n"
+        "  pushq %rbp\n  pushq %rbx\n  pushq %rdi\n  pushq %rsi\n  pushq %r12\n  pushq %r13\n  pushq %r14\n  pushq %r15\n"
+        "  subq $160, %rsp\n"
+        "  movups %xmm6, 0(%rsp)\n  movups %xmm7, 16(%rsp)\n  movups %xmm8, 32(%rsp)\n  movups %xmm9, 48(%rsp)\n"
+        "  movups %xmm10, 64(%rsp)\n  movups %xmm11, 80(%rsp)\n  movups %xmm12, 96(%rsp)\n  movups %xmm13, 112(%rsp)\n"
+        "  movups %xmm14, 128(%rsp)\n  movups %xmm15, 144(%rsp)\n"
+        "  movq %rsp, (%rcx)\n  movq %rdx, %rsp\n"
+        "  movups 0(%rsp), %xmm6\n  movups 16(%rsp), %xmm7\n  movups 32(%rsp), %xmm8\n  movups 48(%rsp), %xmm9\n"
+        "  movups 64(%rsp), %xmm10\n  movups 80(%rsp), %xmm11\n  movups 96(%rsp), %xmm12\n  movups 112(%rsp), %xmm13\n"
+        "  movups 128(%rsp), %xmm14\n  movups 144(%rsp), %xmm15\n"
+        "  addq $160, %rsp\n"
+        "  popq %r15\n  popq %r14\n  popq %r13\n  popq %r12\n  popq %rsi\n  popq %rdi\n  popq %rbx\n  popq %rbp\n  ret\n"
+        ".globl " __UKL_SYM(__ukl_cpu_start) "\n"
+        __UKL_SYM(__ukl_cpu_start) ":\n"
+        "  movq %rbx, %rcx\n  subq $32, %rsp\n  call " __UKL_SYM(__ukl_cpu_entry) "\n  ud2\n");
 #elif defined(__x86_64__)
 #  define __UKL_CPU_FRAME 56
 #  define __UKL_CPU_ARG_SLOT 4
@@ -136,6 +160,13 @@ __asm__(".text\n.p2align 4\n.globl " __UKL_SYM(__ukl_cpu_switch) "\n" __UKL_HIDE
         "  movq %rbx, %rdi\n  call " __UKL_SYM(__ukl_cpu_entry) "\n  ud2\n");
 #else
 #  error "the CPU shim has no context switch for this architecture"
+#endif
+
+// What the host looks up in the library: exported from a Windows DLL, where a symbol is not seen by default.
+#if defined(_WIN32)
+#  define __UKL_EXPORT __declspec(dllexport)
+#else
+#  define __UKL_EXPORT
 #endif
 
 // What the host gives a launch (`compute_kernel_cpu.rs`'s `Launch`, field for field).
@@ -729,8 +760,8 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
     (unsigned long long)((const char *)&__ukl_v.Field - (const char *)&__ukl_v), sizeof(__ukl_v.Field), \
     ukl_type_code<decltype(__ukl_v.Field)>::value
 #define UKL_REFLECT_STRUCT(Type, ...) \
-    extern "C" const char Type ## __ukl_fields[] = #__VA_ARGS__; \
-    extern "C" void Type ## __ukl_layout(unsigned long long * __ukl_out) \
+    extern "C" __UKL_EXPORT const char Type ## __ukl_fields[] = #__VA_ARGS__; \
+    extern "C" __UKL_EXPORT void Type ## __ukl_layout(unsigned long long * __ukl_out) \
     { \
         Type __ukl_v; \
         const unsigned long long __ukl_l[] = \
@@ -742,11 +773,11 @@ template<> struct ukl_type_code<long long> { static constexpr unsigned long long
 // The kernel: its rows and their layouts, its body (`Name_inner`), and its entry, which reads its arguments and
 // runs every threadgroup: 0, or 1 with the launch's error written.
 #define DEFINE_KERNEL2(Library, Name, ...) \
-    extern "C" const char Name ## __ukl_params[] = #__VA_ARGS__; \
-    extern "C" const unsigned long long Name ## __ukl_rows[] = \
+    extern "C" __UKL_EXPORT const char Name ## __ukl_params[] = #__VA_ARGS__; \
+    extern "C" __UKL_EXPORT const unsigned long long Name ## __ukl_rows[] = \
         { __UKL_FOREACH_QUAD(GEN_ROW_LAYOUT2, __VA_ARGS__) }; \
     static inline void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ); \
-    extern "C" int Name (void * const * __ukl_args, const __ukl_cpu_launch * __ukl_L) \
+    extern "C" __UKL_EXPORT int Name (void * const * __ukl_args, const __ukl_cpu_launch * __ukl_L) \
     { \
         unsigned __ukl_k = 0; \
         (void)__ukl_k; \

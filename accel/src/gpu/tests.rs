@@ -208,9 +208,11 @@ fn page_aligned_inputs_are_not_copied() {
     let g = gpu();
     let page = g.gpu.page;
     let n = page / 4 * 3;
-    // SAFETY: an anonymous mapping of three pages, unmapped at the end.
-    let p = unsafe { libc::mmap(std::ptr::null_mut(), n * 4, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
-    assert_ne!(p, libc::MAP_FAILED);
+    // Three pages, page-aligned, given back at the end.
+    let layout = std::alloc::Layout::from_size_align(n * 4, page).unwrap();
+    // SAFETY: a non-zero size.
+    let p: *mut libc::c_void = unsafe { std::alloc::alloc_zeroed(layout) }.cast();
+    assert!(!p.is_null());
     let col = unsafe { std::slice::from_raw_parts_mut(p as *mut u32, n) };
     col.iter_mut().enumerate().for_each(|(i, x)| *x = i as u32 * 7);
     let mut plan = Planner { gpu: &g.gpu, inputs: HashMap::new(), leases: Default::default() };
@@ -222,7 +224,7 @@ fn page_aligned_inputs_are_not_copied() {
     // The same column twice is one buffer.
     assert_eq!(plan.input(&col[..]).contents(), p);
     drop((wrapped, copied, plan));
-    unsafe { libc::munmap(p, n * 4) };
+    unsafe { std::alloc::dealloc(p.cast(), layout) };
 }
 
 #[test]

@@ -3447,6 +3447,7 @@ mod tests {
     }
 
     /// A tree for the listing tests (decision 0400): `root/pkg/m0.py` … `m4.py`, each past the racy window.
+    #[cfg(unix)]
     fn listing_tree(name: &str) -> (PathBuf, PathBuf, Vec<PathBuf>) {
         let base = std::env::temp_dir().join(format!("rerail-listing-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -3464,12 +3465,14 @@ mod tests {
     }
 
     /// A directory's times set back past the racy window, as `aged` does a file's mtime (its ctime is the setting's).
+    #[cfg(unix)]
     fn aged_dir(dir: &Path) {
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
         std::fs::File::open(dir).unwrap().set_modified(old).unwrap();
     }
 
     /// One run of a new process's observer over `root`: its listing of `pkg`, each file's digest, its counts.
+    #[cfg(unix)]
     fn listing_run(store: &Path, root: &Path, files: &[PathBuf]) -> (Counts, Option<Listing>, Vec<Option<[u8; 32]>>) {
         let mut o = Observer::open(Some(store));
         o.begin();

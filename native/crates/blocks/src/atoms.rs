@@ -363,7 +363,10 @@ impl AtomsW {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
             f.seek(io::SeekFrom::Start(0))?;
-            f.write_all(self.block.bytes(0, self.block.used()))?;
+            let bytes = self.block.bytes(0, self.block.used());
+            // The kernel reads and writes a reservation's pages without faulting them in (Windows: `crate::windows`).
+            crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+            f.write_all(bytes)?;
             if self.flush.waits() { f.sync_data() } else { Ok(()) }
         }
     }
@@ -747,12 +750,17 @@ mod tests {
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }
-        // Frozen: the file shrinks to what it holds, and still reads.
+        // Frozen: the file is what it holds, and still reads. A mapped file (Unix) is the whole reservation until
+        // then, so it shrinks; elsewhere the file was written only to the block's end (`sync`).
         again.sync().unwrap();
         let before = std::fs::metadata(&path).unwrap().len();
         again.freeze().unwrap();
-        assert!(std::fs::metadata(&path).unwrap().len() < before);
+        let after = std::fs::metadata(&path).unwrap().len();
         let frozen = AtomsV::open(&path, 4).unwrap();
+        assert_eq!(after, frozen._block.header().length, "the frozen file is its header's length");
+        #[cfg(unix)]
+        assert!(after < before, "the mapping's unwritten tail is given back");
+        let _ = before;
         assert_eq!(frozen.find("e", h("e")), Some(3));
         assert_eq!(frozen.str(0), Some("a"));
         assert!(AtomsW::reopen(&path, 4, Flush::Synced).is_err(), "a frozen block takes no appends");

@@ -255,10 +255,7 @@ pub fn host_clock() -> f64 {
 /// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
 #[cfg(not(target_os = "macos"))]
 pub fn host_clock() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: fills the struct.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    rerail_device::os::monotonic()
 }
 
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
@@ -1875,9 +1872,23 @@ mod tests {
     /// Decision 0506: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
     /// its runs. A probe whose keys mostly miss (2,000,000 left keys, 1% of them among 200,000 or 4,000,000 right
     /// ones, the others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without
-    /// it; its GPU time is printed for both.
+    /// it (its GPU time: [`a_screened_probes_gpu_time`]).
     #[test]
     fn a_screened_probe_finds_the_hosts_pairs() {
+        screened_probes(0);
+    }
+
+    /// The probe's GPU time with the filter and without it, interleaved, the median of 20 each (a probe's GPU time
+    /// moves by a fifth between runs at a millisecond). A measurement: run it alone with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn a_screened_probes_gpu_time() {
+        screened_probes(20);
+    }
+
+    /// The probes of [`a_screened_probe_finds_the_hosts_pairs`], each shape's checked against the host join, then
+    /// `timed` more of each, interleaved, their median GPU time printed.
+    fn screened_probes(timed: usize) {
         if device().is_err() {
             return;
         }
@@ -1894,13 +1905,6 @@ mod tests {
             assert!(screened.screen.is_some());
             let column = || vec![Column::upload(&left).unwrap()];
             let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
-            // Interleaved, 20 each: a probe's GPU time moves by a fifth between runs at a millisecond.
-            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
-            for _ in 0..20 {
-                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
-                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
-            }
-            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
             let mut want = crate::rows::join(&[&left], &[&right]);
             want.sort_unstable();
             let (mut a, mut b) = (with.pairs, without.pairs);
@@ -1909,7 +1913,16 @@ mod tests {
             assert!(want.len() >= 20_000, "{} pairs", want.len());
             assert_eq!(a, want);
             assert_eq!(b, want);
-            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of 20) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
+            if timed == 0 {
+                continue;
+            }
+            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
+            for _ in 0..timed {
+                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
+                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
+            }
+            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
+            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {timed}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
         }
     }
 }
@@ -1921,11 +1934,7 @@ mod host_costs {
 
     /// The process's CPU, user and system: the device layer's own threads' too.
     fn cpu() -> f64 {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        // SAFETY: a valid rusage out.
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
-        t(u.ru_utime) + t(u.ru_stime)
+        rerail_device::os::process_cpu()
     }
 
     /// Microseconds of this thread's CPU per run of `f`, over `n` runs.

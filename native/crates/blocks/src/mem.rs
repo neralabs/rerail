@@ -44,6 +44,19 @@ pub fn reserve(len: usize) -> *mut u8 {
     }
 }
 
+/// Commits the pages of `[p, p + len)` of a reservation, before a device wraps them (its driver pins them, and takes
+/// no fault): on Windows, whose reservations are committed as they are touched (`windows`); elsewhere nothing (a
+/// mapping's pages are the kernel's to fault in).
+pub fn commit(p: *mut u8, len: usize) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return crate::windows::commit(p, len);
+    #[cfg(not(windows))]
+    {
+        let _ = (p, len);
+        Ok(())
+    }
+}
+
 /// Counts `len` bytes about to be `release`d that `reserve` did not take (a file's mapping).
 pub(crate) fn uncounted(len: usize) {
     RESERVED.fetch_add(len, Relaxed);

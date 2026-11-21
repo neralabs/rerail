@@ -7523,7 +7523,7 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         // `in_format` keeps a tape held in another format as it is (a document's tape is format 16 now): the
         // placed tape is in the format its bytes were stored in.
         assert_eq!(placed.format(), own.format(), "held as stored");
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
@@ -7673,6 +7673,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    #[cfg(not(all(windows, target_env = "msvc")))]
     use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
@@ -7686,7 +7687,8 @@ fn the_lean_parsers_write_each_format_directly() {
     // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
     // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
-    let cases: Vec<(GrammarDialect, String, Encode)> = vec![
+    #[allow(unused_mut)]
+    let mut cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
         (GrammarDialect::TypeScript, many("interface A{i} { x?: number }\nconst x{i}: A{i} = {};\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
@@ -7702,10 +7704,14 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
-        // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
+    ];
+    // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma. Not on MSVC,
+    // which builds no simdjson.
+    #[cfg(not(all(windows, target_env = "msvc")))]
+    cases.extend::<[(GrammarDialect, String, Encode); 2]>([
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
-    ];
+    ]);
     let mut direct = Vec::new();
     for (lang, source, encode) in cases {
         eprintln!("{lang:?}: {} bytes", source.len());

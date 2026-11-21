@@ -863,15 +863,17 @@ pub fn guard() -> Result<(), String> {
     GUARD.get().map_or(Ok(()), |f| f())
 }
 
+/// Held by each test that leases from the pool, or counts its live leases: the budget tests count every live lease
+/// in the process (the crate's other tests' too: `crate::blocks`).
+#[cfg(test)]
+pub(crate) fn big_leases() -> std::sync::MutexGuard<'static, ()> {
+    static BIG: Mutex<()> = Mutex::new(());
+    BIG.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
-    fn big_leases() -> std::sync::MutexGuard<'static, ()> {
-        static BIG: Mutex<()> = Mutex::new(());
-        BIG.lock().unwrap_or_else(|p| p.into_inner())
-    }
 
     /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
     /// are dropped.

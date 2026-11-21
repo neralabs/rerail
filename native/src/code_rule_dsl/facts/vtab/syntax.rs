@@ -59,7 +59,7 @@ mod cells;
 /// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
 #[rustfmt::skip]
 pub mod id_reads;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod device_chunk;
 pub mod view_docs;
 use guests::GuestRows;
@@ -1682,7 +1682,7 @@ pub struct Batch {
     /// (`device_chunk`) is nested in it, so the device reads the projections where the host does.
     block: Arc<Block>,
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     chunk: OnceLock<device_chunk::Chunk>,
 }
 
@@ -3223,7 +3223,7 @@ impl Batch {
             families: bound,
             made: grown.made.clone(),
             block,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             chunk: OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-hooks"))]
@@ -3232,7 +3232,7 @@ impl Batch {
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
@@ -3440,13 +3440,13 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
 
 impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
         // The views the views' reads answer are read in place where every tape (and for `line`, every document's
         // lines) is on the device.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
         // none where its buffers have none (`views_in_place`).
@@ -3460,7 +3460,7 @@ impl Source for Viewed {
                 in_place.failed = in_place.cache_failed();
                 in_place
             });
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let in_place: Option<()> = None;
         if matches!(self.view, View::Loc(_)) && in_place.is_none() && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
@@ -3468,16 +3468,16 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,
             view,
             rows: self.len(),
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             in_place,
             home,
         })

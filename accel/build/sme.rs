@@ -1,8 +1,10 @@
 //! The sme lane's build step: the BMOPA kernels in C with ACLE SME intrinsics (`src/sme/kernels.c`), built by `cc`.
 //!
-//! `-mcpu=apple-m4` turns on SME2 without plain SVE: `-march=armv9.2-a+sme2` makes the compiler emit SVE (`cntd`)
-//! outside streaming mode, which faults on Apple silicon. The kernels are built at `-O2` in every profile, so a debug
-//! build times the same code as a release one.
+//! `-march=armv8.6-a+sme2` turns on SME2 without plain SVE: `-march=armv9.2-a+sme2` makes the compiler emit SVE
+//! (`cntd`) outside streaming mode, which faults on Apple silicon. Not `-mcpu=apple-m4`, which gives the same code
+//! (2026-11-20: byte for byte, Apple clang 21) but which the clang of macOS 14's tools (Apple clang 16) refuses; there
+//! too the only SVE instructions are in the streaming region. The kernels are built at `-O2` in every profile, so a
+//! debug build times the same code as a release one.
 
 pub fn run() {
     println!("cargo:rerun-if-changed=build/sme.rs");
@@ -11,7 +13,7 @@ pub fn run() {
         return;
     }
     let mut build = cc::Build::new();
-    build.file("src/sme/kernels.c").flag("-mcpu=apple-m4").flag("-Wall").opt_level(2).debug(false);
+    build.file("src/sme/kernels.c").flag("-march=armv8.6-a+sme2").flag("-Wall").opt_level(2).debug(false);
     build.compile("rerail_sme");
     // The SME ABI's support routines (`__arm_tpidr2_save`, entered with each new ZA state) live in clang's
     // compiler-rt, which the clang driver links and rustc's link line does not: link it by name.

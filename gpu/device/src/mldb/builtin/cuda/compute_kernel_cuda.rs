@@ -5,7 +5,7 @@
 //! Copyright (c) 2026 Jeremy Barnes. This file is part of MLDB's forest as carried in Rerail. Apache-2.0 (see the
 //! LICENSE at `forest/src/mldb/`).
 //!
-//! - **No CUDA at build time.** The driver (`libcuda`) and NVRTC are opened at run time; without them there is no
+//! - **No CUDA at build time.** The driver (`libcuda`, Windows' `nvcuda.dll`) and NVRTC are opened at run time; without them there is no
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
 //! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
 //!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
@@ -90,13 +90,22 @@ const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
 const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
 
-/// The first of `names` the loader opens.
-fn open(names: &[String]) -> Option<Ptr> {
-    names.iter().find_map(|n| {
-        let c = CString::new(n.as_str()).ok()?;
-        let h = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL) };
-        (!h.is_null()).then_some(h)
-    })
+/// The driver's library, and NVRTC's in the system's search and in the toolkit's (`CUDA_HOME`, Windows' `CUDA_PATH`).
+fn library_names() -> (&'static [&'static str], Vec<String>) {
+    if cfg!(windows) {
+        let nvrtc = ["nvrtc64_130_0.dll", "nvrtc64_120_0.dll", "nvrtc64_112_0.dll"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        if let Ok(home) = std::env::var("CUDA_PATH") {
+            names.extend(nvrtc.iter().map(|s| format!("{home}\\bin\\{s}")));
+        }
+        (&["nvcuda.dll"], names)
+    } else {
+        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
+        let nvrtc = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"];
+        let mut names: Vec<String> = nvrtc.iter().map(|s| s.to_string()).collect();
+        names.extend(nvrtc.iter().map(|s| format!("{home}/lib64/{s}")));
+        (&["libcuda.so.1", "libcuda.so"], names)
+    }
 }
 
 /// The driver and NVRTC, opened once; `Err` says what is missing.
@@ -110,15 +119,14 @@ fn api() -> Result<&'static Api, String> {
             // SAFETY: once, before the driver loads, as the process's first use of the device.
             unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
         }
-        let cuda = open(&["libcuda.so.1".into(), "libcuda.so".into()]).ok_or("no CUDA driver (libcuda.so.1)")?;
-        let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
-        let mut names: Vec<String> = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| s.to_string()).collect();
-        names.extend(["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| format!("{home}/lib64/{s}")));
-        let nvrtc = open(&names).ok_or("no NVRTC (libnvrtc.so; CUDA_HOME/lib64)")?;
+        use crate::os::{Lib, Scope};
+        let (driver, nvrtc_names) = library_names();
+        let cuda = Lib::open(driver, Scope::Global).ok_or_else(|| format!("no CUDA driver ({})", driver.join(", ")))?;
+        let nvrtc = Lib::open(&nvrtc_names, Scope::Global).ok_or_else(|| format!("no NVRTC ({})", nvrtc_names.join(", ")))?;
         macro_rules! sym {
             ($lib:expr, $($name:literal)|+) => {{
                 let mut p: *mut c_void = std::ptr::null_mut();
-                $( if p.is_null() { p = unsafe { libc::dlsym($lib, concat!($name, "\0").as_ptr().cast()) }; } )+
+                $( if p.is_null() { p = $lib.sym($name); } )+
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
@@ -438,7 +446,7 @@ static REGISTERED: std::sync::Mutex<std::collections::BTreeMap<u64, Run>> = std:
 
 fn page_bytes() -> u64 {
     static PAGE: OnceLock<u64> = OnceLock::new();
-    *PAGE.get_or_init(|| (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as u64)
+    *PAGE.get_or_init(|| crate::os::page_bytes() as u64)
 }
 
 /// Registers the pages of `[at, at + len)` that no run holds, as runs, and holds every run in it: the runs' starts.

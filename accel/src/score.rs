@@ -296,20 +296,8 @@ impl std::fmt::Display for Score {
     }
 }
 
-/// This thread's CPU seconds.
-pub fn thread_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: a valid timespec out.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
-}
+/// This thread's CPU seconds (one clock for the crate: [`crate::exec::thread_cpu`]).
+pub use crate::exec::thread_cpu;
 
 thread_local! {
     /// The phases of the job this thread runs: (name, count, cpu, wall), in first-seen order.

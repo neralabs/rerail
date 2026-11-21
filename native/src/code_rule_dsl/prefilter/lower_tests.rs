@@ -405,7 +405,7 @@ fn regex_vocabulary_fills_once_follows_new_terms_and_dies_with_its_terms() {
 }
 
 /// The set program on Metal computes the CPU's sets (decision 0024 §2).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn metal_set_steps_compute_the_cpus_candidate_sets() {
     let store = store();

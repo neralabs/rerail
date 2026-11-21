@@ -154,7 +154,7 @@ impl Backend {
             Backend::Cpu => {
                 let mut v = vec![d("UKL_CPU_BACKEND", "1".into()), d("__UKL_CPU_PREPROCESSING", "1".into())];
                 v.push(d(if cfg!(target_arch = "aarch64") { "__aarch64__" } else { "__x86_64__" }, "1".into()));
-                v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else { "__linux__" }, "1".into()));
+                v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else if cfg!(windows) { "_WIN32" } else { "__linux__" }, "1".into()));
                 v
             }
             Backend::OpenCl => vec![

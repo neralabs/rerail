@@ -172,7 +172,7 @@ fn build(sources: &[String]) -> Vec<Entry> {
     // A directory a set of sources: the loader gives back the library already loaded at a path.
     let dir = std::env::temp_dir().join(format!("rerail-ladder-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
     std::fs::create_dir_all(&dir).expect("a directory");
-    let (rs, lib) = (dir.join("ladder.rs"), dir.join("libladder.dylib"));
+    let (rs, lib) = (dir.join("ladder.rs"), dir.join(if cfg!(windows) { "ladder.dll" } else { "libladder.dylib" }));
     let mut text = String::new();
     for (k, src) in sources.iter().enumerate() {
         text.push_str(&format!("mod s{k} {{\n{src}\n}}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry_{k}(ctx: u64) -> u64 {{\n    unsafe {{ s{k}::tier2_entry(ctx) }}\n}}\n"));
@@ -180,20 +180,17 @@ fn build(sources: &[String]) -> Vec<Entry> {
     std::fs::write(&rs, text).expect("writes");
     let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
-    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
-    // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
-    let entries = unsafe {
-        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
-        assert!(!h.is_null(), "dlopen");
-        (0..sources.len())
-            .map(|k| {
-                let name = std::ffi::CString::new(format!("rerail_tier2_entry_{k}")).expect("a name");
-                let f = libc::dlsym(h, name.as_ptr());
-                assert!(!f.is_null(), "dlsym");
-                std::mem::transmute::<*mut libc::c_void, Entry>(f)
-            })
-            .collect()
-    };
+    // A library rustc just built from the sources above; kept loaded for the process (a `Lib` is never closed).
+    let lib = rerail_device::os::Lib::open(&[lib.to_str().expect("a path")], rerail_device::os::Scope::Local)
+        .unwrap_or_else(|| panic!("loading the ladder: {}", rerail_device::os::Lib::error()));
+    let entries = (0..sources.len())
+        .map(|k| {
+            let f = lib.sym(&format!("rerail_tier2_entry_{k}"));
+            assert!(!f.is_null(), "the entry {k}");
+            // SAFETY: the entry the sources above define, of `Entry`'s signature.
+            unsafe { std::mem::transmute::<*mut std::ffi::c_void, Entry>(f) }
+        })
+        .collect();
     let _ = std::fs::remove_dir_all(&dir);
     entries
 }

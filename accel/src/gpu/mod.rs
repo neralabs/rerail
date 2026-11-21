@@ -88,7 +88,7 @@ impl Gpu {
         }
         // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
         let functions = PIPES.iter().map(|name| kernels::function_fixed(SOURCE, name, None)).collect();
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
+        let page = rerail_device::os::page_bytes();
         Ok(Gpu { layer, functions, page, max_buffer: layer.max_buffer })
     }
 }

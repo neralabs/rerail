@@ -202,7 +202,7 @@
                     [(b"language".to_vec(), Some(b"json".to_vec())),]
                 );
             }
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             let scope = crate::code_rule_dsl::transducer::packed::MetalTestScope::enter();
             let actual = crate::code_rule_dsl::transducer::packed::interpreter_reference(
                 std::slice::from_ref(&program),
@@ -215,7 +215,7 @@
             .unwrap();
             assert_eq!(actual.outputs, expected, "{query}");
             assert_eq!(actual.errors, vec![vec![None]]);
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             assert!(scope.snapshot().is_empty());
         }
     }

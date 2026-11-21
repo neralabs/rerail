@@ -7,7 +7,7 @@
 //! preprocessed at run time for the device's architecture. Either is compiled once per process on the shared device
 //! (`gpu::shared`; randomforest_kernels_metal.rs).
 
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 // The copied host sources, each translated to Rust where it sits (upstream paths under `mldb/`).
 #[path = "mldb/utils/fixed_point_accum.rs"]
@@ -44,7 +44,7 @@ pub mod randomforest_kernels;
 pub mod randomforest_recursive;
 // The device layer: `rerail-gpu` (decision 0440), under the names the forest's code uses.
 pub use rerail_gpu::{compute_kernel, compute_kernel_grid, device};
-#[cfg(target_os = "linux")]
+#[cfg(all(not(target_os = "macos"), any(target_os = "linux", windows)))]
 pub use rerail_gpu::compute_kernel_cuda;
 #[cfg(target_os = "macos")]
 pub use rerail_gpu::compute_kernel_metal;
@@ -75,10 +75,7 @@ pub mod gpu {
 
 /// The process's user + system CPU seconds.
 pub fn process_cpu() -> f64 {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
-    s(u.ru_utime) + s(u.ru_stime)
+    rerail_gpu::os::process_cpu()
 }
 
 /// Sorts keys and gives each distinct one once, in order (a numeric column's values, `from_column_device`).

@@ -18,12 +18,12 @@ use crate::Pod;
 use crate::block::Backing;
 use std::cell::{Cell, RefCell};
 
-/// Address space an anonymous scratch region reserves (nothing resident until written). Without a mapping
-/// (`crate::mem`) the reservation is allocated whole, and on Windows it is committed whole (counted against the
-/// commit limit), so it is a working size there.
-#[cfg(unix)]
+/// Address space an anonymous scratch region reserves (nothing resident until written; on Windows nothing committed
+/// until touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a
+/// working size there.
+#[cfg(any(unix, windows))]
 const ANON: usize = 1 << 36;
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
 /// Bytes of a thread's scratch kept resident between uses; past them, a use's pages are given back.
 const KEEP: usize = 64 << 20;

@@ -25,7 +25,7 @@
 //!
 //! Usage: `paces [docs] [runs] [dir]`.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_blocks::block::Block;
 use rerail_blocks::block::kind;
 use rerail_blocks::chunk::{self, DocIn};
@@ -412,7 +412,7 @@ struct Kept {
 
 struct Ctx<'a> {
     sc: &'a Schemas,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu: Option<&'a Gpu>,
     m: Mutex<Meter>,
     checks: Mutex<Vec<String>>,
@@ -437,7 +437,7 @@ impl Ctx<'_> {
 }
 
 /// The join kernels (`rerail_blocks::gpu`) on the process's device, whatever its backend (decision 0440 step C).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct Gpu {
     shared: &'static rerail_gpu::shared::Shared,
     count: &'static rerail_gpu::device::ComputeFunction,
@@ -450,7 +450,7 @@ struct JoinRun {
     reruns: u32,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Gpu {
     /// The kernels on the process's device. A kernel that does not compile is fatal (decision 0382).
     fn new() -> Result<Gpu, String> {
@@ -518,12 +518,12 @@ impl Gpu {
 }
 
 /// A join's arguments as the launch passes them: their bytes (`JoinArgs` is a block's structure, never `Copy`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct JoinArgsPod(JoinArgsBytes);
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct JoinArgsBytes {
@@ -540,11 +540,11 @@ struct JoinArgsBytes {
     rout: u32,
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 // SAFETY: `#[repr(C)]` u64s and u32s, no padding (as `JoinArgs`, whose `structure!` checks it).
 unsafe impl rerail_gpu::Pod for JoinArgsPod {}
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl JoinArgsPod {
     fn of(a: &rerail_blocks::gpu::JoinArgs) -> JoinArgsPod {
         const _: () = assert!(size_of::<JoinArgsBytes>() == size_of::<rerail_blocks::gpu::JoinArgs>());
@@ -553,7 +553,7 @@ impl JoinArgsPod {
 }
 
 /// The GPU's edge join over `imp` and `def` (each a view in `base`/`top`), into a relation of `out`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn join_gpu(cx: &Ctx, base: Option<&Block>, top: &Block, imp: View, def: View, out_f: &Facts, out_r: usize, short: bool) -> Option<JoinRun> {
     use rerail_blocks::gpu::{JoinArgs, NONE};
     let gpu = cx.gpu?;
@@ -618,7 +618,7 @@ fn cold(cx: &Ctx, srcs: &[Src], store: Option<&Store>, journal: Option<&Journal>
     p1.create(P_EDGE);
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut on_gpu = false;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if gpu_edge && cx.gpu.is_some() {
         let run = cx.time("p1.s1 edge join (gpu, count + reserve + claim + write)", || {
             join_gpu(cx, None, &p1.block, p1.view(P_IMP), p1.view(P_DEF), &p1, P_EDGE, false)
@@ -773,7 +773,7 @@ fn maintained(cx: &Ctx, kept: &Kept, srcs: &[Src], changed: &[usize], journal: &
         }
     });
     cx.time("freeze p1.s1", || p1.freeze_rel(P_EDGE));
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if cx.gpu.is_some() {
         // The GPU joins the merged views (base block + this delta block) whole, into a scratch block; with half
         // the room it needs, to take the overflow path. Its set must be the maintained edge.
@@ -999,7 +999,7 @@ fn main() {
     std::fs::create_dir_all(&dir).unwrap();
     let sc = schemas();
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let gpu = match if std::env::var_os("PACES_NO_GPU").is_some() { Err("PACES_NO_GPU".to_string()) } else { {
         // The process's device (`RERAIL_GPU` chooses its backend).
         Gpu::new()
@@ -1012,7 +1012,7 @@ fn main() {
     };
     let cx = Ctx {
         sc: &sc,
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         gpu: gpu.as_ref(),
         m: Mutex::new(Meter::default()),
         checks: Mutex::new(Vec::new()),
@@ -1084,7 +1084,7 @@ fn main() {
 
     program_paces(&cx);
     journal_paces(&cx, &dir);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     residency(&cx);
 
     let m = cx.m.lock().unwrap();
@@ -1150,7 +1150,7 @@ fn journal_paces(cx: &Ctx, dir: &Path) {
     cx.check(e.key == 1 && e.digest == 2, "a reopened journal's entry index reads back".into());
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn residency(cx: &Ctx) {
     let Some(gpu) = cx.gpu else { return };
     let before = footprint();

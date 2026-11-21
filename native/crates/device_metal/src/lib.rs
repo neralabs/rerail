@@ -27,7 +27,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::compile;
     pub use rerail_w::code_rule_dsl::crypto;
     pub use rerail_transducer::code_rule_dsl::demand;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub mod device_metal;
     pub use rerail_lang::code_rule_dsl::embed;
     pub use rerail_w::code_rule_dsl::eval;
@@ -173,7 +173,7 @@ pub mod code_rule_dsl {
             #[cfg_attr(target_os = "macos", path = "setfix")]
             pub mod setfix {
                 pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 pub mod device;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
@@ -392,7 +392,7 @@ pub mod code_rule_dsl {
     #[cfg_attr(target_os = "macos", path = "residency")]
     pub mod residency {
         pub use rerail_transducer::code_rule_dsl::residency::*;
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub mod slabs;
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
@@ -452,13 +452,13 @@ pub mod code_rule_dsl {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
             #[cfg(test)]
             pub mod block_rows_tests;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             #[path = "verify/bounded_repeat_proof.rs"]
             pub mod bounded_repeat_proof;
             #[path = "compile"]
             pub mod compile_matcher {
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 pub mod matcher_metal;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::transducer::packed::*;
@@ -469,15 +469,15 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
             }
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_backend;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_join;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_program_backend;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_rows;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_sort;
             #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",target_arch="aarch64"))]
             pub mod regex_relocation_tests;
@@ -509,21 +509,21 @@ pub mod code_rule_dsl {
             #[cfg(any(test, feature = "test-hooks"))]
             use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
             #[allow(unused_imports)]
-            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
             pub(super) use crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope as MetalTestScope;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::set_steps;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::lattice as metal_lattice;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::metal_program_backend::nearest as metal_nearest;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::device::{RootJobs, RootsFound};
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::transducer::packed::compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};
@@ -635,7 +635,7 @@ pub use rerail_logic::threads;
 /// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).
 /// `.rr` text is read too (the parity cases' programs, on the CPU pool's workers): registered by the first test that
 /// asked, a worker of another test panicked, now and then, by which test ran first (work queue Q23).
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(test, any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
     use crate::code_rule_dsl::language::adapter::rr::Rr;
