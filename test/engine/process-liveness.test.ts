@@ -203,13 +203,15 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
   // The real PowerShell prints that it ended the process before it waits: a wait that never ends stands in for the exit's.
   it.runIf(process.platform === "win32")("says through PowerShell that it ended a process before it waits for the exit", async () => {
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => runSync(
-      program, args.map(arg => arg.replace("Wait-Process -InputObject $p", "Start-Sleep -Seconds 60")), options,
-    )) as unknown as typeof childProcess.spawnSync);
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     const closed = once(child, "close");
     try {
-      expect(endProcessStartedByPowerShell(child.pid!, Date.now(), 8_000)).toBe("running");
+      // Its start as Windows records it: this process's clock can read a moment before it.
+      const started = processStartedAtThroughEngine(child.pid!)!;
+      vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => runSync(
+        program, args.map(arg => arg.replace("Wait-Process -InputObject $p", "Start-Sleep -Seconds 60")), options,
+      )) as unknown as typeof childProcess.spawnSync);
+      expect(endProcessStartedByPowerShell(child.pid!, started, 8_000)).toBe("running");
       await closed;
     } finally {
       child.kill();
