@@ -162,12 +162,21 @@ async function cachePlace(recorded: "runs" | "itself"): Promise<CachePlace> {
   return { base, node, hook };
 }
 
+/** The launcher's exit status, the answer it passed on (`{}` where it wrote none), that answer's fields and its stderr. */
+interface Launched {
+  status: number | null;
+  answer: { cache?: string | null; named?: string | null };
+  cache: string | null;
+  named: string | null;
+  stderr: string;
+}
+
 /**
  * The launcher started as Claude Code starts a hook, with the place's temporary folder (where Node keeps its compile
  * cache by default) and none of the caller's compile cache settings; `env` adds to that environment, and `preload` is a
  * module the node that starts the launcher loads first.
  */
-function launchAt(place: CachePlace, env: NodeJS.ProcessEnv = {}, preload?: string): { cache: string | null; named: string | null; stderr: string } {
+function launchAt(place: CachePlace, env: NodeJS.ProcessEnv = {}, preload?: string): Launched {
   const temp = join(place.base, "tmp");
   const { NODE_COMPILE_CACHE: _cache, NODE_DISABLE_COMPILE_CACHE: _off, ...caller } = process.env;
   const imports = preload === undefined ? [] : ["--import", pathToFileURL(preload).href];
@@ -176,11 +185,11 @@ function launchAt(place: CachePlace, env: NodeJS.ProcessEnv = {}, preload?: stri
     encoding: "utf8",
     env: { ...caller, TMPDIR: temp, TMP: temp, TEMP: temp, ...env },
   });
-  const answer = JSON.parse(result.stdout || "{}") as { cache?: string | null; named?: string | null };
-  return { cache: answer.cache ?? null, named: answer.named ?? null, stderr: result.stderr };
+  const answer = JSON.parse(result.stdout || "{}") as Launched["answer"];
+  return { status: result.status, answer, cache: answer.cache ?? null, named: answer.named ?? null, stderr: result.stderr };
 }
 
-async function launchForCache(recorded: "runs" | "itself", env: NodeJS.ProcessEnv = {}): Promise<{ cache: string | null; named: string | null; base: string; stderr: string }> {
+async function launchForCache(recorded: "runs" | "itself", env: NodeJS.ProcessEnv = {}): Promise<Launched & { base: string }> {
   const place = await cachePlace(recorded);
   return { ...launchAt(place, env), base: place.base };
 }
@@ -205,8 +214,10 @@ describe("hook launcher and Node's compile cache", () => {
   }, 30_000);
 
   it.each<"runs" | "itself">(["itself", "runs"])("leaves the cache off where the person turned it off (recorded node %s)", async recorded => {
-    const { cache, stderr } = await launchForCache(recorded, { NODE_DISABLE_COMPILE_CACHE: "1" });
-    expect(cache, stderr).toBeNull();
+    const { status, answer, stderr } = await launchForCache(recorded, { NODE_DISABLE_COMPILE_CACHE: "1" });
+    // The hook's own answer: one the launcher wrote for a hook that never ran holds no `cache`.
+    expect(status, stderr).toBe(0);
+    expect(answer).toHaveProperty("cache", null);
   }, 30_000);
 
   // A daemon the hook starts, and through it the person's own hook commands, take the hook's environment.
