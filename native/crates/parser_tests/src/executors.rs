@@ -8,7 +8,7 @@
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::{block, native_ir};
 use rerail_cpu_block::native_cpu_block;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use rerail_metal as metal_program_backend;
 
 /// Inputs that put every byte value at every position of a block, and lengths around every
@@ -65,7 +65,7 @@ pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
     /// The program lowered, which the device's executors run.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     native: rerail_compiler::block_native::BlockNative,
     cranelift: native_cpu_block::CompiledBlock,
 }
@@ -76,7 +76,7 @@ impl<'a> Executors<'a> {
         let cranelift = native_cpu_block::compile(&native).expect("compiles");
         Executors {
             block: &p.block_programs[0],
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             native,
             cranelift,
         }
@@ -103,7 +103,7 @@ impl<'a> Executors<'a> {
     }
 
     /// The device's executors' outputs over `bytes` into `out`, those over the launch budget into `skipped`.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device(&self, bytes: &[u8], out: &mut Runs, skipped: &mut Vec<String>) {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
         use rerail_compiler::Error;
@@ -129,7 +129,7 @@ impl<'a> Executors<'a> {
     }
 
     /// No device executors off the device layer's targets.
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     fn device(&self, _bytes: &[u8], _out: &mut Runs, _skipped: &mut Vec<String>) {}
 }
 

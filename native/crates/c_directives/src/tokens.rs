@@ -112,8 +112,9 @@ mod tests {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
         // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
-        // never skipped). A Linux host's GPU lane (decision 0440 step E) may have no device, and is then skipped.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device, and is then
+        // skipped.
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if let Some(m) = match c.metal_images(&[src]) {
             Ok(m) => Some(m),
             Err(e) if cfg!(target_os = "macos") => return Err(format!("the device runs it: {e:?}")),

@@ -62,7 +62,7 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     }
     let device = lane::device()?;
     let _scope = rerail_metal::launch::LaunchScope::enter();
-    let kernel = lane::kernel_fixed(SOURCE, "nearest_jump", None);
+    let kernel = kernel();
     let mut phases = [0.0f64; 7];
     let (mut made, mut reused) = (0u64, 0u64);
     let begun = host_seconds();
@@ -104,6 +104,12 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     }
     let targets = out.into_iter().map(|v| if v == NONE { NONE } else { v & !FINAL }).collect();
     Ok(Solved { targets, rounds: stats.read(1)[0], launches: 1, gpu: times.device, wall: host_seconds() - begun, phases, made, reused })
+}
+
+
+/// The nearest jumps' kernel (a fixed source: compiled ahead, `metal_program_backend::kernels_ahead`).
+pub(in crate::code_rule_dsl) fn kernel() -> lane::Kernel {
+    lane::kernel_fixed(SOURCE, "nearest_jump", None)
 }
 
 #[cfg(test)]

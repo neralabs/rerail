@@ -74,5 +74,5 @@ mod tier2_tests;
 mod ladder_tests;
 
 /// Tier 2 over tier 1's buffers as the Metal backend left them (the device layer's: Metal and Vulkan).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod tier2_on;

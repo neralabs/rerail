@@ -78,6 +78,12 @@ pub enum Backend {
 }
 
 impl Backend {
+    /// Whether the backend's compiler has a 32-bit `long`: the host compiler on Windows (LLP64), and NVRTC there,
+    /// whose device types match the host's.
+    fn long_is_32(self) -> bool {
+        cfg!(windows) && matches!(self, Backend::Cpu | Backend::Cuda { .. })
+    }
+
     /// The shim directory's name under `mldb/builtin/`.
     fn dir(self) -> &'static str {
         match self {
@@ -109,7 +115,7 @@ impl Backend {
             Backend::Cpu => {
                 let mut v = vec![d("UKL_CPU_BACKEND", "1".into()), d("__UKL_CPU_PREPROCESSING", "1".into())];
                 v.push(d(if cfg!(target_arch = "aarch64") { "__aarch64__" } else { "__x86_64__" }, "1".into()));
-                v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else { "__linux__" }, "1".into()));
+                v.push(d(if cfg!(target_os = "macos") { "__APPLE__" } else if cfg!(windows) { "_WIN32" } else { "__linux__" }, "1".into()));
                 v
             }
             Backend::OpenCl => vec![
@@ -146,6 +152,29 @@ struct Out {
     text: TextSink,
     paths: Vec<String>,
     errors: Vec<(u32, u32, String)>,
+    /// The compiler's `long` is 32 bits (`long_is_32`): an integer literal's `l` suffix is written `ll`.
+    long_32: bool,
+}
+
+/// Integer literal `text` with its `long` suffix (`l`, `ul`, `lu`, any case) written `long long` (`ll`, `ull`), or
+/// `None` when it has none. UKL is written for 64-bit `long`, as Metal, OpenCL and every other target have it:
+/// `(1ul << 39) - 1`, `~0ul`. Under Windows' LLP64 (the CPU's host compiler, NVRTC beside it) `long` is 32 bits, so
+/// such a shift is out of range and `~0ul` is `0xffffffff`; the device executor's arena texts read at offset 0 (an
+/// `@printf` gave "." for "002.").
+fn long_long(text: &[u8]) -> Option<Vec<u8>> {
+    if !text.first().is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    let digits = text.iter().rposition(|b| !matches!(b, b'u' | b'U' | b'l' | b'L')).map_or(0, |i| i + 1);
+    let (number, suffix) = text.split_at(digits);
+    let hex = number.len() > 1 && matches!(number[1], b'x' | b'X');
+    let float = number.contains(&b'.') || number.iter().any(|b| if hex { matches!(b, b'p' | b'P') } else { matches!(b, b'e' | b'E') });
+    let longs = suffix.iter().filter(|b| matches!(b, b'l' | b'L')).count();
+    if float || longs != 1 {
+        return None;
+    }
+    let unsigned = suffix.iter().any(|b| matches!(b, b'u' | b'U'));
+    Some([number, if unsigned { b"ull" } else { b"ll" }].concat())
 }
 
 impl Sink for Out {
@@ -153,7 +182,10 @@ impl Sink for Out {
         true
     }
     fn token(&mut self, t: &rerail_c_pp::macros::Tk, text: &[u8], at: Option<At>, off: u32) {
-        self.text.token(t, text, at, off);
+        match self.long_32.then(|| long_long(text)).flatten() {
+            Some(wide) => self.text.token(t, &wide, at, off),
+            None => self.text.token(t, text, at, off),
+        }
     }
     fn enter(&mut self, file: u32, path: &str, from: Option<(u32, u32)>, depth: u32) {
         if self.paths.len() <= file as usize {
@@ -248,7 +280,8 @@ impl Preprocess {
             std::fs::read(p).ok().filter(|_| std::path::Path::new(p).is_file())
         };
         let mut io = Search::new(self.search(), read);
-        let mut out = Out { text: TextSink::default(), paths: Vec::new(), errors: Vec::new() };
+        let long_32 = self.backend.long_is_32();
+        let mut out = Out { text: TextSink::default(), paths: Vec::new(), errors: Vec::new(), long_32 };
         // A `__has_*` test the configuration does not answer reads as 0, as on a compiler without the feature.
         let ok = Pp::new(cfg, &mut io, &mut out).run(main);
         if !ok || !out.errors.is_empty() {

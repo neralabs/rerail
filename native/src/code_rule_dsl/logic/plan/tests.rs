@@ -1041,7 +1041,7 @@ fn open_files() -> Vec<std::path::PathBuf> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }

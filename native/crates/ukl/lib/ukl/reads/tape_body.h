@@ -357,7 +357,9 @@ UKL_INLINE uint32_t clif_t15_end_stated(CLIF_T_ARGS, uint32_t i)
 }
 
 // `c + size`, past `c` however `size` wraps, and no further than the tape's nodes.
-UKL_INLINE uint32_t clif_t_hop(CLIF_T_ARGS, uint32_t c, uint32_t size) { return ukl_min(ukl_max(c + size, c + 1u), clif_view(v, CLIF_T_NODES)); }
+// Past `c` after the clamp too: from the view's last node (a short count, a node asked past it) a hop clamped to the
+// nodes was a step of zero, and a walk stopped only past its end never stopped (decision 0463).
+UKL_INLINE uint32_t clif_t_hop(CLIF_T_ARGS, uint32_t c, uint32_t size) { return ukl_max(ukl_min(ukl_max(c + size, c + 1u), clif_view(v, CLIF_T_NODES)), c + 1u); }
 
 // The nearest node before whose subtree holds the node, back over at most 64 nodes, else a descent from the root
 // over the siblings' subtrees.
@@ -430,7 +432,13 @@ UKL_COLD uint32_t clif_tape_line_select(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_S
     uint32_t w = clif_t_u32(t, r, sample, 0u);
     uint32_t before = clif_t_u32(t, r, sample, 4u);
     uint32_t high = clif_t_lines_part(t, v, (zs + os) * 8u);
+    // Within the index's words: past them (a `j` it does not hold, a line past the last) the position past its last
+    // word. Unbounded, a word of none was a step of zero, and past the index lies the rest of the slab, zeroed: a
+    // select there walked it all (2026-11-20, a GPU held; decision 0463).
+    uint32_t words = clif_t_lines_field(t, v, 4u);
     for (;;) {
+        if (w >= words)
+            return words * 64u;
         uint64_t word = clif_t_word(t, r, high, w * 8u);
         uint64_t x = ones != 0u ? word : ~word;
         uint32_t through = before + ukl_popcount64(x);

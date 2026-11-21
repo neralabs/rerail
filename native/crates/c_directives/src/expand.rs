@@ -262,14 +262,14 @@ pub fn ukl() -> Result<&'static str, String> {
 }
 
 /// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
 /// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
 /// runner of `expand_tus_with`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
     let Ok(source) = ukl() else { return refused("the words do not translate to UKL") };

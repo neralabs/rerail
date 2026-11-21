@@ -128,27 +128,6 @@ fn json_fixed() -> Vec<String> {
     docs
 }
 
-/// The system's loader: a library opened and kept, and its symbols.
-mod loader {
-    use std::ffi::{c_char, c_void};
-    #[cfg(unix)]
-    pub unsafe fn open(path: *const c_char) -> *mut c_void {
-        unsafe { libc::dlopen(path, libc::RTLD_NOW) }
-    }
-    #[cfg(unix)]
-    pub unsafe fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void {
-        unsafe { libc::dlsym(h, name) }
-    }
-    #[cfg(windows)]
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        #[link_name = "LoadLibraryA"]
-        pub fn open(path: *const c_char) -> *mut c_void;
-        #[link_name = "GetProcAddress"]
-        pub fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void;
-    }
-}
-
 /// The sources built into one library, each a module with its entry `rerail_tier2_entry_{k}`; the entries, in order.
 fn build(sources: &[String]) -> Vec<Entry> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -165,20 +144,17 @@ fn build(sources: &[String]) -> Vec<Entry> {
     // With its debug assertions: a walk's invariants the reserved writer leaves unchecked (`rust_stream::reserved`).
     let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-C", "debug-assertions", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
-    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
-    // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
-    let entries = unsafe {
-        let h = loader::open(path.as_ptr());
-        assert!(!h.is_null(), "loading {}", lib.display());
-        (0..sources.len())
-            .map(|k| {
-                let name = std::ffi::CString::new(format!("rerail_tier2_entry_{k}")).expect("a name");
-                let f = loader::symbol(h, name.as_ptr());
-                assert!(!f.is_null(), "rerail_tier2_entry_{k} in {}", lib.display());
-                std::mem::transmute::<*mut std::ffi::c_void, Entry>(f)
-            })
-            .collect()
-    };
+    // A library rustc just built from the sources above; kept loaded for the process (a `Lib` is never closed).
+    let lib = rerail_device::os::Lib::open(&[lib.to_str().expect("a path")], rerail_device::os::Scope::Local)
+        .unwrap_or_else(|| panic!("loading the ladder: {}", rerail_device::os::Lib::error()));
+    let entries = (0..sources.len())
+        .map(|k| {
+            let f = lib.sym(&format!("rerail_tier2_entry_{k}"));
+            assert!(!f.is_null(), "the entry {k}");
+            // SAFETY: the entry the sources above define, of `Entry`'s signature.
+            unsafe { std::mem::transmute::<*mut std::ffi::c_void, Entry>(f) }
+        })
+        .collect();
     let _ = std::fs::remove_dir_all(&dir);
     entries
 }

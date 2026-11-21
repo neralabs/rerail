@@ -705,7 +705,7 @@ pub mod code_rule_dsl {
             }
         }
         // The slabs' tests store parsed documents: they run where the languages are registered.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub mod slabs {
             pub use rerail_boot::code_rule_dsl::residency::slabs::*;
             #[cfg(test)]

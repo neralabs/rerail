@@ -373,7 +373,7 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
 fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if crate::code_rule_dsl::tape::placed::device().is_some() {
         return placed_parse(image, grammar).map(|(_, image)| image);
     }

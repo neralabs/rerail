@@ -7,6 +7,8 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// Canonical paths without Windows' verbatim prefix: the engine's every one (`rerail_store::Canonical`).
+use rerail_store::Canonical as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -63,11 +65,15 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// jemalloc does not build for MSVC targets; Windows takes mimalloc (below). The test build declares it too
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
+
+#[cfg(all(windows, not(feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
@@ -391,7 +397,7 @@ fn policy_file_path(path: &str) -> Result<&Path> {
 fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
     let path = policy_file_path(path)?;
     match snapshot {
-        None => path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
+        None => path.canonical().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
         Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
         Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
     }
@@ -704,7 +710,7 @@ pub fn owning_directory_analysis_store(store_path: String, directory: String, ho
 #[napi]
 pub fn retire_upkeep_under(directory: String) {
     let path = Path::new(&directory);
-    let root = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let root = path.canonical().unwrap_or_else(|_| path.to_owned());
     rerail_accel::upkeep::retire_files_under(&root);
 }
 
