@@ -3851,6 +3851,10 @@ impl View {
     pub fn filtered(&self) -> bool {
         !self.eqs.is_empty()
     }
+    /// The constants that chose its rows: each a source's column and its value.
+    pub fn eqs(&self) -> &[(usize, i64)] {
+        &self.eqs
+    }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]
