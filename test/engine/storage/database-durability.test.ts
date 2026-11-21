@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { openRerailDatabase, openSqliteDatabase } from "../../../src/engine/storage/database.js";
+import { commitDurably, openRerailDatabase, openSqliteDatabase } from "../../../src/engine/storage/database.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 // What the reference tells a person the store keeps through a power cut is what its writers' setting gives: SQLite's
@@ -39,6 +39,21 @@ describe("what the store keeps through a power cut", () => {
       } finally {
         database.$client.close();
       }
+    }
+  });
+
+  // The rare commit a power cut must not take (the remote outbox's record of a batch it sends) waits for the disk alone:
+  // FULL while it commits, and the connection's own setting after, however the write ends.
+  it("waits for the disk at a durable commit only, then gives the connection its own setting back", async () => {
+    const database = openRerailDatabase(await databasePath());
+    const client = database.$client;
+    try {
+      expect(commitDurably(client, () => client.pragma("synchronous", { simple: true }))).toBe(FULL);
+      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+      expect(() => commitDurably(client, () => { throw new Error("refused"); })).toThrow("refused");
+      expect(client.pragma("synchronous", { simple: true })).toBe(promised);
+    } finally {
+      client.close();
     }
   });
 });

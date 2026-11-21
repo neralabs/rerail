@@ -450,8 +450,8 @@ export class SqliteAuditControlStore {
    * and its checks still running are interrupted (a check whose finish a power cut took would read as running for
    * good otherwise, as would one a kill stopped, in a session that never opens again) and its owner released, as when
    * its owner is found gone, and its record ends `idleMs` after it was last heard from (its newest recorded event, else
-   * its start), as the idle close of a daemon still running would have ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
-   * returns how many sessions it ended.
+   * its start), as the idle close of a daemon still running would have ended it, and at the latest at `now`. Each
+   * process and each lock is asked once. One query and one transaction; returns how many sessions it ended.
    */
   endSessionsOfEndedOwners(idleMs: number, now: number): number {
     return this.#database.transaction(() => {

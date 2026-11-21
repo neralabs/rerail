@@ -27,13 +27,14 @@ import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { violationCopiesSql } from "../engine/storage/audit-history.js";
-import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitDurably, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import {
   excludedAt, machineId, machineLabel, readRemoteConfig, readRemoteToken, remoteStateKey, type RemoteEntry, type RepositoryExclusion,
 } from "./remote-config.js";
+import { POSTED_EVENTS_STREAM } from "./remote-cursors.js";
 
 export const SINK_PROTOCOL = 1;
 /** C1: one batch is at most 5 MB uncompressed. */
@@ -279,6 +280,10 @@ type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | 
 
 const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
 
+/** The last event number `batch` carries, its records and those too large to send; 0 when it carries none. */
+const lastSequence = (batch: { readonly records: readonly OutboxRecord[]; readonly oversized: readonly OutboxRecord[] }): number =>
+  [...batch.records, ...batch.oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
+
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
@@ -474,6 +479,7 @@ export class RemoteOutbox {
       this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
       return "next";
     }
+    this.#markPosted(state, key, batch);
     const outcome = await this.#post(remote, token, batch.records, options.signal);
     const stopped = this.#stoppedWhileOut(sending);
     if (stopped !== undefined) return stopped;
@@ -483,6 +489,21 @@ export class RemoteOutbox {
       return "next";
     }
     return this.#settleBatch(sending, batch, outcome);
+  }
+
+  /**
+   * The last event number `batch` carries, on disk before the batch goes out (`POSTED_EVENTS_STREAM`): once the remote
+   * may hold an event, the next writer of events numbers past it (`keepEventNumbersPastRemotes`), whatever a power cut
+   * takes after, the remote's answer and the cursor's move included. Of the outbox's commits only this one waits for the
+   * disk (`commitDurably`), once per batch that carries events. None runs inside a hook, but the daemon's timer runs
+   * them on the daemon's thread, which a hook arriving meanwhile waits for; and a cut that takes another of them only
+   * makes the outbox send again what the remote holds.
+   */
+  #markPosted(state: Database.Database, remote: string, batch: BatchBuilder): void {
+    const sequence = lastSequence(batch);
+    if (sequence === 0) return;
+    commitDurably(state, () => state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, ?, ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)")
+      .run(remote, POSTED_EVENTS_STREAM, sequence));
   }
 
   /** The result that ends the sync when the lock is lost or the remote is removed (or removed and added again) while a batch was out: nothing more is sent or recorded for it. */
@@ -695,7 +716,7 @@ export class RemoteOutbox {
       // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
       if (!this.#configured(remote)) return;
       const machine = machineId(this.#home);
-      const sequence = [...records, ...oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
+      const sequence = lastSequence({ records, oversized });
       if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
       const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
       for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);

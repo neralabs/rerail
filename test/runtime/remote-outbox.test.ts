@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -478,10 +478,26 @@ describe("event numbers a remote has taken", () => {
     await outbox().sync({ force: true });
     moveAside();
     const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
     store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
     store.close();
     await outbox().sync({ force: true });
     expect(sent()).toContain("first");
+  });
+
+  // A hook's steer receipt opens a writer of its own and no session (`hook-host.ts`), and its session opened in the
+  // daemon first, which moved the numbers: the receipt's writer opened the outbox at every receipt all the same.
+  it("reads no outbox for a writer that opens no session, as a hook's steer receipt", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    vi.mocked(existsSync).mockClear();
+    const store = new SqliteSessionStore(databasePath());
+    store.recordSteer(session, "r1", ["a-rule"]);
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+    expect(sequenceOf(databasePath(), "steering-delivered:r1")).toBe(1);
   });
 
   it("leaves the numbering of a database the outbox does not read as it is", async () => {
@@ -490,6 +506,7 @@ describe("event numbers a remote has taken", () => {
     await outbox().sync({ force: true });
     const other = join(home, "other.sqlite");
     const store = new SqliteSessionStore(other);
+    store.openSession(session);
     store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "elsewhere" } }, session);
     store.close();
     expect(sequenceOf(other, "first")).toBe(1);
@@ -498,6 +515,7 @@ describe("event numbers a remote has taken", () => {
   it("numbers events as before beside an outbox it cannot read", () => {
     real.writeFileSync(join(home, "remote-outbox.sqlite"), "not a database");
     const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
     store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "hello" } }, session);
     store.close();
     expect(sequenceOf(databasePath(), "first")).toBe(1);

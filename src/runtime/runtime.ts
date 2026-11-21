@@ -238,20 +238,26 @@ function firstDatedEvent(ledger: readonly LedgerEntry[]): number | undefined {
   return undefined;
 }
 
+/** The event kinds the ledger's lines name (`persistEvent` writes each line with its row's kind). */
+function ledgerKinds(ledger: readonly LedgerEntry[]): Set<string> {
+  return new Set(ledger.flatMap((entry) => (entry.type === "event" && entry.kind !== undefined ? [entry.kind] : [])));
+}
+
 /**
  * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
  * committed before its ledger line is written, one event after another, and such a loss takes only the store's last
- * commits: so the lost events are those after the newest one whose row is there. A ledger line older builds wrote
- * (no kind or time) ends the walk, since those builds synced every commit; a ledger with no row of any of its events
- * gives none: `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells apart.
- * Costs one indexed read when nothing was lost.
+ * commits: so the lost events are those after `recorded` (`SqliteSessionStore.lastRecordedEvent`), the newest one
+ * whose row is there, or the last of a stretch a record of lost events already counted. A ledger line older builds
+ * wrote (no kind or time) ends the walk, since those builds synced every commit; a ledger that does not hold `recorded`
+ * gives none: `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells
+ * apart. The walk reads only the ledger in memory.
  */
-function lostEvents(ledger: readonly LedgerEntry[], hasRow: (eventId: string) => boolean): LostEvent[] {
+function lostEvents(ledger: readonly LedgerEntry[], recorded: string | undefined): LostEvent[] {
   const lost: LostEvent[] = [];
   for (let index = ledger.length - 1; index >= 0; index -= 1) {
     const entry = ledger[index]!;
     if (entry.type !== "event") continue;
-    if (entry.kind === undefined || entry.observedAt === undefined || hasRow(entry.eventId)) return lost.reverse();
+    if (entry.kind === undefined || entry.observedAt === undefined || entry.eventId === recorded) return lost.reverse();
     lost.push({ eventId: entry.eventId, kind: entry.kind, observedAt: entry.observedAt });
   }
   return [];
@@ -2243,7 +2249,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
-      this.#sessionStore.recordLostEvents(session, lostEvents(ledger.entries, eventId => this.#sessionStore.hasEvent(session.sessionId, eventId)));
+      const recorded = this.#sessionStore.lastRecordedEvent(session.sessionId, ledgerKinds(ledger.entries));
+      this.#sessionStore.recordLostEvents(session, lostEvents(ledger.entries, recorded));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#registerOwner(session.sessionId);

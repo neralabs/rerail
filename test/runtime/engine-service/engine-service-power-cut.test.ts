@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,8 @@ import { startTestRepository } from "../../support/started-repository.js";
 
 const CHILD = fileURLToPath(new URL("../../support/processes/engine-service-process.ts", import.meta.url));
 const IDLE_MS = 60_000;
+/** Ledger lines past the session's own in the case of an open after a reset. */
+const LONG_LEDGER = 2_000;
 
 const roots: string[] = [];
 const services: EngineService[] = [];
@@ -204,6 +206,45 @@ function recordedAt(databasePath: string, eventIds: readonly string[]): number[]
     eventIds.map(eventId => (database.prepare("SELECT observed_at AS at FROM events WHERE event_id = ?").get(eventId) as { at: number }).at));
 }
 
+/**
+ * Runs `sync` with the outbox's log left as the disk holds it when the power goes: a connection of the test's own stays
+ * open meanwhile, so the outbox's close neither copies its log into the file nor removes it, and the file and its log
+ * are copied before that connection closes, then put back with no WAL index, as `cutPower` wants them.
+ */
+async function keepingOutboxLog(root: string, sync: () => Promise<void>): Promise<string> {
+  const path = join(root, "remote-outbox.sqlite");
+  new RemoteOutbox({ home: root }).status();
+  const kept = await mkdtemp(join(tmpdir(), "rerail-outbox-log-"));
+  roots.push(kept);
+  const holder = new Database(path);
+  try {
+    await sync();
+    for (const suffix of ["", "-wal"]) await copyFile(`${path}${suffix}`, join(kept, `outbox${suffix}`));
+  } finally {
+    holder.close();
+  }
+  for (const suffix of ["", "-wal"]) await copyFile(join(kept, `outbox${suffix}`), `${path}${suffix}`);
+  await rm(`${path}-shm`, { force: true });
+  return path;
+}
+
+/** The highest event number the outbox's cursors say a remote acknowledged. */
+const acknowledgedEvents = (state: Database.Database): number =>
+  (state.prepare("SELECT max(value) AS value FROM cursors WHERE stream = 'event'").get() as { value: number | null }).value ?? 0;
+
+/** Every id the remote received names one event, and it holds every event the store holds under the store's number. */
+function expectOneEventPerId(sink: FakeSink, databasePath: string): void {
+  const named = new Map<string, string>();
+  for (const record of storedRecords(sink).filter(item => item.type === "event")) {
+    expect(named.get(record.id) ?? String(record.eventId), record.id).toBe(String(record.eventId));
+    named.set(record.id, String(record.eventId));
+  }
+  const machine = [...named.keys()][0]!.split(":")[0]!;
+  const stored = storedEvents(databasePath);
+  expect(stored.map(row => row.eventId)).toContain("s:six");
+  expect(stored.map(row => [row.eventId, named.get(`${machine}:${row.sequence}`)])).toEqual(stored.map(row => [row.eventId, row.eventId]));
+}
+
 const hasEvent = (database: Database.Database, eventId: string): boolean =>
   database.prepare("SELECT 1 FROM events WHERE event_id = ?").get(eventId) !== undefined;
 
@@ -274,17 +315,34 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       const next = await nextDaemon(root, databasePath);
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "six"));
       expect((await outbox.sync({ force: true }))[0]?.error).toBeUndefined();
-      // Every id the remote received names one event: the lost ones it holds stay as they were.
-      const named = new Map<string, string>();
-      for (const record of sent()) {
-        expect(named.get(record.id) ?? record.eventId, record.id).toBe(record.eventId);
-        named.set(record.id, record.eventId);
-      }
-      // And it holds every event the store holds, each under the number the store gave it.
-      const machine = [...named.keys()][0]!.split(":")[0]!;
-      const stored = storedEvents(databasePath);
-      expect(stored.map(row => row.eventId)).toContain("s:six");
-      expect(stored.map(row => [row.eventId, named.get(`${machine}:${row.sequence}`)])).toEqual(stored.map(row => [row.eventId, row.eventId]));
+      // The lost events the remote holds stay as they were.
+      expectOneEventPerId(sink, databasePath);
+    });
+
+    // The remote answered 200 and the cut took the outbox's cursor move after it, with the events' rows: the cursor read
+    // as if the remote held none of them, and the next events took numbers the remote holds.
+    it("sends the events after the cut under new numbers when the cut also took the outbox's acknowledgement", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const sink = await startFakeSink();
+      sinks.push(sink);
+      addRemote({ url: sink.url, token: "test-token", content: true }, root);
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three", "four", "five"]) await daemon.send(prompt("s", text));
+      const outbox = new RemoteOutbox({ home: root });
+      const outboxPath = await keepingOutboxLog(root, async () => {
+        expect((await outbox.sync({ force: true }))[0]?.error).toBeUndefined();
+      });
+      await daemon.stop();
+      const acknowledged = stateAt(outboxPath, walCommits(outboxPath).at(-1)!, acknowledgedEvents);
+      expect(acknowledged).toBeGreaterThan(0);
+      cutPower(outboxPath, latestCommitWhere(outboxPath, state => acknowledgedEvents(state) < acknowledged));
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:two") && !hasEvent(database, "s:three")));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "six"));
+      expect((await outbox.sync({ force: true }))[0]?.error).toBeUndefined();
+      expectOneEventPerId(sink, databasePath);
     });
   });
 
@@ -310,6 +368,55 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       }]);
       const { gaps } = await dashboard(databasePath, "/api/sessions/s") as { gaps: { lostEvents: number } };
       expect(gaps.lostEvents).toBe(2);
+    });
+
+    // A second cut took a later event's row and kept the record of the first stretch: the walk back went past that
+    // stretch to the newest row, and counted its events again.
+    it("counts each lost event once when a second cut takes a later event's row", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const first = await daemonProcess(root, databasePath);
+      await first.send(start("s"));
+      for (const text of ["one", "two", "three"]) await first.send(prompt("s", text));
+      await first.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
+      const second = await daemonProcess(root, databasePath);
+      await second.send(prompt("s", "four"));
+      await second.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "events-lost:s:three") && !hasEvent(database, "s:four")));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "five"));
+      expect((await lostRecords(databasePath, "s")).map(record => record.payload)).toEqual([
+        expect.objectContaining({ count: 2, firstEventId: "s:two", lastEventId: "s:three" }),
+        expect.objectContaining({ count: 1, firstEventId: "s:four", lastEventId: "s:four" }),
+      ]);
+      const { gaps } = await dashboard(databasePath, "/api/sessions/s") as { gaps: { lostEvents: number } };
+      expect(gaps.lostEvents).toBe(3);
+    });
+
+    // A reset deleted the session's rows and its ledger stayed: the open asked the store for each ledger line's row in
+    // turn, down to the first, at every open until an event's row was written again.
+    it("reads the store a few times at an open after a reset, however long the ledger", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout, storageRoot } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      await daemon.send(prompt("s", "one"));
+      await daemon.stop();
+      const { path } = await ledgerLinesFrom(storageRoot, "s", "s:one");
+      const lines = Array.from({ length: LONG_LEDGER }, (_, index) => JSON.stringify({ type: "event", eventId: `s:p${index}`, kind: "user-prompt", observedAt: 1_000 + index }));
+      await appendFile(path, lines.map(line => `${line}\n`).join(""));
+      const database = new Database(databasePath, { readonly: true });
+      const { repositoryId } = database.prepare("SELECT repository_id AS repositoryId FROM sessions WHERE session_id = 's'").get() as { repositoryId: string };
+      database.close();
+      expect(resetRepositoryHistory(databasePath, repositoryId)).toMatchObject({ openSessions: 1 });
+      const next = await nextDaemon(root, databasePath);
+      const reads = vi.spyOn(Database.prototype, "prepare");
+      await next.ingest(prompt("s", "two"));
+      const ofEvents = reads.mock.calls.filter(([text]) => /\bfrom\s+"?events"?/iu.test(String(text))).length;
+      reads.mockRestore();
+      expect(ofEvents).toBeLessThan(LONG_LEDGER / 10);
+      expect(await lostRecords(databasePath, "s")).toEqual([]);
     });
 
     // The ledger is not synced either: the cut can take its last lines too, and those events count as never processed.
