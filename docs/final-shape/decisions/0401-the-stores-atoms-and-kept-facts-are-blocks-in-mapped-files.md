@@ -422,11 +422,11 @@ against 32.7 G before. Now the analysis run collects as it finishes (`collect_af
 Against 6fc580233a (the step 6 commit, measured again on the M3 the same day, profiling binary), the regressions
 were three, each found in the two profiles:
 
-| ep2, M3 | 6fc580233a | before the fixes | after |
-|---|---|---|---|
-| cold | 1,078-1,220 G | 2,476 G | 1,517 G |
-| warm | 1.8 G | 35.9 G | 2.0 G |
-| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G |
+| ep2, M3 | 6fc580233a | before the fixes | the three below | and the narrow copies |
+|---|---|---|---|---|
+| cold | 1,078-1,220 G | 2,476 G | 1,517 G | 1,022 G |
+| warm | 1.8 G | 35.9 G | 2.0 G | 2.0 G |
+| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G | 70.9 G |
 
 - Warm (7127549186): every `logic` command begins an analysis run (0547), and the whole-run cutoff skipped any run
   with a staged owner (since 395a6ac2f7). A hit now re-owns the recorded run's manifests.
@@ -435,10 +435,13 @@ were three, each found in the two profiles:
 - Cold, prepare 27 s against 1.4 s (9baa291010): the push held back one reader of a helper shared by 400
   `violation` rules a round, so it ran about 400 rounds, each a split of the program.
 
-Still above the baseline, by cause:
-- The narrow copies of main's #923 (0c3dde2edb) double the program: 6,664 strata against 3,236, and
-  `rr_narrow_<rel>` evaluates its original's rules again (`ruff_safe_operand` and its copy, 1.6 s each). The
-  fixes that make a copy its original's rows (15e8c73191, c82460adf4) are on investigate-bend-vs-datalog alone.
+- The narrow copies of main's #923 (0c3dde2edb) doubled the program: 6,664 strata against 3,236, and
+  `rr_narrow_<rel>` evaluated its original's rules again (`ruff_safe_operand` and its copy, 1.6 s each). Taken
+  together: 15e8c73191 (from cost-classifier-metal-rf: a copy within one document is its original's rows under the
+  bound) and 0575's diffed copies with their two follow-ups (from investigate-bend-vs-datalog), which read the former
+  as change points (0575, "Beside the copies within one document"). 4,434 strata.
+
+Still above the baseline:
 - An edit counts Q396's semi-joins (`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) by walking every
   held node's document, making all 300 (1.1 s of the edit's stats, 0.06 s before): their statistics are kept
   under the cross program's key, which an edit changes, not beside the base relations' table.
