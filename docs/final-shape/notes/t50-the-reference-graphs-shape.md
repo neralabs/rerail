@@ -442,7 +442,20 @@ rules' own CPU 312.9 → 272.0 s. By stratum: `rf_in` 6.56 → 4.32 s, `rf_fn_in
 instructions. The hosts were loaded (load 4 to 31 on 10 cores), so wall and CPU moved by 10–40% from one run to the
 next. Instructions are the measure here.
 
-The chain root (`rf_fn_in`/`rf_top`/`rf_owner`), step 4's last part, is next: after this, the chain costs 0.86 + 0.34 + 0.17 s.
+### Step 4, the chain root: measured, left for later (user, 2026-11-20)
+
+On `all`, after the test above, the chain costs `rf_fn_in` 0.91 s (295 runs: 0.58 s joins, 0.22 s input load),
+`rf_top` 0.18 s and `rf_owner` 0.44 s. `rf_owner` is a plain join of `rf_in` and `rf_top` (5.5 M work), which a
+chain root keeps. Only a function in another function's decorators or defaults takes `rf_fn_in`'s recursion. So a
+chain root would remove `rf_top` and that recursion: at most 0.5–1 s of the rules' 272 s.
+
+No existing mechanism fits. Rewritten as a closure (`rf_up(g, g)`, `rf_up(g, z) :- rf_up(g, y), rf_fn_in(y, z)`,
+`rf_top(g, t) :- rf_up(g, t), !rf_fn_in(t, _)`), it is the reach index's shape (decision 0119). But the reach
+index reads its inputs into pair vectors and builds one bitmap per start, for 700 K functions. It would be a new
+operator, with its own decision record. The user chose step 5 next and the chain root for later.
+
+What is left of T3 is `rf_in`'s 4.3 s: 26 M rows of work in its first rule, about 185 ns a row and step. That is the
+executor's cost per row, not the chain.
 
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
