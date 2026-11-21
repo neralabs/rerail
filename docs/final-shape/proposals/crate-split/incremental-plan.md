@@ -301,3 +301,37 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   `waves::findings`) and the syntax-only adapters (C, C++, C#, CSS, Go, HTML, Java, Kotlin, Markdown, Scala,
   Swift). So `rerail-boot` takes them with it. Steps 1 and 3 become one: boot holds the composition and the
   engine's glue, and the engine keeps napi and the CLI.
+- **Step 1b** (2026-11-21): `rerail-boot` (`native/crates/boot`), the composition root, above every other crate and
+  below the engine. It mounts the files the engine's prefix of `code_rule_dsl/mod.rs` mounts: everything up to the
+  line `// cratify: the engine's own items (napi) begin`. Two scripts write it from the engine's sources:
+  `tools/cratify/boot_mounts.py` writes `lib.rs`, and `boot_manifest.py` writes `Cargo.toml` with the engine's
+  features and dependencies. Each engine feature that forwards to classic also forwards to boot. Boot owns:
+  - `boot.rs`: `install(BuildIds)`, which sets the build identities, then registers the devices, the language packs,
+    the Git inventory and the store's connection functions. It runs once a process. `install_for_tests` does the
+    same with the test binary's own identities, and boot's test binary calls it from a load hook.
+  - `prefilter`, `functors`, `slice` (apart from its napi object), `facts::vtab::syntax::ast_wave`, and `waves`'
+    `matches`, `findings`, `policies` and `schedule::batches`.
+  - the syntax-only adapters (C, C++, C#, CSS, Go, HTML, Java, Kotlin, Markdown, Scala, Swift), and `test_support`.
+
+  The engine keeps napi, the CLI and its hosted tests. `lib.rs`'s `install_store_functions` calls `boot::install`.
+  Rule compiling moved from the napi method to `rule_api::compile(source, format, capabilities)` (classic), with
+  `rule_api::CAPABILITIES`, so boot's code and tests compile rules without the napi object.
+  `CodeRuleDslRuntime::compile` calls it.
+  - Tests' helpers that both crates' tests read moved into fixtures modules, behind `test-hooks`:
+    `slice::fixtures` and `prefilter::fixtures`. The slice's napi test moved beside `slice/napi.rs`
+    (`slice::napi_tests`, the engine's).
+  - Tests that found their data through `CARGO_MANIFEST_DIR` read `source_tree::native()`.
+  - Boot's test binary also mounts the engine's test-binary rules: the watchdog and `RERAIL_FLUSH=none`.
+  - Crates below boot keep their own test registrations: device-metal's `test_languages` registers the two packs
+    its tests read. Only test binaries above boot go through `boot::install`.
+
+  Results:
+  - The CLI (`--features test-hooks`) builds with the engine's one warning, the linker's `__eh_frame` note.
+  - Boot's tests: 76 of 77 pass. The one failure, `the_backends_find_the_same_keys_on_real_files`, reads the
+    Python pack's upstream fixtures, which aren't pulled on this checkout or on the host, so it fails at the
+    parent commit too.
+  - The engine's moved and dependent tests pass: `slice::napi_tests`, `stats::{ingest,inputs}`,
+    `waves::schedule`, 14 tests.
+  - The wasm check was not run: no machine here has `wasi-libc`.
+  - Mounts in the engine's prefix that only boot's files read carry `#[allow(unused_imports)] // boot's mount`.
+    They go when step 3 makes the engine's `code_rule_dsl` boot's, plus the engine's own items.

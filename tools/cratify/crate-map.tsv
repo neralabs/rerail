@@ -175,19 +175,41 @@ language::adapter::sql	rerail-lang-sql
 language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
-# Java reads syntax alone (no semantic concern yet): its adapter is the engine's until a capability needs a crate
-language::adapter::java	rerail-engine
-
-# The engine: napi, CLI, boot and the composition glue
+# The engine: napi and the CLI, and the tests it still hosts (incremental-plan.md, step 2)
 crate	rerail-engine
 dsl_root	rerail-engine
-slice	rerail-engine
+slice::napi	rerail-engine
+slice::napi_tests	rerail-engine
 tools	rerail-engine
-prefilter	rerail-engine
 waves	rerail-engine
 logic::convert	rerail-engine
 logic::plan::corpus::references	rerail-engine
 transducer::packed::compile_matcher	rerail-transducer
+
+# Boot: the composition root (incremental-plan.md, step 1b) and what only it and the engine read. Boot's mounts are
+# generated from the engine's code_rule_dsl/mod.rs (tools/cratify/boot_mounts.py, boot_manifest.py).
+boot	rerail-boot
+slice	rerail-boot
+prefilter	rerail-boot
+functors	rerail-boot
+test_support	rerail-boot
+waves::matches	rerail-boot
+waves::findings	rerail-boot
+waves::policies	rerail-boot
+waves::schedule::batches	rerail-boot
+facts::vtab::syntax::ast_wave	rerail-boot
+language::adapter::c	rerail-boot
+language::adapter::c_pp	rerail-boot
+language::adapter::csharp	rerail-boot
+language::adapter::css	rerail-boot
+language::adapter::go	rerail-boot
+language::adapter::html	rerail-boot
+# Java reads syntax alone (no semantic concern yet): boot keeps its adapter until a capability needs a crate
+language::adapter::java	rerail-boot
+language::adapter::kotlin	rerail-boot
+language::adapter::markdown	rerail-boot
+language::adapter::scala	rerail-boot
+language::adapter::swift	rerail-boot
 
 # Generic concepts every language reads (one canonical module path; embedded segments)
 module_path	rerail-lang

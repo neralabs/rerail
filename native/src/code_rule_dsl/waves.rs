@@ -123,13 +123,16 @@ pub(in crate::code_rule_dsl) mod relational {
     };
 }
 /// The first slice's wave over lowered matchers (06 S4).
-pub(in crate::code_rule_dsl) mod matches;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::matches;
 /// The first slice's findings layer over the wave's matches (06 S5).
-pub(in crate::code_rule_dsl) mod findings;
-#[path = "waves/schedule"]
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::findings;
+#[cfg_attr(test, path = "waves/schedule")]
 pub(in crate::code_rule_dsl) mod schedule {
     pub use rerail_logic::code_rule_dsl::waves::schedule::*;
-    pub mod batches;
+    #[cfg_attr(not(test), allow(unused_imports))]
+    pub use rerail_boot::code_rule_dsl::waves::schedule::batches;
     #[cfg(test)]
     pub mod tests;
     #[allow(unused_imports)]
@@ -154,4 +157,5 @@ pub(in crate::code_rule_dsl) mod schedule {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::waves::schedule::lattice::Operations as LatticeOperations;
 }
 /// The policies through the logic language: the wave's clauses, rules and demand (list step 21).
-pub(in crate::code_rule_dsl) mod policies;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub(in crate::code_rule_dsl) use rerail_boot::code_rule_dsl::waves::policies;

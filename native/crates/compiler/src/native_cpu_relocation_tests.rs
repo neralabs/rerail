@@ -15,7 +15,9 @@ const RESERVATION: usize = 256 * 1024 * 1024;
 const SEPARATION: usize = 192 * 1024 * 1024;
 /// Past the ±256 MB Cranelift's `Arm64Call` relocation asserts (`diff >> 26` of a word count, wider than a `bl`'s
 /// ±128 MB): a direct call this far panics where it is laid, as a test can see without running it.
+#[cfg(test)]
 const FAR_RESERVATION: usize = 512 * 1024 * 1024;
+#[cfg(test)]
 const FAR_SEPARATION: usize = 320 * 1024 * 1024;
 
 type Relocations = Vec<(FuncId, Vec<ModuleReloc>)>;

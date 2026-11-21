@@ -2,7 +2,7 @@
 
 use super::matcher::GrammarMatcher;
 use super::model::{ClauseKind, Query};
-use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::CompiledCodeRuleDsl;
 use napi::Result;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
@@ -12,9 +12,7 @@ pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let path = crate::source_tree::native()
     .join("..")
     .join(relative);
     assert!(
@@ -64,11 +62,7 @@ pub(super) fn compile_typescript_rule(rule: Value) -> Result<CompiledCodeRuleDsl
             "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "match" },
         }],
     });
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES)
 }
 
 pub(super) fn evaluate_file(
@@ -103,11 +97,7 @@ pub(super) fn compile_document_with(
     document: Value,
     capabilities: &Value,
 ) -> Result<CompiledCodeRuleDsl> {
-    CodeRuleDslRuntime::compile(
-        document.to_string(),
-        "json".to_owned(),
-        capabilities.to_string(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
 }
 
 pub(super) fn clause_document(clause: Value) -> Value {

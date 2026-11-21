@@ -48,6 +48,7 @@ mod blade {
         #[allow(unused_imports)]
         use token::{LexerError, Token, TokenType};
     }
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_php::code_rule_dsl::blade::*;
     #[cfg(test)]
     pub mod tests;
@@ -529,6 +530,7 @@ mod compile {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::adapter::{gate};
     }
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_ecma::code_rule_dsl::compile::import_target;
     #[cfg_attr(test, path = "parse")]
     pub mod parse {
@@ -600,6 +602,7 @@ mod compile {
     #[cfg_attr(test, path = "resolve")]
     pub mod resolve {
         pub use rerail_classic::code_rule_dsl::compile::resolve::*;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_php::code_rule_dsl::compile::resolve::php;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::compile::utils::UtilScope;
@@ -704,6 +707,7 @@ mod compile {
     #[cfg(test)]
         pub mod params_tests;
 }
+#[cfg_attr(not(test), allow(unused_imports))]
 pub use rerail_lang_python::code_rule_dsl::cpython;
 #[cfg_attr(test, path = "demand")]
 mod demand {
@@ -753,6 +757,7 @@ mod demand {
     }
     #[cfg_attr(test, path = "driver")]
     pub mod driver {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_transducer::code_rule_dsl::demand::driver::*;
         #[cfg(test)]
         pub mod catalog;
@@ -776,12 +781,16 @@ mod demand {
 }
 // Metal as the engine's device (`rerail-device-metal`): registered as the library loads (`install_devices`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+#[allow(unused_imports)] // boot's mount: only boot's files read it
 pub use rerail_device_metal::code_rule_dsl::device_metal;
 #[cfg_attr(test, path = "embed")]
 mod embed {
     pub use rerail_lang::code_rule_dsl::embed::*;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_php::code_rule_dsl::embed::compiled_view;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_ecma::code_rule_dsl::embed::script_block;
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_python::code_rule_dsl::embed::call_argument;
     #[allow(unused_imports)]
     #[cfg(test)]
@@ -889,7 +898,9 @@ mod eval {
         #[allow(unused_imports)]
         use std::collections::BTreeSet;
     }
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_classic::code_rule_dsl::eval::*;
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_ecma::code_rule_dsl::eval::ecma;
     #[cfg(test)]
     pub mod tests;
@@ -927,9 +938,10 @@ mod eval {
     #[allow(unused_imports)]
     use std::sync::Arc;
 }
-#[path = "facts"]
+#[cfg_attr(test, path = "facts")]
 mod facts {
     pub mod families {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_facts::code_rule_dsl::facts::families::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -1050,11 +1062,12 @@ mod facts {
             pub use rerail_lang_python::code_rule_dsl::facts::producers::python::*;
         }
     }
-    #[path = "vtab"]
+    #[cfg_attr(test, path = "vtab")]
     pub mod vtab {
         pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_python::code_rule_dsl::facts::vtab::python;
-        #[path = "syntax"]
+        #[cfg_attr(test, path = "syntax")]
         pub mod syntax {
             pub mod core_rr {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::core_rr::*;
@@ -1069,16 +1082,24 @@ mod facts {
                 use std::collections::{BTreeSet, HashSet};
             }
             pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::annotation;
-            pub mod ast_wave;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
+            pub use rerail_boot::code_rule_dsl::facts::vtab::syntax::ast_wave;
             #[cfg(test)]
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::candidates;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::cpython;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_ecma::code_rule_dsl::facts::vtab::syntax::ecma_core;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::fstring;
+            #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::py_families;
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_core;
             pub mod python_demand {
+                #[cfg_attr(not(test), allow(unused_imports))]
                 pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_demand::*;
                 #[cfg(test)]
                 #[path = "tests.rs"]
@@ -1107,6 +1128,7 @@ mod facts {
                 #[allow(unused_imports)]
                 use super::{Dialect, Projected};
             }
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
             #[cfg(test)]
             pub mod tests;
@@ -1228,6 +1250,7 @@ pub mod identifier {
     #[allow(unused_imports)]
     use crate::code_rule_dsl::language::adapter::pack as language_pack;
 }
+#[allow(unused_imports)] // boot's mount: only boot's files read it
 pub use rerail_lang_ecma::code_rule_dsl::import_target;
 pub use rerail_lang::code_rule_dsl::json;
 #[cfg_attr(test, path = "language")]
@@ -1247,6 +1270,7 @@ mod language {
             #[allow(unused_imports)]
             use std::borrow::Cow;
         }
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_php::code_rule_dsl::language::adapter::blade;
         pub mod calls {
             pub use rerail_classic::code_rule_dsl::language::adapter::calls::*;
@@ -1286,25 +1310,39 @@ mod language {
             use std::borrow::Cow;
         }
         // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
-        pub mod csharp;
-        pub mod java;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::csharp;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::java;
         // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
-        pub mod c;
-        pub mod c_pp;
-        pub mod go;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::c;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
+        pub use rerail_boot::code_rule_dsl::language::adapter::c_pp;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::go;
         // Kotlin's, Swift's and Scala's families: syntax only so far, their tapes from the lean parsers.
-        pub mod kotlin;
-        pub mod scala;
-        pub mod swift;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::kotlin;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::scala;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::swift;
         // HTML's, CSS's and Markdown's families: syntax only so far, read by tree-sitter.
-        pub mod css;
-        pub mod html;
-        pub mod markdown;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::css;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::html;
+        #[cfg_attr(not(test), allow(unused_imports))]
+        pub use rerail_boot::code_rule_dsl::language::adapter::markdown;
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_json::code_rule_dsl::language::adapter::json;
         #[cfg(test)]
         pub mod kit;
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_php::code_rule_dsl::language::adapter::php;
         pub use rerail_lang_python::code_rule_dsl::language::adapter::python;
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_rust::code_rule_dsl::language::adapter::rust;
         pub mod scope {
             pub use rerail_classic::code_rule_dsl::language::adapter::scope::*;
@@ -1336,6 +1374,7 @@ mod language {
             #[allow(unused_imports)]
             use std::sync::Arc;
         }
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_sql::code_rule_dsl::language::adapter::sql;
         pub mod syntax {
             pub use rerail_classic::code_rule_dsl::language::adapter::syntax::*;
@@ -1380,6 +1419,7 @@ mod language {
             use std::cmp::Ordering;
         }
         pub mod vue {
+            #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_ecma::code_rule_dsl::language::adapter::vue::*;
             #[cfg(test)]
             #[path = "tests.rs"]
@@ -1504,6 +1544,7 @@ mod literal {
     }
     pub use rerail_classic::code_rule_dsl::literal::*;
     pub mod annotation {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::literal::annotation::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -1523,8 +1564,10 @@ mod literal {
         #[allow(unused_imports)]
         use std::sync::OnceLock;
     }
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_python::code_rule_dsl::literal::brace;
     pub mod eslint_directive {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_ecma::code_rule_dsl::literal::eslint_directive::*;
         #[cfg(test)]
                 pub mod tests;
@@ -1535,10 +1578,14 @@ mod literal {
         #[allow(unused_imports)]
         use std::ops::Range;
     }
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_python::code_rule_dsl::literal::identifier_words;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_python::code_rule_dsl::literal::percent;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_python::code_rule_dsl::literal::format_tape;
     pub mod phpdoc {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_php::code_rule_dsl::literal::phpdoc::*;
         #[cfg(test)]
                 pub mod tests;
@@ -1547,11 +1594,15 @@ mod literal {
         #[allow(unused_imports)]
         use crate::code_rule_dsl::value::Value;
     }
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_php::code_rule_dsl::literal::printf;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_python::code_rule_dsl::literal::python_fstring;
     #[cfg(test)]
     pub use rerail_lang_python::code_rule_dsl::literal::python_string;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_rust::code_rule_dsl::literal::rust_format;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_php::code_rule_dsl::literal::scanf;
     pub use rerail_lang_python::code_rule_dsl::literal::semantic;
     #[allow(unused_imports)]
@@ -1626,6 +1677,7 @@ pub(crate) mod logic {
             use std::collections::BTreeSet;
         }
         pub mod yaml {
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::front::Error;
@@ -1957,6 +2009,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub(crate) use super::logic::profile::strict_on_every_connection;
 }
 #[cfg_attr(test, path = "sql_executor")]
@@ -2637,9 +2690,13 @@ mod matcher {
     }
     pub mod format_args {
         pub use rerail_classic::code_rule_dsl::matcher::format_args::*;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_php::code_rule_dsl::matcher::format_args::printf;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_python::code_rule_dsl::matcher::format_args::python;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_rust::code_rule_dsl::matcher::format_args::rust;
+        #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_php::code_rule_dsl::matcher::format_args::scanf;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::tree::Tree;
@@ -3038,17 +3095,22 @@ mod php_view {
     #[allow(unused_imports)]
     use std::ops::Range;
 }
+#[allow(unused_imports)] // boot's mount: only boot's files read it
 pub use rerail_facts::code_rule_dsl::producers;
 // Published from the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
-pub(crate) mod prefilter;
+#[cfg_attr(not(test), allow(unused_imports))]
+pub use rerail_boot::code_rule_dsl::prefilter;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
 pub use rerail_transducer::code_rule_dsl::space;
 // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
 #[cfg_attr(test, path = "stats")]
 mod stats {
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_classic::code_rule_dsl::stats::*;
     #[cfg_attr(test, path = "ingest")]
     pub mod ingest {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_classic::code_rule_dsl::stats::ingest::*;
         #[cfg(test)]
         pub mod tests;
@@ -3065,6 +3127,7 @@ mod stats {
     }
     #[cfg_attr(test, path = "inputs")]
     pub mod inputs {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_classic::code_rule_dsl::stats::inputs::*;
         #[cfg(test)]
         pub mod tests;
@@ -3081,6 +3144,7 @@ mod stats {
     }
     #[cfg_attr(test, path = "plans")]
     pub mod plans {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_classic::code_rule_dsl::stats::plans::*;
         #[cfg(test)]
         pub mod tests;
@@ -3130,11 +3194,13 @@ mod query {
     use std::ops::Range;
 }
 // Admission reads these once the batch budget is wired; until then only tests call it.
+#[allow(unused_imports)] // boot's mount: only boot's files read it
 pub use rerail_classic::code_rule_dsl::resolution;
 pub use rerail_facts::code_rule_dsl::search_index;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use rerail_classic::code_rule_dsl::walks;
-mod functors;
+#[allow(unused_imports)] // boot's mount: only boot's files read it
+pub use rerail_boot::code_rule_dsl::functors;
 pub use rerail_classic::code_rule_dsl::rule_api;
 #[cfg_attr(test, path = "residency")]
 mod residency {
@@ -3235,6 +3301,7 @@ mod residency {
                     sync::{Arc, atomic::AtomicUsize},
                 };
             }
+            #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_python::code_rule_dsl::residency::admission::relational::python_ast;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::eval::{failure, violation_from_witness};
@@ -3270,6 +3337,7 @@ mod residency {
     // The slabs' tests store parsed documents: they run where the languages are registered.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub mod slabs {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_device_metal::code_rule_dsl::residency::slabs::*;
         #[cfg(test)]
         pub mod tests;
@@ -3442,6 +3510,7 @@ mod scope {
     use crate::code_rule_dsl::identifier::{name_in};
 }
 pub mod regexes {
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang::code_rule_dsl::regexes::*;
     #[cfg(test)]
     pub mod tests;
@@ -3450,7 +3519,13 @@ pub mod regexes {
 }
 pub use rerail_lang::code_rule_dsl::semver;
 // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
-mod slice;
+mod slice {
+    pub use rerail_boot::code_rule_dsl::slice::*;
+    // The host's entry, which only the engine (napi) compiles.
+    pub mod napi;
+    #[cfg(test)]
+    mod napi_tests;
+}
 pub mod soundness {
     pub use rerail_classic::code_rule_dsl::soundness::*;
     #[cfg(test)]
@@ -3496,6 +3571,7 @@ mod suppress {
     }
     pub use rerail_classic::code_rule_dsl::suppress::*;
     pub mod biome {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_ecma::code_rule_dsl::suppress::biome::*;
         #[cfg(test)]
                 pub mod tests;
@@ -3510,10 +3586,14 @@ mod suppress {
         #[allow(unused_imports)]
         use std::ops::Range;
     }
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_rust::code_rule_dsl::suppress::clippy;
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_ecma::code_rule_dsl::suppress::eslint;
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_python::code_rule_dsl::suppress::noqa;
     pub mod nosec {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_python::code_rule_dsl::suppress::nosec::*;
         #[cfg(test)]
                 pub mod tests;
@@ -3535,6 +3615,7 @@ mod suppress {
         use std::sync::LazyLock;
     }
     pub mod oxlint {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_ecma::code_rule_dsl::suppress::oxlint::*;
         #[cfg(test)]
                 pub mod tests;
@@ -3551,8 +3632,10 @@ mod suppress {
         #[allow(unused_imports)]
         use std::ops::Range;
     }
+    #[cfg_attr(not(test), allow(unused_imports))]
     pub use rerail_lang_php::code_rule_dsl::suppress::phpcs;
     pub mod phpstan {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_php::code_rule_dsl::suppress::phpstan::*;
         #[cfg(test)]
         #[path = "tests.rs"]
@@ -3577,6 +3660,7 @@ mod suppress {
         use std::ops::Range;
     }
     pub use rerail_lang_php::code_rule_dsl::suppress::psalm;
+    #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_lang_sql::code_rule_dsl::suppress::sqlfluff;
     pub use rerail_lang_ecma::code_rule_dsl::suppress::vue;
     #[allow(unused_imports)]
@@ -3681,6 +3765,7 @@ mod transducer {
         pub mod rir {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::*;
             // The grammar's names; the compiler's `program::Names` comes in by `super::*` too.
+            #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::Names;
             #[cfg(test)]
             #[path = "rir_tests.rs"]
@@ -3724,6 +3809,7 @@ mod transducer {
             use super::*;
         }
         pub mod regex_block {
+            #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_transducer::code_rule_dsl::transducer::packed::regex_block::*;
             #[cfg(test)]
                         pub mod tests;
@@ -3785,6 +3871,7 @@ mod transducer {
         pub mod compile_matcher_tests;
         // Read by simdjson's registration (not wasm: `install_languages`) and the tests.
         #[cfg(any(test, feature = "test-hooks", not(target_family = "wasm")))]
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_json::code_rule_dsl::transducer::packed::json_parser;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         pub mod metal_backend {
@@ -3936,6 +4023,7 @@ mod typing {
     pub mod phase_tests;
     #[cfg_attr(test, path = "file_local")]
     pub mod file_local {
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_logic::code_rule_dsl::typing::file_local::*;
         // A test that reads T's programs as text: it runs where the Rr language is registered.
         #[cfg(test)]
@@ -4238,6 +4326,7 @@ pub(crate) mod workspace {
     pub mod crossfile_tests;
     pub mod ingest {
         pub use rerail_classic::code_rule_dsl::workspace::ingest::*;
+        #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_ecma::code_rule_dsl::workspace::ingest::ecma;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::workspace::crossfile::{CrossFileScheduler};
@@ -4315,16 +4404,15 @@ pub(crate) mod workspace {
     use crate::code_rule_dsl::workspace::storage::StorageContext;
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
+#[cfg_attr(not(test), allow(unused_imports))] // boot's fixtures (`prefilter::fixtures`) read it under `test-hooks`
 pub use rerail_lang::code_rule_dsl::fixtures;
 
-use compile::{compile_document, parse_capabilities, parse_document};
-use json::{canonicalize_value, hex_digest, invalid, json_error};
-use model::CompiledCodeRule;
+// cratify: the engine's own items (napi) begin; boot's mounts are the lines above (tools/cratify/boot_mounts.py)
+use json::{invalid, json_error};
 use napi::Result;
 use napi_derive::napi;
 use serde_json::Value;
-use std::sync::Arc;
 
 #[napi]
 pub struct CodeRuleDslRuntime;
@@ -4373,28 +4461,7 @@ impl CodeRuleDslRuntime {
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        let capabilities = parse_capabilities(&capabilities_json)?;
-        let document = parse_document(&source, &format)?;
-        let canonical_value = canonicalize_value(document);
-        let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
-        let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        // The regexes only validation took, or a rejected document's, go as this ends (`regexes`).
-        let _compiling = regexes::compiling();
-        let (id, rule_mode, scope, clauses, required, report_count_gt) =
-            compile_document(&canonical_value, &capabilities)?;
-        Ok(CompiledCodeRuleDsl {
-            inner: Arc::new(CompiledCodeRule {
-                id,
-                report_count_gt,
-                rule_mode,
-                canonical,
-                digest,
-                required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-                clauses,
-                scope,
-                capabilities,
-            }),
-        })
+        rule_api::compile(&source, &format, &capabilities_json)
     }
 }
 
@@ -4615,370 +4682,5 @@ pub use rule_api::CompiledCodeRuleDsl;
 #[cfg(test)]
 pub(crate) use rule_api::CodeRuleDslEditor;
 
-
-
-/// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
-/// loads, before any run: the core asks a family's questions of the pack registered here.
-pub(crate) fn install_languages() {
-    use language::Family;
-    use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue, kotlin::Kotlin, scala::Scala, swift::Swift};
-    register(Family::Python, &Pack::<Python>::NEW);
-    language::register_base(Family::Python, &Pack::<Python>::NEW);
-    register(Family::Ecma, &Pack::<Ecma>::NEW);
-    language::register_base(Family::Ecma, &Pack::<Ecma>::NEW);
-    register(Family::Php, &Pack::<Php>::NEW);
-    language::register_base(Family::Php, &Pack::<Php>::NEW);
-    register(Family::Blade, &Pack::<Blade>::NEW);
-    language::register_base(Family::Blade, &Pack::<Blade>::NEW);
-    register(Family::Rust, &Pack::<Rust>::NEW);
-    language::register_base(Family::Rust, &Pack::<Rust>::NEW);
-    register(Family::Sql, &Pack::<Sql>::NEW);
-    language::register_base(Family::Sql, &Pack::<Sql>::NEW);
-    register(Family::Vue, &Pack::<Vue>::NEW);
-    language::register_base(Family::Vue, &Pack::<Vue>::NEW);
-    register(Family::Rr, &Pack::<Rr>::NEW);
-    language::register_base(Family::Rr, &Pack::<Rr>::NEW);
-    register(Family::Json, &Pack::<Json>::NEW);
-    language::register_base(Family::Json, &Pack::<Json>::NEW);
-    register(Family::Format, &Pack::<Format>::NEW);
-    language::register_base(Family::Format, &Pack::<Format>::NEW);
-    register(Family::Java, &Pack::<Java>::NEW);
-    language::register_base(Family::Java, &Pack::<Java>::NEW);
-    register(Family::Csharp, &Pack::<Csharp>::NEW);
-    language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
-    register(Family::Go, &Pack::<Go>::NEW);
-    language::register_base(Family::Go, &Pack::<Go>::NEW);
-    register(Family::C, &Pack::<C>::NEW);
-    language::register_base(Family::C, &Pack::<C>::NEW);
-    register(Family::Kotlin, &Pack::<Kotlin>::NEW);
-    language::register_base(Family::Kotlin, &Pack::<Kotlin>::NEW);
-    register(Family::Swift, &Pack::<Swift>::NEW);
-    language::register_base(Family::Swift, &Pack::<Swift>::NEW);
-    register(Family::Scala, &Pack::<Scala>::NEW);
-    language::register_base(Family::Scala, &Pack::<Scala>::NEW);
-    // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
-    language::install_answerers(vec![&language::adapter::c_pp::Directives, &language::adapter::c_pp::Units, &language::adapter::c_pp::CompileCommands]);
-    register(Family::Html, &Pack::<Html>::NEW);
-    language::register_base(Family::Html, &Pack::<Html>::NEW);
-    register(Family::Css, &Pack::<Css>::NEW);
-    language::register_base(Family::Css, &Pack::<Css>::NEW);
-    register(Family::Markdown, &Pack::<Markdown>::NEW);
-    language::register_base(Family::Markdown, &Pack::<Markdown>::NEW);
-    // The linters' suppressions, in the order `suppress` is parsed and checked in.
-    {
-        use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
-        suppress::install(vec![
-            kind::<eslint::Suppressions>(),
-            kind::<noqa::Suppressions>(),
-            kind::<nosec::Suppressions>(),
-            kind::<oxlint::Suppressions>(),
-            kind::<biome::Suppressions>(),
-            kind::<phpstan::Suppressions>(),
-            kind::<psalm::Suppressions>(),
-            kind::<phpcs::Suppressions>(),
-            kind::<clippy::Suppressions>(),
-            kind::<sqlfluff::Suppressions>(),
-        ]);
-    }
-    // The embedders, by `Via` (`embed::Embedder`), and the program scopes an embedding gives a meaning of its own.
-    embed::install_embedders(vec![
-        #[cfg(feature = "lang-blade")]
-        (language::Via::CompiledView, &embed::compiled_view::CompiledView),
-        #[cfg(feature = "lang-html")]
-        (language::Via::RawText, &embed::raw_text::RawText),
-        #[cfg(all(feature = "lang-html", feature = "lang-python"))]
-        (language::Via::CallArgument, &embed::call_argument::CallArgument),
-        #[cfg(feature = "lang-markdown")]
-        (language::Via::InlineContent, &embed::inline_content::InlineContent),
-        #[cfg(all(feature = "lang-rr", feature = "lang-json"))]
-        (language::Via::JsonObject, &embed::json_object::JsonObject),
-        #[cfg(feature = "lang-rr")]
-        (language::Via::MatchRegex, &embed::match_regex::MatchRegex),
-        #[cfg(feature = "lang-rr")]
-        (language::Via::Pattern, &embed::rule_pattern::RulePattern),
-        #[cfg(feature = "lang-vue")]
-        (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
-        #[cfg(any(test, feature = "test-hooks"))]
-        (language::Via::TestScript, &embed::TestScript),
-    ]);
-    scope::install_program_scopes(vec![
-        #[cfg(feature = "lang-blade")]
-        (language::Via::CompiledView, embed::compiled_view::scope),
-    ]);
-    // What reads W's values off a file's tape for facts' `value` relations.
-    facts::core::install_value_reader(&matcher::Values);
-    // The families' producers of a batch's relations: Python's f-string trees, CPython's syntax, string annotations.
-    facts::vtab::syntax::install_producers(vec![
-        &facts::vtab::syntax::fstring::Producer,
-        &facts::vtab::syntax::cpython::Producer,
-        &facts::vtab::syntax::annotation::Producer,
-    ]);
-    // The families' lazy relations over a batch (Python's `py.*`).
-    facts::vtab::syntax::install_families(vec![&facts::vtab::syntax::py_families::Families]);
-    // The families' tables over a bound `node` relation (Python's semantic producers).
-    facts::vtab::install_node_tables(vec![facts::vtab::python::register]);
-    // The semantic facts a program's native steps demand (Python's).
-    facts::vtab::syntax::install_semantic_producer(&facts::vtab::syntax::python_demand::Semantic);
-    // What each family reads of its own core.rerail facts.
-    {
-        use crate::code_rule_dsl::facts::vtab::syntax::core_rr::{self, Family};
-        use crate::code_rule_dsl::facts::vtab::syntax::{ecma_core, python_core, rr_core};
-        core_rr::register_dialect_facts(Family::Python, &python_core::PythonFacts);
-        core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
-        core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
-        core_rr::register_dialect_facts(core_rr::Family::Format, &literal::format_tape::FormatFacts);
-    }
-    // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
-    workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
-    // A snapshot's context of ECMAScript's files (its manifests).
-    eval::install_snapshot_context(eval::ecma::derive);
-    // The numbers `toPrecision` reads (ECMAScript's).
-    matcher::install_number_text(&value::ecma::Numbers);
-    // `@to_precision`'s formatting (ECMAScript's), for the string functions below the languages.
-    logic::strings::functions::install_to_precision(value::ecma::to_precision);
-    // `@py_repr`'s formatting (Python's), likewise.
-    logic::strings::functions::install_py_repr(|s| cpython::value::str_repr(&cpython::value::PyStr::Text(s.to_owned())));
-    // The canonical AST stage's producer (Python's CPython `ast`).
-    residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
-    // What ECMAScript's import targets resolve among (`resolution`).
-    resolution::install(import_target::held::RESOLUTIONS);
-    // A repository's context as its index reads it (ECMAScript's `package.json` files).
-    workspace::ingest::install_repository_context(workspace::ingest::ecma::repository_context);
-    // The language terms (ECMAScript's `importTarget`).
-    matcher::install_terms(vec![compile::import_target::TERM]);
-    // Each format style's preparer (`formatArgs`): Python's, PHP's and Rust's.
-    {
-        use matcher::format_args::{Style, printf, python, rust, scanf};
-        matcher::format_args::install_format_preparers(vec![
-            (Style::Brace, &python::BRACE),
-            (Style::Percent, &python::PERCENT),
-            (Style::Printf, &printf::Printf),
-            (Style::Scanf, &scanf::Scanf),
-            (Style::Rust, &rust::Rust),
-        ]);
-    }
-    // What compiles `resolves` over a flow (PHP's).
-    compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
-    // The containment relations' `nearest` solve (the file-local FIX's).
-    facts::nearest::install_nearest(typing::file_local::nearest);
-    // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
-    facts::rows::install_block_device(logic::plan::placement::block_device);
-    // What a chunk's jobs allocated less freed (Q203 item 3): the allocator's own per-thread counters.
-    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-    facts::rows::install_heap_net(heap_net);
-    // And each chunk scope's heap at its most (decision 0469): jemalloc's per-thread peak.
-    #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-    facts::rows::install_heap_peak(heap_peak, heap_peak_reset);
-    // `core.rerail`'s names, as the rule language reads them.
-    facts::core::install_core_names(logic::rr::core_shape);
-    // What the evaluator keeps per connection, dropped with it.
-    facts::vtab::install_forget(facts::vtab::Forget { scope: logic::native::forget_scope, engine: logic::native::forget_engine });
-    // core.rerail's functors whose meaning is W's or a language's.
-    logic::strings::install_functors(functors::register_functors);
-    // The run's executors, by binding.
-    facts::core::install_executors(logic::lanes::executor_for);
-    // A tape's prefilter rows, which the push path derives.
-    facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
-    // An owned connection's demand module.
-    waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
-    workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
-        logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
-            .map_err(|error| error.to_string())
-    });
-    // A snapshot's files, as an SQL session binds them.
-    sql_executor::documents::install_snapshot_files(|json| {
-        let (snapshot, _) = eval::parse_snapshot(json, false)?;
-        Ok(snapshot.files.into_iter().map(|f| sql_executor::documents::File { path: f.path, language: f.language, source: f.source }).collect())
-    });
-    // The candidate compiler's audit of a compiled rule.
-    let _ = rule_api::FRONTIER_AUDIT.set(prefilter::candidate_frontier_audit);
-    // What compiles and launches a span pattern's prefilter (the transducer's block programs).
-    facts::span_prefilter::install_span_prefilter(transducer::packed::regex_block::compile_span, transducer::packed::regex_block::launch_spans);
-    // What compiles a program's `ast` matchers into the transducer wave facts runs (decision 0106).
-    facts::vtab::syntax::install_ast_compiler(&facts::vtab::syntax::ast_wave::Compiler);
-    // The literal grammars `parse` applies, in the order messages list them (`literal::LiteralGrammar`).
-    literal::install(vec![
-        literal::percent::GRAMMAR,
-        literal::identifier_words::GRAMMAR,
-        literal::python_fstring::GRAMMAR,
-        literal::brace::GRAMMAR,
-        literal::annotation::GRAMMAR,
-        literal::eslint_directive::GRAMMAR,
-        literal::printf::GRAMMAR,
-        literal::scanf::GRAMMAR,
-        literal::phpdoc::GRAMMAR,
-        literal::rust_format::GRAMMAR,
-        literal::regex::GRAMMAR,
-        #[cfg(test)]
-        literal::CHARS,
-    ]);
-    // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
-    language::set_no_manifest(&package_manifest::NoManifest);
-    language::set_manifest_reader(package_manifest::read_wire);
-    // The dialects their languages parse themselves (`tape::TreeParser`), each implementation registered
-    // with the parser router, which takes the best this host runs (`tape::install_parsers`). A build
-    // without a language's feature routes no file to it, so its parser is not linked.
-    {
-        let mut parsers: Vec<tape::ParserImpl> = Vec::new();
-        if cfg!(feature = "lang-blade") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Blade, name: "Forte", rank: 0, runs: true, parser: &blade::tape::Forte });
-        }
-        if cfg!(feature = "lang-python") {
-            // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Python, name: "lean Python parser", rank: 0, runs: true, parser: &tape::python_lean::Lean });
-        }
-        // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
-        if cfg!(feature = "lang-python") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
-        }
-        // Regular expressions in the engine's dialect (decision 0495 §2): a rule file's `match` regexes, and any
-        // string a rule parses as one.
-        parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Regex, name: "regexes (the Rust dialect, hand-written)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::Regex); &P } });
-        // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
-        if cfg!(feature = "lang-typescript") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });
-        }
-        // The lean ECMAScript parser (`tape::ecma_lean`, decision 0184); a file it refuses goes to
-        // the dialect's tree-sitter grammar.
-        if cfg!(feature = "lang-javascript") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::JAVASCRIPT });
-        }
-        if cfg!(feature = "lang-typescript") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::TYPESCRIPT });
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &tape::ecma_lean::TSX });
-        }
-        if cfg!(feature = "lang-rust") {
-            // The lean Rust parser (`tape::rust_lean`, decision 0193); a file it refuses goes to
-            // tree-sitter-rust.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Rust, name: "lean Rust parser", rank: 0, runs: true, parser: &tape::rust_lean::Lean });
-        }
-        if cfg!(feature = "lang-java") {
-            // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
-            // tree-sitter-java.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
-        }
-        if cfg!(feature = "lang-go") {
-            // The lean Go parser (`tape::go_lean`, decision 0314); a file it refuses goes to
-            // tree-sitter-go.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Go, name: "lean Go parser", rank: 0, runs: true, parser: &tape::go_lean::Lean });
-        }
-        if cfg!(feature = "lang-c") {
-            // The lean C parser (`tape::c_lean`, decision 0317); a file it refuses goes to
-            // tree-sitter-c.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::C, name: "lean C parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
-        }
-        if cfg!(feature = "lang-cpp") {
-            // The lean C++ parser (`tape::c_lean`, decision 0317); a file it refuses goes to
-            // tree-sitter-cpp.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Cpp, name: "lean C++ parser", rank: 0, runs: true, parser: &tape::c_lean::Lean });
-        }
-        if cfg!(feature = "lang-csharp") {
-            // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
-            // tree-sitter-c-sharp.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
-        }
-        // The lean Kotlin, Swift and Scala parsers (`tape::kotlin_lean`, `swift_lean`, `scala_lean`,
-        // decisions 0305 and 0326); a file one refuses goes to its tree-sitter grammar.
-        if cfg!(feature = "lang-kotlin") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Kotlin, name: "lean Kotlin parser", rank: 0, runs: true, parser: &tape::kotlin_lean::Lean });
-        }
-        if cfg!(feature = "lang-swift") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Swift, name: "lean Swift parser", rank: 0, runs: true, parser: &tape::swift_lean::Lean });
-        }
-        if cfg!(feature = "lang-scala") {
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Scala, name: "lean Scala parser", rank: 0, runs: true, parser: &tape::scala_lean::Lean });
-        }
-        if cfg!(feature = "lang-php") {
-            // The lean PHP parser (`tape::php_lean`, decision 0198); a file it refuses goes to
-            // tree-sitter-php.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Php, name: "lean PHP parser", rank: 0, runs: true, parser: &tape::php_lean::Lean });
-        }
-        if cfg!(feature = "lang-html") {
-            // The lean HTML parser (`tape::html_lean`, decision 0199); a file it refuses goes to
-            // tree-sitter-html.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Html, name: "lean HTML parser", rank: 0, runs: true, parser: &tape::html_lean::Lean });
-        }
-        if cfg!(feature = "lang-css") {
-            // The lean CSS parser (`tape::css_lean`, decision 0200); a file it refuses goes to
-            // tree-sitter-css.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Css, name: "lean CSS parser", rank: 0, runs: true, parser: &tape::css_lean::Lean });
-        }
-        if cfg!(feature = "lang-markdown") {
-            // The lean Markdown parser (`tape::markdown_lean`, decision 0237); a file it refuses
-            // goes to tree-sitter-md.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Markdown, name: "lean Markdown parser", rank: 0, runs: true, parser: &tape::markdown_lean::Lean });
-            // The lean parser of Markdown's inline grammar (`tape::markdown_inline_lean`, decision
-            // 0234), for the inline texts Markdown's tapes embed; a text it refuses goes to
-            // tree-sitter-md-inline.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::MarkdownInline, name: "lean Markdown inline parser", rank: 0, runs: true, parser: &tape::markdown_inline_lean::Lean });
-        }
-        if cfg!(feature = "lang-sql") {
-            // The lean SQL parser (`tape::sql_lean`, decision 0214); a file it refuses goes to
-            // tree-sitter-sql.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Sql, name: "lean SQL parser", rank: 0, runs: true, parser: &tape::sql_lean::Lean });
-        }
-        if cfg!(feature = "lang-vue") {
-            // The lean Vue parser (`tape::vue_lean`, decision 0242), whose tape the component's
-            // embedded program is built from; a file it refuses goes to tree-sitter-vue.
-            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
-        }
-        if cfg!(feature = "lang-json") {
-            // simdjson where it builds (not wasm or MSVC: tree-sitter-json there); the Bitlex parser
-            // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
-            parsers.extend(transducer::packed::json_parser::simdjson::registrations());
-        }
-        tape::install_parsers(parsers);
-    }
-    // Every family the build has, registered (`pack` refuses one that is not).
-    Family::ALL.into_iter().for_each(|family| _ = pack(family));
-}
-
-/// The engine's devices, into the logic's and the transducer's registries (`logic::device`,
-/// `transducer::packed::device`). Called as the library loads, before any run.
-pub(crate) fn install_devices() {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    device_metal::register();
-}
-
-/// This thread's bytes allocated less freed, from jemalloc's per-thread counters (`facts::rows::install_heap_net`).
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-fn heap_net() -> i64 {
-    thread_local! {
-        static COUNTERS: Option<(tikv_jemalloc_ctl::thread::ThreadLocal<u64>, tikv_jemalloc_ctl::thread::ThreadLocal<u64>)> =
-            tikv_jemalloc_ctl::thread::allocatedp::read().ok().zip(tikv_jemalloc_ctl::thread::deallocatedp::read().ok());
-    }
-    COUNTERS.with(|c| (*c).map_or(0, |(a, d)| a.get() as i64 - d.get() as i64))
-}
-
-/// jemalloc's `thread.peak.read` and `thread.peak.reset`, by their MIBs (looked up once; `None` where the allocator
-/// has no such control).
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-fn peak_mibs() -> Option<([usize; 3], [usize; 3])> {
-    static MIBS: std::sync::OnceLock<Option<([usize; 3], [usize; 3])>> = std::sync::OnceLock::new();
-    *MIBS.get_or_init(|| {
-        let (mut read, mut reset) = ([0; 3], [0; 3]);
-        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.read\0", &mut read).ok()?;
-        tikv_jemalloc_ctl::raw::name_to_mib(b"thread.peak.reset\0", &mut reset).ok()?;
-        Some((read, reset))
-    })
-}
-
-/// This thread's most allocated less freed since its last `heap_peak_reset`, above what it was then
-/// (`facts::rows::install_heap_peak`).
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-fn heap_peak() -> i64 {
-    // SAFETY: `thread.peak.read` is a `uint64_t`.
-    peak_mibs().and_then(|(read, _)| unsafe { tikv_jemalloc_ctl::raw::read_mib::<u64>(&read) }.ok()).map_or(0, |v| v as i64)
-}
-
-/// Resets this thread's peak (`heap_peak`) to what it holds now.
-#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
-fn heap_peak_reset() {
-    if let Some((_, reset)) = peak_mibs() {
-        // SAFETY: `thread.peak.reset` reads and writes nothing: no old or new value is passed.
-        unsafe { tikv_jemalloc_sys::mallctlbymib(reset.as_ptr(), reset.len(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), 0) };
-    }
-}
+/// The engine's composition: every provider registered once, in one order (`rerail-boot`).
+pub use rerail_boot::code_rule_dsl::boot;

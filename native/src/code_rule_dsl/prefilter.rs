@@ -80,7 +80,7 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
 }
 
 /// Builds and publishes the prefilter rows of `docs`, the tapes `tapes` name, 64 at a time.
-pub(in crate::code_rule_dsl) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
+pub fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
     if tapes.len() != docs.len() {
         return Err(StoreError::Invalid("tape identity count does not match prefilter documents".to_owned()));
     }
@@ -210,5 +210,8 @@ pub(in crate::code_rule_dsl) fn fallback(
     }).collect())
 }
 
+// The tests' fixtures: this crate's tests and the engine's read them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod fixtures;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;

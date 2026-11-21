@@ -147,15 +147,7 @@ pub(crate) fn install_store_functions() {
             .ok()
             .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
-        code_rule_dsl::install_devices();
-        code_rule_dsl::install_languages();
-        code_rule_dsl::logic::plan::corpus::install_git_inventory();
-        content_store::set_connection_functions(|db| {
-            code_rule_dsl::text::install(db)?;
-            code_rule_dsl::prefilter::tapes::install(db)
-        });
-        code_rule_dsl::sql_hazards::strict_on_every_connection();
+        code_rule_dsl::boot::install(code_rule_dsl::boot::BuildIds { engine: env!("RERAIL_ENGINE_BUILD_ID"), grammar });
     });
 }
 

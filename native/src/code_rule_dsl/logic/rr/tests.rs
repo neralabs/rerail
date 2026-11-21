@@ -3487,7 +3487,7 @@ fn files_with_tests() -> Vec<PathBuf> {
 /// its own (`testing::run`, 3–9 s at O0): four run at once, so the 44 the files carry fit the test's time.
 #[test]
 fn rule_files_pass_their_own_tests() {
-    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let work = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-tests");
     let mut cases = Vec::new();
     for (k, file) in files_with_tests().iter().enumerate() {
         for (j, test) in super::testing::tests(file).unwrap().into_iter().enumerate() {
@@ -3533,7 +3533,7 @@ fn a_rule_files_tests_are_no_part_of_its_program() {
 /// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
 #[test]
 fn failed_expectations_say_what_the_run_had() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-fail");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, r#".policy "t:fail" revision 1
@@ -3568,7 +3568,7 @@ Call(c) :- kind(c, "call").
 /// of each run's own made the store a root and its frames more on every run of the same tests.
 #[test]
 fn running_a_files_tests_again_adds_no_root_to_the_store() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-again");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-again");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, r#".policy "t:again" revision 1
@@ -3605,7 +3605,7 @@ Call(c) :- kind(c, "call").
 /// share one.
 #[test]
 fn a_tests_directory_is_the_stores_or_the_runs_own() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-dirs");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-test-dirs");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, "").unwrap();
@@ -3639,7 +3639,7 @@ fn test_blocks_parse_only_whole() {
 
 /// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
 fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("t.rerail");
     std::fs::write(&file, text).unwrap();
@@ -3814,7 +3814,7 @@ fn a_printed_test_reads_back_as_written() {
         ".decl r(x: symbol)\nr(\"a\").\n{}",
         super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])
     );
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-printed");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("t.rerail"), &text).unwrap();
     let tests = super::testing::tests(&dir.join("t.rerail")).unwrap();
@@ -3845,7 +3845,7 @@ fn converted_cases_are_tests() {
     let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
     let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
     let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
+    let dir = crate::code_rule_dsl::prefilter::fixtures::temp().with_extension("rr-cases");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("t.rerail"), tests).unwrap();
     let read = super::testing::tests(&dir.join("t.rerail")).unwrap();

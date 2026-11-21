@@ -180,7 +180,7 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
 }
 
 /// The capabilities rules compile against, as bundled with the engine.
-pub const CAPABILITIES: &str = include_str!("capabilities.json");
+pub const CAPABILITIES: &str = super::rule_api::CAPABILITIES;
 
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.

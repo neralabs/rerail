@@ -27,7 +27,10 @@ pub fn metal_buffer_limit() -> usize {
 #[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 #[derive(Default)]
 pub(crate) struct DeviceState {
+    // A test build keeps its ledgers per thread (`test_pool`), so it reads neither.
+    #[cfg(not(any(test, feature = "test-hooks")))]
     pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
     peak: Arc<AtomicUsize>,
     #[cfg(target_os = "macos")]
     allocation: Mutex<()>,
