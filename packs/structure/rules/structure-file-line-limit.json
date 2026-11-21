@@ -1,0 +1,170 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-file-line-limit",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep source files at 500 lines or fewer, outside tests, scripts, config and generated code; long files mix concerns and are hard to review.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs",
+      "**/*.py"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.stories.*",
+      "**/*.d.ts",
+      "**/test_*.py",
+      "**/*_test.py",
+      "**/conftest.py",
+      "**/__tests__/**",
+      "**/tests/**",
+      "**/test/**",
+      "**/e2e/**",
+      "**/fixtures/**",
+      "**/__mocks__/**",
+      "**/migrations/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.*",
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/public/**",
+      "**/scripts/**",
+      "**/*.config.*",
+      "**/icons/**",
+      "**/locales/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "typescript-file-lines",
+      "violation": {
+        "code": "FILE_TOO_LONG",
+        "anchor": "file.start",
+        "message": "This file has $N lines, over the limit of 500. Put new code in a new module named for what it does and import it. Don't split existing code unless asked. Leave generated or data files."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "pattern": "$P",
+            "kind": "program",
+            "not": {
+              "has": {
+                "kind": "comment",
+                "regex": "(?i)@generated|do not edit|auto-?generated"
+              }
+            },
+            "layout": {
+              "span": {
+                "min": 501
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.(?:ts|tsx)$"
+            }
+          },
+          "transform": {
+            "N": {
+              "lines": {
+                "source": "$P"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "javascript-file-lines",
+      "violation": {
+        "code": "FILE_TOO_LONG",
+        "anchor": "file.start",
+        "message": "This file has $N lines, over the limit of 500. Put new code in a new module named for what it does and import it. Don't split existing code unless asked. Leave generated or data files."
+      },
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "pattern": "$P",
+            "kind": "program",
+            "not": {
+              "has": {
+                "kind": "comment",
+                "regex": "(?i)@generated|do not edit|auto-?generated"
+              }
+            },
+            "layout": {
+              "span": {
+                "min": 501
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.(?:js|jsx|mjs|cjs)$"
+            }
+          },
+          "transform": {
+            "N": {
+              "lines": {
+                "source": "$P"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "python-file-lines",
+      "violation": {
+        "code": "FILE_TOO_LONG",
+        "anchor": "file.start",
+        "message": "This file has $N lines, over the limit of 500. Put new code in a new module named for what it does and import it. Don't split existing code unless asked. Leave generated or data files."
+      },
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$P",
+            "kind": "module",
+            "not": {
+              "has": {
+                "kind": "comment",
+                "regex": "(?i)@generated|do not edit|auto-?generated"
+              }
+            },
+            "layout": {
+              "span": {
+                "min": 501
+              }
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.(?:py)$"
+            }
+          },
+          "transform": {
+            "N": {
+              "lines": {
+                "source": "$P"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

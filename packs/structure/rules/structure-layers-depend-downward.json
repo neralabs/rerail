@@ -1,0 +1,299 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "structure-layers-depend-downward",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep imports pointing down the layers: shared code imports no pages, routes, server actions or components, UI primitives no feature code, and services no Next.js.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.stories.*",
+      "**/*.d.ts",
+      "**/__tests__/**",
+      "**/tests/**",
+      "**/test/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/generated/**",
+      "**/__generated__/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared-imports-page",
+      "violation": {
+        "code": "SHARED_IMPORTS_PAGE",
+        "anchor": "witness.span",
+        "message": "Keep imports pointing down the layers. Shared code (lib, utils, services, db) should not import a page or route: move what it needs into shared code. For a type alone, use `import type`."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "kind": "export_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "regex": "^['\\\"](?:(?:@/|~/|#/|(?:\\.\\./)+)(?:src/)?(?:app|pages|routes))(?:/[^'\\\"]*)?['\\\"]$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "regex": "\\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|scss|json|md)(?:\\?[a-z]+)?['\\\"]$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)(?:lib|libs|utils|helpers|shared|core|domain|db|database|models|services)/",
+              "notRegex": "(?:^|/)components/"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "shared-imports-action",
+      "violation": {
+        "code": "SHARED_IMPORTS_ACTION",
+        "anchor": "witness.span",
+        "message": "Keep imports pointing down the layers. Shared code should not import a server action: put the logic in a service or lib function that the action calls. For a type alone, use `import type`."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "kind": "export_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "regex": "^['\\\"](?:(?:@/|~/|#/|(?:\\.\\./)+)(?:src/)?(?:server/)?actions)(?:/[^'\\\"]*)?['\\\"]$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "regex": "\\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|scss|json|md)(?:\\?[a-z]+)?['\\\"]$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)(?:lib|libs|utils|helpers|shared|core|domain|db|database|models|services)/",
+              "notRegex": "(?:^|/)components/"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "non-ui-imports-component",
+      "violation": {
+        "code": "NON_UI_IMPORTS_COMPONENT",
+        "anchor": "witness.span",
+        "message": "Keep imports pointing down the layers. Non-UI code should not import a component: return the data and let the UI pick the component, or move this file beside the components."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "kind": "export_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "regex": "^['\\\"](?:(?:@/|~/|#/|(?:\\.\\./)+)(?:src/)?components)(?:/[^'\\\"]*)?['\\\"]$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "regex": "\\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|scss|json|md)(?:\\?[a-z]+)?['\\\"]$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)(?:lib|libs|utils|helpers|core|domain|db|database|models|services)/",
+              "notRegex": "(?:^|/)(?:components|ui|hooks)/|\\.tsx$"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "ui-kit-imports-feature",
+      "violation": {
+        "code": "UI_KIT_IMPORTS_FEATURE",
+        "anchor": "witness.span",
+        "message": "Keep imports pointing down the layers. A UI primitive should not import pages, features, actions, services or the database: take data and callbacks as props."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "kind": "export_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "regex": "^['\\\"](?:(?:@/|~/|#/|(?:\\.\\./)+)(?:src/)?(?:app|pages|routes|features|modules|(?:server/)?actions|services|db))(?:/[^'\\\"]*)?['\\\"]$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "regex": "\\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|scss|json|md)(?:\\?[a-z]+)?['\\\"]$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)components/ui/"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "service-imports-next",
+      "violation": {
+        "code": "SERVICE_IMPORTS_NEXT",
+        "anchor": "witness.span",
+        "message": "Keep imports pointing down the layers. Services should not import Next.js, so they run in tests: do cookies, redirects and revalidation in the action or route and pass plain values in."
+      },
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "import_statement"
+                  },
+                  {
+                    "kind": "export_statement"
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "source",
+                  "kind": "string",
+                  "regex": "^['\\\"](?:next)(?:/[^'\\\"]*)?['\\\"]$"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "field": "source",
+                    "kind": "string",
+                    "regex": "\\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|scss|json|md)(?:\\?[a-z]+)?['\\\"]$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "regex": "^(?:import|export)\\s+type\\b"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "(?:^|/)services/"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
