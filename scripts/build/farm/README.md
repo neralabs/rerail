@@ -775,11 +775,11 @@ Measured 2026-11-21, in seconds (`*`: the host was busy with other work, so the 
 | M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 0.80 |
 | DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 19.3, 19.4 | 0.92 |
 | M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 1.00 |
-| M3 Max Mac | macOS | 142 | 47.2 | 26.9 | 1.29 |
+| M3 Max Mac | macOS, the first-run check off | 147* | 39.0 | 20.6 | 0.99 |
+| M1 Max Mac | macOS, the first-run check off | 156 | 46.0 | 25.6 | 1.22 |
 | M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 1.32 |
 | M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 1.43 |
 | Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 1.52 |
-| M1 Max Mac | macOS | 193* | 47.9 | 37.9 | 1.81 |
 | Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 40.5 | 1.94 |
 | M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 2.05 |
 | Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 2.78 |
@@ -793,7 +793,12 @@ What follows from it:
   measured: macOS checks each new program the first time it runs, and over ssh (the farm's way in) that
   took 290 ms a program on the M3 Max and 345 ms on the M1 Max, against 5 ms in this Mac's terminal,
   which is a Developer Tool (System Settings, Privacy & Security, Developer Tools). A build runs a few
-  dozen new build scripts.
+  dozen new build scripts. With `/usr/libexec/sshd-keygen-wrapper` added there (it starts sshd, so
+  every ssh session counts as a developer tool), a first run takes 3 ms, and the M3 Max's macOS
+  build at 8 jobs went from 26.9 s to 20.6 s, the M1 Max's from 37.9 s to 25.6 s. On macOS 26 the
+  grant reaches only ssh sessions that start after it: the shared connections already open (ssh's
+  and the farm's, `~/Library/Caches/rerail-farm/ssh/`) keep the check until they are told
+  `ssh -O stop` (2026-11-21: the M1 Max's grant looked lost for that). macOS 15 applies it at once.
 - A Windows build costs 2 to 2.5 times the Linux side of the same PC. Defender is not the cause: with
   the farm's directory, the toolchains and the compilers excluded (2026-11-21), the PCs' times moved by
   under 10% at 4 and 8 jobs. Only the Windows VM gained (51 s to 30 s at 8 jobs). On Windows, add
