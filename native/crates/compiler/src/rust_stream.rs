@@ -99,6 +99,17 @@ struct Facts<'a> {
     methods: std::cell::RefCell<Vec<(String, String)>>,
     /// The dispatches' values the rules use (`L`, `rule`): each the name of the place it goes on to.
     labels: std::cell::RefCell<Vec<String>>,
+    /// Where the last token's end is read from (`last_ends`): `None` where a `TOKEN` keeps it (`t.last_end`).
+    ends: Option<LastEnds>,
+}
+
+/// The last token's end without a copy a token (`last_ends`), as the lean parser passes the `end` it holds: a `TOKEN`
+/// leaves it in `rec_end`, which an arm makes again for its own token only where a word reads that. A `CLOSE` of the
+/// last token's end reads `rec_end` where no arm made it again on any way in (`rec`), else `last_end`, which each
+/// writing arm of the switches (by table) in `copies` keeps first.
+struct LastEnds {
+    rec: HashSet<usize>,
+    copies: HashSet<usize>,
 }
 
 impl Facts<'_> {
@@ -148,6 +159,164 @@ fn sentinel(x: &Facts<'_>) -> bool {
             return false;
         }
         work.extend(plain_succ(x, pc));
+    }
+    true
+}
+
+/// Where the last token's end is read from, without a copy at each `TOKEN` (`LastEnds`), in a sentinel run whose
+/// records tier 2 makes, in a direct format 16 run. Each word's states, as the bits `REC` (`rec_end` holds the last token's end) and `LAST`
+/// (`last_end` does): a take leaves `REC`; a switch's arm that makes its token's end (`arm_writes`) clears it, after
+/// keeping it in `last_end` where the switch is in `copies`; a region's place leaves neither. A switch copies where
+/// every state into it has `REC` and a word after it reads the last end (`end_read_from`). `None` where a reader of
+/// it would have neither on some way, or the run keeps it elsewhere (a deferred leaf, a part's `keep`, `TOKEN`'s
+/// unmade end).
+fn last_ends(x: &Facts<'_>) -> Option<LastEnds> {
+    const REC: u8 = 1;
+    const LAST: u8 = 2;
+    let words = &x.native.structural;
+    let fx = x.fetch.as_ref()?;
+    // Outside a direct format 16 run every arm makes its token's end (`end_read`): a copy an arm is one a token.
+    if !x.sentinel || x.flagged || !(x.sixteen && x.coded) {
+        return None;
+    }
+    let part = |pc: usize| fx.part_at(x, pc);
+    for (pc, w) in words.iter().enumerate() {
+        match w.operation {
+            Op::Leaf { deferred: true, .. } | Op::Token { extras: true, .. } => return None,
+            // `TOKEN`'s unmade end (`rec_end = 0`), for a switch on kinds after.
+            Op::Switch { table } if !(pc > 0 && part(pc - 1)) && on_kinds(x, &x.native.switches[usize::from(table)]) && !fresh(x, &x.native.switches[usize::from(table)]) => return None,
+            _ => {}
+        }
+        // A part's `keep` (`part_plan`): the last end its own.
+        if part(pc) && !x.strings.contains_key(&pc) {
+            return None;
+        }
+    }
+    let takes = |pc: usize| matches!(words[pc].operation, Op::Token { .. }) && x.phase[pc] == crate::stream::TAKEN && !part(pc);
+    // Each switch's places, and whether an arm to each makes its token's end.
+    let arms: HashMap<usize, Vec<(usize, bool, bool, bool)>> = words
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, w)| match w.operation {
+            Op::Switch { table } => Some((pc, arm_writes(x, fx, &x.native.switches[usize::from(table)], &succ(x, pc)))),
+            _ => None,
+        })
+        .collect();
+    let table = |pc: usize| match words[pc].operation {
+        Op::Switch { table } => usize::from(table),
+        _ => unreachable!("a switch"),
+    };
+    // By table: a switch's arms are written once for every word that switches on it.
+    let wanted: HashSet<usize> = arms.iter().filter(|(_, a)| a.iter().any(|&(_, k, _, _)| k)).map(|(&pc, _)| table(pc)).collect();
+    let mut nocopy: HashSet<usize> = HashSet::new();
+    loop {
+        let copy = |pc: usize| wanted.contains(&table(pc)) && !nocopy.contains(&table(pc));
+        let mut states = vec![0u8; words.len()];
+        let mut work: Vec<(usize, u8)> = x.entries.iter().map(|&e| (e, REC | LAST)).collect();
+        while let Some((pc, st)) = work.pop() {
+            if pc >= words.len() || states[pc] & (1 << st) != 0 {
+                continue;
+            }
+            states[pc] |= 1 << st;
+            if takes(pc) {
+                work.extend(succ(x, pc).into_iter().map(|q| (q, REC)));
+            } else if part(pc) {
+                work.extend(succ(x, pc).into_iter().map(|q| (q, 0)));
+            } else if let Some(a) = arms.get(&pc) {
+                let kept = if copy(pc) { if st & REC != 0 { LAST } else { 0 } } else { st & LAST };
+                for &(q, after_keep, made, left) in a {
+                    if after_keep {
+                        work.push((q, kept));
+                    }
+                    if made {
+                        work.push((q, st & LAST));
+                    }
+                    if left {
+                        work.push((q, st));
+                    }
+                }
+            } else {
+                work.extend(succ(x, pc).into_iter().map(|q| (q, st)));
+            }
+        }
+        let all = |pc: usize, bit: u8| (0..4u8).filter(|s| states[pc] & (1 << s) != 0).all(|s| s & bit != 0);
+        // A switch that copies where some state into it has no `REC`: it copies nothing, and is walked again.
+        let bad: Vec<usize> = arms.keys().copied().filter(|&pc| copy(pc) && !all(pc, REC)).map(table).collect();
+        if !bad.is_empty() {
+            nocopy.extend(bad);
+            continue;
+        }
+        let mut rec = HashSet::new();
+        for (pc, w) in words.iter().enumerate() {
+            if !matches!(w.operation, Op::Close { this: false }) || states[pc] == 0 {
+                continue;
+            }
+            if all(pc, REC) {
+                rec.insert(pc);
+            } else if !all(pc, LAST) {
+                return None;
+            }
+        }
+        let copies = arms.keys().copied().filter(|&pc| copy(pc)).map(table).collect();
+        return Some(LastEnds { rec, copies });
+    }
+}
+
+/// A switch's places (its `succ`), each with whether an arm to it makes its token's end (`rec_end`) and whether one
+/// leaves it, as `fetched_arms` writes them (`ArmGroup`): `(place, made after a keep, made with none, left)`. The
+/// end's arm, and every arm of a switch on kinds, leave it.
+fn arm_writes(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, to: &[usize]) -> Vec<(usize, bool, bool, bool)> {
+    let mut groups: Vec<ArmGroup> = Vec::new();
+    if on_kinds(x, sw) {
+        fetched_arms_with(x, fx, sw, &mut Plan::default(), &mut groups);
+    }
+    to.iter()
+        .map(|&q| {
+            let to: Vec<&ArmGroup> = groups.iter().filter(|g| g.to.contains(&(q as u16))).collect();
+            (q, to.iter().any(|g| g.keeps(x)), to.iter().any(|g| g.writes && !g.keeps(x)), to.is_empty() || to.iter().any(|g| !g.writes))
+        })
+        .collect()
+}
+
+/// Whether no way takes more than two tokens past the stream's count, so that its two entries there
+/// (`Batch::end_streams`) are all a `TOKEN` reads past it, unclamped. Past the count a token's start is the file's
+/// length, whose byte (padding) every switch refuses but at its end arm (`sw.end`): from each take that may be the
+/// first past the count, the ways on are walked through the end arms alone, counting takes. A string's place (`succ`:
+/// its parts are its method's) scans its bytes (`part_stop`) and takes none.
+fn ends_suffice(x: &Facts<'_>) -> bool {
+    let words = &x.native.structural;
+    let takes = |pc: usize| {
+        matches!(words[pc].operation, Op::Token { .. }) && (x.flagged || x.phase[pc] == crate::stream::TAKEN) && !x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc))
+    };
+    let on = |pc: usize| -> Vec<usize> {
+        match words[pc].operation {
+            Op::Switch { table } => {
+                let end = x.native.switches[usize::from(table)].end;
+                if end == REFUSE { Vec::new() } else { vec![usize::from(end)] }
+            }
+            _ => succ(x, pc),
+        }
+    };
+    let mut reached = vec![false; words.len()];
+    let mut work: Vec<usize> = x.entries.clone();
+    while let Some(pc) = work.pop() {
+        if pc >= words.len() || std::mem::replace(&mut reached[pc], true) {
+            continue;
+        }
+        work.extend(succ(x, pc));
+    }
+    // (word, takes past the count so far): from every take, as the first past it.
+    let mut seen: HashSet<(usize, u8)> = HashSet::new();
+    let mut work: Vec<(usize, u8)> = (0..words.len()).filter(|&pc| reached[pc] && takes(pc)).flat_map(|pc| on(pc).into_iter().map(|w| (w, 1))).collect();
+    while let Some((pc, k)) = work.pop() {
+        if pc >= words.len() || !seen.insert((pc, k)) {
+            continue;
+        }
+        let k = if takes(pc) { k + 1 } else { k };
+        if k > 2 {
+            return false;
+        }
+        work.extend(on(pc).into_iter().map(|w| (w, k)));
     }
     true
 }
@@ -522,7 +691,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default() };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default(), ends: None };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -568,6 +737,7 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, lang:
     if facts.part_arg {
         strings = string_methods(&facts);
     }
+    facts.ends = last_ends(&facts);
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
@@ -2915,7 +3085,9 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             // The `CLOSE` before a `RETURN`: the call's number from its container's row first.
             let before = plain_succ(x, pc).iter().any(|&t| matches!(n.structural[t].operation, Op::Return { .. }));
             let take = if sure && before { "ret = s.taken_ret();\n" } else { "" };
-            format!("{take}s.close::<{this}, {sure}>({})?;\n{}", if this { end } else { "t.last_end" }, jump(0)?)
+            // The last token's end where `last_ends` finds it.
+            let last = if x.ends.as_ref().is_some_and(|e| e.rec.contains(&pc)) { "t.rec_end" } else { "t.last_end" };
+            format!("{take}s.close::<{this}, {sure}>({})?;\n{}", if this { end } else { last }, jump(0)?)
         }
         Op::Leaf { kind, deferred, extra } => {
             let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;
@@ -3168,16 +3340,35 @@ fn fetched_token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>) -> Resul
         let part = |pc: usize| pc > 0 && x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc - 1));
         let again = x.native.structural.iter().enumerate().any(|(pc, w)| matches!(w.operation, Op::Switch { table } if !part(pc) && on_kinds(x, &x.native.switches[usize::from(table)]) && !fresh(x, &x.native.switches[usize::from(table)])));
         let unmade = if again { "        t.rec_end = 0;\n" } else { "" };
-        // Past the last token, the file's length as the start, the stream's two slots past its
-        // count readable: a select, no branch; the byte there (0, padding) no switch takes.
+        // The last token's end kept here, unless the arms keep it where it is read (`last_ends`).
+        let copy = if x.ends.is_some() { "" } else { "        t.last_end = t.rec_end;\n" };
+        // Past the last token, the file's length as the start: the stream's two entries past its count
+        // (`Batch::end_streams`), as simdjson's index ends, where no way takes past them (`ends_suffice`): one load
+        // and one add, as the lean parser's `take!()`.
+        // Else the index held at the count: a select, no branch. The byte there (0, padding) no switch takes.
+        if ends_suffice(x) {
+            writeln!(
+                out,
+                "    /// `TOKEN`: the next token's start (past the last, the file's length: the stream's ends, as simdjson's
+    /// index past its last); its record is made where it is switched on.
+    #[inline(always)]
+    fn {name}(&mut self, t: &mut T) -> R {{
+{room}{copy}        t.start = unsafe {{ *self.starts.add(t.next as usize * self.rs) }};
+{unmade}        t.next += 1;
+        Ok(())
+    }}
+"
+            )
+            .unwrap();
+            return Ok(());
+        }
         writeln!(
             out,
             "    /// `TOKEN`: the next token's start (past the last, the file's length, as simdjson's index
     /// past its last); its record is made where it is switched on.
     #[inline(always)]
     fn {name}(&mut self, t: &mut T) -> R {{
-{room}        t.last_end = t.rec_end;
-        let i = t.next.min(self.n as u32);
+{room}{copy}        let i = t.next.min(self.n as u32);
         let st = unsafe {{ *self.starts.add(i as usize * self.rs) }};
         t.start = if i as usize == self.n {{ self.len }} else {{ st }};
 {unmade}        t.next = i + 1;
@@ -3433,7 +3624,30 @@ fn kind_target(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, code: u32) -> u16 {
 /// - a run (a number's bytes): each word that begins with its bytes as simdjson's atom test
 ///   (`str4ncmp(value, "true")`, then the byte after not in the run's class), then the run's end.
 fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> String {
+    fetched_arms_with(x, fx, sw, p, &mut Vec::new())
+}
+
+/// A group of a byte switch's arms (`fetched_arms`): whether it makes its token's end (`rec_end`), and the places it
+/// goes to.
+struct ArmGroup {
+    writes: bool,
+    to: Vec<u16>,
+}
+
+impl ArmGroup {
+    /// Whether the group keeps the last token's end (`t.last_end`) before it makes its own, where its switch's arms
+    /// do (`LastEnds::copies`): where it makes it, and a word after one of its places reads the last end.
+    fn keeps(&self, x: &Facts<'_>) -> bool {
+        self.writes && self.to.iter().any(|&q| end_read_from(x, usize::from(q), true))
+    }
+}
+
+/// `fetched_arms`, each group of arms it writes in `groups`.
+fn fetched_arms_with(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan, groups_out: &mut Vec<ArmGroup>) -> String {
     use crate::records::EndRule;
+    // The last token's end kept first where the switch's writing arms come before a reader of it (`last_ends`).
+    let keep = x.ends.as_ref().is_some_and(|e| x.native.switches.iter().position(|o| std::ptr::eq(o, sw)).is_some_and(|k| e.copies.contains(&k)));
+    let keep = if keep { "t.last_end = t.rec_end;\n" } else { "" };
     let ft = &fx.ft;
     // A switch whose arms are another's and some of its own (an array's first value, which also
     // takes `]`, and its value after a `,`): its own arms, then the other's switch for every other
@@ -3473,11 +3687,14 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
         // A one-byte token (punctuation, an opener): its place's test of that (`SPAN`) holds,
         // and is not made again (`past_span`).
         let one = past_span(x, t, 1);
+        let before = p.refs.len();
+        let writes = form == 2 || end_read(x, one);
+        let made = if writes { "t.rec_end = t.start + 1;\n" } else { "" };
         let body = match form {
             // Its end only where a word reads it (`end_read`).
-            0 => format!("{}{}{}", if end_read(x, one) { "t.rec_end = t.start + 1;\n" } else { "" }, code_set(x, &[one], a), p.to(one)),
+            0 => format!("{made}{}{}", code_set(x, &[one], a), p.to(one)),
             // The opener's place: passed at the method's call where `part_arg` holds, else kept for the part.
-            1 => format!("{}{}{}{}", if end_read(x, one) { "t.rec_end = t.start + 1;\n" } else { "" }, code_set(x, &[one], a), if x.part_arg { "" } else { "t.part_at = t.start + 1;\n" }, p.to(one)),
+            1 => format!("{made}{}{}{}", code_set(x, &[one], a), if x.part_arg { "" } else { "t.part_at = t.start + 1;\n" }, p.to(one)),
             _ => {
                 let r = a;
                 let (mut tests, mut arms) = (String::new(), String::new());
@@ -3544,7 +3761,14 @@ fn fetched_arms(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch, p: &mut Plan) -> S
                 }
             }
         };
+        let group = ArmGroup { writes, to: p.refs[before..].to_vec() };
+        // The last token's end kept before this arm makes its own, where a word after reads it.
+        let body = if group.keeps(x) { format!("{keep}{body}") } else { body };
+        groups_out.push(group);
         writeln!(s, "{} => {{\n{body}\n}}", pats.join(" | ")).unwrap();
+    }
+    if let Some((at, _)) = delegate {
+        groups_out.push(ArmGroup { writes: false, to: vec![at] });
     }
     // No byte of its own: the switch is its default alone, no `match`.
     if groups.is_empty() {

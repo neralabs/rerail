@@ -446,9 +446,19 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {byte}");
         for arm in arms {
-            assert_eq!(arm.starts_with("t.rec_end = t.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
+            // The last token's end kept first where a close after reads it (`rust_stream::last_ends`).
+            let own = arm.strip_prefix("t.last_end = t.rec_end;\n").unwrap_or(arm);
+            assert_eq!(own.starts_with("t.rec_end = t.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
+            assert!(made || !arm.starts_with("t.last_end"), "{byte}'s arm keeps no end it does not make again");
         }
     }
+    // A token taken as the lean parser's `take!()`: one load and one add, the stream ended in two entries of the
+    // file's length (`Batch::end_streams`), and no copy of the last token's end (`rust_stream::last_ends`): a close
+    // of it reads `rec_end` where no arm made it again, and `last_end` where the arm before it kept it.
+    let take = src16.split("fn token_all(&mut self, t: &mut T) -> R {").nth(1).and_then(|r| r.split("\n    }\n").next()).expect("the token's step");
+    assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
+    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end)?;\n"), "a `,` closes the value by the end it left");
+    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end)?;\n"), "a `}}` keeps the value's end before it makes its own");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
     // number (`rust_stream::UNNUMBERED`).
     let unnumbered = src16.matches(rerail_compiler::rust_stream::UNNUMBERED).count();
@@ -519,6 +529,15 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         assert!(jit.parser.image(f).is_err(), "{:?}: the JIT refuses it", String::from_utf8_lossy(&f[..f.len().min(20)]));
         let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
         assert!(got.as_ref().err().is_some_and(|e| e.contains(text)), "{:?}: refused for {why} ({text}): {got:?}", String::from_utf8_lossy(&f[..f.len().min(20)]));
+    }
+    // A file cut off in a container: its tokens taken past the stream's count read the two entries there
+    // (`Batch::end_streams`), the file's length, as the unclamped `TOKEN` takes them (decision 0543): the Rust refuses
+    // each, as the JIT does (whose refusal names its word, not the reason). Ends of 0, as before, would read the
+    // file's first byte as the next token's.
+    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b""] {
+        let want = jit.parser.image16(f, &lang, &numbers, false).map(|_| ());
+        let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
+        assert!(want.is_err() && got.is_err(), "{:?}: the Rust refuses it as the JIT does: {got:?}, {want:?}", String::from_utf8_lossy(f));
     }
 }
 

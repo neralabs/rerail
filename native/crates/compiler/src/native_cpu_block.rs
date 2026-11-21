@@ -295,6 +295,27 @@ impl Batch {
             self.run(*entry);
         }
         self.unstrip(program, rows);
+        self.end_streams(program);
+    }
+
+    /// Each extract's stream ended in two entries of its file's length, past its count, as simdjson's stage 1 ends
+    /// its index: tier 2 takes a token with one load (`rust_stream`'s `take`), the end's start the file's length,
+    /// whose byte (padding) no switch takes. The extract's slack (`capacity`) holds them.
+    fn end_streams(&mut self, program: &CompiledBlock) {
+        let fields: Option<[u64; 3]> = program.records.as_ref().map(|t| [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64]);
+        for row in &self.rows {
+            for e in 0..program.extracts.len() {
+                let count = self.counts[row.counts as usize + e];
+                let field = program.records.as_ref().and_then(|t| [t.starts, t.lasts].iter().position(|&x| usize::from(x) == e));
+                for j in count..count + 2 {
+                    let at = match (field, &program.records, fields) {
+                        (Some(field), Some(t), Some(cols)) => row.positions + t.layout.index(field, j, cols, row.capacity),
+                        _ => row.positions + e as u64 * row.capacity + j,
+                    };
+                    self.positions[at as usize] = row.len as u32;
+                }
+            }
+        }
     }
 
     /// The program's pass `k` alone (the record pass last): for the profile, the passes before

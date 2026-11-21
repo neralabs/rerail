@@ -593,6 +593,13 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 47, done: a token one load and one add (decision 0543)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A token taken | `take!()`: one load, one add; the index ends in sentinel entries | the index clamped to the count, the end selected, `last_end` copied | `t.start = *starts.add(t.next * rs); t.next += 1;`, the stream ended in two entries of the file's length |
+| The last token's end | the `end` it holds | `t.last_end = t.rec_end` at every token | read from `rec_end` where no arm made it again (`,`, `:`); kept by the `}` and `]` arms before they make theirs |
+
 ## Step 46, done: the token's state the rule's local (decision 0542)
 
 | | the lean parser | before | now |
