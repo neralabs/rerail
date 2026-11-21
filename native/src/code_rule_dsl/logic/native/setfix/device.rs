@@ -1454,6 +1454,22 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
+                // What each upload read, and why it was not read where it lies: what step 6 removes, by view.
+                if let (Owner::Src(_), Some(view)) = (&owner, &rel.view) {
+                    let why = if ids.is_some() {
+                        "dead rows"
+                    } else if !view.whole() {
+                        "filtered by constants"
+                    } else if let Some(b) = view.src.in_block() {
+                        if b.rows as usize == n { "in a block, not taken" } else { "in a block of other rows" }
+                    } else if view.src.device_view().is_some() {
+                        "made on the device, of other rows"
+                    } else {
+                        "in no block, not made on the device"
+                    };
+                    let cols: String = view.src.columns().join(",").chars().take(60).collect();
+                    crate::code_rule_dsl::prof::count_named(format!("device.upload ({why}): {cols}"), 8 * k * n);
+                }
 // copy (0353 step 6): rows uploaded from the host (decision 0353).
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
@@ -2629,16 +2645,15 @@ struct Own {
     total: HashMap<usize, Rc<mj::DevRel>>,
     delta: HashMap<usize, Rc<mj::DevRel>>,
     sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
-    /// Each relation's keys (`delta`: its last round's), every one a stage of the component's plans probes it by, and
-    /// a set head's total's every column (its new rows made distinct of it): its relations are made with room for an
-    /// index of each, so no probe copies them (decision 0353 step 6, `DevIndex::moved`).
+    /// Each relation's keys (`delta`: its last round's), every one a stage of the component's plans probes it by: its
+    /// deltas are made with room for an index of each, so no probe copies them (decision 0353 step 6,
+    /// `DevIndex::moved`). A total grows in a block with room for its indexes (`SetHead`).
     keys: HashMap<(usize, bool), Vec<Vec<usize>>>,
 }
 
 impl Own {
-    /// `rel`'s keys (`Own::keys`) gathered from the component's plans; `all` the heads whose totals are made distinct
-    /// of by every column.
-    fn keyed<'a>(plans: impl Iterator<Item = &'a Plan>, all: impl Iterator<Item = (usize, usize)>) -> HashMap<(usize, bool), Vec<Vec<usize>>> {
+    /// Each relation's keys (`Own::keys`) gathered from the component's plans.
+    fn keyed<'a>(plans: impl Iterator<Item = &'a Plan>) -> HashMap<(usize, bool), Vec<Vec<usize>>> {
         let mut keys: HashMap<(usize, bool), Vec<Vec<usize>>> = HashMap::new();
         let mut add = |at: (usize, bool), cols: Vec<usize>| {
             let ks = keys.entry(at).or_default();
@@ -2652,9 +2667,6 @@ impl Own {
                     add((*rel, *delta), cols.clone());
                 }
             }
-        }
-        for (h, k) in all {
-            add((h, false), (0..k).collect());
         }
         keys
     }
@@ -2796,6 +2808,18 @@ struct LatHead { code: mj::LatCode, part: Option<Part>, had: usize, map: Option<
 /// written. A head past it refuses its stratum.
 const LAT_ROOM: usize = 256 << 20;
 
+/// The room a recursive set head's relation has in its block to grow, round after round (`SetHead`): address space,
+/// memory only as its rows and indexes are written.
+const HEAD_ROOM: usize = LAT_ROOM;
+
+/// A recursive component's set head on the device: its one relation, in a block of the run's life, its rows so far
+/// claimed and each round's new rows written past them (never moved; its indexes forgotten as it grows, so a round's
+/// probes build them of its rows then). The store takes it as it lies (`Fresh::place`).
+#[derive(Default)]
+struct SetHead {
+    part: Option<Part>,
+}
+
 /// A key map where it lies, for the device to bind.
 fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
     mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places() }
@@ -2846,11 +2870,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
-    let set_heads = heads.iter().filter(|&&h| store.rels[h].device_lattice().is_none()).map(|&h| (h, store.rels[h].k));
-    own.keys = Own::keyed(seeds.iter().chain(deltas).map(|r| r.0), set_heads);
+    own.keys = Own::keyed(seeds.iter().chain(deltas).map(|r| r.0));
     // A lattice head folds each round by key on the device (decision 0124), into its one relation through its key map
     // in its block (decision 0384 step 5).
     let mut lattices: HashMap<usize, LatHead> = HashMap::new();
+    // A set head's one relation, grown round after round in its block (`SetHead`).
+    let mut sets: HashMap<usize, SetHead> = HashMap::new();
     for &h in heads {
         if let Some(lat) = store.rels[h].device_lattice() {
             let (code, top, after) = lat?;
@@ -2988,6 +3013,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let mut any = false;
         let mut old: Vec<Rc<mj::DevRel>> = std::mem::take(&mut own.delta).into_values().collect();
         let mut rows_held: Vec<mj::Table> = Vec::new();
+        // Set heads whose relation grew this round, and by how many rows: claimed once the batch is done.
+        let mut grown: Vec<(usize, usize)> = Vec::new();
+        let no_counts = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
         for (h, rows, words, anti) in news {
             let n = words.get(if anti { 2 } else { 1 }) as usize;
             if n == 0 {
@@ -3003,16 +3031,33 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 lv.resize(had, 0);
                 lv.resize(had + n, rounds as u32);
             }
-            let total = mj::DevRel::empty_indexed(k, had + n, own.room(h, false)).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
-            if let Some(old) = own.total.get(&h) {
-                batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
+            // The head's one relation, made at its first round with rows in a block of the run's life with room to go on
+            // growing there: this round's new rows written past its rows, never moved (as a lattice head's, decision
+            // 0384 step 5), and taken by the store as it lies at the end.
+            own.sorts.retain(|(r, _, _), _| *r != h);
+            let part = match &sets.entry(h).or_default().part {
+                Some(p) => p.clone(),
+                None => {
+                    let p = Part::for_writes_with_room(k, n, HEAD_ROOM).map_err(|e| format!("a recursive head's relation: {e}"))?;
+                    sets.get_mut(&h).expect("its entry").part.insert(p).clone()
+                }
+            };
+            if had > 0 {
+                // Its indexes are of its rows before this round's: the round's batch that probed them finished, and
+                // their sorts are dropped (above).
+                // SAFETY: as said; nothing else reads them.
+                unsafe { part.forget_indexes() };
             }
-            batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
+            if !part.reserve((had + n) as u64) {
+                return Err(format!("a recursive head of {} rows past its block's room", had + n));
+            }
+            // Bound after the room was made in the block, so its buffer reaches it.
+            let dst = mj::DevRel::in_block(&part.in_block((had + n) as u32), k).map_err(|e| format!("{e:?}: a recursive head in its block"))?;
+            batch.place_rows(mj::Rows::Table(&rows), n, None, &no_counts, &ident, dst, had).map_err(|e| format!("{e:?}"))?;
+            grown.push((h, n));
             let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
             batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
-            old.extend(own.total.insert(h, Rc::new(total)));
             own.delta.insert(h, Rc::new(delta));
-            own.sorts.retain(|(r, _, _), _| *r != h);
             rows_held.push(rows);
         }
         // A lattice head: its held rows were updated in place and its new keys' rows written past them, in its one
@@ -3049,7 +3094,14 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             rows_held.push(changed);
         }
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
-        drop((old, rows_held));
+        for (h, n) in grown {
+            let part = sets[&h].part.as_ref().expect("its relation");
+            // SAFETY: the batch is finished, and `rows_copy` wrote every value of its `n` new rows.
+            unsafe { part.written_more(n as u32) };
+            let total = mj::DevRel::in_block(&part.in_block(part.len()), store.rels[h].k).map_err(|e| format!("{e:?}"))?;
+            old.extend(own.total.insert(h, Rc::new(total)));
+        }
+        drop((old, rows_held, no_counts));
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
@@ -3058,41 +3110,18 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             break;
         }
     }
-    // A set head's rows written in place (decision 0325 step 4): its total, every row new (its relation had none
-    // before the run), into a relation of a block the store takes as it lies, each row with its round where the
-    // head keeps levels. One submission for the component's set heads.
-    let mut parts: Vec<(usize, super::Placed, usize)> = Vec::new();
-    let mut batch: Option<mj::Batch> = None;
-    // No count slot: each total's rows are known. Held until the batch completes.
-    let no_counts = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+    // A set head's relation as it lies (decision 0325 step 4): every row new (its relation had none before the run),
+    // grown in its block round after round, each row with its round where the head keeps levels. Nothing copied.
+    drop(own);
     for &h in heads {
-        let Some(total) = own.total.get(&h) else { continue };
-        if lattices.contains_key(&h) || total.rows == 0 {
+        let Some(SetHead { part: Some(part) }) = sets.remove(&h) else { continue };
+        let n = part.len() as usize;
+        if n == 0 {
             continue;
         }
-        let k = store.rels[h].k;
-        let b = match &mut batch {
-            Some(b) => b,
-            None => batch.insert(direct_batch(None)?),
-        };
-// copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
-// of the run's life from its start (decision 0353).
-        const TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
-        TOTAL.copied(8 * k * total.rows);
-        let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
-        let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;
-        parts.push((h, room, total.rows));
-    }
-    if let Some(mut b) = batch {
-        finish_timed(&mut b, &mut rep)?;
-    }
-    drop(no_counts);
-    for (h, room, n) in parts {
-        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows of the room.
-        let part = unsafe { written(room, n) };
+        // Its last round's indexes are of every row, in its block: the store's readers find them (decision 0325).
         let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
-        fresh[h].place(part, rounds);
+        fresh[h].place(super::Placed::Part(part), rounds);
         rep.distinct += n as u64;
         rep.placed += n as u64;
     }
