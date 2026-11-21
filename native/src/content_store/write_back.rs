@@ -1062,9 +1062,9 @@ impl ContentStore {
         if let Some((run, how)) = open {
             w.seal(run, how);
         }
-        let mut s = w.shared.state.lock().expect("the writer's state");
+        let s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
-        s = w.shared.wait_until(s, |s| !s.keys.contains_key(key));
+        drop(w.shared.wait_until(s, |s| !s.keys.contains_key(key)));
         if let Some(t) = t {
             super::hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
         }
