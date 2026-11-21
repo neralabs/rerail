@@ -841,7 +841,7 @@ fn room_for(k: usize, rows: usize) -> usize {
 /// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
         Device::Must
     } else {
         Device::No
@@ -1175,12 +1175,12 @@ impl Part {
         Ok(part)
     }
 
-    /// How long its rows live: the blocks it is in.
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.held) == 1
     }
 
+    /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
     }

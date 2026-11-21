@@ -31,7 +31,7 @@ struct Pages {
 
 impl Pages {
     fn new(words: usize) -> Pages {
-        let page = rerail_device::page_size();
+        let page = crate::os::page_bytes();
         let layout = std::alloc::Layout::from_size_align((words * 4).next_multiple_of(page), page).unwrap();
         // SAFETY: a non-zero size.
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };

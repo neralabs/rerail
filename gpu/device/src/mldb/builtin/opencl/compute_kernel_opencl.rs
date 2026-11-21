@@ -162,6 +162,7 @@ unsafe impl Sync for Api {}
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
+        // Windows' loader is in System32, and finds the drivers the display drivers register.
         let paths: &[&str] = if cfg!(target_os = "macos") {
             &["/System/Library/Frameworks/OpenCL.framework/OpenCL"]
         } else if cfg!(windows) {
@@ -170,13 +171,10 @@ fn api() -> Result<&'static Api, String> {
         } else {
             &["libOpenCL.so.1", "libOpenCL.so"]
         };
-        // The system's OpenCL loader.
-        let handle = paths
-            .iter()
-            .find_map(|p| crate::sys::Library::open(p).ok())
-            .ok_or_else(|| format!("no OpenCL library ({})", paths.join(", ")))?;
+        let lib = crate::os::Lib::open(paths, crate::os::Scope::Local).ok_or_else(|| format!("no OpenCL library ({}): {}", paths.join(", "), crate::os::Lib::error()))?;
         let sym = |name: &str| -> Result<Ptr, String> {
-            handle.symbol(name).ok_or_else(|| format!("the OpenCL library has no {name}"))
+            let p = lib.sym(name);
+            if p.is_null() { Err(format!("the OpenCL library has no {name}")) } else { Ok(p) }
         };
         /// The symbol at `p` as the function type `F` its field declares (a function pointer: its size is checked).
         ///
@@ -590,7 +588,7 @@ impl ClBuffer {
 /// the buffer over it is that allocation, not a copy (`ClDevice::follows_addresses`).
 pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> ClBuffer {
     let len = (length * std::mem::size_of::<T>()).max(16);
-    let page = crate::sys::page_size();
+    let page = crate::os::page_bytes();
     let layout = std::alloc::Layout::from_size_align(len.next_multiple_of(64), page).unwrap();
     let (ptr, owner) = match &device.0.usm {
         Some(u) => {
@@ -632,7 +630,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
-    let page = crate::sys::page_size();
+    let page = crate::os::page_bytes();
     if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(64) || len == 0 {
         return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
     }

@@ -7,7 +7,7 @@
 //! `test-hooks` gives each test thread its own buffer ledger (`test_pool`) and the buffer
 //! observations, for the engine's tests as for this crate's.
 // Where the device layer is (decision 0440 step E).
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 #![allow(clippy::missing_safety_doc)]
 
 /// Block programs on Metal (decision 0066): the interpreter and generated MSL, over a batch of

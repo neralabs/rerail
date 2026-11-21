@@ -117,7 +117,6 @@ pub fn peak(stage: &str) {
     }
 }
 
-/// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 /// What the heap holds live, in MB (jemalloc's allocated bytes); 0 where the system allocator runs (Windows, wasm).
 pub fn live_heap_mb() -> usize {
     #[cfg(not(any(windows, target_family = "wasm")))]
@@ -129,6 +128,18 @@ pub fn live_heap_mb() -> usize {
     0
 }
 
+/// The heap's resident pages, in MB (jemalloc's resident bytes); 0 where the system allocator runs (Windows, wasm).
+pub fn resident_heap_mb() -> usize {
+    #[cfg(not(any(windows, target_family = "wasm")))]
+    {
+        let _ = tikv_jemalloc_ctl::epoch::advance();
+        tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20
+    }
+    #[cfg(any(windows, target_family = "wasm"))]
+    0
+}
+
+/// The process's physical footprint now, in MB (macOS; 0 elsewhere).
 pub fn footprint_mb() -> usize {
     #[cfg(target_os = "macos")]
     {

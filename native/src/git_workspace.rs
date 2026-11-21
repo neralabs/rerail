@@ -2,7 +2,7 @@
 //! Production code in this module never executes an external Git process.
 
 #[allow(unused_imports)]
-use crate::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use crate::content_store::{
     ContentStore, GitTree, GitTreeEntry, HashKey, SnapshotId, SourceId, StoreResult, WorkspaceId,
     WorkspaceRegistration,

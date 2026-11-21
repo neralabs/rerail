@@ -14,6 +14,10 @@
 //! A lease is made under a temporary name, locked, then linked to its number, so a lease is never seen unlocked
 //! under its number while its run lives. One whose lock is free is a run that ended without removing it (a crash):
 //! whoever finds it removes it.
+//!
+//! The lock is a lease's own (`hold`, `probe`, `let_go`), apart from the gate's: Unix's is advisory, so a lease's
+//! record is read under it; Windows' (`LockFileEx`) bars every other handle from the bytes it covers, and std's covers
+//! them all, so there a lease locks one byte far past its record instead, and the record stays readable.
 
 #[cfg(not(target_family = "wasm"))]
 use super::StoreError;
@@ -64,10 +68,77 @@ impl Drop for ScopeLease {
         {
             let _ = std::fs::remove_file(&self.path);
             if let Some(file) = self.file.take() {
-                let _ = file.unlock();
+                let_go(&file);
             }
         }
     }
+}
+
+/// Locks a lease's file while its run lives (the module's last paragraph), waiting for it.
+#[cfg(all(not(target_family = "wasm"), not(windows)))]
+fn hold(file: &std::fs::File) -> std::io::Result<()> {
+    file.lock()
+}
+
+/// Whether a lease's lock is free (its run has ended): `Ok` takes it.
+#[cfg(all(not(target_family = "wasm"), not(windows)))]
+fn probe(file: &std::fs::File) -> Result<(), std::fs::TryLockError> {
+    file.try_lock()
+}
+
+/// Lets a lease's lock go.
+#[cfg(all(not(target_family = "wasm"), not(windows)))]
+fn let_go(file: &std::fs::File) {
+    let _ = file.unlock();
+}
+
+/// The byte a lease locks on Windows: far past any record, which stays readable (Windows locks past a file's end).
+#[cfg(windows)]
+const LOCKED_BYTE: u64 = 1 << 62;
+
+/// Windows: `LockFileEx` on `LOCKED_BYTE`, exclusive; `flags` adds `LOCKFILE_FAIL_IMMEDIATELY` for a probe.
+#[cfg(windows)]
+fn lock_byte(file: &std::fs::File, flags: u32) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LockFileEx};
+    // SAFETY: OVERLAPPED is plain integers and a handle; zero is its empty value.
+    let mut at: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { std::mem::zeroed() };
+    at.Anonymous.Anonymous.Offset = LOCKED_BYTE as u32;
+    at.Anonymous.Anonymous.OffsetHigh = (LOCKED_BYTE >> 32) as u32;
+    // SAFETY: the file's own handle, synchronous (std opens without FILE_FLAG_OVERLAPPED), so the call completes
+    // before it returns and `at` outlives it.
+    if unsafe { LockFileEx(file.as_raw_handle(), LOCKFILE_EXCLUSIVE_LOCK | flags, 0, 1, 0, &mut at) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn hold(file: &std::fs::File) -> std::io::Result<()> {
+    lock_byte(file, 0)
+}
+
+#[cfg(windows)]
+fn probe(file: &std::fs::File) -> Result<(), std::fs::TryLockError> {
+    use windows_sys::Win32::Foundation::{ERROR_IO_PENDING, ERROR_LOCK_VIOLATION};
+    match lock_byte(file, windows_sys::Win32::Storage::FileSystem::LOCKFILE_FAIL_IMMEDIATELY) {
+        Ok(()) => Ok(()),
+        Err(e) if matches!(e.raw_os_error(), Some(c) if c == ERROR_LOCK_VIOLATION as i32 || c == ERROR_IO_PENDING as i32) => {
+            Err(std::fs::TryLockError::WouldBlock)
+        }
+        Err(e) => Err(std::fs::TryLockError::Error(e)),
+    }
+}
+
+#[cfg(windows)]
+fn let_go(file: &std::fs::File) {
+    use std::os::windows::io::AsRawHandle;
+    // SAFETY: as in `lock_byte`.
+    let mut at: windows_sys::Win32::System::IO::OVERLAPPED = unsafe { std::mem::zeroed() };
+    at.Anonymous.Anonymous.Offset = LOCKED_BYTE as u32;
+    at.Anonymous.Anonymous.OffsetHigh = (LOCKED_BYTE >> 32) as u32;
+    // SAFETY: the file's own handle; unlocking a range it does not hold fails, harmlessly.
+    unsafe { windows_sys::Win32::Storage::FileSystem::UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut at) };
 }
 
 /// The leases' directory of the store at `store`.
@@ -93,11 +164,11 @@ fn leases(dir: &Path) -> StoreResult<Vec<Held>> {
     for entry in std::fs::read_dir(dir)?.flatten() {
         let Some(n) = entry.file_name().to_str().and_then(|s| s.parse::<i64>().ok()) else { continue };
         let Ok(file) = std::fs::File::open(entry.path()) else { continue };
-        match file.try_lock() {
+        match probe(&file) {
             Ok(()) => {
                 // Its run ended without removing it.
                 let _ = std::fs::remove_file(entry.path());
-                let _ = file.unlock();
+                let_go(&file);
             }
             Err(std::fs::TryLockError::WouldBlock) => {
                 let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
@@ -169,7 +240,7 @@ pub(super) fn take(
                 let held = Held { acquisition: n, scope: scope.to_owned(), acquired_at, create, generation };
                 std::fs::write(&temp, held.text())?;
                 let file = std::fs::File::open(&temp)?;
-                file.lock()?;
+                hold(&file)?;
                 let path = dir.join(n.to_string());
                 match std::fs::hard_link(&temp, &path) {
                     Ok(()) => {
@@ -178,7 +249,7 @@ pub(super) fn take(
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                         // Another run took this number between the listing and the link.
-                        let _ = file.unlock();
+                        let_go(&file);
                         n += 1;
                     }
                     Err(e) => {

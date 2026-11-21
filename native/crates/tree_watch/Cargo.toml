@@ -24,3 +24,7 @@ libc = "0.2.189"
 [target.'cfg(windows)'.dependencies]
 # The completion port, the reads and the oplock (`tree_watch/windows.rs`).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
+
+[dev-dependencies]
+# The tests' scratch folders, canonical (`/private/var`, not `/var`) as FSEvents reports them.
+dunce = "=1.0.5"

@@ -11,8 +11,6 @@
 //! A file read with `parse_file_version` has `core.rerail` before it, included or not. An included file's `.output`s are its own,
 //! not the program's: they are left out (`python/calls.rerail`'s).
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
@@ -35,6 +33,7 @@ pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rerail` parser crate's (`rerail_rr_syntax`).
+use rerail_store::Canonical as _;
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
 use from_tape::{RrFile, S, Stmt};

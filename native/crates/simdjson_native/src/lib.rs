@@ -9,9 +9,8 @@
 //!   caller's buffers (`Sink`). One for each implementation, with the CPU's SHA-256 instructions and
 //!   without: `Kernel::ALL` lists them best first, and `Kernel::runs` says which this CPU runs.
 //!
-//! Nothing on MSVC, which compiles none of the C++ (GCC and Clang target regions and attributes): the
-//! engine reads JSON there without simdjson (`json_parser::fallback`).
-#![cfg(not(all(windows, target_env = "msvc")))]
+//! On MSVC the C++ is compiled by Visual Studio's clang-cl (`build.rs`): MSVC's own compiler takes none of simdjson's
+//! GCC and Clang target regions and attributes.
 
 use std::ffi::{CStr, c_char};
 

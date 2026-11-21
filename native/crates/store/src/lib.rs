@@ -5,6 +5,22 @@
 //! `crate::git_workspace`), so no caller changed. What the store needs of the engine, the engine hands it as
 //! it loads: the SQL functions every connection gets ([`content_store::set_connection_functions`]).
 
+// The store's files name the trait below as `rerail_store::Canonical`, as every crate that compiles them does.
+extern crate self as rerail_store;
+
+/// A path's canonical form without Windows' verbatim prefix (`dunce`: std's `\\?\C:\...` is no path `/`-joined
+/// text or a comparison with a plain path finds); std's `canonicalize` elsewhere. The engine's and the store's every
+/// canonical path (`.canonical()`, not `.canonicalize()`).
+pub trait Canonical {
+    fn canonical(&self) -> std::io::Result<std::path::PathBuf>;
+}
+
+impl<P: AsRef<std::path::Path> + ?Sized> Canonical for P {
+    fn canonical(&self) -> std::io::Result<std::path::PathBuf> {
+        dunce::canonicalize(self)
+    }
+}
+
 #[path = "../../../src/content_store/mod.rs"]
 pub mod content_store;
 /// Every in-process Git read: the one opener, its setup and its pool (`native/src/git_access`). Its Node-API

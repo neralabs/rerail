@@ -58,23 +58,43 @@ Tests: `findings_keep_their_columns_and_an_annotation_is_not_code`, `string_anno
 
 ## A rule's rows are its own
 
-Added 2026-11-20. Folding widened an original for every reader, not only for its copies' readers. A pack's programs
-share the library's relations (decision 0089), so a program whose rules reached an original from an annotation widened
-it for another program's rules too: alone, RUF060 found `1 in []` in no string annotation; beside C417, whose dict
-clause reads `list_like` from one, it found `x: "1 in []"` through `empty_literal`. A program's own readers leaked the
-same way: C408 found seven calls inside string type definitions, alone and in a pack, and Ruff reports one of them.
+Added 2026-11-20 (main's #923), and built on the version 2026-11-21. A pack's programs share the library's relations
+(decision 0089), so a rule's rows depended on what else the run held. Since decision 0431 an annotation is a tape
+value, and a finding at its node is refused (R9), so the pack failed where the program alone ran:
+
+- **Clones.** Hiding clones a rule for a variable that may be a guest's node (O110). `builtin_at` holds an
+  annotation's names beside a library that reads string annotations, so C408's own `c4_builtin` was cloned, and its
+  findings were calls inside `a: "dict()"`. Alone, C408 found none.
+- **Folding.** Folding widened an original for every reader, not only its copies' readers. Beside `anns`, which reads
+  `list_like` from a string annotation, `cmps` read `cmp` widened and found the annotation's `1 in []` (RUF060 beside
+  C417, main's #923).
+
+Both now hold to one line, the columns an output shows (`hide::shown_columns`, `combining::shown_columns`): an
+output's every column, a finding's place (the column `rr_unplaced` reads a node of), and each column a rule reads into
+one its head shows, transitively.
 
 - Only the original of a copy made for an annotation is widened: a code guest's documents are under the narrow bound.
-- A rule that reads such an original and is not its own reads `rr_narrow_<orig>`: the original's rules before they
-  are widened, each reading the others' narrow copies, declared as the original is (`hiding::keep_narrow`). A native
-  operator's fields name the narrow copies too where its relation reads narrow.
+- A clone whose head would hold an annotation's node at a shown column goes (`hide::shows_an_annotation`). A column
+  that may be an annotation's counts, since a clone leaves it unbounded.
+- A rule that is not a widened original's own reads it as hiding left it, `rr_narrow_<orig>`, where the atom reads a
+  variable its head shows: the original's rules before they are widened, declared as the original is. A narrow copy's
+  rules read every widened original narrow. A native operator's fields name the narrow copies where its relation reads
+  narrow.
 - A rule that asks for what every reader is answered from reads the widened original: the guest demand and its
   contexts (4), and the on-request rewrite's attributes, requests and widened copies (decision 0174). Read narrow, a
   request asks too little for the widened original's readers (UP031 lost 61 of 67 findings beside PYI009).
+- A clone or a widened read used inside a rule stays. A call's target through a quoted `n: "Node"` needs the clones
+  (`quoted_annotations_are_read_as_their_code`), and narrowing every read, as main does, lost eleven typing tests'
+  rows.
 
-Measured on the Python fixtures (536 rules, 1,953 files; release build, a Linux build box, two runs each): the pack
-finds what each rule finds alone but for RUF034, which fails alone (0174 §6), and B032 and PYI025 (decision 0168), as
-before. Against main, the pack loses RUF060's two string annotations and C408's seven type definitions. Wall 72–74 s
-to 83–85 s, peak 5.8 GB to 6.4 GB: 88 narrow copies are evaluated beside their originals.
+Main's narrowing of every read, measured on the Python fixtures (536 rules, 1,953 files; release build, a Linux build
+box, two runs each): the pack found what each rule finds alone but for RUF034, which fails alone (0174 §6), and B032
+and PYI025 (decision 0168); wall 72–74 s to 83–85 s, peak 5.8 GB to 6.4 GB, with 88 narrow copies beside their
+originals. Narrowing only the shown reads makes fewer copies; not measured again.
 
-Test: `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`.
+Also: `wellfounded::classify`'s count of measures to try stops at its bound as it is multiplied. The narrow copies
+grew one recursive component until the product overflowed before its bound of 4,000.
+
+Tests: `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` (C408 beside its twin, and a policy that includes
+`ruff-classes.rerail`), `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` (main's #923, its `Ann`
+placed at the string as R9 asks).

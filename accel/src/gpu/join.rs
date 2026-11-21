@@ -263,7 +263,7 @@ pub fn host_clock() -> f64 {
 /// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
 #[cfg(not(target_os = "macos"))]
 pub fn host_clock() -> f64 {
-    rerail_device::monotonic_seconds()
+    rerail_device::os::monotonic()
 }
 
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
@@ -1924,6 +1924,20 @@ mod tests {
         assert_eq!(screen_words(4_000_000), Some(1 << 19));
         assert_eq!(screen_words(65_536), Some(8192));
         assert_eq!(screen_words(1 << 23 | 1), None);
+        screened_probes(0);
+    }
+
+    /// The probe's GPU time with the filter and without it, interleaved, the median of 20 each (a probe's GPU time
+    /// moves by a fifth between runs at a millisecond). A measurement: run it alone with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "a measurement, not a check"]
+    fn a_screened_probes_gpu_time() {
+        screened_probes(20);
+    }
+
+    /// The probes of [`a_screened_probe_finds_the_hosts_pairs`], each shape's checked against the host join, then
+    /// `timed` more of each, interleaved, their median GPU time printed.
+    fn screened_probes(timed: usize) {
         if device().is_err() {
             return;
         }
@@ -1940,16 +1954,6 @@ mod tests {
             assert!(screened.screen.is_some());
             let column = || vec![Column::upload(&left).unwrap()];
             let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
-            // Interleaved, 20 each: a probe's GPU time moves by a fifth between runs at a millisecond. The CPU backend
-            // runs the kernels on the host, where a probe's time says nothing of a device's: one each there, for the
-            // pairs alone.
-            let times = if rerail_device::device::backend() == "CPU" { 1 } else { 20 };
-            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
-            for _ in 0..times {
-                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
-                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
-            }
-            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
             let mut want = crate::rows::join(&[&left], &[&right]);
             want.sort_unstable();
             let (mut a, mut b) = (with.pairs, without.pairs);
@@ -1958,7 +1962,16 @@ mod tests {
             assert!(want.len() >= 600, "{} pairs", want.len());
             assert_eq!(a, want);
             assert_eq!(b, want);
-            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {times}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
+            if timed == 0 {
+                continue;
+            }
+            let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
+            for _ in 0..timed {
+                gpu_with.push(probe(&column(), &screened, 0).unwrap().gpu_seconds);
+                gpu_without.push(probe(&column(), &plain, 0).unwrap().gpu_seconds);
+            }
+            let median = |v: &mut Vec<f64>| { v.sort_by(f64::total_cmp); v[v.len() / 2] * 1e6 };
+            println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {timed}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));
         }
         // Two keys, the second of another span on each side; a left key no right row has.
         let (a0, a1) = (rows(9000, 1, 2000, 1 << 32), rows(9000, 2, 3, 0));
@@ -1994,7 +2007,7 @@ mod host_costs {
 
     /// The process's CPU, user and system: the device layer's own threads' too.
     fn cpu() -> f64 {
-        rerail_device::process_cpu_seconds()
+        rerail_device::os::process_cpu()
     }
 
     /// Microseconds of this thread's CPU per run of `f`, over `n` runs.

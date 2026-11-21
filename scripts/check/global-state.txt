@@ -22,6 +22,8 @@ accel/src/upkeep.rs::SERIAL	stays	a test lock
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
+native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
+native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
@@ -49,6 +51,7 @@ native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::RATE	stays	computed once: the machine's TSC rate, which Windows' cycle times count in
 native/crates/prof/src/lib.rs::SIZES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::SPANS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::START	stays	the process's start: a clock origin
@@ -106,6 +109,7 @@ native/src/code_rule_dsl/facts/vtab/syntax.rs::PRODUCERS	stays	code registered a
 native/src/code_rule_dsl/facts/vtab/syntax.rs::SEMANTIC	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs::DIALECT_FACTS	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/vtab/syntax/py_families.rs::STRINGS	stays	computed once from the engine's constants
+native/src/code_rule_dsl/fixtures.rs::DIR	stays	computed once from the environment: the test binary's fixtures directory
 native/src/code_rule_dsl/fixtures.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/fixtures.rs::SWEPT	stays	a test fixture's sweep, once
 native/src/code_rule_dsl/import_target/mod.rs::FALLBACK	stays	computed once from the engine's constants
@@ -134,7 +138,6 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counte
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it
@@ -166,6 +169,7 @@ native/src/code_rule_dsl/logic/rr/lower.rs::ALL	stays	code a crate above registe
 native/src/code_rule_dsl/logic/rr/lower.rs::ENGINE	stays	computed once from the engine's own constants
 native/src/code_rule_dsl/logic/rr/lower.rs::WORLD	stays	a key, holding nothing
 native/src/code_rule_dsl/logic/rr/lower/core.rs::DECLS	stays	computed once from the engine's own files
+native/src/code_rule_dsl/logic/rr/testing.rs::RUNS	stays	an id counter: append-only (a work directory's name when no store is kept)
 native/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load

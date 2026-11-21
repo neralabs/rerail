@@ -2,7 +2,7 @@
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
 #[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
@@ -270,7 +270,7 @@ fn rr_files() -> Vec<PathBuf> {
 }
 
 fn short(p: &Path) -> String {
-    p.strip_prefix(rule_syntax()).unwrap_or(p).display().to_string()
+    p.strip_prefix(rule_syntax()).unwrap_or(p).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[test]

@@ -14,7 +14,8 @@ fn main() {
     // The generated Rust is NEON's (`clif_rust`): elsewhere the path is the JIT's code (`lib.rs`).
     #[cfg(feature = "generated")]
     if std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "aarch64") {
-        generate();
+        // On a thread of its own stack: the compile's recursion outgrows Windows' 1 MB main thread.
+        std::thread::Builder::new().stack_size(64 << 20).spawn(generate).expect("a thread").join().expect("the generation");
     }
 }
 

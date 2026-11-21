@@ -27,7 +27,7 @@ pub fn register() {
 mod test_load {
     extern "C" fn load() {
         super::register();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
     }
     #[used]

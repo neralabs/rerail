@@ -33,8 +33,7 @@ pub fn reserve(len: usize) -> *mut u8 {
     }
     #[cfg(windows)]
     {
-        // Address space only, as on Unix: what is written is committed as it is allocated (`commit`).
-        crate::windows::reserve(len).unwrap_or_else(|e| panic!("VirtualAlloc of {len} bytes failed: {e}"))
+        crate::windows::anon(len).unwrap_or_else(|e| panic!("VirtualAlloc of {len} bytes failed: {e}"))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -45,9 +44,38 @@ pub fn reserve(len: usize) -> *mut u8 {
     }
 }
 
+/// Commits the pages of `[p, p + len)` of a reservation, before a device wraps them (its driver pins them, and takes
+/// no fault): on Windows, whose reservations are committed as they are touched (`windows`); elsewhere nothing (a
+/// mapping's pages are the kernel's to fault in).
+pub fn commit(p: *mut u8, len: usize) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return crate::windows::commit(p, len);
+    #[cfg(not(windows))]
+    {
+        let _ = (p, len);
+        Ok(())
+    }
+}
+
 /// Counts `len` bytes about to be `release`d that `reserve` did not take (a file's mapping).
 pub(crate) fn uncounted(len: usize) {
     RESERVED.fetch_add(len, Relaxed);
+}
+
+/// Unmaps a file's mapping of `len` bytes at `p` (`Block::file`, `map_file`, `open_file`), which `uncounted` counted.
+///
+/// # Safety
+/// `p` and `len` are the mapping's, and nothing reads it after.
+pub(crate) unsafe fn release_mapping(p: *mut u8, len: usize) {
+    #[cfg(windows)]
+    {
+        RESERVED.fetch_sub(len, Relaxed);
+        crate::windows::unmap_view(p);
+    }
+    #[cfg(not(windows))]
+    unsafe {
+        release(p, len)
+    }
 }
 
 /// Gives back what `reserve` (or, on Unix, any mapping of `len` bytes at `p`) took.
@@ -66,20 +94,6 @@ pub(crate) unsafe fn release(p: *mut u8, len: usize) {
     unsafe {
         std::alloc::dealloc(p, std::alloc::Layout::from_size_align(len, PAGE).expect("a page-aligned reservation"));
     }
-}
-
-/// Makes `len` bytes at `p` of a reservation memory that may be written: on Windows its pages committed (`MEM_COMMIT`;
-/// pages committed already stay as they are). Elsewhere nothing: Unix commits a page on its first touch.
-///
-/// # Safety
-/// `p` and `len` lie in a reservation of `reserve`'s.
-// Its callers outside the tests commit on Windows only (`Block::commit_to`, `Scratch::take`).
-#[cfg(any(windows, test))]
-pub(crate) unsafe fn commit(p: *mut u8, len: usize) {
-    #[cfg(windows)]
-    crate::windows::commit(p, len).unwrap_or_else(|e| panic!("committing {len} bytes of a reservation: {e}"));
-    #[cfg(not(windows))]
-    let _ = (p, len);
 }
 
 /// Makes a reservation read-only, so a write after freeze faults (Unix, Windows); elsewhere nothing.

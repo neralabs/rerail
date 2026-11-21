@@ -1,5 +1,6 @@
 //! The owners of corpus manifests and audit snapshots. Their rows are roots for collection.
 
+use rerail_store::Canonical as _;
 use super::{CollectionLease, ContentStore, SnapshotId, StoreResult};
 use super::connection::Cached as _;
 use std::path::Path;
@@ -418,7 +419,7 @@ pub fn directory_in(path: &Path, home: Option<&str>) -> String {
 fn directory_value(path: &Path) -> String {
     use std::os::unix::ffi::OsStrExt;
     let path = path.ancestors().find_map(|ancestor| {
-        let mut existing = ancestor.canonicalize().ok()?;
+        let mut existing = ancestor.canonical().ok()?;
         existing.extend(path.strip_prefix(ancestor).ok()?.components());
         Some(existing)
     }).unwrap_or_else(|| path.components().collect());
@@ -435,7 +436,7 @@ fn directory_value(path: &Path) -> String {
 
 #[cfg(not(unix))]
 fn directory_value(path: &Path) -> String {
-    path.canonicalize().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned()
+    path.canonical().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned()
 }
 
 // A committed stop must use the path captured at enqueue, even after a rename or symlink change.

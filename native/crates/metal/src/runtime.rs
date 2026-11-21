@@ -27,7 +27,10 @@ pub fn metal_buffer_limit() -> usize {
 #[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 #[derive(Default)]
 pub(crate) struct DeviceState {
+    /// The pool's ledger and its most (a test build's are its thread's: `test_pool`).
+    #[cfg(not(any(test, feature = "test-hooks")))]
     pool: Arc<AtomicUsize>,
+    #[cfg(not(any(test, feature = "test-hooks")))]
     peak: Arc<AtomicUsize>,
     #[cfg(target_os = "macos")]
     allocation: Mutex<()>,
@@ -261,7 +264,10 @@ unsafe impl Sync for MappedRegion {}
 
 impl MappedRegion {
     fn zeroed(byte_length: usize) -> Result<Self, Error> {
+        #[cfg(unix)]
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        #[cfg(windows)]
+        let page = rerail_device::os::page_bytes() as isize;
         if page <= 0 {
             return Err(Error::BackendFailure);
         }
@@ -273,6 +279,7 @@ impl MappedRegion {
             .ok_or(Error::BackendCapacity)?;
         let reservation =
             BufferReservation::acquire(length, pool(), metal_buffer_limit())?;
+        #[cfg(unix)]
         let raw = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -283,9 +290,12 @@ impl MappedRegion {
                 0,
             )
         };
+        #[cfg(unix)]
         if raw == libc::MAP_FAILED {
             return Err(Error::BackendFailure);
         }
+        #[cfg(windows)]
+        let raw = rerail_device::os::map_zeroed(length).ok_or(Error::BackendFailure)?;
         let pointer = NonNull::new(raw.cast::<u8>()).ok_or(Error::BackendFailure)?;
         Ok(Self {
             pointer,
@@ -372,6 +382,7 @@ impl HostMapped {
 
 impl Drop for MappedRegion {
     fn drop(&mut self) {
+        #[cfg(unix)]
         unsafe {
             libc::madvise(
                 self.pointer.as_ptr().cast(),
@@ -380,6 +391,11 @@ impl Drop for MappedRegion {
             );
             libc::munmap(self.pointer.as_ptr().cast(), self.length);
         }
+        // SAFETY: the region's own mapping, read no more.
+        #[cfg(windows)]
+        unsafe {
+            rerail_device::os::unmap(self.pointer.as_ptr(), self.length)
+        };
     }
 }
 
