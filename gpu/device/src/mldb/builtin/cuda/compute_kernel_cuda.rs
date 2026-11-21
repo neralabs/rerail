@@ -575,7 +575,9 @@ impl CudaComputeFunctionLibrary {
     /// Compiles CUDA C++ (UKL preprocessed for this device) with NVRTC for the device's architecture, and loads it.
     pub fn compile_from_source(device: &CudaDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let a = device.current();
-        let options = [format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        let mut options = vec![format!("--gpu-architecture=sm_{}", device.sm), "-std=c++20".into(), "-default-device".into()];
+        // `RERAIL_CUDA_OPTIONS`: more of NVRTC's options, a measurement aid (they are in the key).
+        options.extend(std::env::var("RERAIL_CUDA_OPTIONS").unwrap_or_default().split_whitespace().map(str::to_owned));
         // The store's cubin (`crate::store`), keyed by all the compile reads: NVRTC's and the driver's builds too.
         let (mut major, mut minor, mut driver) = (0, 0, 0);
         unsafe { (a.nvrtc_version)(&mut major, &mut minor) };
@@ -590,6 +592,7 @@ impl CudaComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, "cu", &options.join(" "), preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|e| e.to_string())?;
         let name = CString::new(file_name_to_appear_in_error_messages).map_err(|e| e.to_string())?;
         let opts: Vec<CString> = options.into_iter().map(|o| CString::new(o).unwrap()).collect();

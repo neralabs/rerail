@@ -195,6 +195,16 @@ pub fn save(backend: &str, key: &str, ext: &str, bytes: &[u8]) {
     }
 }
 
+/// `RERAIL_GPU_DUMP=<dir>`, a measurement aid: each source a backend's compiler is given, as `<label>.<ext>` in
+/// `<dir>` with its options in a first comment line, to compile again outside the engine (decision 0395 §6).
+pub fn dump(label: &str, ext: &str, options: &str, source: &str) {
+    let Some(dir) = std::env::var_os("RERAIL_GPU_DUMP") else { return };
+    let dir = Path::new(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let name: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' { c } else { '_' }).collect();
+    let _ = std::fs::write(dir.join(format!("{name}.{ext}")), format!("// options: {options}\n{source}"));
+}
+
 /// A number no other call in this process gives: a temporary file's own name.
 pub fn unique() -> u64 {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

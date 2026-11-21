@@ -182,3 +182,63 @@ machine. The runs:
 - **Shipping.** `kernels ship` from A's store shipped 3 fixed libraries, 7 kernels, in 0.45 s, as this device's
   archives.
 - **Findings** were 463 at cold and 464 after each edit in every run, as on the CPU.
+
+### 7. What OpenCL's and NVRTC's compile time is made of (spike, 2026-11-21)
+
+Measured with the device layer's dumps (`RERAIL_GPU_DUMP=<dir>`: each source a compiler is given, with its options)
+compiled again alone: `clc` (OpenCL, `gpu/device/examples/clc.rs`) on an Arc 140V with Intel's cache off
+(`NEO_CACHE_PERSISTENT=0`), `nvc` (NVRTC 13.0, `examples/nvc.rs`, bounded in time and resident memory) on a DGX Spark.
+One compile at a time unless said.
+
+| Source | As compiled | Variant | Time |
+|---|---|---|---|
+| `rows_copy` (OpenCL, one kernel) | 45–47 s | `vread` reads nothing | 0.40 s |
+| | | one view kind: core, docof (no tape read) | 0.93–0.98 s |
+| | | one view kind: node, child, field, line, loc_* | 7–14 s |
+| | | all kinds, no 16z branch / 16 only | 3.4 s / 2.7 s |
+| | | `UKL_COLD` inlined, or plain `static` | 6.3 s |
+| | | `optnone` on the cold reads | 83 s |
+| | | `-cl-intel-256-GRF-per-thread` | 32 s |
+| | | `-cl-opt-disable` | 1.5 s |
+| | | view reads in a library, `clCompileProgram` + `clLinkProgram` | 0.3 s + 0.3 s, link 94 s (two kernels) |
+| | | the binary loaded (`clCreateProgramWithBinary`) | 2–5 ms |
+| `run_batch`, `label_sweep` (OpenCL) | > 240 s | no 16z branch | 97 s, 96 s |
+| | | `UKL_COLD` inlined (with or without 16z) | > 240 s (204 s) |
+| | | `-cl-opt-disable` | 2.0 s |
+| | | `-O1`, `-ze-opt-level=1`, `-cl-intel-opt-level=1` | refused (-11) |
+| the join program (CUDA, all its kernels) | 24 s | `-Xptxas -O0` / `-G` | 21.5 s / 46 s |
+| | | `__forceinline__` cold reads | past 8 GB resident |
+| | | `--Ofast-compile=max` | 1.0 s |
+| `run_batch` (CUDA) | > 120 s, 1.2 GB | `-Xptxas -O0`; no 16z branch | > 120 s; > 90 s |
+| | | `--Ofast-compile=mid` / `max` | 49 s / 0.68 s |
+| `label_sweep` (CUDA) | > 120 s, 4.9 GB | `--Ofast-compile=max` | 0.72 s |
+| the preprocessor's passes (CUDA) | past 8 GB at 36 s | `--Ofast-compile=max` | 8.8 s |
+
+Every fixed kernel, 4 at a time, into an empty store, then the resident-tape test and the writer test from the store:
+
+| Device | Options | The list | Resident-tape test | Writer test |
+|---|---|---|---|---|
+| Arc 140V | as compiled, `UKL_COLD` inlined | > 460 s (interpreters, sweep unfinished) | — | 1.3 s |
+| Arc 140V | `-cl-opt-disable` | 41.5 s, all | 4.3 s | 4.9 s |
+| DGX Spark | as compiled (no sweep, no pp passes) | 174 s | 4.4 s | 2.1 s |
+| DGX Spark | `--Ofast-compile=max`, sweep and pp passes too | 10.1 s | 4.7 s | 4.4 s |
+
+What it says:
+
+- **The cost is the tape reads' code generation, in the back end**: the reads that touch no tape compile in a
+  second, and each tape-reading view adds 7–14 s on Intel, most of it 16z's block decode (no 16z: 45 → 3.4 s).
+  ptxas is not where NVRTC's time goes (`-O0` saves 10%); NVVM's optimizer is.
+- **Linking does not help.** The link step is the code generation (94 s for two kernels): nothing compiled is shared.
+- **Inlining is no general answer.** Intel compiles a `noinline` function as a stack call, and small kernels compile
+  7x faster with the cold reads inlined, but the interpreter and the sweep compile slower; on CUDA inlined reads
+  only grow NVRTC's memory.
+- **Each compiler has a quick tier**: `-cl-opt-disable` (Intel; no level between it and full optimization in
+  OpenCL), `--Ofast-compile=max` (NVRTC 12.8 and later). Every fixed kernel compiles in 10–42 s with it, the kernels
+  pass the tests, and those run up to 2x (CUDA) and 4x (Intel) slower in wall time. That is 0395's tiers on these
+  backends: a kernel is made at once in the quick tier, used, and compiled optimized as maintenance, which replaces it
+  when done.
+- **Shipping works**: a binary loads in milliseconds (`kernels ship`, keyed by driver and options).
+- **Host USM** (Intel: `clHostMemAllocINTEL`) gives a block's pages a device address: a kernel read a block through
+  an address held in a directory, indirect access on, correctly at 30–70 GB/s. Its capabilities are access and
+  atomics, not concurrent access: the host must not touch such a block while a kernel runs.
+- **Level Zero** is installed with Intel's driver (`ze_loader.dll`); its build options include optimization levels.

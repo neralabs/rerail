@@ -761,6 +761,7 @@ impl ClComputeFunctionLibrary {
             }
         }
         crate::store::count(false);
+        crate::store::dump(file_name_to_appear_in_error_messages, "cl", &options_text, preprocessed_source);
         let src = CString::new(preprocessed_source).map_err(|_| format!("{file_name_to_appear_in_error_messages}: a NUL in the source"))?;
         let p = src.as_ptr();
         let mut e = 0;
