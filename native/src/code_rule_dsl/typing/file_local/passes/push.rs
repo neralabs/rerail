@@ -359,7 +359,10 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let at = lits.iter().copied().find(|j| !replaced.iter().any(|(at, _)| at == j)).expect("a literal no other helper's read took");
                 replaced.push((at, BodyItem::New(helper.clone(), args)));
                 taken.extend(lits);
-                if !made.iter().any(|(_, n)| *n == helper) {
+                // Every rule reading it, not only the first to make it: a helper that is not file-local holds back
+                // all its readers at once. Held back one rule a round, a helper of the same content in 400 rules
+                // (`violation`'s, ep2) took 400 rounds, each a split of the program (27 s of a cold run's 28).
+                if !made.iter().any(|(r, n)| *r == i && *n == helper) {
                     made.push((i, helper));
                 }
             }
@@ -386,7 +389,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
         if failed.is_empty() {
-            return Ok(Some(Pushed { round, made: made.into_iter().map(|(_, n)| n).collect(), local: now, candidate }));
+            let mut names: Vec<String> = Vec::new();
+            for (_, n) in made {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            return Ok(Some(Pushed { round, made: names, local: now, candidate }));
         }
         for i in failed {
             *level.entry(i).or_default() += 1;
