@@ -126,3 +126,19 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      - A decode of a block takes well under a millisecond, so the writers waited for stood still while their
        waiters spun. Point 2's premise, that a claimant goes on, does not hold on the M3. The bound held: nothing
        hung.
+     - **The experiments (2026-11-21), each one run of that test on the M3:**
+       - *Not a lane waiting for its own SIMD group.* With one lane in 32 reading (the rest returned at once) it
+         failed worse: 828 waits ran out, none ended with its block found, 631 turns of the cache.
+       - *Not a writer that waits for a turn on its core.* Waits that read memory one turn in 64, over 64 times the
+         turns, and that stalled on loads of the tape's own bytes between: 15 s of waiting, all 7 blocks filled, and
+         still 8,510 waits ran out.
+       - *What a wait that runs out finds.* Every one (117 of 117) finds a slot of its key claimed, with no entry
+         yet. At the first, no writer is counted in the head, and every claim made so far has been settled (given
+         an entry or given back). The claimed slot read complete a moment before, the same way on every run. An
+         add of a zero the compiler cannot know, a poll and a load all agree that it then reads claimed. No clear
+         touched the head, and no decode or copy wrote past its entry.
+       - *Takes that find the head full with 8 entries.* 1,667 claims in one run found no free slot among their 16
+         probes while most of the head's slots were empty: the cache turned with 8 entries in it. A lookup's first
+         turn reads the epoch and the take's stamp check by loads, which may be stale copies (Q123). With the stamp
+         check a poll and every turn after a failed try polling, such claims were 57 to 2,673 a run, and the test
+         still failed. The cause is not found.
