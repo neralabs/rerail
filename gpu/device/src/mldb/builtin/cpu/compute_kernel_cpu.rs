@@ -40,7 +40,17 @@ pub fn defines() -> Vec<(&'static str, String)> {
     if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
         v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
     }
+    if strict_simd() {
+        v.push(("UKL_CPU_SIMD_STRICT", "1".to_string()));
+    }
     v
+}
+
+/// `RERAIL_CPU_SIMD_STRICT=1`: a SIMD group's lanes meet only at the same operation reached by the same path
+/// (`ukl_cpu_shim.h`'s `__ukl_cpu_site`), compiled without optimization so that none is duplicated: a kernel with a
+/// SIMD-group operation some lanes skip fails, naming where each waits.
+pub fn strict_simd() -> bool {
+    std::env::var("RERAIL_CPU_SIMD_STRICT").is_ok_and(|v| v == "1")
 }
 
 /// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
@@ -237,7 +247,7 @@ impl CpuComputeFunctionLibrary {
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
         let lib = match crate::store::path("cpu", &k, "so") {
             Some(p) => p,
             None => {
@@ -268,8 +278,12 @@ impl CpuComputeFunctionLibrary {
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
             let tmp = dir.join(format!("{own}.so"));
+            // `-O0` last before `-o`: it overrides the flags' `-O1`.
+            let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
-                .args(CXX_FLAGS)
+                .args(flags)
+                .args(strict_simd().then_some("-O0"))
+                .args(out)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
