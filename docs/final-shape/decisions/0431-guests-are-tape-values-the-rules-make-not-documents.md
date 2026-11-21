@@ -335,6 +335,15 @@ keep their meaning, rewritten for `guest_of` and the file's programs where they 
      candidate now (`demand::split_negations`). A load's answer (`loaded`) is no input and keeps its demand.
    - Measured: PostHog unchanged, 29,747 findings (fa0efeaed6ff); see "Measured (step 7)".
 
+## Measured (R9's placement, once a program)
+
+2026-11-21. A finding placed through a string (R9) joined `guest_place`, `node` and `doc` in its own diagnostic and
+violation rules: on corpus0 × B-now (one pack) 346 diagnostics each made every guest's placement, each split apart by
+the file-local factorizing. The placement is now one relation a program's findings read, `rr_placed_line(n, line, col,
+path)` (`findings::PLACED_LINE`), and `rr_placed_at` reads it. One pack 1.114 T to 1.089 T instructions, the normal
+packs 2.756 T to 2.723 T (off, one thread, an M1 Max); 463 findings, the same set. Test:
+`findings_placed_through_a_string_read_one_placement`.
+
 ## Measured (step 7)
 
 PostHog, cold, on the M3 at load 47–70: 29,747 findings, fa0efeaed6ff, unchanged. 2,415 G instructions (step 6: 2,405 G),

@@ -30,6 +30,10 @@ pub const UNPLACED: &str = "rr_unplaced";
 /// The tape values' nodes a string of a file places (`guest_place` at a string whose document is a file's): a node of
 /// a string inside another value stands in that value's text, which is no file's (decision 0431 §3, R9).
 pub const PLACED_AT: &str = "rr_placed_at";
+/// A tape value's node's place in a file, `(n, line, col, path)`: at each string of a file that holds it
+/// (`guest_place`), in that string's document. One relation a program's findings placed through a string read, not a
+/// join each writes again (346 diagnostics on corpus0 each made every guest's placement).
+pub const PLACED_LINE: &str = "rr_placed_line";
 
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
@@ -300,6 +304,7 @@ impl<'p> Findings<'_, 'p> {
             // 0431 §3: "a finding at s by n, placed through s"): C408's `dict()` inside `a: "dict({})"`.
             let through = at_document && f.node && seen.reads_guests;
             if through {
+                self.placed_line()?;
                 self.placed_at()?;
             }
             self.diagnostics(&policy, &f, at_document, commit_locations, through)?;
@@ -328,12 +333,9 @@ impl<'p> Findings<'_, 'p> {
                 self.scope(&mut o, scoped);
                 self.close(o)?;
                 if through {
-                    let s = self.v("rr_s");
                     let mut o = self.open("violation", &head);
                     self.put(&mut o, &f.name, &cols, false);
-                    self.put(&mut o, "guest_place", &[v0.clone(), s.clone(), l.clone(), c.clone()], false);
-                    self.put(&mut o, "node", &[d.clone(), s, w(), w(), w()], false);
-                    self.put(&mut o, "doc", &[d.clone(), p.clone(), w()], false);
+                    self.put(&mut o, PLACED_LINE, &[v0.clone(), l.clone(), c.clone(), p.clone()], false);
                     self.scope(&mut o, scoped);
                     self.close(o)?;
                 }
@@ -720,11 +722,9 @@ impl<'p> Findings<'_, 'p> {
         // At a tape value's node: at each file's string that holds it, at the node's line there (`guest_place`).
         if through {
             self.diagnostic_rule(policy, finding, &cols, at, Location::Document, &|me, o| {
-                let (d, p, l, s) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"), me.v("rr_s"));
+                let (p, l) = (me.v("rr_p"), me.v("rr_l"));
                 me.put(o, &finding.name, &cols, false);
-                me.put(o, "guest_place", &[cols[0].clone(), s.clone(), l, Tm::Wild], false);
-                me.put(o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
-                me.put(o, "doc", &[d, p, Tm::Wild], false);
+                me.put(o, PLACED_LINE, &[cols[0].clone(), l, Tm::Wild, p], false);
             })?;
         }
         if finding.places {
@@ -743,18 +743,30 @@ impl<'p> Findings<'_, 'p> {
         Ok(())
     }
 
-    /// `PLACED_AT`'s rule, once a program: a tape value's node `n`, placed by `guest_place` at a string `s` whose document
-    /// is a file's.
+    /// `PLACED_LINE`'s rule, once a program: a tape value's node `n`, placed by `guest_place` at a string `s` whose
+    /// document is a file's, at the line and column there and that file's path.
+    fn placed_line(&mut self) -> Result<(), Error> {
+        if self.b.declares(PLACED_LINE) {
+            return Ok(());
+        }
+        self.b.fields().declare(PLACED_LINE, &[("n", "node"), ("line", "int"), ("col", "int"), ("path", "sym")]);
+        let (n, s, d, l, c, p) = (self.v("rr_n"), self.v("rr_s"), self.v("rr_d"), self.v("rr_l"), self.v("rr_c"), self.v("rr_p"));
+        let mut o = self.open(PLACED_LINE, &[n.clone(), l.clone(), c.clone(), p.clone()]);
+        self.put(&mut o, "guest_place", &[n, s.clone(), l, c], false);
+        self.put(&mut o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d, p, Tm::Wild], false);
+        self.close(o)
+    }
+
+    /// `PLACED_AT`'s rule, once a program: a tape value's node `n` that `PLACED_LINE` places in a file.
     fn placed_at(&mut self) -> Result<(), Error> {
         if self.b.declares(PLACED_AT) {
             return Ok(());
         }
         self.b.fields().declare(PLACED_AT, &[("n", "node")]);
-        let (n, s, d) = (self.v("rr_n"), self.v("rr_s"), self.v("rr_d"));
+        let n = self.v("rr_n");
         let mut o = self.open(PLACED_AT, std::slice::from_ref(&n));
-        self.put(&mut o, "guest_place", &[n, s.clone(), Tm::Wild, Tm::Wild], false);
-        self.put(&mut o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
-        self.put(&mut o, "doc", &[d, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, PLACED_LINE, &[n, Tm::Wild, Tm::Wild, Tm::Wild], false);
         self.close(o)
     }
 

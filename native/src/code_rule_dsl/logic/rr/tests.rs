@@ -2525,6 +2525,35 @@ Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     assert_eq!(at, [("a.py", "3")], "at the string's line in its file: {found:?}");
 }
 
+/// Decision 0431 R9: a tape value's node's place in a file (`guest_place` at a string, its document's path) is one
+/// relation a program's findings read, not a join each finding writes again: 346 diagnostics on corpus0 each made the
+/// same rows, every guest's placement.
+#[test]
+fn findings_placed_through_a_string_read_one_placement() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-placed-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+.policy "t:tape-placed-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let rule = dir.join("placed-once.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+    let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
+    let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
+    assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
+    assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
+}
+
 /// Decision 0431 R9: a finding at a node of a string inside another tape value (`'int'` in `"List['int']"`) has no
 /// place: that string stands in the outer value's text, which is no file's. It is refused, naming its clause, not
 /// dropped.
