@@ -89,7 +89,7 @@ The four changes were measured together, not one by one.
 - Kotlin's 47 tests against the lean parser pass. The corpus (495 files) gives 429 the same,
   62 refused, 0 differ, as with the walk lemmas off and no runs.
 - `kotlin_parser::tests::a_cold_compile_makes_the_shipped_answers_program`: the grammar compiles
-  twice to the same program, cold and with its shipped answers (`kotlin.proofs.zst`, 0414; Q371).
+  twice to the same program, cold and with its shipped answers (`kotlin.answers`, 0414; Q371).
 - `kotlin_parser::tests::walk_lemmas_keep_the_tapes` checks that the lemmas make the program
   smaller, and that with them off (`bitlex_masks::NO_WALK_LEMMAS`) it reads each text the same.
   Without the lemmas the grammar takes minutes to compile, so the test is in nextest's slow tier,

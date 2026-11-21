@@ -110,7 +110,7 @@ pub struct Compiled {
     pub values: Vec<Named>,
     /// The provers' answers this compile made (decision 0414): what a later compile is given to
     /// answer the same questions without their proofs (`compile_proved`).
-    pub proofs: Vec<(Vec<u8>, bitlex_prove::Answer)>,
+    pub proofs: Vec<(bitlex_prove::Key, bitlex_prove::Answer)>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -3045,7 +3045,7 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
         all = low.or(all, c)?;
     }
     let prover = low.induction(8, 100_000);
-    let key = bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given());
+    let key = bitlex_prove::key_of(&bitlex_prove::question_given(&low.proof_ops(), &low.program.tables, &low.program.rounds, all.v, all.d, &prover.asker("gap ends"), prover.given()));
     let holds = match low.proofs.known.get(&key) {
         Some(&bitlex_prove::Answer::Never(b)) => b,
         _ => {

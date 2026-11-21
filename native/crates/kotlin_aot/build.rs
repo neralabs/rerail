@@ -7,7 +7,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../kotlin_parser/kotlin.bitlex");
-    println!("cargo:rerun-if-changed=../kotlin_parser/kotlin.proofs.zst");
+    println!("cargo:rerun-if-changed=../kotlin_parser/kotlin.answers");
     println!("cargo:rerun-if-changed=src/tier1_source.rs");
     #[cfg(feature = "generated")]
     generate();
@@ -21,8 +21,8 @@ fn generate() {
     rerail_compiler::native_cpu_codegen::options().keep_ir.store(true, std::sync::atomic::Ordering::Relaxed);
     // Rust's NEON tests bits in one instruction (`vtst`): classes as the tests themselves.
     rerail_compiler::native_cpu_codegen::options().bit_test.store(true, std::sync::atomic::Ordering::Relaxed);
-    // With the shipped answers (decision 0414): the provers ask nothing they answered before.
-    let c = rerail_kotlin_parser::compile_timed(rerail_kotlin_parser::GRAMMAR, rerail_kotlin_parser::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
+    // With the shipped answers and the machine's (decision 0414): the provers ask nothing they answered before.
+    let c = rerail_kotlin_parser::compile_answered(rerail_kotlin_parser::GRAMMAR).expect("the grammar compiles");
     let one = rerail_kotlin_aot_tier1(&c).unwrap_or_else(|e| panic!("tier 1 to Rust: {e}"));
     let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
     let (widths, tag) = c.parser.tier2.widths_tag();

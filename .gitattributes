@@ -19,9 +19,8 @@ model/config.json -text
 model/tokenizer.json -text
 native/src/code_rule_dsl/value/names/names.bin filter=lfs diff=lfs merge=lfs -text
 native/grammars/*/src/parser.generated.c.gz filter=lfs diff=lfs merge=lfs -text
-# A Bitlex grammar's shipped prover answers (decision 0414), zstd-compressed. Without LFS the pointer decodes to no
-# answers: the grammar compiles cold, and its seed test says so.
-native/crates/*/*.proofs.zst filter=lfs diff=lfs merge=lfs -text
+# A Bitlex grammar's shipped prover answers (decision 0414): 16-byte digests and answers, tens of KB, kept as stored.
+native/crates/*/*.answers -text
 
 # Packs' expected findings and the upstream test cases copied beside them: generated or vendored data that GitHub
 # collapses in reviews and leaves out of language statistics.

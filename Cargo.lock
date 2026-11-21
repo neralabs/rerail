@@ -3248,6 +3248,7 @@ dependencies = [
  "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -3660,7 +3661,6 @@ dependencies = [
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",
- "zstd",
 ]
 
 [[package]]

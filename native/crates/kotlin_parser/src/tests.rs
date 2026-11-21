@@ -8,7 +8,7 @@ use super::*;
 fn compiled() -> Result<&'static Compiled, &'static str> {
     static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
     match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
-        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Ok(p) => OTHER.get_or_init(|| compile_answered(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
         Err(_) => super::compiled(),
     }
 }
@@ -875,22 +875,21 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
     h.finish()
 }
 
-/// The shipped answers (`kotlin.proofs.zst`, decision 0414's seed) answer every question the grammar
-/// asks: the process's compile proves nothing. `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again,
-/// from a cold compile's.
+/// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
+/// asks: a compile from them alone, not the machine's kept answers, proves nothing.
+/// `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again, from a cold compile's.
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
     if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
         let cold = compile_text(GRAMMAR).expect("the grammar compiles");
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/kotlin.proofs.zst");
-        std::fs::write(path, crate::shipped_bytes(&cold.proofs)).expect("kotlin.proofs.zst written");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/kotlin.answers");
+        std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
         return;
     }
-    assert!(!crate::ANSWERS.starts_with(b"version https://git-lfs"), "kotlin.proofs.zst is a Git LFS pointer: git lfs install && git lfs pull");
-    let c = super::compiled().expect("the grammar compiles");
+    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
     assert!(
         c.proofs.is_empty(),
-        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.proofs.zst",
+        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
         c.proofs.len()
     );
 }

@@ -19,7 +19,7 @@ struct Ladder {
     samples: &'static [(&'static str, &'static [&'static str])],
     /// Its steps compiled as a rules grammar's parser is (`ladder::compile_step_as`): Kotlin's, as `kotlin_parser`'s.
     rules: bool,
-    /// The provers' answers its steps are given (decision 0414): Kotlin's shipped ones (`kotlin.proofs.zst`).
+    /// The provers' answers its steps are given (decision 0414): Kotlin's shipped ones (`kotlin.answers`).
     known: fn() -> Known,
 }
 
