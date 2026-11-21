@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -274,6 +274,8 @@ function goneMainWorktree(root: string): string {
 function relativeWorktreeByLink(root: string): string {
   const worktree = join(root, "wts", "feature");
   git(checkout(root, "main"), "worktree", "add", "-q", "-b", "feature", worktree);
+  // Written anew: Git for Windows marks the .git file hidden, and Windows refuses to open a hidden file to replace it.
+  unlinkSync(join(worktree, ".git"));
   writeFileSync(join(worktree, ".git"), "gitdir: ../../main/.git/worktrees/feature\n");
   return linkAt(worktree, join(folderAt(root, "links", "x"), "current"));
 }
