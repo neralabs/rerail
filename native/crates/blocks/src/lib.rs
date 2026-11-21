@@ -36,6 +36,7 @@ pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
 pub mod ledger;
+pub mod mapped;
 pub mod mem;
 pub mod packed;
 pub mod ranged;

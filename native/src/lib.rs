@@ -11,6 +11,17 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 /// checks the identities the build script computes.
 #[cfg(test)]
 mod build_identity;
+
+/// The tests' process makes its folders and files as a user who keeps the engine's stores private does: a mapped
+/// file's folder is the user's alone (decision 0574, `rerail_blocks::mapped`), and a fixture's folder
+/// (`tempfile::tempdir`, `create_dir_all`) is made with the umask's mode, as the farm's hosts' 002 made them 775. The
+/// rules' own refusals are tested by setting the modes they refuse (`mapped::tests`, `tools::launch_tests`).
+#[cfg(all(test, unix))]
+#[ctor::ctor(unsafe)]
+fn private_test_folders() {
+    // SAFETY: `umask` sets the process's file mode mask; it cannot fail and touches no memory.
+    unsafe { libc::umask(0o077) };
+}
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
 /// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]

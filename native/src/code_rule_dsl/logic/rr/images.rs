@@ -85,28 +85,10 @@ impl Bundle {
     }
 }
 
-/// `path`'s bytes, mapped read-only for the process (never unmapped: the bundle is the engine's, as its code is).
-#[cfg(unix)]
-fn map(path: &Path) -> Option<&'static [u8]> {
-    use std::os::unix::io::AsRawFd;
-    let file = std::fs::File::open(path).ok()?;
-    let len = file.metadata().ok()?.len() as usize;
-    if len == 0 {
-        return None;
-    }
-    // SAFETY: a read-only, private mapping of a file this process opened; it is never unmapped, and the slice made of
-    // it is only read. A bundle replaced while mapped keeps its old pages (the replace makes a new file).
-    let at = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0) };
-    if at == libc::MAP_FAILED {
-        return None;
-    }
-    // SAFETY: `at` maps `len` bytes, for the rest of the process.
-    Some(unsafe { std::slice::from_raw_parts(at.cast::<u8>(), len) })
-}
-
-/// Where no mapping is, the file read once for the process, into a buffer at 16 bytes (its images are read in place
-/// at 16, decision 0464).
-#[cfg(not(unix))]
+/// `path`'s bytes, read once for the process into a buffer at 16 bytes (its images are read in place at 16, decision
+/// 0464), never freed: the bundle is the engine's, as its code is. It is read, not mapped: it lies beside the engine's
+/// executable, in a folder that is the installer's (0755, often root's), which a mapped file's may not be
+/// (`rerail_blocks::mapped`). A load from the disk to its bytes, not a copy (decision 0353).
 fn map(path: &Path) -> Option<&'static [u8]> {
     use std::io::Read;
     let mut file = std::fs::File::open(path).ok()?;
@@ -118,7 +100,7 @@ fn map(path: &Path) -> Option<&'static [u8]> {
     Some(bytes)
 }
 
-/// An image in the shipped bundle's mapping, held as an image's bytes are (`program_image::SharedBytes`).
+/// An image in the shipped bundle's bytes, held as an image's bytes are (`program_image::SharedBytes`).
 struct InBundle(&'static [u8]);
 
 impl AsRef<[u8]> for InBundle {
@@ -137,7 +119,7 @@ pub fn shipped_image(key: HashKey) -> Option<crate::code_rule_dsl::logic::progra
 /// shipped with the engine).
 pub type ImageFound = (crate::code_rule_dsl::logic::program_image::SharedBytes, Option<SourceId>);
 
-/// The program image under `key`, read where it is held (decision 0464): in the shipped bundle's mapping, else the
+/// The program image under `key`, read where it is held (decision 0464): in the shipped bundle's bytes, else the
 /// store's, mapped from its segment (every object is in one); never copied.
 pub fn read_image(store: Option<&ContentStore>, key: HashKey) -> Option<ImageFound> {
     read_images(store, &[key]).pop().flatten()

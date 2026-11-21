@@ -36,7 +36,7 @@ pub fn copy_beside(from: &Path, to: &Path) -> std::io::Result<()> {
         std::fs::remove_dir_all(&into)?;
     }
     let Ok(entries) = std::fs::read_dir(&segments) else { return Ok(()) };
-    std::fs::create_dir_all(&into)?;
+    crate::content_store::prepare_cache_directory(&into)?;
     for e in entries.flatten() {
         super::atoms::clone_file(&e.path(), &into.join(e.file_name()))?;
     }

@@ -17,12 +17,43 @@ use std::path::{Path, PathBuf};
 
 /// Where templates are kept, one per build.
 fn templates() -> PathBuf {
-    std::env::temp_dir().join("rerail-store-templates")
+    harness_folder(std::env::temp_dir().join("rerail-store-templates"))
 }
 
 /// Where the tests' stores are: one directory each, `<pid>-<n>`, so that sweeping them reads only theirs.
 fn copies() -> PathBuf {
-    std::env::temp_dir().join("rerail-test-stores")
+    harness_folder(std::env::temp_dir().join("rerail-test-stores"))
+}
+
+/// One of the test harness's own folders, kept to the mapped files' rules (`rerail_blocks::mapped`): the user's alone.
+/// Folders made before the rules (a umask of 002 made them 775, their files 664) have group and world access taken
+/// off them and everything under them, once a process. The harness's own: a product run refuses such a folder.
+fn harness_folder(dir: PathBuf) -> PathBuf {
+    static DONE: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    if !done.contains(&dir) {
+        #[cfg(unix)]
+        fn private(p: &Path) {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            let Ok(m) = std::fs::symlink_metadata(p) else { return };
+            // SAFETY: `geteuid` reads the process's effective user id; it cannot fail and touches no memory.
+            if m.file_type().is_symlink() || m.uid() != unsafe { libc::geteuid() } {
+                return;
+            }
+            if m.mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(m.mode() & 0o7700));
+            }
+            if m.is_dir() {
+                for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+                    private(&e.path());
+                }
+            }
+        }
+        #[cfg(unix)]
+        private(&dir);
+        done.push(dir.clone());
+    }
+    dir
 }
 
 /// Another build's template unused this long is removed: every build of the engine has its own (an edit is a new
@@ -55,7 +86,7 @@ pub fn template() -> &'static Path {
     PATH.get_or_init(|| {
         let key = format!("{}-{}", &crate::code_rule_dsl::build_ids::engine()[..16], &crate::code_rule_dsl::build_ids::grammar()[..16]);
         let dir = templates();
-        std::fs::create_dir_all(&dir).expect("the templates' directory");
+        crate::content_store::prepare_cache_directory(&dir).expect("the templates' directory");
         let path = dir.join(format!("{key}.sqlite"));
         let ready = dir.join(format!("{key}.ready"));
         let _lock = Lock::take(&dir.join(format!("{key}.lock")));
@@ -76,7 +107,7 @@ pub fn template() -> &'static Path {
 /// drained, and published whole.
 fn make(path: &Path) {
     let staging = path.with_extension(format!("{}.{}.build", std::process::id(), nanos()));
-    std::fs::create_dir_all(&staging).expect("the template's staging directory");
+    crate::content_store::prepare_cache_directory(&staging).expect("the template's staging directory");
     let store = staging.join("store.sqlite");
     let filling = store.clone();
     // The thread fills it for its starter, on its starter's object (decision 0442; a test's: the tests' one).
@@ -96,7 +127,7 @@ fn make(path: &Path) {
     if let Err(why) = filled {
         eprintln!("rerail: the test stores' template holds no library ({why}); every test's store starts empty");
         let _ = std::fs::remove_dir_all(&staging);
-        std::fs::create_dir_all(&staging).expect("the template's staging directory");
+        crate::content_store::prepare_cache_directory(&staging).expect("the template's staging directory");
         drop(crate::content_store::ContentStore::open(&store).expect("an empty store"));
     }
     // Its atoms' blocks frozen (each shrunk to what it holds: a copy's first write starts its own, decision 0401), and
@@ -214,7 +245,7 @@ pub fn copy() -> Store {
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let dir = copies().join(format!("{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("a test store's directory");
+    crate::content_store::prepare_cache_directory(&dir).expect("a test store's directory");
     let path = dir.join("store.sqlite");
     clone_file(template, &path).expect("a copy of the template");
     for suffix in FOLDERS {
@@ -344,7 +375,7 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
 /// rows naming files it lacked ("a space's kept facts: No such file or directory").
 fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
-    std::fs::create_dir_all(to)?;
+    crate::content_store::prepare_cache_directory(to)?;
     for e in entries.flatten() {
         let kind = e.file_type()?;
         if kind.is_file() {
@@ -405,7 +436,7 @@ mod tests {
         let template = dir.path().join("template.sqlite");
         ContentStore::open(&template).unwrap().put_memo_entries(&space, (0..4).map(|p| put(p, 1)).collect(), 4).unwrap();
         let copy = dir.path().join("copy/store.sqlite");
-        std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        crate::content_store::prepare_cache_directory(copy.parent().unwrap()).unwrap();
         super::clone_file(&template, &copy).unwrap();
         for suffix in super::FOLDERS {
             super::clone_dir(&super::beside(&template, suffix), &super::beside(&copy, suffix)).unwrap();

@@ -3754,7 +3754,7 @@ fn run_observed_within(
         return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
     }
     if !capturing {
-        std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
+        crate::content_store::prepare_cache_directory(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
     }
     // The outputs are rerail's own: outside the file observer, for this process and the next (decision 0284).
     if !capturing {

@@ -386,6 +386,9 @@ impl AtomsW {
         // takes no disk meanwhile, the file being sparse.
         #[cfg(any(unix, windows))]
         self.block.truncate_file(len)?;
+        // Frozen: read-only on disk too (`mapped`).
+        #[cfg(any(unix, windows))]
+        self.block.mark_file_frozen()?;
         #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
             f.set_len(len)?;
@@ -690,7 +693,7 @@ mod tests {
     fn dir(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("rerail-atoms-block-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        crate::mapped::make_folder(&d).unwrap();
         d
     }
 

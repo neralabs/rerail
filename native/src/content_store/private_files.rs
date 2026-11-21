@@ -9,26 +9,23 @@ use std::path::Path;
 #[cfg(unix)]
 const JOURNAL_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
 
-fn create_directory(path: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(path)
+/// Creates a directory reserved for the cache (`0700`), and refuses one that group or world may write or search: the
+/// files it holds are mapped (`rerail_blocks::mapped`).
+pub fn prepare_cache_directory(path: &Path) -> io::Result<()> {
+    rerail_blocks::mapped::make_folder(path)
 }
 
-/// Creates a directory reserved for the cache and repairs its Unix mode on reopening.
-pub fn prepare_cache_directory(path: &Path) -> io::Result<()> {
-    create_directory(path)?;
-    #[cfg(unix)]
-    keep_private(path, true)?;
-    Ok(())
+/// Refuses a folder mapped files may not be in (`rerail_blocks::mapped::check_folder`): the launch's check.
+pub fn check_mapped_folder(dir: &Path) -> io::Result<()> {
+    rerail_blocks::mapped::check_folder(dir)
 }
 
 /// Prepares a database at a caller-supplied path. Only new parent directories get a mode here.
 pub(super) fn prepare(path: &Path) -> io::Result<()> {
-    if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
-        create_directory(folder)?;
+    // SQLite maps the database (`mmap_size`): its folder the user's alone, refused otherwise (`rerail_blocks::mapped`).
+    match path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
+        Some(folder) => rerail_blocks::mapped::make_folder(folder)?,
+        None => rerail_blocks::mapped::check_folder_of(path)?,
     }
     #[cfg(unix)]
     {
@@ -57,10 +54,10 @@ pub(super) fn prepare(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Takes group and other access away from a folder (to `0700`) or regular file (to `0600`) this user owns. The path
-/// is judged with `lstat`, so a symlink is left alone, and changed by path, never through a descriptor of its own:
-/// closing any descriptor of a database file drops every POSIX lock this process holds on it, SQLite's included. A
-/// missing path, a symlink, another user's, or anything else is left alone.
+/// Takes group and other read away from a regular file (to `0600`) this user owns, and refuses one another user owns
+/// or group or world may write (a mapped file's rules, `rerail_blocks::mapped`). The path is judged with `lstat`, so a
+/// symlink is left alone, and changed by path, never through a descriptor of its own: closing any descriptor of a
+/// database file drops every POSIX lock this process holds on it, SQLite's included. A missing path is left alone.
 #[cfg(unix)]
 fn keep_private(path: &Path, directory: bool) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -76,7 +73,16 @@ fn keep_private(path: &Path, directory: bool) -> io::Result<()> {
         }
         Err(error) => return Err(error),
     };
-    // SAFETY: `geteuid` reads the process's effective user id; it cannot fail and touches no memory.
+    if metadata.is_file() {
+        // SAFETY: `geteuid` reads the process's effective user id; it cannot fail and touches no memory.
+        if metadata.uid() != unsafe { libc::geteuid() } {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{}: a mapped database of user {}, not this user's", path.display(), metadata.uid())));
+        }
+        if metadata.mode() & 0o022 != 0 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("{}: a mapped database of mode {:o}: group or world may write it", path.display(), metadata.mode() & 0o7777)));
+        }
+    }
+    // SAFETY: as above.
     if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 == 0 {
         return Ok(());
     }

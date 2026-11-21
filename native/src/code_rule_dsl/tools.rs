@@ -4,6 +4,28 @@
 #[allow(unused_imports)]
 use rerail_store::source_tree::Canonical as _;
 pub use super::logic::profile::watch::watch;
+
+/// The launch's check of the folders the run maps files from (`rerail_blocks::mapped`, through the store's): each that is there already must
+/// be the user's alone, no group or world write or search (`0700`); one missing is made so when it is first used.
+/// The run's tape store (`RERAIL_TAPE_CACHE`), its atoms and memo folders, the cost store (`RERAIL_COSTS`), the image
+/// store (`RERAIL_IMAGE_STORE`) and the build's stores (`corpus::build_store`'s folders).
+pub fn launch_checks() -> Result<(), String> {
+    use std::path::PathBuf;
+    let mut folders: Vec<PathBuf> = Vec::new();
+    let file = |var: &str| std::env::var_os(var).filter(|v| v != "off" && v != "project" && !v.is_empty()).map(PathBuf::from);
+    for db in [file("RERAIL_TAPE_CACHE"), super::logic::costs::file(), file("RERAIL_IMAGE_STORE")].into_iter().flatten() {
+        folders.push(db.parent().map_or_else(|| PathBuf::from("."), |p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_owned() }));
+        folders.push(crate::content_store::atoms_dir(&db));
+        folders.push(crate::content_store::pack_dir(&db));
+    }
+    for name in ["rerail-stores", "rerail-images"] {
+        folders.push(std::env::temp_dir().join(name));
+    }
+    for dir in folders.iter().filter(|d| d.exists()) {
+        crate::content_store::check_mapped_folder(dir).map_err(|e| format!("refusing to launch: {e}"))?;
+    }
+    Ok(())
+}
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
@@ -870,7 +892,7 @@ fn run_pack(
     let mut done = Vec::with_capacity(group.members.len());
     for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
         let own = out.join(k.to_string());
-        std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
+        crate::content_store::prepare_cache_directory(&own).map_err(|e| format!("{}: {e}", own.display()))?;
         // Its own outputs, a base of its findings alone (decision 0239).
         let mut image = output::Builder::new(flags, false);
         for (rel, rows) in &rows {
@@ -1557,7 +1579,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     if files.is_empty() {
         return Err(usage.into());
     }
-    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    crate::content_store::prepare_cache_directory(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let translator = json_rules::Translator::new();
     let mut failed = 0;
     let mut counts = serde_json::Map::new();
@@ -2432,5 +2454,32 @@ subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
             "--revision".into(), commit, "--analysis-scope".into(), "review".into()], &mut Default::default(), &crate::code_rule_dsl::logic::run::Shared::new()).0.unwrap();
         let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
         assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
+    }
+}
+
+/// The launch refuses a run whose store's folder group or world may write or search (`launch_checks`), and takes one
+/// of the user's alone. Its own process under nextest: the environment it sets is its own.
+#[cfg(all(test, unix))]
+mod launch_tests {
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_shared_store_folder_refuses_the_launch() {
+        let dir = std::env::temp_dir().join(format!("rerail-launch-{}", std::process::id()));
+        crate::content_store::prepare_cache_directory(&dir).unwrap();
+        // SAFETY: this test's process alone reads its environment (nextest runs each test in a process of its own).
+        unsafe {
+            std::env::set_var("RERAIL_TAPE_CACHE", dir.join("store.sqlite"));
+            std::env::set_var("RERAIL_COSTS", "off");
+            std::env::set_var("RERAIL_IMAGE_STORE", "project");
+        }
+        super::launch_checks().unwrap();
+        for bad in [0o755, 0o770, 0o711, 0o702] {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(bad)).unwrap();
+            let e = super::launch_checks().unwrap_err();
+            assert!(e.contains("refusing to launch") && e.contains("group or world"), "mode {bad:o}: {e}");
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        super::launch_checks().unwrap();
     }
 }

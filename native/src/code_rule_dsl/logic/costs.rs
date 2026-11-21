@@ -71,7 +71,7 @@ pub fn machine() -> String {
 
 pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
     if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
+        let _ = crate::content_store::prepare_cache_directory(dir);
     }
     let db = rusqlite::Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -892,7 +892,7 @@ pub mod tests {
     #[test]
     fn the_samples_read_are_found_by_the_priced_indexes() {
         let dir = std::env::temp_dir().join(format!("rerail-costs-priced-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = crate::content_store::prepare_cache_directory(&dir);
         let path = dir.join("costs.sqlite");
         let db = super::open(&path).unwrap();
         let machine = super::machine();
@@ -926,7 +926,7 @@ pub mod tests {
             return;
         }
         let dir = std::env::temp_dir().join(format!("rerail-costs-warm-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = crate::content_store::prepare_cache_directory(&dir);
         let path = dir.join("costs.sqlite");
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "code_rule_dsl::logic::costs::tests::a_warm_runs_cost_statistics_child", "--nocapture", "--test-threads=1"])
@@ -962,7 +962,7 @@ pub mod tests {
             return;
         }
         let dir = std::env::temp_dir().join(format!("rerail-costs-read-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
+        let _ = crate::content_store::prepare_cache_directory(&dir);
         let path = dir.join("costs.sqlite");
         drop(super::open(&path).unwrap());
         let out = std::process::Command::new(std::env::current_exe().unwrap())

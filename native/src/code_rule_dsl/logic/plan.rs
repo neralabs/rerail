@@ -10838,6 +10838,8 @@ impl<'a> Run<'a, '_> {
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
 pub fn run_sql(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, facts: &Path) -> Result<Outcome> {
+    // The facts file is mapped (`mmap_size` below): it and its folder the user's alone (`rerail_blocks::mapped`).
+    rerail_blocks::mapped::open_read(facts, false).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
@@ -10854,6 +10856,8 @@ pub fn run_sql_native(
     modes: &str,
     load: impl FnOnce(&Connection) -> rusqlite::Result<()>,
 ) -> Result<Outcome> {
+    // The facts file is mapped (`mmap_size` below): it and its folder the user's alone (`rerail_blocks::mapped`).
+    rerail_blocks::mapped::open_read(facts, false).map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;

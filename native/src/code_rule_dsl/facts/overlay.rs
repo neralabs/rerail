@@ -238,7 +238,7 @@ impl Overlay {
     }
 
     fn with(store: StoreHandle, limits: Limits) -> StoreResult<Self> {
-        std::fs::create_dir_all(&limits.spill)?;
+        crate::content_store::prepare_cache_directory(&limits.spill)?;
         let background = limits.background;
         let shared = Arc::new(Shared {
             store,

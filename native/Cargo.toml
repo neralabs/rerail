@@ -73,7 +73,7 @@ metal-tests = ["rerail-device-metal/metal-tests", "rerail-facts/metal-tests", "r
 # dev-dependencies below add to the dependencies (the grammars, rusqlite's `array`, tempfile): then the CLI and the
 # tests build every dependency crate alike, once per edit, not twice (docs/final-shape/notes/t37-edit-loop-time.md,
 # "One feature set"). `scripts/check/check_dev_features.py` checks that the two stay alike.
-test-hooks = ["rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "dep:tempfile", "rusqlite/array", "rerail-c-directives/test-hooks",
+test-hooks = ["rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "dep:tempfile", "dep:ctor", "rusqlite/array", "rerail-c-directives/test-hooks",
   "ast-grep-language/tree-sitter-bash", "ast-grep-language/tree-sitter-c", "ast-grep-language/tree-sitter-cpp",
   "ast-grep-language/tree-sitter-c-sharp", "ast-grep-language/tree-sitter-css", "ast-grep-language/tree-sitter-go",
   "ast-grep-language/tree-sitter-html", "ast-grep-language/tree-sitter-java", "ast-grep-language/tree-sitter-json",
@@ -86,6 +86,8 @@ test-hooks = ["rerail-c-pp/test-hooks", "rerail-clif/test-hooks", "rerail-tape-f
 dunce = "=1.0.5"
 # Only under `test-hooks` (above); the tests have it as a dev-dependency.
 tempfile = { version = "=3.27.0", optional = true }
+# Only under `test-hooks` (above), as `tempfile`: the tests' process keeps its folders private (`private_test_folders`).
+ctor = { version = "=1.0.13", optional = true }
 # `.rerail`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
@@ -221,6 +223,8 @@ block = "0.1.6"
 metal = "0.33.0"
 
 [dev-dependencies]
+# The tests' process keeps its folders private (`private_test_folders`, decision 0574).
+ctor = "=1.0.13"
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).

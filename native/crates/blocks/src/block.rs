@@ -7,7 +7,6 @@
 use crate::structure;
 use std::fs::File;
 #[cfg(any(unix, windows))]
-use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
 #[cfg(unix)]
@@ -200,7 +199,7 @@ impl Block {
     #[cfg(unix)]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
-        let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        let f = crate::mapped::open_write(path, true, true)?;
         f.set_len(reserved as u64)?;
         let p = unsafe {
             libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0)
@@ -218,7 +217,7 @@ impl Block {
     #[cfg(windows)]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
-        let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
+        let f = crate::mapped::open_write(path, true, true)?;
         crate::windows::sparse(&f)?;
         f.set_len(reserved as u64)?;
         let p = crate::windows::map_file(&f, reserved, true)?;
@@ -666,8 +665,10 @@ impl Block {
             fence(Release);
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
-        if self.file.is_some() {
+        if let Some(f) = self.file.as_ref() {
             self.truncate_file(len as u64).expect("truncate a journal block");
+            // Frozen: read-only on disk too (`mapped`).
+            crate::mapped::mark_frozen(f).expect("mark a frozen block's file read-only");
         } else if self.backing.is_none() {
             // A free-listed block's reservation past its length goes back: nothing is written there now.
             // Whole MBs, and never under a device buffer made over it (`device_buffer`'s extent).
@@ -734,7 +735,8 @@ impl Block {
     /// (`bytes`).
     pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
-        let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
+        // The file and its folder the user's (`mapped`): an open block's may be its writer's to write still.
+        let f = if writable { crate::mapped::open_write(path, false, false)? } else { crate::mapped::open_read(path, false)? };
         let len = f.metadata()?.len() as usize;
         if len < size_of::<Header>() {
             return Err(invalid(format!("{len} bytes, shorter than a header")));
@@ -824,6 +826,11 @@ impl Block {
     /// truncates no file a view maps, once its view is unmapped (`drop`), and only if no other view (a reader's)
     /// maps it then. A reader meanwhile reads the length from the header (`open_file`). Nothing for a block with no
     /// file.
+    /// Marks the block's file, where it holds one, read-only (`mapped::mark_frozen`): a frozen block's file.
+    pub fn mark_file_frozen(&self) -> io::Result<()> {
+        self.file.as_ref().map_or(Ok(()), crate::mapped::mark_frozen)
+    }
+
     pub fn truncate_file(&self, len: u64) -> io::Result<()> {
         let Some(f) = &self.file else { return Ok(()) };
         #[cfg(windows)]
@@ -839,7 +846,8 @@ impl Block {
     /// Maps a block's file read-only, valid only if it was frozen whole: magic, kind, state, and the length its
     /// header says is the file's.
     pub fn open_file(path: &Path, kind: u32) -> Result<Frozen, String> {
-        let f = File::open(path).map_err(|e| e.to_string())?;
+        // Frozen: read-only, the user's, in a folder of the user's alone (`mapped`).
+        let f = crate::mapped::open_read(path, true).map_err(|e| e.to_string())?;
         let len = f.metadata().map_err(|e| e.to_string())?.len() as usize;
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
@@ -1074,7 +1082,7 @@ mod tests {
     fn frozen_file_blocks_hold_no_descriptor() {
         const N: usize = 256;
         let dir = std::env::temp_dir().join(format!("rerail-block-descriptors-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::mapped::make_folder(&dir).unwrap();
         let before = open_descriptors();
         let mut held = Vec::new();
         for i in 0..N {
