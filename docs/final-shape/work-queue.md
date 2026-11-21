@@ -5690,23 +5690,7 @@ Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
   - `every_step_on_metal_equals_the_interpreter`: JSON's steps 14 and 15 start early (0330), which generated MSL
     lacks, and one refused step refused the whole batch. `block_program::missing_form` names the form (`run_batch`
     refuses by it); the test runs the 13 steps Metal can (2,206 files, equal) and counts the 2 refused by name.
-    Generating the early start is Q188.
-
-
-### Q188. Generated MSL has no early start (0330): JSON's ladder steps 14 and 15 do not run on Metal
-
-Found 2026-11-18 (Q183). `block_program::missing_form` refuses a program that `starts_late` (decision 0330: a value
-whose bits lie in a file's first 16 positions comes down to an earlier delay, so a file's first lane is shifted
-down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start").
-
-- **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
-  runs every step, none refused.
-- **Found 2026-11-20** (the ladders cut to their grammars, 0499): both JSON forms now run on Metal (0 refused, since
-  5670277876's early start), and `every_grammar_on_metal_equals_the_interpreter` (the test's new name) fails: on 42
-  of 378 `jsonc` files, all with comments, the outputs are equal and extract 4 (a comment's last bytes) differs, e.g.
-  `"// /* x\nfalse"`: Metal `[6]`, the interpreter `[2, 12]`. The same with the old seeds (`15-jsonc`: 39 files) and
-  with the newline output (0493) taken out, so neither change causes it. `json-rfc` is equal. **Done when** this
-  test passes.
+    Generated MSL has the early start since 5670277876: every grammar runs on Metal, equal.
 
 
 ### Q197. Tier 1 with no general body (0383) differs from the interpreter on 14 corpus programs
