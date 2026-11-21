@@ -40,7 +40,8 @@ fn python_files(root: &Path) -> BTreeMap<String, String> {
             if path.is_dir() {
                 walk(root, &path, out);
             } else if path.extension().is_some_and(|e| e == "py") {
-                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&path).unwrap());
+                // Keyed as documents are named, with `/` on every OS.
+                out.insert(path.strip_prefix(root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), std::fs::read_to_string(&path).unwrap());
             }
         }
     }

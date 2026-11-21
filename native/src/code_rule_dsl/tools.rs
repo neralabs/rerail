@@ -2074,7 +2074,8 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
                         refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     };
-                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    // A document's path, with `/` on every OS.
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
                     let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
                     record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
                     record.extend_from_slice(rel.as_bytes());

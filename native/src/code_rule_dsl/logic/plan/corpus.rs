@@ -11622,7 +11622,8 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     // Kept when Git sees no file under the root too (a corpus in an ignored directory): unkept, every run read the
     // work tree's whole status again to find none (decision 0285).
     let found = observe(|o| o.git(root)).map(|g| {
-        let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        // With `/`, as Git spells the work tree's files.
+        let prefix = real.strip_prefix(&g.worktree_root).map(slashed).unwrap_or_default();
         let under: Vec<String> = g
             .worktree_files()
             .into_iter()
@@ -12782,8 +12783,8 @@ fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, 
     }
 }
 
-/// A path under a root as a document's path is spelled on every OS, Git's way: its parts joined with `/` (Windows'
-/// `\` separators are `/`; elsewhere a `\` is a name's own).
+/// A path under a root as a document's path is spelled on every OS (and a canonical one as phase 1 hands it on), Git's
+/// way: its parts joined with `/` (Windows' `\` separators are `/`; elsewhere a `\` is a name's own).
 pub(super) fn slashed(relative: &Path) -> String {
     let text = relative.to_string_lossy();
     #[cfg(windows)]
