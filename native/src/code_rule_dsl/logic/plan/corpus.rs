@@ -2472,11 +2472,14 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
+        // A rule whose bound takes the annotations in (`guests::sees_annotations`) reads the tape values other rules'
+        // requests make (decision 0431 §8): its cone holds those requests, or it would read none of them.
         let cone = closure(&|cone| {
-            v.rules()
-                .filter(|r| cone.contains(v.rel_name(r.head().rel())))
+            let in_cone = || v.rules().filter(|r| cone.contains(v.rel_name(r.head().rel())));
+            let values_read = in_cone().any(guests::sees_annotations);
+            in_cone()
                 .flat_map(|r| r.body().filter_map(|l| match l.view() { Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()), _ => None }).collect::<Vec<_>>())
-                .chain(requests.iter().filter(|(by, _)| cone.contains(by)).map(|(_, req)| req.clone()))
+                .chain(requests.iter().filter(|(by, _)| values_read || cone.contains(by)).map(|(_, req)| req.clone()))
                 .collect()
         });
         let inside = |rel: &str| cone.contains(rel);
@@ -11351,7 +11354,8 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             if !path.is_file() {
                 continue;
             }
-            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
+            // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and findings read it.
+            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
             // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
             classify(relative);
         }

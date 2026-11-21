@@ -342,22 +342,31 @@ pub(super) fn grammar_tags(v: &crate::code_rule_dsl::logic::program_image::Versi
 /// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
 /// against the widened bound, and the other guests (other grammars, values) never.
 pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
-    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    use crate::code_rule_dsl::logic::program_image::Lit;
     let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
-    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
     let mut seen = Seen::Code;
     for r in v.rules() {
         for l in r.body() {
             match l.view() {
                 Lit::Atom(a) | Lit::Agg { atom: a, .. } if entry(v.rel_name(a.rel())) => return Seen::All,
                 Lit::Ast { .. } => return Seen::All,
-                Lit::Cmp { l, r, .. } if widened(l) || widened(r) => seen = Seen::Annotations,
                 _ => {}
             }
         }
+        if sees_annotations(r) {
+            seen = Seen::Annotations;
+        }
     }
     seen
+}
+
+/// Whether rule `r`'s bound was widened to the annotations (`combining::FoldOwn`): it reads the tape values in the
+/// run's language, which are made only as some rule's request asks for them (decision 0431 §8).
+pub(super) fn sees_annotations(r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> bool {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
+    r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r, .. } if widened(l) || widened(r)))
 }
 
 impl Guests {
