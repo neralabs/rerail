@@ -113,14 +113,14 @@ impl World {
     /// unchanged is not statted. Not phase 0's root, up front: an empty placeholder (`phase0`); a read under it is
     /// watched as it comes.
     fn watch_roots(root: &Path, roots: &[PathBuf]) {
-        let placeholder = super::phase0::active().then(|| std::fs::canonicalize(root).ok()).flatten();
+        let placeholder = super::phase0::active().then(|| dunce::canonicalize(root).ok()).flatten();
         let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
         super::observe(|o| o.watch(&watched));
     }
 
     /// The roots (`new`) and the load budget `prog`'s settings give.
     fn roots(root: &Path, prog: &(impl ProgramFields + ?Sized)) -> (Vec<PathBuf>, usize) {
-        let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+        let canonical = |p: &Path| dunce::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
         for row in prog.fact_rows("env") {

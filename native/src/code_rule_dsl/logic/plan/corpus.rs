@@ -16,6 +16,8 @@
 //! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
 //! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 use super::{Error, Outcome, Result, lower, output};
 
 use crate::code_rule_dsl::facts::core::{self, Built};
@@ -2507,7 +2509,7 @@ const TAPE_RUNS: usize = 4;
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
@@ -3011,7 +3013,7 @@ fn run_handed(
     // `World`'s, the run's reuse and constants keys): a root named by an alias (`/tmp`, `/var` on macOS) was read
     // by the alias and watched by both names, and the run after a cold one wrote the alias's first cursor
     // (`RERAIL_WARM`), the cold run having watched the directory above it, the store's own.
-    let root = &std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let root = &dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
@@ -3031,7 +3033,7 @@ fn run_handed(
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
-    let library = std::fs::canonicalize(&library).unwrap_or(library);
+    let library = dunce::canonicalize(&library).unwrap_or(library);
     // Phase 0's root is an empty placeholder (`phase0`): asked up front, the journal waited for a cookie of a busy
     // temporary directory every run (2 s when the event came late). A read under it is watched as it comes
     // (`watch_above`).
@@ -3077,7 +3079,7 @@ fn run_handed(
             })
         });
         if component_seeded {
-            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rerail").canonicalize() {
+            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rerail").canonical() {
                 phase0::graph(&phase0::Seed::File(components))?;
             }
         }
@@ -3880,7 +3882,7 @@ fn run_observed_within(
     let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The last run's, found through the root's newest manifest, which named them.
     let last_named: Vec<[u8; 32]> = if durable.is_some() {
-        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
         store.corpus_run_also(&root.to_string_lossy()).map_err(|e| Error::Plan(e.to_string()))?
     } else {
         Vec::new()
@@ -3988,7 +3990,7 @@ fn run_observed_within(
             // the last runs of its lane, as that run's manifest named them. Named by the preparing run alone, they made
             // the next run's record differ (Q101), and a manifest recorded without them lost them to the run after.
             if durable.is_some() {
-                let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+                let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
                 for d in store.corpus_lane_also(&root.to_string_lossy(), &lane).map_err(|e| Error::Plan(e.to_string()))? {
                     let sources = |name: &'static str| crate::code_rule_dsl::logic::program_text::run_sources(store, &preparation::run_key(name, &d)).map_err(Error::Plan);
                     if let (Some(front), Some(prepared)) = (sources(preparation::FRONT)?, sources(preparation::PREPARATION)?) {
@@ -4910,7 +4912,7 @@ fn run_observed_within(
     let recording = matches!(memo, Some(memo::Memo::Stored(_)));
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
-    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
+    let canonical_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
     let stat_index = if recording {
         // An earlier run of this process may have queued the root's stats: read once they are written, before the
         // first wave (decision 0104).
@@ -11330,7 +11332,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
     observe(|o| {
         o.preload(root);
-        if let Ok(real) = std::fs::canonicalize(root)
+        if let Ok(real) = dunce::canonicalize(root)
             && real != root
         {
             o.preload(&real);
@@ -11806,7 +11808,7 @@ pub mod tests {
             let _run = super::ObservedBatch::begin();
             assert_eq!(super::git_files(&root), None, "Git sees no file under an ignored directory");
         }
-        let real = std::fs::canonicalize(&root).unwrap();
+        let real = dunce::canonicalize(&root).unwrap();
         let record = super::observe(|o| o.run_record(&format!("git-files:{}", real.display())));
         // As `git_files` writes it: the overlays' count (eight bytes), then the files' list.
         let mut empty = 0u64.to_le_bytes().to_vec();

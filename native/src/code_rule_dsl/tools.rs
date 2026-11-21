@@ -1,6 +1,8 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
@@ -390,7 +392,7 @@ pub fn run_policies(
     // Every policy's includes resolved by one run of phase 0 (`bootstrap.rerail`) over all of them, each graph kept for
     // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
     let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
-        paths.iter().filter_map(|p| p.canonicalize().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
+        paths.iter().filter_map(|p| p.canonical().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
     if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
         let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
     }

@@ -1,6 +1,8 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
@@ -290,14 +292,14 @@ fn rule_syntax_files_pass_check_rr() {
     }
     let mut problems = Vec::new();
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
-    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonicalize().unwrap())).collect();
+    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
     for f in rr_files() {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
         let mut program = program(&f).unwrap().0;
-        let core = library().join("core.rerail").canonicalize().unwrap();
+        let core = library().join("core.rerail").canonical().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
@@ -3844,7 +3846,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
         let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
-        let own = path.canonicalize().unwrap();
+        let own = path.canonical().unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|s| s.what() == Some(from_tape::S::Clause)).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
         let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
@@ -4228,7 +4230,7 @@ fn a_rule_files_program_is_found_while_what_it_read_holds() {
     let original = ".decl helper(x: symbol)\nhelper(\"a\").\n";
     std::fs::write(&helper, original).unwrap();
     std::fs::write(&main, "#include \"helper_0275.rerail\"\n.decl out(x: symbol)\nout(x) :- helper(x).\n.output out\n").unwrap();
-    let main = main.canonicalize().unwrap();
+    let main = main.canonical().unwrap();
     let found = || kept_program_found(&main);
     assert!(found().is_none(), "nothing kept before the first read");
     let (program, files) = read_file(&main).unwrap();
