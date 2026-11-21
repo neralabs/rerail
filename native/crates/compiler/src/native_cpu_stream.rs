@@ -3958,7 +3958,8 @@ pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
 }
 
 impl TableFns {
-    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool) -> Result<Self, Error> {
+    /// `near`: the module's code in one arena (`Cut::near`), so the writer's ops call each other directly.
+    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool, near: bool) -> Result<Self, Error> {
         let w = x.widths;
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
@@ -3970,7 +3971,7 @@ impl TableFns {
         let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
         let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
         let sixteen = if sixteen {
-            let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local).map_err(|e| {
+            let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near).map_err(|e| {
                 if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
                     eprintln!("the writer's ops: {e}");
                 }
@@ -4598,7 +4599,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // The node words' rare loops, outlined (`TableFns`).
     let classes = supertype_classes(native)?;
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
-    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen)?;
+    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near)?;
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).
