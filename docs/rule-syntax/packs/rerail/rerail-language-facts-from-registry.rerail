@@ -1,0 +1,148 @@
+.policy "rerail-language-facts-from-registry" revision 2
+.description "Take file suffixes and language names from the language registry or its generated tables, not a hand-kept list in shared engine or host code; a family's own modules may keep theirs."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "native/src/code_rule_dsl/language/**", "native/src/build_languages.rs", "**/*tests.rs", "**/tests/**", "**/test_support.rs", "**/*.generated.rs", "native/src/build_identity.rs", "native/src/code_rule_dsl/tape/corpus_parity.rs", "native/src/code_rule_dsl/value/eslint_rules.rs", "native/src/code_rule_dsl/value/rules.rs", "native/src/code_rule_dsl/compile/parse/ruff.rs", "native/src/code_rule_dsl/compile/binds/ruff.rs", "native/src/code_rule_dsl/compile/binds/eslint.rs", "native/src/code_rule_dsl/compile/format_args/php.rs", "native/src/code_rule_dsl/compile/format_args/ruff.rs", "native/src/code_rule_dsl/suppress/ruff.rs", "native/src/code_rule_dsl/lines/eslint.rs", "native/src/code_rule_dsl/embed/test_script.rs"
+#include "rust/rerail-native.rerail"
+// File suffixes and language names come from the language registry (label_of_path, the tables language.rs
+// includes); shared engine code that lists them by hand drifts. The Rust half; the host's TypeScript is
+// rerail-language-facts-from-registry.typescript.rerail. A family's own modules (family_owned) and test code may
+// keep their lists.
+//   const SOURCE_SUFFIXES: &[&str] = &["py", "pyi", "rs"];      HAND_KEPT_LANGUAGE_LIST (a list of two facts or more)
+//   matches!(ext, "ts" | "tsx")   vec!["python", "rust"]        HAND_KEPT_LANGUAGE_LIST
+//   "py" | "pyi" => …                                           HAND_KEPT_LANGUAGE_LIST (an or-pattern of facts)
+//   let ts = p.ends_with(".ts") || p.ends_with(".tsx");          HAND_KEPT_LANGUAGE_LIST (two suffix tests)
+//   match ext { ".py" => "python", … }                          SUFFIX_TO_LANGUAGE_ARM (a suffix arm giving a language)
+//   const SOURCE_NAMES: &[&str] = &[".npmignore", ".gitignore"]; not reported
+// A fact is a string literal naming a suffix ("py", ".tsx", "blade.php") or a language ("python", "ecma").
+
+.decl fact(n: node)
+fact(n) :- kind(n, "string_literal"), match("\"(?:\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)|python|typescript|javascript|blade|rust|ecma)\"", n).
+.decl facts(n: node, k: number)  // n holds k facts, at any depth
+facts(n, k) :- (kind(n, "array_expression") ; kind(n, "or_pattern") ; kind(n, "macro_invocation")),
+    k = count : { has(n, f, "string_literal"), fact(f) }.
+
+// `x.ends_with(".py")`, `x.strip_suffix(".tsx")`.
+.decl suffix_call(c: node)
+suffix_call(c) :- kind(c, "call_expression"), match("(?s:.*)\\.(?:ends_with|strip_suffix)\\(\\s*\"\\.(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"\\s*\\)", c).
+
+// A match arm from a suffix to a language, in a match on something named like a path or an extension:
+// `".py" | ".pyi" => Some(GrammarDialect::Python)` in `match ext { … }`.
+.decl suffix_arm(a: node)
+suffix_arm(a) :- kind(a, "match_arm"), field(a, "pattern", p), has(p, s, "string_literal"),
+    match("\"\\.?(?:py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|php|vue|rs|sql|blade\\.php)\"", s),
+    field(a, "value", v), (language(v) ; has(v, l, language_kind), language(l)),
+    inside(a, m, "match_expression"), field(m, "value", x), subject_word(w), icontains(w, x).
+.decl subject_word(w: symbol)
+subject_word("ext"). subject_word("suffix"). subject_word("path"). subject_word("name"). subject_word("rsplit").
+subject_word("extension").
+.decl language_kind(k: symbol)
+language_kind("string_literal"). language_kind("scoped_identifier").
+.decl language(n: node)
+language(n) :- native_label(n).
+language(n) :- kind(n, "scoped_identifier"), match("(?s:.*)(?:^|::)(?:GrammarDialect|CodeRuleLanguage)::[A-Z][A-Za-z0-9_]*", n).
+.decl in_suffix_arm(n: node)
+in_suffix_arm(n) :- inside(n, a, "match_arm"), suffix_arm(a).
+
+.violation HAND_KEPT_LANGUAGE_LIST(at: node) "Take these from the registry (label_of_path, the tables language.rs includes) or move this code into its family's module; formats outside the registry and a resolver's probe order may stay."
+HAND_KEPT_LANGUAGE_LIST(n) :- hand_kept_list(n), !in_native_test(n), docof(n, d), !family_owned(d).
+.decl hand_kept_list(n: node)
+// The outermost array: `[["py", "pyi"], ["ts", "tsx"]]` is one list.
+hand_kept_list(n) :- kind(n, "array_expression"), facts(n, k), k >= 2, !inside(n, _, "array_expression").
+// The whole or-pattern, unless it is in a suffix arm (SUFFIX_TO_LANGUAGE_ARM reports that).
+hand_kept_list(n) :- kind(n, "or_pattern"), facts(n, k), k >= 2, child(p, n, _), !kind(p, "or_pattern"),
+    !in_suffix_arm(n).
+hand_kept_list(n) :- kind(n, "macro_invocation"), glob("{matches,vec}!**", n), facts(n, k), k >= 2.
+hand_kept_list(n) :- suffix_tests(n), k = count : { has(n, c, "call_expression"), suffix_call(c) }, k >= 2.
+.decl suffix_tests(n: node)  // a let, or a whole condition
+suffix_tests(n) :- kind(n, "let_declaration").
+suffix_tests(n) :- kind(n, "binary_expression"), child(p, n, _), !kind(p, "binary_expression").
+
+.violation SUFFIX_TO_LANGUAGE_ARM(at: node) "Map this file suffix to its language with label_of_path, which reads the registry's suffixes, instead of a match arm here; a suffix the registry does not list may stay."
+SUFFIX_TO_LANGUAGE_ARM(a) :- suffix_arm(a), !in_native_test(a), docof(a, d), doc(d, p, _),
+    !match("(?s:.*)(?:(?:^|/)(?:(?:python|ecma|php|blade|vue|rust|sql)(?:\\.rs$|/)|embed/[a-z_]+\\.rs$))(?s:.*)", p).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_hand_kept_suffix_list_is_reported exactly
+    .fixture "native/src/git_workspace.rs" ```
+        /// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in
+        /// code-rule-languages.ts): dialect sources and the text files regex clauses read.
+        const SOURCE_SUFFIXES: &[&str] = &[
+            "bash", "cjs", "css", "cts", "html", "js", "json", "jsx", "md", "mdx", "mjs", "mts", "php",
+            "py", "pyi", "rs", "rst", "scss", "sh", "sql", "toml", "ts", "tsx", "txt", "yaml", "yml",
+            "zsh",
+        ];
+        ```
+    .expect HAND_KEPT_LANGUAGE_LIST at "native/src/git_workspace.rs":3
+.end
+
+.test lists_tests_and_suffix_arms_are_reported exactly
+    .fixture "native/src/code_rule_dsl/shared.rs" ```
+        fn source(ext: &str) -> bool {
+            matches!(ext, "ts" | "tsx")
+        }
+        fn labels() -> Vec<&'static str> {
+            vec!["python", "rust"]
+        }
+        fn rank(ext: &str) -> u8 {
+            match ext {
+                "py" | "pyi" => 1,
+                _ => 0,
+            }
+        }
+        fn is_ts(p: &str) -> bool {
+            let ts = p.ends_with(".ts") || p.ends_with(".tsx");
+            ts
+        }
+        fn dialect(ext: &str) -> Option<GrammarDialect> {
+            match ext {
+                ".py" | ".pyi" => Some(GrammarDialect::Python),
+                _ => None,
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/module_graph.rs" ```
+        const PROBES: &[&str] = &[".ts", ".tsx", ".js"];
+        fn label(path: &str) -> &str {
+            match path.rsplit('.').next() {
+                Some("rs") => "rust",
+                _ => "",
+            }
+        }
+        ```
+    .expect HAND_KEPT_LANGUAGE_LIST at "native/src/code_rule_dsl/shared.rs":2
+    .expect HAND_KEPT_LANGUAGE_LIST at "native/src/code_rule_dsl/shared.rs":5
+    .expect HAND_KEPT_LANGUAGE_LIST at "native/src/code_rule_dsl/shared.rs":9
+    .expect HAND_KEPT_LANGUAGE_LIST at "native/src/code_rule_dsl/shared.rs":14
+    .expect SUFFIX_TO_LANGUAGE_ARM at "native/src/code_rule_dsl/shared.rs":19
+    .expect SUFFIX_TO_LANGUAGE_ARM at "native/src/code_rule_dsl/module_graph.rs":4
+.end
+
+// The pack's passing example, one fact alone, test code, and a family's own module.
+.test registry_reads_tests_and_family_modules_pass exactly
+    .fixture "native/src/git_workspace.rs" ```
+        /// The names of the files the host evaluates by their whole name (`SOURCE_NAMES` in
+        /// code-rule-languages.ts): the package ignore files `file.package.published` reads.
+        const SOURCE_NAMES: &[&str] = &[".npmignore", ".gitignore"];
+        const ONE: &[&str] = &["py"];
+
+        #[cfg(test)]
+        // The suffixes a fixture tree holds.
+        mod probe {
+            const SUFFIXES: &[&str] = &["py", "ts"];
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/python.rs" ```
+        const SUFFIXES: &[&str] = &["py", "pyi"];
+        fn dialect(ext: &str) -> Option<GrammarDialect> {
+            match ext {
+                ".py" | ".pyi" => Some(GrammarDialect::Python),
+                _ => None,
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/language/registry.rs" ```
+        const SUFFIXES: &[&str] = &["py", "pyi"];
+        ```
+.end

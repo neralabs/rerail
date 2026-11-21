@@ -1,4 +1,4 @@
-//! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
+//! File-backed positional FTS, following the SQL index prototype. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
 #[path = "lower/audit.rs"]
 pub mod audit;

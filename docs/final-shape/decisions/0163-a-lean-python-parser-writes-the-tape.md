@@ -26,7 +26,7 @@ a Python file -> the lean lexer (64-byte blocks) -> tokens + layout + extras
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed with tree-sitter only; it has no lean parser to compare.
+- **SQL index prototype indexes:** the spike parsed with tree-sitter only; it has no lean parser to compare.
 - **0140** (the tape's writer) and **0161** (the tape format, 11 to 15). **Agrees:** the lean parser uses
   the same writer, and stores only the tokens format 15 stores.
 - **0148** (parsers routed by what the host runs). **Extended:** the lean parser is Python's rank-0

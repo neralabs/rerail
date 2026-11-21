@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { lastEventAt, openState, sessionCorrections, sessionDeclinedTotal, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
+import { coverageGaps, placesHeading } from "../../ui/render/timeline.js";
+import { discoveryGapPlaces, lastEventAt, openState, sessionCorrections, sessionDeclinedTotal, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
 import { data, pagedList } from "../../ui/state.js";
 
 const MIN = 60_000;
@@ -102,5 +103,65 @@ describe("declined steers", () => {
     expect(sessionDeclinedTotal(row({ violationCount: 4, steeredViolations: 3, declinedViolations: 1 }))).toBe(1);
     loadSession([note("complexity", "a1", "reason")], 2);
     expect(sessionDeclinedTotal(row({ violationCount: 4, steeredViolations: 3, declinedViolations: 1 }))).toBe(2);
+  });
+});
+
+describe("what the timeline says Rerail did not see of the session", () => {
+  const NO_GAPS = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+  function withGaps(gaps: object) {
+    data.sessionDetail.set("s1", { head: null, gaps, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
+  }
+
+  it("says each count in its words and its order, and nothing for a session it saw whole", () => {
+    withGaps(NO_GAPS);
+    expect(coverageGaps(row())).toBe("");
+    withGaps({ droppedEvents: 1, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 1, ignoredEdits: 1, ignoreRuleChanges: 1 });
+    expect(coverageGaps(row())).toBe([
+      "1 event never reached Rerail", "rules had not yet seen shell edits at 1 boundary", "code rules were not yet running at 1 boundary",
+      "1 edit went unchecked because Git ignores the file", "Git's ignore rules changed once",
+    ].join("; "));
+    withGaps({ droppedEvents: 1200, uncheckedBoundaries: 2, codeRulesPendingBoundaries: 3, ignoredEdits: 4, ignoreRuleChanges: 5 });
+    expect(coverageGaps(row())).toBe([
+      "1,200 events never reached Rerail", "rules had not yet seen shell edits at 2 boundaries",
+      "code rules were not yet running at 3 boundaries", "4 edits went unchecked because Git ignores the file", "Git's ignore rules changed 5 times",
+    ].join("; "));
+  });
+
+  it("says when rules could not fully check part of the repository, beside the boundaries that answered before their walk ended", () => {
+    withGaps({ ...NO_GAPS, discoveryGaps: 1 });
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (1 place)");
+    withGaps({ ...NO_GAPS, uncheckedBoundaries: 2, discoveryGaps: 3 });
+    expect(coverageGaps(row())).toBe("rules had not yet seen shell edits at 2 boundaries; rules could not fully check part of the repository (3 places)");
+  });
+
+  it("lists the places the daemon names with why, and says how many of the session's places they are", () => {
+    const place = { boundary: "turn", path: "src/locked", reason: "EACCES: permission denied, opendir '/repo/src/locked'", observedAt: 1 };
+    withGaps({ ...NO_GAPS, discoveryGaps: 1, discoveryGapPlaces: [place] });
+    expect(discoveryGapPlaces(row())).toEqual([place]);
+    withGaps({ ...NO_GAPS, discoveryGaps: 1 });
+    expect(discoveryGapPlaces(row())).toEqual([]);
+    // Words true of every reason a place has: one Rerail could not read went unchecked, one checked in part was not.
+    expect(placesHeading(row(), 1)).toBe("Rules could not fully check this place:");
+    withGaps({ ...NO_GAPS, discoveryGaps: 3 });
+    expect(placesHeading(row(), 3)).toBe("Rules could not fully check these places:");
+    withGaps({ ...NO_GAPS, discoveryGaps: 1000 });
+    expect(placesHeading(row(), 20)).toBe("Rules could not fully check the first 20 of these 1,000 places:");
+  });
+
+  it("says how many places the record holds and that the check met more, once it met more than the record takes", () => {
+    // 1,001, 1,500 or 10,000 places met: the record holds the first 1,000, and one more record, no place, says it met more.
+    withGaps({ ...NO_GAPS, discoveryGaps: 1000, discoveryGapsMore: true });
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (more than 1,000 places; 1,000 recorded)");
+    expect(placesHeading(row(), 20)).toBe("Rules could not fully check more than 1,000 places; the first 20 of the 1,000 recorded:");
+    withGaps({ ...NO_GAPS, discoveryGaps: 1000, discoveryGapsMore: false });
+    expect(coverageGaps(row())).toBe("rules could not fully check part of the repository (1,000 places)");
+    expect(placesHeading(row(), 20)).toBe("Rules could not fully check the first 20 of these 1,000 places:");
+  });
+
+  it("says nothing of a walk's gaps when the session has none, or the answer counts none", () => {
+    withGaps({ ...NO_GAPS, discoveryGaps: 0 });
+    expect(coverageGaps(row())).toBe("");
+    withGaps(NO_GAPS);
+    expect(coverageGaps(row())).toBe("");
   });
 });

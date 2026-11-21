@@ -1,0 +1,164 @@
+.policy "rerail-no-message-classification" revision 2
+.description "Classify a failure by its code or a shared constant, not by another Rerail component's message wording, in TypeScript and Rust; build steer notices from structured rule data."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "**/*.test.ts", "src/**/*.generated.ts", "src/runtime/npm.ts", "src/setup/rule-pack-store.ts"
+// A failure is classified by its code, or by a constant its writer uses too, never by the wording of another
+// component's message; a steer notice is built from the delivery's structured rules, never parsed back from its
+// text. Four clauses for TypeScript, as the JSON's:
+//   failure.message.startsWith("file has syntax errors")      MESSAGE_TEXT_TEST (a test of a message's text)
+//   /^\d+ further failures? not recorded$/u.test(e.message)   MESSAGE_REGEX_TEST
+//   msg === "native session is not initialized"               MESSAGE_EQUALS_TEXT (also a switch case, [..].includes)
+//   EDIT_LEAD.test(lead), lead !== RESTEER_LEAD               STEER_TEXT_PARSED (EDIT_LEAD = /Rerail found …/)
+//   failure.code === "source-partial"                         not reported
+// A message is `….message`, a name message, errorMessage or msg, errorText(…) and its kin, String(error),
+// error.toString(), or one of them lower-cased or trimmed. Wording is a literal of three letters in a row, or a
+// file-local constant holding one that no `new` or `throw` also uses (then the writer shares it). The JSON's
+// scope spans TypeScript and Rust: this is its TypeScript policy; rerail-no-message-classification.rust is the other.
+
+#include "tsx/names.rerail"
+//   ref_site(r, site), binding_value(site, v), site_exported(site), site_occurrence(site, o)
+
+// message_text(n): n reads a failure's message.
+.decl message_text(n: node)
+message_text(n) :- kind(n, "member_expression"), glob("**.message", n).
+message_text(n) :- kind(n, "identifier"), glob("{message,errorMessage,msg}", n).
+message_text(n) :- kind(n, "call_expression"), glob("{errorText,errorMessage,messageOf}(**", n).
+message_text(n) :- kind(n, "call_expression"), glob("String({error,err,e,cause,reason})", n).
+message_text(n) :- kind(n, "call_expression"), glob("{error,err,e,cause}{?.,.}toString()", n).
+message_text(n) :- kind(n, "call_expression"),
+    match("(?:(?s:.*)\\.message|message|msg)\\??\\.(?:toLowerCase|toUpperCase|toLocaleLowerCase|trim|trimStart|trimEnd)\\(\\)", n).
+
+// worded(n): a literal with three letters in a row: a one-line string, a template not starting with `${`, or (for
+// a text test) a regex.
+.decl worded(n: node, k: symbol)
+worded(n, k) :- kind(n, "string"), k = "string", match("[^\\n][^\\n]*[A-Za-z]{3}[^\\n]*[^\\n]", n).
+worded(n, k) :- kind(n, "template_string"), k = "string", glob("**[A-Za-z][A-Za-z][A-Za-z]**", n), !prefix("`${", n).
+worded(n, k) :- kind(n, "regex"), k = "regex", glob("**[A-Za-z][A-Za-z][A-Za-z]**", n).
+// wording(n, k): a worded literal, or a name for one: a file-local constant or variable, not exported, that no
+// `new …` or `throw …` mentions (`throw new SessionError(NOT_INITIALIZED)` makes it the writer's constant).
+.decl wording(n: node, k: symbol)
+wording(n, k) :- worded(n, k).
+wording(n, k) :- kind(n, "identifier"), ref_site(n, b), binding_value(b, v), worded(v, k), !site_exported(b), !raised(b).
+.decl raised(b: node)  // an occurrence of binding b is inside a `new` or `throw`
+raised(b) :- site_occurrence(b, o), inside(o, _, raise_kind).
+.decl raise_kind(k: symbol)
+raise_kind("new_expression"). raise_kind("throw_statement").
+
+// ---- a message's text tested -------------------------------------------------------------------------------------
+// message.includes("busy"), err?.message.startsWith(PREFIX): a string method called on a message with wording.
+.violation MESSAGE_TEXT_TEST(at: node) "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+MESSAGE_TEXT_TEST(c) :- (c ~ `$M.$F($A)` ; c ~ `$M?.$F($A)`), message_text(M), wording(A, _),
+    glob("{startsWith,endsWith,includes,indexOf,lastIndexOf,match,matchAll,search}", F).
+
+// /busy|locked/.test(error.message): any .test or .exec of a message.
+.violation MESSAGE_REGEX_TEST(at: node) "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+MESSAGE_REGEX_TEST(c) :- (c ~ `$R.test($M)` ; c ~ `$R.exec($M)`), message_text(M).
+
+// msg === "…" (either side), `switch (error.message) { case "…": }`, and ["…", …].includes(message).
+.violation MESSAGE_EQUALS_TEXT(at: node) "Branch on the failure's code, adding one where the failure is written, not on this wording; a constant counts only when the writer uses it too. A person's or another program's text may be matched."
+MESSAGE_EQUALS_TEXT(n) :- equality(n), child(n, a, 0), child(n, b, 1),
+    (message_text(a), wording(b, "string") ; wording(a, "string"), message_text(b)).
+MESSAGE_EQUALS_TEXT(s) :- kind(s, "string"), worded(s, "string"), child(k, s, _), kind(k, "switch_case"),
+    child(b, k, _), kind(b, "switch_body"), child(w, b, _), kind(w, "switch_statement"),
+    child(w, p, _), kind(p, "parenthesized_expression"), child(p, m, _), message_text(m).
+MESSAGE_EQUALS_TEXT(c) :- kind(c, "call_expression"), child(c, f, _), kind(f, "member_expression"),
+    child(f, l, 0), kind(l, "array"), child(l, s, _), kind(s, "string"),
+    child(f, p, _), kind(p, "property_identifier"), text(p, "includes"),
+    child(c, args, _), kind(args, "arguments"), child(args, m, 0), message_text(m).
+.decl equality(n: node)
+equality(n) :- kind(n, "binary_expression"), op(n, o), glob("{===,!==,==,!=}", o).
+
+// ---- a steer notice parsed back ----------------------------------------------------------------------------------
+// steer_regex(n): a regex (or a name for one) that finds a steer notice's own text: "Rerail found", "Why\?", [○◆■].
+.decl steer_regex(n: node)
+steer_regex(n) :- kind(n, "regex"), steer_regex_text(n).
+steer_regex(n) :- kind(n, "identifier"), ref_site(n, b), binding_value(b, v), kind(v, "regex"), steer_regex_text(v).
+.decl steer_regex_text(n: node)
+steer_regex_text(n) :- kind(n, "regex"), match("(?s:.*)(?:Rerail (?:·|found|re-checked|finished)|Why\\\\\\?|\\[○◆■\\])(?s:.*)", n).
+// steer_string(n): a string (or a name for one) holding such text: "Rerail found", "Why? →", "in your last edit:".
+.decl steer_string(n: node)
+steer_string(n) :- kind(n, "string"), steer_string_text(n).
+steer_string(n) :- kind(n, "identifier"), ref_site(n, b), binding_value(b, v), kind(v, "string"), steer_string_text(v).
+.decl steer_string_text(n: node)
+steer_string_text(n) :- kind(n, "string"), match("(?s:.*)(?:Rerail (?:found|re-checked|finished)|Why\\? →|in your last edit:)(?s:.*)", n).
+
+// EDIT_LEAD.test(x), x.split(/Rerail found/), text.startsWith("Rerail found"), lead !== RESTEER_LEAD.
+.violation STEER_TEXT_PARSED(at: node) "Read this from the delivery's rules and links, adding any other fact the code needs to the delivery, instead of matching the text written for the agent. Showing that text as a whole is fine."
+STEER_TEXT_PARSED(c) :- (c ~ `$R.test($X)` ; c ~ `$R.exec($X)`), child(c, f, _), kind(f, "member_expression"),
+    child(f, r, 0), steer_regex(r).
+STEER_TEXT_PARSED(c) :- string_call(c, x, a), glob("{match,matchAll,split,search}", x), steer_regex(a).
+STEER_TEXT_PARSED(c) :- string_call(c, x, a), glob("{startsWith,endsWith,includes,indexOf,lastIndexOf,match,split,search}", x),
+    steer_string(a).
+STEER_TEXT_PARSED(n) :- equality(n), child(n, s, _), steer_string(s).
+// string_call(c, x, a): c calls a method x with a as its first argument: `….x(a, …)`.
+.decl string_call(c: node, x: symbol, a: node)
+string_call(c, x, a) :- kind(c, "call_expression"), child(c, f, _), kind(f, "member_expression"),
+    child(f, p, _), kind(p, "property_identifier"), text(p, x), child(c, args, _), kind(args, "arguments"),
+    child(args, a, 0).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_message_prefix_test_is_reported exactly
+    .fixture "src/engine/audit/audit.ts" ```
+        export function isSourceGap(failure: AuditFailure): boolean {
+          return failure.code === "source-incomplete" && failure.message.startsWith("file has syntax errors");
+        }
+        ```
+    .expect MESSAGE_TEXT_TEST at "src/engine/audit/audit.ts":2
+.end
+
+.test message_tests_are_reported exactly
+    .fixture "src/harness/session.ts" ```
+        const BUSY = "session is busy";
+        export const busy = (error: Error) => error.message.includes(BUSY);
+        export const retry = (error: Error) => !/Unknown session|busy|locked/iu.test(error.message);
+        export const missing = (error: unknown) => errorText(error).includes("native session is not initialized");
+        export const owner = (message: string) => message === "native session owner mismatch";
+        export function kind(error: Error) {
+          switch (error.message) {
+            case "session is busy": return "busy";
+          }
+          return ["session closed", "session lost"].includes(error.message) ? "gone" : "other";
+        }
+        ```
+    .expect MESSAGE_TEXT_TEST at "src/harness/session.ts":2
+    .expect MESSAGE_REGEX_TEST at "src/harness/session.ts":3
+    .expect MESSAGE_TEXT_TEST at "src/harness/session.ts":4
+    .expect MESSAGE_EQUALS_TEXT at "src/harness/session.ts":5
+    .expect MESSAGE_EQUALS_TEXT at "src/harness/session.ts":8
+    .expect MESSAGE_EQUALS_TEXT at "src/harness/session.ts":10
+.end
+
+.test steer_text_parsed_is_reported exactly
+    .fixture "src/engine/code-rule/rerail-steer.ts" ```
+        const EDIT_LEAD = /^Rerail found \d+ problems? in your last edit:/u;
+        const RESTEER_LEAD = "Rerail re-checked your last edit:";
+        export function strip(content: string, lead: string): string {
+          if (!EDIT_LEAD.test(lead) && lead !== RESTEER_LEAD) return content;
+          return content.split(/Why\? →/u)[0];
+        }
+        ```
+    .expect STEER_TEXT_PARSED at "src/engine/code-rule/rerail-steer.ts":4
+    .expect STEER_TEXT_PARSED at "src/engine/code-rule/rerail-steer.ts":5
+.end
+
+// The pack's passing example; a constant the writer throws with; an exported constant; a code; tests.
+.test codes_shared_constants_and_tests_pass exactly
+    .fixture "src/engine/audit/audit.ts" ```
+        export function isSourceGap(failure: AuditFailure): boolean {
+          return failure.blind === "syntax" || failure.code === "source-partial";
+        }
+        ```
+    .fixture "src/harness/owner.ts" ```
+        const NOT_INITIALIZED = "native session is not initialized";
+        export const MISMATCH = "native session owner mismatch";
+        export const fail = () => { throw new Error(NOT_INITIALIZED); };
+        export const missing = (error: Error) => error.message === NOT_INITIALIZED;
+        export const mismatch = (error: Error) => error.message.startsWith(MISMATCH);
+        export const shown = (message: string) => message.includes(`${name} failed`);
+        ```
+    .fixture "src/harness/owner.test.ts" ```
+        expect(error.message.startsWith("native session")).toBe(true);
+        ```
+.end

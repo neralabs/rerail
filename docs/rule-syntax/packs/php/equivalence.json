@@ -1,0 +1,130 @@
+{
+  "format": "rerail.translation-equivalence/v1",
+  "pack": "php",
+  "equivalent": false,
+  "untranslated": {},
+  "different": {
+    "phpcs-generic-code-analysis-empty-statement": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-php": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        }
+      }
+    },
+    "phpcs-generic-php-lower-case-constant": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        }
+      }
+    },
+    "phpcs-generic-php-no-silenced-errors": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-php": {
+          "originalOnly": 0,
+          "translationOnly": 76
+        }
+      }
+    },
+    "phpcs-squiz-php-eval": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-php": {
+          "originalOnly": 0,
+          "translationOnly": 8
+        }
+      }
+    },
+    "phpstan-argument-sprintf": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 5
+        },
+        "samples-php": {
+          "originalOnly": 3,
+          "translationOnly": 1
+        }
+      }
+    },
+    "phpstan-argument-sscanf": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 3
+        }
+      }
+    },
+    "phpstan-array-duplicate-key": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 11
+        }
+      }
+    },
+    "phpstan-if-always-false": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "samples-php": {
+          "originalOnly": 1,
+          "translationOnly": 0
+        }
+      }
+    },
+    "phpstan-missing-function-return-type": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 10
+        },
+        "samples-php": {
+          "originalOnly": 2,
+          "translationOnly": 0
+        }
+      }
+    },
+    "phpstan-random-int-parameters": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 7
+        }
+      }
+    },
+    "psalm-forbidden-code": {
+      "reason": "recorded by the suite, not yet explained",
+      "right": "unknown",
+      "counts": {
+        "fixtures": {
+          "originalOnly": 0,
+          "translationOnly": 1
+        },
+        "samples-php": {
+          "originalOnly": 0,
+          "translationOnly": 15
+        }
+      }
+    }
+  }
+}

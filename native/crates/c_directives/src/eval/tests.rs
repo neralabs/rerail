@@ -813,11 +813,11 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (got, want, rung, launches)
 }
 
-/// A `DeviceRun` and the givings back the run made (decision 0486 §10).
-type GivenRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
+/// A device run's outputs (`DeviceRun`) and the givings back it made.
+type GivingRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
 
 /// `expanded_in`, and the givings back the run made (decision 0486 §10).
-fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivenRun {
+fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivingRun {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();

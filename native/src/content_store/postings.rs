@@ -1,4 +1,4 @@
-//! Streaming adapter for packed posting segments (`nera_postings`), from Pulling-it-all-together's
+//! Streaming adapter for packed posting segments (`nera_postings`), from PIAT's
 //! anchor store. Every store connection has it (`configure_connection`), so the prefilter's SQL
 //! decodes postings where it selects them. SQLite owns all selection and joins.
 use rusqlite::{

@@ -149,9 +149,18 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "text_open", params: &[I32, I32, I32], ret: I64, hot: false, body: crate::verdict_reads::text_open },
     Read { family: Family::Relation, name: "cache_done", params: &[I64], ret: I32, hot: false, body: crate::verdict_reads::cache_done },
     // The cache's two lookups, each written once and called (decision 0310): the verdicts' (an entry made with its
-    // masks empty) and the texts' open one. Last, so no other read's number moves.
+    // masks empty) and the texts' open one.
     Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
     Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
+    // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
+    // descendants as a range of numbers. Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
+    Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
+    // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
+    // Last, so no other read's number moves.
+    Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
+    Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
+    Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

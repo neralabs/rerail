@@ -33,6 +33,11 @@ pub(crate) fn behind_the_run() {
     profile::behind_the_run();
 }
 
+/// The command's own bookkeeping around its run (`profile::around_the_run`).
+pub(crate) fn around_the_run<T>(f: impl FnOnce() -> T) -> T {
+    profile::around_the_run(f)
+}
+
 /// A recomputation in a warm run (`RERAIL_WARM`, `profile::warm_fault`): nothing without it.
 pub(crate) fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
     profile::warm_fault(kind, detail);

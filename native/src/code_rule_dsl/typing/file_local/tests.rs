@@ -292,6 +292,43 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
 }
 
+/// A cross-file join by a value (two files' identifiers of one text, `text(a, t), text(b, t)`) is each file's part,
+/// pushed apart, joined in the cross part by the value: so an edit makes the edited file's rows of it alone, and the
+/// join reads the others' kept rows, no document of theirs (Q332). A test of the value alone goes with each.
+#[test]
+fn a_cross_file_join_by_a_value_pushes_each_files_part() {
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.input doc, node, text, docof
+.decl named(t: symbol)
+named(t) :- node(_, a, "identifier", _, _), text(a, t), docof(a, d), node(_, b, "identifier", _, _), text(b, t), docof(b, e), d < e, t != "self".
+.output named
+"#;
+    let v = read(text);
+    assert!(!split_of(&v).local.contains("named"), "named joins two files");
+    let (v, made) = pushed(v);
+    assert_eq!(made.len(), 2, "one join each file's identifiers: {made:?}");
+    let split = split_of(&v);
+    assert!(made.iter().all(|m| split.local.contains(m)), "each made join is file-local: {made:?}");
+    let named = rules_of(&v, "named");
+    assert_eq!(named.len(), 1);
+    let mut read = reads(&v, named[0]);
+    read.sort();
+    let mut want: Vec<String> = made.clone();
+    want.sort();
+    assert_eq!(read, want, "the rule reads the two joins, no base relation: {}", v.show_rule(named[0]));
+    for m in &made {
+        let join = rules_of(&v, m)[0];
+        assert_eq!(join.head().args().count(), 2, "its value and its document: {}", v.show_rule(join));
+        assert!(v.show_rule(join).contains("self"), "the value's test goes with each: {}", v.show_rule(join));
+    }
+    let parts = programs_of(Arc::clone(&v)).unwrap();
+    assert!(!parts.base.iter().any(|b| b == "text" || b == "docof"), "the cross part reads no base relation: {:?}", parts.base);
+}
+
 /// Position comparisons must retain the semantic candidate filters. Document equality alone
 /// does not make their Cartesian product a bounded per-file producer.
 #[test]
@@ -782,7 +819,7 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }

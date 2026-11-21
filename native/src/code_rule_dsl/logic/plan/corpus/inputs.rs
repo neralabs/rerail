@@ -295,38 +295,33 @@ fn blob_id(bytes: &[u8]) -> String {
     hash.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The files of `root` the corpus walk sees (`corpus_files`: no hidden directory, no `target`), relative and sorted.
-fn walk(root: &Path) -> std::io::Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for (name, is_dir) in crate::git_workspace::snapshot::listing(&dir)? {
-            let path = dir.join(&name);
-            if is_dir {
-                if !name.starts_with('.') && name != "target" { pending.push(path); }
-            } else if let Ok(relative) = path.strip_prefix(root) {
-                out.push(relative.to_string_lossy().replace('\\', "/"));
-            }
-        }
-    }
+/// The files of `root` the corpus sees (`corpus_paths`: Git's listing in a work tree, so none Git ignores, else the
+/// walk; none under a directory the host's walk never enters) that `set` matches, relative and sorted. Git lists a
+/// committed symbolic link as an entry of its own (mode 120000), where the walk enters a linked folder: a link to a
+/// folder is no file.
+fn inputs(root: &Path, set: &globset::GlobSet) -> Result<Vec<String>> {
+    let mut out = super::corpus_paths(root)?;
+    out.retain(|path| set.is_match(path) && root.join(path).is_file());
     out.sort();
     Ok(out)
+}
+
+/// An artifact's input globs; `*` does not cross a `/`.
+fn input_globs(globs: &[String]) -> std::result::Result<globset::GlobSet, String> {
+    let mut set = globset::GlobSetBuilder::new();
+    for glob in globs {
+        set.add(globset::GlobBuilder::new(glob).literal_separator(true).build().map_err(|e| format!("input glob {glob:?}: {e}"))?);
+    }
+    set.build().map_err(|e| e.to_string())
 }
 
 /// The digest of an artifact's inputs on the tree at `root` (RUN-FACTS.md section 4): SHA-256 over the sorted lines
 /// `path NUL blob-id LF`, one per file the walk sees that a glob matches.
 pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> std::result::Result<String, String> {
     use sha2::Digest as _;
-    let mut set = globset::GlobSetBuilder::new();
-    for glob in globs {
-        set.add(globset::GlobBuilder::new(glob).literal_separator(true).build().map_err(|e| format!("input glob {glob:?}: {e}"))?);
-    }
-    let set = set.build().map_err(|e| e.to_string())?;
+    let set = input_globs(globs)?;
     let mut hash = sha2::Sha256::new();
-    for path in walk(root).map_err(|e| format!("{}: {e}", root.display()))? {
-        if !set.is_match(&path) {
-            continue;
-        }
+    for path in inputs(root, &set).map_err(|e| format!("{}: {e}", root.display()))? {
         let bytes = crate::git_workspace::snapshot::read(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         hash.update(path.as_bytes());
         hash.update([0]);
@@ -955,9 +950,12 @@ grew(e) :- now_entry(e), !was(_, e).
         assert!(artifact_declaration("\"a\" inputs").is_err());
     }
 
-    /// The digest covers the files the globs match, by content: a change to an unmatched file keeps it.
+    /// The digest covers the files the globs match, by content: a change to an unmatched file keeps it, and so does
+    /// one under a directory the host's walk never enters (`vendor`, `.rerail`); a hidden directory's (`.github`) counts.
+    /// Its lines name each file with `/` on every platform, so a walk on Windows digests as Git's listing does.
     #[test]
     fn an_artifacts_digest_moves_only_with_its_inputs() {
+        use sha2::Digest as _;
         let root = std::env::temp_dir().join(format!("rerail-artifact-digest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("pkg")).unwrap();
@@ -966,12 +964,48 @@ grew(e) :- now_entry(e), !was(_, e).
         std::fs::write(root.join("README.md"), "one\n").unwrap();
         let globs = vec!["**/*.py".to_owned()];
         let first = inputs_digest(&root, &globs).unwrap();
+        let line = format!("pkg/a.py\0{}\n", blob_id(b"x = 1\n"));
+        let named = sha2::Sha256::digest(line.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+        assert_eq!(first, format!("sha256:{named}"), "pkg/a.py, named with `/`");
         std::fs::write(root.join("README.md"), "two\n").unwrap();
         std::fs::write(root.join(".rerail/facts/x.py"), "hidden\n").unwrap();
+        std::fs::create_dir_all(root.join("vendor")).unwrap();
+        std::fs::write(root.join("vendor/x.py"), "vendored\n").unwrap();
         assert_eq!(inputs_digest(&root, &globs).unwrap(), first);
+        std::fs::create_dir_all(root.join(".github")).unwrap();
+        std::fs::write(root.join(".github/x.py"), "workflow helper\n").unwrap();
+        let hidden = inputs_digest(&root, &globs).unwrap();
+        assert_ne!(hidden, first);
         std::fs::write(root.join("pkg/a.py"), "x = 2\n").unwrap();
-        assert_ne!(inputs_digest(&root, &globs).unwrap(), first);
+        assert_ne!(inputs_digest(&root, &globs).unwrap(), hidden);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// In a Git work tree the digest reads Git's listing, which holds a committed link to a folder as an entry of its
+    /// own: no input file, so a glob matching it leaves the digest as the files alone make it. Two work trees, each
+    /// listed once.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_folder_in_a_work_tree_is_no_input_file() {
+        let tree = |linked: bool| {
+            let work = tempfile::tempdir().unwrap();
+            let root = work.path();
+            std::fs::create_dir_all(root.join("shared")).unwrap();
+            std::fs::create_dir_all(root.join("docs")).unwrap();
+            std::fs::write(root.join("docs/a.md"), "one\n").unwrap();
+            std::fs::write(root.join("shared/b.md"), "two\n").unwrap();
+            if linked {
+                std::os::unix::fs::symlink("../shared", root.join("docs/shared")).unwrap();
+            }
+            let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
+            git(&["init", "-q"]);
+            git(&["add", "-A"]);
+            git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "files"]);
+            work
+        };
+        let globs = vec!["docs/**".to_owned()];
+        let (plain, linked) = (tree(false), tree(true));
+        assert_eq!(inputs_digest(linked.path(), &globs), inputs_digest(plain.path(), &globs));
     }
 
     const BUDGET: &str = r#"

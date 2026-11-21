@@ -1421,7 +1421,8 @@ fn cpu_now() -> f64 {
 
 /// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);
 /// a fixed kind, a field of leaves only, a short constant, and the twin itself need none. With the twin, no rule
-/// asks for every node's text at any length.
+/// asks for every node's text at any length. A negation gets no twin: of a short constant it needs no longer text,
+/// and otherwise every node's text is made at any length.
 #[test]
 fn long_text_twins_where_no_body_fixes_the_kind() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
@@ -1437,6 +1438,16 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
         assert_eq!(made, twins, "{body}");
         assert!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).any.is_empty(), "{body}: every text is read");
         assert_eq!(crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap().1, 0, "{body}: twinned once");
+    }
+    for (body, negated_any) in [
+        ("out(\"doc\") :- node(_, n, _, _, _), !text(n, \"doc\").", 0),
+        ("out(t) :- node(_, n, _, _, _), field(n, \"attribute\", c), text(c, t), !text(n, t).", 1),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(program, &Vec::new()).unwrap();
+        assert_eq!(made, 0, "{body}: no twin");
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
+        assert_eq!((demand.any.len(), demand.negated_any), (0, negated_any), "{body}");
     }
 }
 
@@ -1471,6 +1482,28 @@ fn text_only_for_the_nodes_read() {
     }
 }
 
+/// A negated `text` read narrows the nodes given `text` as a positive one does: by the field the node is in
+/// (PYI025's `field(a, "alias", al), !text(al, "AbstractSet")`), the constant it is compared with, or its fixed kind.
+/// Of a constant within the bound it needs no text past the bound, even of a fixed kind; compared with a variable, its
+/// fixed kind's text is made at any length.
+#[test]
+fn a_negated_text_read_narrows_the_nodes_it_tests() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let set = |names: &[&str]| names.iter().map(|k| k.to_string()).collect::<BTreeSet<_>>();
+    for (body, read, long) in [
+        ("out(\"AbstractSet\") :- field(_, \"alias\", n), !text(n, \"AbstractSet\").", TextNodes { fields: set(&["alias"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- node(_, n, _, _, _), !text(n, \"self\").", TextNodes { values: set(&["self"]), ..TextNodes::default() }, set(&[])),
+        ("out(\"self\") :- kind(n, \"identifier\"), !text(n, \"self\").", TextNodes { kinds: set(&["identifier"]), ..TextNodes::default() }, set(&[])),
+        ("out(t) :- kind(n, \"identifier\"), kind(s, \"string\"), text(s, t), !text(n, t).", TextNodes { kinds: set(&["identifier", "string"]), ..TextNodes::default() }, set(&["identifier", "string"])),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
+        let demand = crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]);
+        assert_eq!(demand.read, Some(read), "{body}: the nodes given text");
+        assert_eq!(demand.long, long, "{body}: the kinds whose text is made at any length");
+        assert_eq!((demand.any.len(), demand.negated_any), (0, 0), "{body}: no node of any kind");
+    }
+}
+
 /// A base relation's name (`kind`, `field`, `child`) the program gives rules of its own is a relation like any
 /// other: it narrows the nodes whose text is read only by what its rules give. Here they give nothing narrower than
 /// `edge`, so every node's text is read. `node`'s projection `kind(n, k) :- node(_, n, k, _, _)` is `kind` itself.
@@ -1498,6 +1531,27 @@ fn a_derived_base_name_narrows_no_text() {
     // `node`'s projection alone (the lowering's, `rr::lower` `projections`) is `kind` itself: it narrows.
     let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{decls}kind(n, k) :- node(_, n, k, _, _).\nout(t) :- kind(n, \"call\"), text(n, t).\n")).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::text_demand::text_kind_demand(&program, &[]).read, Some(TextNodes { kinds: BTreeSet::from(["call".to_owned()]), ..TextNodes::default() }));
+}
+
+/// A negated `text` read demands the rows it tests, as a positive one does: a policy whose only read of a node's text
+/// is `!text(v, "self")` finds the same alone as beside a policy that reads those nodes' text. Alone, no identifier's
+/// text was made, and the negation held of `self` too.
+#[test]
+fn a_negated_text_read_finds_the_same_alone_and_beside_a_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    std::fs::create_dir_all(at("root")).unwrap();
+    std::fs::write(at("root/a.py"), "self.x: int\nother.y: int\n").unwrap();
+    let policy = |id: &str, rule: &str| format!(".policy \"t:{id}\" revision 1\n.language python\n.mode steer\n.scope include \"**/*\"\n{rule}\n");
+    std::fs::write(at("negated.rerail"), policy("negated", ".violation Odd(at: node) code \"odd\" \"an attribute of a name other than self\"\nOdd(t) :- kind(t, \"attribute\"), field(t, \"object\", v), kind(v, \"identifier\"), !text(v, \"self\").")).unwrap();
+    std::fs::write(at("reader.rerail"), policy("reader", ".violation Named(at: node) code \"named\" \"a name\"\nNamed(v) :- kind(v, \"identifier\"), text(v, \"nothing\").")).unwrap();
+    let lines = |policies: &[&str], out: &str| -> Vec<i64> {
+        let paths: Vec<PathBuf> = policies.iter().map(|p| at(p)).collect();
+        let report = crate::code_rule_dsl::tools::run_policies(&paths, &at("root"), &at(out), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().filter(|d| d["code"] == "odd").map(|d| d["line"].as_i64().unwrap()).collect()
+    };
+    assert_eq!(lines(&["negated.rerail"], "alone"), [2], "alone");
+    assert_eq!(lines(&["negated.rerail", "reader.rerail"], "beside"), [2], "beside a reader");
 }
 
 /// `node_text` (a node's exact text, at any length) is answered on request (decision 0174): each reader asks for the
@@ -1894,6 +1948,44 @@ fn an_axis_counts_its_rows_without_its_solve() {
         assert!(source.is_solved(), "{name}: solved by the scan");
         assert_eq!(source.len(), len, "{name}");
     }
+}
+
+/// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
+/// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
+/// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
+/// containment has no solve, and no such relation.
+#[test]
+fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-ids")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, source) in [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ] {
+        let ib = source.in_block().unwrap_or_else(|| panic!("{name}: its answer in a block"));
+        assert_eq!(ib.rows as usize, source.len(), "{name}: every row");
+        assert!(ib.rows > 0, "{name}");
+        let rel = ib.relation();
+        for r in 0..ib.rows {
+            assert_eq!((rel.rows.get(r, 0), rel.rows.get(r, 1)), (source.value(r as usize, 0), source.value(r as usize, 1)), "{name}: row {r}");
+        }
+        let again = source.in_block().expect("again");
+        assert!(Arc::ptr_eq(&again.facts, &ib.facts) && again.at == ib.at, "{name}: written once");
+        // An index on each column is built in its block: a reader's probe does not copy it (`DevIndex::moved`).
+        assert!(ib.own_index(&[0]).is_some() && ib.own_index(&[1]).is_some(), "{name}: room for an index on each column");
+    }
+    assert!(within::Within::new(Arc::clone(&batch), within::Mode::Span).in_block().is_none(), "span containment has no solve");
 }
 
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
@@ -2336,6 +2428,25 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1);
     assert!(text.failure().is_none());
+}
+
+/// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that
+/// module's document alone, as one by its path does: the batch knows each file's module from its path and the
+/// corpus's name for it, none made.
+#[test]
+fn a_probe_of_doc_by_a_module_makes_that_document_alone() {
+    let store = ContentStore::open(&temp("probe-module")).unwrap();
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("pkg/m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["doc".to_owned()].into()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let doc = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "doc").unwrap().2);
+    let module = i64::from(store.atoms_handle().intern("pkg.m4").unwrap());
+    let found = doc.lookup(2, &[module]).unwrap();
+    assert_eq!(found.iter().map(|&r| doc.value(r, 0)).collect::<Vec<_>>(), vec![4], "pkg/m4.py's row");
+    assert_eq!(batch.docs.made_count(), 1, "only the module's document is made");
+    assert_eq!(doc.lookup(2, &[i64::from(store.atoms_handle().intern("pkg.none").unwrap())]).unwrap(), Vec::<usize>::new(), "no file is that module");
+    assert_eq!(batch.docs.made_count(), 1, "a module no file is makes none");
 }
 
 /// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and

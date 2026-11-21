@@ -65,15 +65,31 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
         // Cold (a call) where 0310's policy marks the read so.
-        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        let mut text = String::new();
+        body(&mut text, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        // A large body is a call on the device even where the JIT inlines it: a GPU compiler inlines a hot read at
+        // every call site, with the hot reads it calls, and the transducer's interpreter (`run_batch`) took 44.7 s in
+        // the AGX back end on an M5 Max with every tape read inlined, 5.5 s with none (`DEVICE_INLINE`, decision 0548;
+        // the tape's own reads, written by hand in `<ukl/reads/tape_body.h>`, are marked so there).
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot) && statements(&text) <= DEVICE_INLINE;
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
-        body(&mut bodies, f, &named, family).map_err(|e| format!("{n} (u0:{id}): {e}"))?;
+        bodies.push_str(&text);
         bodies.push_str("}\n");
     }
     out.push_str(&bodies);
     Ok(out)
+}
+
+/// The most statements a hot read's body has and is still inlined on the device: the tape's small reads (`child`,
+/// `slot`, `has_kind`, `length`: 59 or fewer), not those that decode a format's lines or a node's stated span
+/// (`start_stated`, `line`, `start_next`, `end_stated`, `size`, `line_start`: 86 to 255, each calling more reads).
+pub const DEVICE_INLINE: usize = 70;
+
+/// A body's statements, as its text counts them.
+fn statements(body: &str) -> usize {
+    body.matches(';').count()
 }
 
 /// The 64-bit values of `f` of which every use reads only the low 32 bits (a demanded-bits pass to its fixpoint):

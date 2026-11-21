@@ -8,22 +8,64 @@
  * The packs are restricted, so this reads them with the npm credentials in the environment: CI's `installed-packs`
  * job sets `RERAIL_INSTALLED_PACKS_NPM=1` with a read-only token. Without it the file is skipped. Each run gets its
  * own `HOME`, so no coding agent on this machine is connected, and keeps npm's own user config for the token.
+ *
+ * The core is this build, whose version can be one npm's `latest` does not have yet: from the merge of a Release pull
+ * request to its promotion, main is that release, published (or to be published) under `next` beside the pack versions
+ * released with it, while the packs on `latest` may still name ranges that exclude it. So the Rerail home is on the
+ * update channel an install of this version is on (`channel`), and the pack versions the steps name are read
+ * from the registry by the range each one publishes (`admittedVersions`), not pinned.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import semver from "semver";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { PACK_FALLBACK_TAG, UPDATE_STATE_FILE } from "../src/setup/index.js";
 
 const NPM = process.env.RERAIL_INSTALLED_PACKS_NPM === "1";
 /** A registry round trip per pack, several per test. */
 const NPM_TIMEOUT_MS = 300_000;
-/** Two published versions of the JavaScript pack, the older first. Both list eslint-eqeqeq. */
-const JAVASCRIPT_VERSIONS = ["0.1.1", "0.1.2"] as const;
+const JAVASCRIPT = "@neralabs/rerail-pack-javascript";
 const PACKAGE_ROOT = resolve(".");
 const CLI = join(PACKAGE_ROOT, "dist", "cli", "cli.js");
 
+interface Manifest {
+  version: string;
+  peerDependencies?: Record<string, string>;
+}
+
+/** `npm view <args> --json`, with the npm credentials in the environment. */
+function npmView(args: readonly string[]): unknown {
+  return JSON.parse(execFileSync("npm", ["view", ...args, "--json"], { encoding: "utf8" })) as unknown;
+}
+
+/** This build's manifest: its version is the core every pack's range is checked against, as `rerail` reports it. */
+const CORE = JSON.parse(readFileSync(join(PACKAGE_ROOT, "package.json"), "utf8")) as Manifest;
+
+/** The published plain versions of `packageName` whose core range admits this build's core, oldest first. */
+function admittedVersions(packageName: string): string[] {
+  const viewed = npmView([`${packageName}@>=0.0.0`, "version", "peerDependencies"]);
+  // npm answers one matching version as an object, several as an array.
+  const published = (Array.isArray(viewed) ? viewed : [viewed]) as Manifest[];
+  return published
+    .filter(manifest => {
+      const range = manifest.peerDependencies?.["@neralabs/rerail"];
+      return range !== undefined && semver.satisfies(CORE.version, range, { includePrerelease: true });
+    })
+    .map(manifest => manifest.version)
+    .sort(semver.compare);
+}
+
+/**
+ * The update channel an install of this core is on: `latest` once core's `latest` dist-tag is its version, else `next`,
+ * where every release publishes core and its packs first (docs/release.md, "Promoting").
+ */
+let channel: string;
+/** The two newest published versions of the JavaScript pack that load in this core, the older first. Both list eslint-eqeqeq. */
+let older: string;
+let newer: string;
 let root: string;
 let home: string;
 let repo: string;
@@ -39,6 +81,8 @@ beforeEach(() => {
   symlinkSync(PACKAGE_ROOT, join(home, "current"));
   // Past set-up's one approval that Rerail may read sessions; `setup-json.test.ts` asks it.
   writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
+  // The channel set-up fetches packs under, as `rerail update --channel` records it.
+  writeFileSync(join(home, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel, current: { version: CORE.version, packageRoot: PACKAGE_ROOT } }));
   environment = {
     ...process.env,
     RERAIL_HOME: home,
@@ -110,6 +154,16 @@ async function eqeqeq(): Promise<{ on: boolean | undefined; unavailable: string[
 }
 
 describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS }, () => {
+  beforeAll(() => {
+    channel = npmView(["@neralabs/rerail", "dist-tags.latest"]) === CORE.version ? "latest" : PACK_FALLBACK_TAG;
+    const admitted = admittedVersions(JAVASCRIPT);
+    // A release writes a pack's range open above (`>=<version>-0`), so each release's pack still loads in the next core:
+    // only the capped ranges (`<0.2.0`) of the packs published before 0.2.0 could leave fewer than two.
+    if (admitted.length < 2) throw new Error(`Upgrading and downgrading ${JAVASCRIPT} needs two published versions whose core range admits Rerail ${CORE.version}; npm has ${admitted.length === 0 ? "none" : admitted[0]}`);
+    older = admitted.at(-2)!;
+    newer = admitted.at(-1)!;
+  });
+
   it("`rerail setup --relay`: shows the published packs that fit an outside project, installs nothing before the answer, then exactly the versions the answer carries", async () => {
     const read = await rerail(["setup", "--relay"]);
     expect(read.stdout).toContain("Find rule packs for shop?");
@@ -124,16 +178,17 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     expect(confirm.stdout).toContain("eslint-eqeqeq starts on");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
 
-    // The answer carries exact versions: an older one than the tag gives is installed as named, not re-resolved.
+    // The answer carries exact versions: one other than the tag gives is installed as named, not re-resolved.
     const start = answerArgs(confirm.stdout, 1);
     const packs = start.indexOf("--packs") + 1;
-    start[packs] = start[packs]!.replace(/javascript@[^,]+/u, `javascript@${JAVASCRIPT_VERSIONS[0]}`);
+    const named = /javascript@([^,]+)/u.exec(start[packs]!)?.[1] === newer ? older : newer;
+    start[packs] = start[packs]!.replace(/javascript@[^,]+/u, `javascript@${named}`);
     const started = await rerail(start);
     expect(started.stdout).toContain("Rerail is on in shop ·");
     // Every other pack is installed at the version the answer carried.
     const carried = Object.fromEntries(start[packs]!.split(",").map(spec => [`@neralabs/rerail-pack-${spec.slice(0, spec.lastIndexOf("@"))}`, spec.slice(spec.lastIndexOf("@") + 1)]));
     expect(installed()).toEqual(carried);
-    expect(installed()["@neralabs/rerail-pack-javascript"]).toBe(JAVASCRIPT_VERSIONS[0]);
+    expect(installed()[JAVASCRIPT]).toBe(named);
 
     const listed = await daemonGet<{ packs: { id: string; version: string | null }[]; skipped: unknown[] }>("/api/rule-packs");
     expect(listed.packs.map(found => found.id).sort()).toEqual(["complexity", "javascript", "typescript"]);
@@ -172,7 +227,6 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
   });
 
   it("`rerail packs` upgrades, downgrades and removes a published pack while the repository's settings stand, and leaves out one whose core range excludes Rerail", async () => {
-    const [older, newer] = JAVASCRIPT_VERSIONS;
     expect((await rerail(["packs", "add", `javascript@${older}`])).stdout).toContain(`javascript@${older}`);
     const read = await rerail(["setup", "--relay"]);
     const confirm = await rerail(answerArgs(read.stdout, 1));
@@ -191,7 +245,7 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     const manifest = join(home, "packs", "node_modules", "@neralabs", "rerail-pack-javascript", "package.json");
     const original = readFileSync(manifest, "utf8");
     writeFileSync(manifest, JSON.stringify({ ...JSON.parse(original) as object, peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
-    expect((await rerail(["packs", "list"])).stdout).toMatch(/left out: @neralabs\/rerail-pack-javascript@0\.1\.1: .*>=9\.0\.0/u);
+    expect((await rerail(["packs", "list"])).stdout).toMatch(new RegExp(`left out: ${JAVASCRIPT}@${older.replaceAll(".", "\\.")}: .*>=9\\.0\\.0`, "u"));
     expect((await eqeqeq()).unavailable).toContain("javascript: missing");
     writeFileSync(manifest, original);
 

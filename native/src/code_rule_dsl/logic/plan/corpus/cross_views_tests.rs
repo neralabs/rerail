@@ -212,6 +212,44 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     assert!(edit.iter().all(patched) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
 }
 
+/// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and
+/// keeps its base relations' statistics as the kept route does: its first run counts them and makes every document,
+/// the run after it makes none and takes them as kept, and an edit makes the changed file's documents alone and patches
+/// the statistics by its old and new ones. Its outputs are a fresh run's.
+#[test]
+fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut c = Corpus::new("session-batch");
+    let handle = super::session::Handle::open(&c.dir.join("session")).unwrap();
+    // The decisions are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let run = |c: &mut Corpus| {
+        profile::take_decisions();
+        let (_, rows) = {
+            let _bound = handle.bind();
+            c.run()
+        };
+        let made = profile::take_decisions();
+        let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+        (of("the base relations' statistics (decision 0458)"), of("the corpus batch (decision 0458)"), rows)
+    };
+    let all = |made: &BTreeSet<String>, how: &str| !made.is_empty() && made.iter().all(|x| x.ends_with(&format!(": {how}")));
+    let (cold, cold_batch, _) = run(&mut c);
+    let (warm, warm_batch, _) = run(&mut c);
+    c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
+    let (edit, edit_batch, rows) = run(&mut c);
+    profile::set(false);
+    assert!(all(&cold, "counted"), "a session's first run counts them: {cold:?}");
+    assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
+    assert!(all(&warm, "kept"), "the run after it takes them as kept: {warm:?}");
+    assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
+    assert!(all(&edit, "patched by the changed documents"), "an edit patches them: {edit:?}");
+    assert_eq!(edit_batch, BTreeSet::from(["1 documents made, 3 held from the session's last run".to_owned()]), "and makes the changed file's alone");
+    every_output_has_rows(&rows);
+    assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
+}
+
 /// R5: the runs pass in strict mode (`RERAIL_SQL_STRICT`): no SQL inside the waves (decision 0104), for the memo
 /// hits' tapes too. The strict mode aborts a process that reads SQL in a wave, so each run is a process of its own,
 /// as `a_rule_edit_over_known_files_writes_their_entries_with_no_sql_in_the_waves`' are.

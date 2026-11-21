@@ -130,7 +130,7 @@ describe("gh invocation", () => {
   });
 
   it("reads the API only with GET, an explicit host and the GitHub media type", async () => {
-    const gh = fakeGh(() => ({ stdout: JSON.stringify({ login: "jbarnes" }) }));
+    const gh = fakeGh(() => ({ stdout: JSON.stringify({ login: "jdoe" }) }));
     await createGithubClient({ env, spawn: gh.spawn }).readiness({ ...REPOSITORY, host: "github.example.com" });
     expect(gh.calls.map(call => call.args)).toEqual([
       ["auth", "status", "--hostname", "github.example.com"],
@@ -255,7 +255,7 @@ describe("readiness", () => {
 
   it("is unavailable, not signed-out, when gh auth status fails with a login it could not check", async () => {
     // gh prints this for a rejected token, and for one it could not check because the network failed.
-    const stderr = "github.com\n  X Failed to log in to github.com account tbelanger (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n";
+    const stderr = "github.com\n  X Failed to log in to github.com account akim (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n";
     const gh = fakeGh(() => ({ code: 1, stderr }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
       .resolves.toEqual({ state: "unavailable", login: null, repository: "neralabs/rerail" });
@@ -268,10 +268,10 @@ describe("readiness", () => {
   });
 
   it("is signed-in with the login GitHub reports for the user", async () => {
-    // `gh api --method GET user --jq '{login}'` → {"login":"Moti-Velz"}
-    const gh = fakeGh(args => (args[0] === "auth" ? { stdout: "github.com\n  ✓ Logged in to github.com account Moti-Velz (keyring)\n" } : { stdout: JSON.stringify({ login: "Moti-Velz", id: 1, type: "User" }) }));
+    // `gh api --method GET user --jq '{login}'` → {"login":"dlee"}
+    const gh = fakeGh(args => (args[0] === "auth" ? { stdout: "github.com\n  ✓ Logged in to github.com account dlee (keyring)\n" } : { stdout: JSON.stringify({ login: "dlee", id: 1, type: "User" }) }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
-      .resolves.toEqual({ state: "signed-in", login: "Moti-Velz", repository: "neralabs/rerail" });
+      .resolves.toEqual({ state: "signed-in", login: "dlee", repository: "neralabs/rerail" });
     expect(gh.calls[1]?.args).toEqual(["api", "--method", "GET", "--hostname", "github.com", "-H", ACCEPT, "user"]);
   });
 
@@ -285,9 +285,9 @@ describe("readiness", () => {
 describe("openPullRequests", () => {
   // The shape `gh pr list --json <PR_FIELDS>` prints (gh 2.89).
   const real = {
-    author: { id: "U_kgDOBnypnA", is_bot: false, login: "Moti-Velz", name: "Timo" },
+    author: { id: "U_kgDOAAAAAA", is_bot: false, login: "dlee", name: "Dana Lee" },
     baseRefName: "main",
-    headRefName: "Moti-Velz/changelog-entries",
+    headRefName: "dlee/changelog-entries",
     headRefOid: COMMIT,
     headRepositoryOwner: { id: "O_kgDOCHyD1g", login: "neralabs" },
     isCrossRepository: false,
@@ -312,7 +312,7 @@ describe("openPullRequests", () => {
       { ...real, number: 398, url: "https://github.com/neralabs/rerail/pull/398", updatedAt: "yesterday" },
       "not an object",
       // A fork's pull request names its head's owner; a deleted fork's names none.
-      { ...real, number: 399, url: "https://github.com/neralabs/rerail/pull/399", isCrossRepository: true, headRepositoryOwner: { id: "U_x", login: "Moti-Velz" } },
+      { ...real, number: 399, url: "https://github.com/neralabs/rerail/pull/399", isCrossRepository: true, headRepositoryOwner: { id: "U_x", login: "dlee" } },
       { ...real, number: 400, url: "https://github.com/neralabs/rerail/pull/400", isCrossRepository: true, headRepositoryOwner: null },
     ];
     const gh = fakeGh(() => ({ stdout: JSON.stringify(entries) }));
@@ -323,17 +323,17 @@ describe("openPullRequests", () => {
         number: 389,
         title: "Release notes: changelog entries wait in .changelog/",
         url: "https://github.com/neralabs/rerail/pull/389",
-        headRefName: "Moti-Velz/changelog-entries",
+        headRefName: "dlee/changelog-entries",
         headCommit: COMMIT,
         baseRefName: "main",
-        author: "Moti-Velz",
+        author: "dlee",
         isDraft: false,
         updatedAt: "2026-11-02T20:09:43Z",
         crossRepository: false,
         headOwner: "neralabs",
       },
       expect.objectContaining({ number: 390, author: "dependabot[bot]", isDraft: true, title: "Bump zod" }),
-      expect.objectContaining({ number: 399, crossRepository: true, headOwner: "Moti-Velz" }),
+      expect.objectContaining({ number: 399, crossRepository: true, headOwner: "dlee" }),
       expect.objectContaining({ number: 400, crossRepository: true, headOwner: null }),
     ]);
   });

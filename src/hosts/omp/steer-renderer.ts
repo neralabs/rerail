@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@oh-my-pi/pi-coding-agent";
 import { isConflictNotice, isSteerRule, RULE_MESSAGE_TYPE, STEER_LINE_MESSAGE_TYPE, type ConflictNotice, type SteerRule } from "../../engine/adapter-contract.js";
-import { STEER_GLYPHS } from "../../engine/code-rule/rerail-steer.js";
+import { STEER_GLYPHS, steerRuleName } from "../../engine/code-rule/rerail-steer.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 
@@ -40,8 +40,8 @@ function detailConflict(details: unknown): ConflictNotice | undefined {
  * `◆ R E R A I L · <rule>  steered`, `steerHeadlines`' header: the glyph and state in the theme's accent, the separator
  * dimmed, and Rerail as its mark, the footer's coloured letters.
  */
-function headerText({ id, state }: SteerRule, mark: string, theme: SteerTheme): string {
-  return `${theme.fg("accent", STEER_GLYPHS[state])} ${mark}${theme.fg("dim", " · ")}${terminalText(id)}  ${theme.fg("accent", state)}`;
+function headerText(rule: SteerRule, mark: string, theme: SteerTheme): string {
+  return `${theme.fg("accent", STEER_GLYPHS[rule.state])} ${mark}${theme.fg("dim", " · ")}${terminalText(steerRuleName(rule))}  ${theme.fg("accent", rule.state)}`;
 }
 
 /** The `why?` (or `open`) after a headline: the word itself linked where the terminal draws links, else the word and its address. */

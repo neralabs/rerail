@@ -3441,8 +3441,10 @@ mod json_probe {
     /// JSON's tier 1 is structured control (0363): its passes' graphs are reducible, every loop
     /// entered at its head alone, so its Rust form (`clif_rust`) is nested loops, as the lean
     /// lexer's, with no loop over a label switch (a `goto`'s translation, which rustc compiles to
-    /// a jump table every transition passes).
+    /// a jump table every transition passes). The Rust form is NEON's (`clif_rust`'s target), so
+    /// the test is aarch64's: x86-64's tier 1 has its own vector forms (a movemask, `vhigh_bits`).
     #[test]
+    #[cfg(target_arch = "aarch64")]
     fn json_tier1_has_no_label_switch() {
         use rerail_compiler::records::Split;
         let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");

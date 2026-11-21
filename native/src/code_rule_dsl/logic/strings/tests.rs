@@ -30,7 +30,7 @@ fn globs_respect_path_segments() {
     assert!(test("glob", "impl/sqlite/fts/a/b.py", "impl/*/fts/**"));
     assert!(!test("glob", "impl/a/b/fts/c.py", "impl/*/fts/**"), "* is one segment");
     assert!(!test("glob", "lib/impl/x.py", "impl/**/*.py"), "anchored at the start");
-    assert!(test("glob", "l2070_server_plan/x.py", "l2070_*/*.py"));
+    assert!(test("glob", "plan_steps/x.py", "plan_*/*.py"));
     assert!(!test("glob", "a.py", "[unclosed"), "an invalid glob matches nothing");
 }
 
