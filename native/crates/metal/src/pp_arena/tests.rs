@@ -416,6 +416,11 @@ fn the_source_is_opencl_c_1_2() {
 #[test]
 fn the_grid_is_the_devices_resident_count() {
     let device = lane::device().unwrap();
+    // The CPU runs one group (decision 0527): its groups would be coroutines on one thread.
+    if matches!(device, lane::Device::Cpu(_)) {
+        assert_eq!(groups(), 1, "one group on the CPU");
+        return;
+    }
     let local = kernel("pp_setup").threadgroup_bytes();
     match device.gpu_cores() {
         Some(cores) => {

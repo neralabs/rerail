@@ -234,6 +234,16 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 }
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return (uint32_t)__ukl_cpu_exchange(v, __ukl_self->lane ^ m); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__ukl_cpu_ballot(b); }
+// Native forms: a reduction or a scan is one wait of the SIMD group, not a shuffle's per step.
+#define UKL_NATIVE_SG_REDUCE 1
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 0u); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 1u); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 2u); }
+#define UKL_NATIVE_SG_SCAN 1
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, true); }
+UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, false); }
+#define UKL_NATIVE_SG_SEG 1
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_native(bool add, uint32_t f, uint32_t v, uint32_t* fin __UKL_PARAMS) { return __ukl_cpu_seg(add, f, v, fin); }
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }

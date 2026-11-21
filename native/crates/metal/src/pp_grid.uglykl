@@ -32,7 +32,7 @@
 #define JOB(j, n_, in_, out_, total_) jobs[j].n = (n_); jobs[j].in = C32(in_); jobs[j].out = C32(out_); jobs[j].total = C32(total_)
 #define SCANS(k) TICK(); if (!ukl_grid_scans(g, jobs, (k), C32(SUMS), tg->scratch, &tg->flag __UKL_ARGS)) return
 #define SCAN(n, in, out, total) TICK(); if (!ukl_grid_scan_n(g, (n), C32(in), C32(out), C32(total), C32(SUMS), tg->scratch, &tg->flag __UKL_ARGS)) return
-#define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg->big, tg->big + 256u, &tg->flag)) return
+#define SEG(op, n, in, heads, out) TICK(); if (!ukl_grid_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), C32(SUMS), tg->big, tg->big + 256u, &tg->flag __UKL_ARGS)) return
 #define SORT(n, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64(g, (n), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg->scratch, &tg->flag __UKL_ARGS)) return
 // A sort whose rows are already in the order of their low `low` bits: only the digits above pass.
 #define SORT_FROM(n, low, bits, keys, va, kb, vb, hist) TICK(); if (!ukl_grid_sort_u64_from(g, (n), (low), (bits), true, C64(keys), C32(va), C64(kb), C32(vb), C32(hist), C32(SUMS), sl, tg->scratch, &tg->flag __UKL_ARGS)) return
@@ -56,15 +56,168 @@
 #define TEXT_STRETCHES AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS)
 #define IF_STRETCHES AT(const uint32_t, IF_NODES), AT(const uint32_t, IF_AT), AT(const uint32_t, N_DIRS), AT(const uint32_t, IF_AT)
 
-// The queue's workers over a top: each SIMD group of the grid one, until the queue is idle.
-#define PX_WORK_ON(T, CLOSES)                                                                        \
-    px_worker(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const PpDef, DEFS), AT(const uint32_t, ITEMS), \
+// A round's items over a top (decision 0527): each SIMD group of the grid takes its share.
+#define PX_UA(T, CLOSES)                                                                        \
+    Ux xu; Ar xa;                                                                                      \
+    px_make(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const PpDef, DEFS), AT(const uint32_t, ITEMS), \
               AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), \
               AT(const uint32_t, VALUES), T##_TOP, T##_INST, AT(const uint32_t, DEPTH), AT(PxList, LISTS),                                      \
               AT(uint32_t, TOKENS), AT(PxArg, ARGS), AT(uint32_t, OUT), AT(uint32_t, SLOTS), AT(uint32_t, QCTL),                  \
               AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), \
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
-              AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], lane __UKL_ARGS)
+              AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], \
+              AT(uint32_t, SCANS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa)
+// This SIMD group of the grid, and their count.
+#define SG_ID (g.group * (g.lsz / UKL_SIMD_WIDTH) + g.lid / UKL_SIMD_WIDTH)
+#define SG_N (g.groups * (g.lsz / UKL_SIMD_WIDTH))
+#define PX_WORK_ON(T, CLOSES) { PX_UA(T, CLOSES); px_worker(xu, xa, SG_ID, SG_N, lane __UKL_ARGS); }
+
+// A round's scan (decision 0527 §2): every list its items gave, a thread a token of each.
+#define PX_SCANS(T, CLOSES)                                                                          \
+    {                                                                                                  \
+        PX_UA(T, CLOSES);                                                                            \
+        Sc sc_;                                                                                        \
+        sc_.scans = AT(const uint32_t, SCANS); sc_.ns = ukl_min(ukl_atomic_load(&AT(uint32_t, QCTL)[5]), W(Q_CAP)); \
+        sc_.n = AT(uint32_t, SC_N); sc_.base = AT(uint32_t, SC_BASE); sc_.xj = AT(uint32_t, SC_XJ);    \
+        sc_.m = AT(uint32_t, SC_M); sc_.k = AT(uint32_t, SC_K); sc_.e = AT(uint32_t, SC_E);            \
+        sc_.delta = AT(uint32_t, SC_DELTA); sc_.heads = AT(uint32_t, SC_HEADS); sc_.depth = AT(uint32_t, SC_DEPTH); \
+        sc_.close = AT(uint32_t, SC_CLOSE); sc_.cat = AT(uint32_t, SC_CAT); sc_.ckeys = AT(uint64_t, SC_CKEYS); \
+        sc_.cend = AT(uint32_t, SC_CEND); sc_.reach = AT(uint32_t, SC_REACH); sc_.live = AT(uint32_t, SC_LIVE); sc_.rank = AT(uint32_t, SC_RANK); \
+        sc_.total = 0u; sc_.ltotal = 0u; sc_.first = 0u;                                               \
+        if (sc_.ns != 0u) {                                                                            \
+            EACH(i, sc_.ns) px_sc_count(xa, sc_, i);                                                   \
+            BARRIER();                                                                                 \
+            SCAN(sc_.ns, SC_N, SC_BASE, SC_TOTAL);                                                     \
+            sc_.total = N(SC_TOTAL);                                                                   \
+            ONE(x) AT(uint32_t, CTL)[24] = ukl_max(AT(const uint32_t, CTL)[24], sc_.total);           \
+            if (sc_.total > W(SC_CAP)) {                                                               \
+                ONE(x) px_refuse(AT(uint32_t, CTL), X_ROOM);                                           \
+            } else {                                                                                   \
+                EACH(t, sc_.total) px_sc_tok(xu, xa, sc_, t);                                          \
+                BARRIER();                                                                             \
+                SEG(UKL_SEG_ADD, sc_.total, SC_DELTA, SC_HEADS, SC_DEPTH);                             \
+                SCAN(sc_.total, SC_CLOSE, SC_CAT, SC_CTOTAL);                                          \
+                EACH(t, sc_.total) px_sc_ckeys(xa, sc_, t);                                            \
+                BARRIER();                                                                             \
+                SORT_FROM(N(SC_CTOTAL), 24u, W(CLOSE_BITS), SC_CKEYS, SC_VA, SC_KB, SC_VB, SC_HIST);  \
+                PP_GLOBAL const uint64_t* scl_ = ukl_grid_sort_in_input(W(CLOSE_BITS)) ? AT(const uint64_t, SC_CKEYS) : AT(const uint64_t, SC_KB); \
+                uint32_t ncl_ = N(SC_CTOTAL);                                                          \
+                EACH(t, sc_.total) px_sc_ends(xa, sc_, scl_, ncl_, t);                                 \
+                BARRIER();                                                                             \
+                SEG(UKL_SEG_MAX, sc_.total, SC_CEND, SC_HEADS, SC_REACH);                              \
+                EACH(t, sc_.total) px_sc_live(sc_, t);                                                 \
+                BARRIER();                                                                             \
+                SCAN(sc_.total, SC_LIVE, SC_RANK, SC_LTOTAL);                                          \
+                ONE(x) {                                                                               \
+                    uint32_t nl_ = N(SC_LTOTAL), f_ = nl_ == 0u ? 0u : px_list_ids(xa, nl_);           \
+                    if (f_ == NO_POS) px_refuse(AT(uint32_t, CTL), X_ROOM);                            \
+                    AT(uint32_t, SC_FIRST)[0] = f_;                                                    \
+                }                                                                                      \
+                BARRIER();                                                                             \
+                sc_.ltotal = N(SC_LTOTAL); sc_.first = N(SC_FIRST);                                    \
+                EACH(t, sc_.total) px_sc_child(xu, xa, sc_, t);                                        \
+                BARRIER();                                                                             \
+                px_sc_finish(xu, xa, sc_, SG_ID, SG_N, lane __UKL_ARGS);                               \
+            }                                                                                          \
+        }                                                                                              \
+    }
+
+// A walk's phases over the iteration's set `w_` (decision 0527 §2), in the given forms of a phase
+// over `n` elements, a barrier, a scan and a segmented scan: the grid's, or group 0's alone.
+#define PX_WALK_PHASES(EACHM, BARM, SCANM, SEGM, which_, ROOMOUT)                                     \
+    EACHM(i, w_.ns) px_wk_count(xa, w_, i);                                                          \
+    BARM();                                                                                            \
+    SCANM(w_.ns, SC_N, SC_BASE, SC_TOTAL);                                                           \
+    w_.total = N(SC_TOTAL);                                                                            \
+    if (w_.total > W(SC_CAP)) { ROOMOUT; }                                                           \
+    EACHM(t, w_.total) px_wk_clear(w_, t);                                                           \
+    BARM();                                                                                            \
+    EACHM(i, w_.ns) px_wk_seq(xa, w_, i);                                                            \
+    BARM();                                                                                            \
+    SEGM(UKL_SEG_MAX, w_.total, SC_K, SC_HEADS, SC_DEPTH);                                           \
+    SEGM(UKL_SEG_MAX, w_.total, SC_E, SC_HEADS, SC_CLOSE);                                           \
+    EACHM(t, w_.total) px_wk_tok(xu, xa, w_, t);                                                     \
+    BARM();                                                                                            \
+    EACHM(t, w_.total) px_wk_piece(xa, w_, t);                                                       \
+    BARM();                                                                                            \
+    SEGM(UKL_SEG_ADD, w_.total, SC_DELTA, SC_HEADS, SC_LIVE);                                        \
+    SEGM(UKL_SEG_ADD, w_.total, SC_REACH, SC_HEADS, SC_RANK);                                        \
+    SEGM(UKL_SEG_ADD, w_.total, SC_K, SC_E, SC_DEPTH);                                               \
+    EACHM(t, w_.total) px_wk_runs(xa, w_, t);                                                        \
+    BARM();                                                                                            \
+    if ((which_) != 0u) {                                                                              \
+        EACHM(t, w_.total) px_wk_write(xu, xa, w_, t);                                               \
+        BARM();                                                                                        \
+    }                                                                                                  \
+    EACHM(i, w_.ns) px_wk_end(xa, w_, i);                                                            \
+    BARM()
+
+// Group 0's forms: its threads alone, its own barriers.
+#define G_EACH(t, n) for (uint32_t t = g.lid, t##_n = (n); t < t##_n; t += g.lsz)
+#define G_BARRIER() ukl_tg_barrier_device()
+#define G_SCAN(n, in, out, total) ukl_group_scan_n(g, (n), C32(in), C32(out), C32(total), tg->scratch __UKL_ARGS)
+#define G_SEG(op, n, in, heads, out) ukl_group_seg_scan_n(g, (op), (n), C32(in), C32(heads), C32(out), tg->big, tg->big + 256u __UKL_ARGS)
+
+// The walk's set `which_` (0 the lists made final, 1 the lists to place), `wc_` its control words
+// (`px_set_later`): the next iteration's taken (its half the iteration's), into `w_`.
+#define PX_WALK_SET(which_, wc_, n_)                                                                   \
+    Wk w_;                                                                                             \
+    w_.set = ((which_) == 0u ? AT(const uint32_t, FINS) : AT(const uint32_t, PLACES)) + (ukl_atomic_poll(&wc_[1]) & 1u) * W(Q_CAP); \
+    w_.ns = (n_); w_.place = (which_) != 0u;                                                           \
+    w_.n = AT(uint32_t, SC_N); w_.base = AT(uint32_t, SC_BASE); w_.stop = AT(uint32_t, SC_XJ);         \
+    w_.child = AT(uint32_t, SC_M); w_.xlive = AT(uint32_t, SC_K); w_.ends = AT(uint32_t, SC_E);       \
+    w_.heads = AT(uint32_t, SC_HEADS); w_.cb = AT(uint32_t, SC_DEPTH); w_.incl = AT(uint32_t, SC_CLOSE); \
+    w_.pi = AT(uint32_t, SC_CAT); w_.fl = AT(uint32_t, SC_CEND); w_.v = AT(uint32_t, SC_DELTA);        \
+    w_.pv = AT(uint32_t, SC_REACH); w_.off = AT(uint32_t, SC_LIVE); w_.poff = AT(uint32_t, SC_RANK)
+
+// A round's walks (decision 0527 §2) of the set `which_`: an iteration a set, each one's lists'
+// tokens a thread each, until an iteration makes none (a chain's finals climb it, a list's places
+// go down it). The scan's stores hold them. A set whose lists and tokens a group holds is group
+// 0's alone, with its own barriers, one such after another (a chain's climb: no grid barrier a
+// level); a larger one is the grid's. `CTL` 26 + 3 `which_` + 2 says which: 0 none left, 1 a large
+// one next.
+#define PX_WALKS(T, CLOSES, which_)                                                                  \
+    {                                                                                                  \
+        PP_GLOBAL uint32_t* wc_ = AT(uint32_t, CTL) + 26u + 3u * (which_);                            \
+        for (uint32_t wi_ = 0u; wi_ < MAX_CHAIN; wi_++) {                                              \
+            PX_UA(T, CLOSES);                                                                          \
+            if (g.group == 0u) {                                                                       \
+                uint32_t left_ = 0u;                                                                   \
+                for (uint32_t si_ = 0u; si_ < MAX_CHAIN; si_++) {                                      \
+                    ukl_tg_barrier_device();                                                           \
+                    uint32_t n_ = ukl_atomic_load(&wc_[0]);                                            \
+                    if (n_ == 0u) break;                                                               \
+                    if (n_ > ukl_min(W(Q_CAP), UKL_GRID_SMALL)) { left_ = 1u; break; }                 \
+                    /* The next set's tokens: within a group's, or the grid's. */                      \
+                    PP_GLOBAL const uint32_t* nx_ = ((which_) == 0u ? AT(const uint32_t, FINS) : AT(const uint32_t, PLACES)) + (1u - (ukl_atomic_load(&wc_[1]) & 1u)) * W(Q_CAP); \
+                    uint32_t mine_ = 0u;                                                               \
+                    for (uint32_t i_ = g.lid; i_ < n_; i_ += g.lsz) mine_ += xa.lists[nx_[i_]].len;    \
+                    if (ukl_tg_sum(mine_, g.lid, g.lsz, tg->scratch __UKL_ARGS) > UKL_GRID_SMALL) { left_ = 1u; break; } \
+                    ukl_tg_barrier_device();                                                           \
+                    if (g.lid == 0u) {                                                                 \
+                        ukl_atomic_store(&wc_[0], 0u);                                                 \
+                        ukl_atomic_store(&wc_[1], (ukl_atomic_load(&wc_[1]) & 1u) ^ 1u);               \
+                    }                                                                                  \
+                    ukl_tg_barrier_device();                                                           \
+                    PX_WALK_SET(which_, wc_, n_);                                                      \
+                    PX_WALK_PHASES(G_EACH, G_BARRIER, G_SCAN, G_SEG, which_, if (g.lid == 0u) px_refuse(AT(uint32_t, CTL), X_ROOM); break); \
+                }                                                                                      \
+                if (g.lid == 0u) ukl_atomic_store(&wc_[2], left_);                                     \
+            }                                                                                          \
+            BARRIER();                                                                                 \
+            if (ukl_atomic_poll(&wc_[2]) == 0u) break;                                                 \
+            /* A large set: the grid's phases. */                                                      \
+            ONE(x) {                                                                                   \
+                uint32_t n_ = ukl_min(ukl_atomic_poll(&wc_[0]), W(Q_CAP));                             \
+                ukl_atomic_store(&wc_[2], n_);                                                         \
+                ukl_atomic_store(&wc_[0], 0u);                                                         \
+                ukl_atomic_store(&wc_[1], (ukl_atomic_load(&wc_[1]) & 1u) ^ 1u);                       \
+            }                                                                                          \
+            BARRIER();                                                                                 \
+            PX_WALK_SET(which_, wc_, ukl_atomic_poll(&wc_[2]));                                        \
+            PX_WALK_PHASES(EACH, BARRIER, SCAN, SEG, which_, ONE(x) { AT(uint32_t, CTL)[24] = ukl_max(AT(const uint32_t, CTL)[24], w_.total); px_refuse(AT(uint32_t, CTL), X_ROOM); } BARRIER(); break); \
+        }                                                                                              \
+    }
 
 // The top level's rollback, its sizes and places, over a top of `nt_` tokens (after the queue's
 // first phase).
@@ -95,18 +248,15 @@
 // The queue made ready for another top: the slots of its ring's positions past its base emptied, the arena's tops back to the file literals' (`CTL` 6 and 7 keep
 // them). The refusals stay.
 #define PX_RESET()                                                                                     \
-    EACH(k, ukl_min(AT(const uint32_t, QCTL)[1] - AT(const uint32_t, QCTL)[4], W(Q_CAP))) AT(uint32_t, SLOTS)[(AT(const uint32_t, QCTL)[4] + k) % W(Q_CAP)] = 0u; \
-    BARRIER();                                                                                         \
     ONE(x) {                                                                                           \
         PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);                                                    \
         /* Each top's high water first (`Exp::room` sizes the next run from it). */                     \
         c_[8] = ukl_max(c_[8], c_[0]); c_[9] = ukl_max(c_[9], c_[1]); c_[10] = ukl_max(c_[10], c_[3]);  \
         c_[11] = ukl_max(c_[11], c_[4]); c_[12] = ukl_max(c_[12], c_[5]);                              \
-        c_[13] = ukl_max(c_[13], AT(const uint32_t, QCTL)[1] - AT(const uint32_t, QCTL)[4]);           \
         c_[14] = ukl_max(c_[14], AT(const uint32_t, OPTOTAL)[0]);                                       \
         c_[0] = 0u; c_[1] = 0u; c_[3] = 0u; c_[4] = c_[6]; c_[5] = c_[7];                              \
         c_[15] = AT(const uint32_t, WORDS)[11]; c_[18] = AT(const uint32_t, WORDS)[12]; c_[19] = AT(const uint32_t, WORDS)[13]; \
-        AT(uint32_t, QCTL)[1] = 0u; AT(uint32_t, QCTL)[4] = 0u; AT(uint32_t, CNT)[1] = 0u;             \
+        AT(uint32_t, QCTL)[0] = 0u; AT(uint32_t, QCTL)[1] = 0u; AT(uint32_t, QCTL)[2] = 0u; AT(uint32_t, QCTL)[4] = 0u; AT(uint32_t, CNT)[1] = 0u; \
     }                                                                                                  \
     /* The pools empty (decision 0503 §10): the tokens' heads past their five columns, the lists'    \
        and the arguments' past their links. */                                                         \
@@ -117,39 +267,50 @@
     }                                                                                                  \
     BARRIER()
 
-// The queue's workers over a top, launched again in the kernel while work remains, a bounded
-// number of times. Between runs, where a store's front passed its mark (`px_past_marks`, the
-// workers stopped there), the blocks and ids no item reads again are given back (decision 0503
-// §10). Their count is bounded by the host (`WORDS` 15): a store's mark is a gap past its front,
-// so each room is passed a bounded number of times, and the ring's pauses by the work bound. A
-// cap below that (192 givings) stopped every giving for the rest of a long top, and each store
-// then grew with the work.
-#define PX_RUNS (8u)
+// A top's rounds (decision 0527): each round takes the items the one before made (`QCTL` 1 to 2,
+// the halves swapped), runs them on the whole grid, and the next starts at a barrier. Between
+// rounds, where a store's front passed its mark (`px_past_marks`), the blocks and ids no item reads
+// again are given back (decision 0503 §10), at most `WORDS` 15 times. A top's items at most
+// `WORDS` 14 (`X_WORK` past it: an expansion that would hold a launch too long; no store ran out,
+// so no rung is larger for it). `CTL` 17 is one thread's decision, read by all past a barrier.
 #define PX_DRAIN(T, CLOSES)                                                                          \
     {                                                                                                  \
-        uint32_t runs_ = 0u, gives_ = 0u, gmax_ = AT(const uint32_t, WORDS)[15];                       \
-        for (uint32_t it_ = 0u; it_ < PX_RUNS + gmax_ + 1u; it_++) {                                   \
-            PX_WORK_ON(T, CLOSES);                                                                   \
-            BARRIER();                                                                                 \
-            /* One thread decides (`CTL` 17): done, run again, or give back first. Every thread reading \
-               the queue's and the tokens' words itself would race the groups past the barrier, whose \
-               next run changes them, and the grid would split between two paths. */                    \
-            PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);                                                 \
+        uint32_t gives_ = 0u, gmax_ = AT(const uint32_t, WORDS)[15], work_ = AT(const uint32_t, WORDS)[14]; \
+        PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);                                                    \
+        for (uint32_t it_ = 0u; it_ < work_ + gmax_ + 2u; it_++) {                                     \
             ONE(x) {                                                                                   \
                 PP_GLOBAL uint32_t* q_ = AT(uint32_t, QCTL);                                          \
-                uint32_t mark_ = ukl_atomic_poll(&c_[15]);                                             \
-                bool give_ = px_past_marks(c_) || (mark_ != 0xffffffffu && q_[0] - q_[4] > W(Q_CAP) / 2u); \
-                ukl_atomic_store(&c_[17], ukl_atomic_poll(&q_[2]) == 0u ? 0u : give_ ? 2u : 1u);      \
+                uint32_t n_ = ukl_min(ukl_atomic_poll(&q_[1]), W(Q_CAP));                              \
+                c_[13] = ukl_max(c_[13], n_);                                                          \
+                uint32_t go_ = n_ == 0u ? 0u : 1u;                                                     \
+                if (n_ != 0u && q_[0] + n_ > work_) { px_refuse(c_, X_WORK); go_ = 0u; }               \
+                else if (n_ != 0u) {                                                                   \
+                    q_[0] += n_;                                                                       \
+                    ukl_atomic_store(&q_[2], n_);                                                      \
+                    ukl_atomic_store(&q_[1], 0u);                                                      \
+                    ukl_atomic_store(&q_[5], 0u);                                                      \
+                    ukl_atomic_store(&q_[4], (q_[4] & 1u) ^ 1u);                                       \
+                    c_[25]++;                                                                          \
+                }                                                                                      \
+                ukl_atomic_store(&c_[17], go_);                                                        \
             }                                                                                          \
             BARRIER();                                                                                 \
-            uint32_t next_ = ukl_atomic_poll(&c_[17]);                                                 \
-            if (next_ == 0u) break;                                                                    \
-            if (next_ == 2u) {                                                                         \
+            if (ukl_atomic_poll(&c_[17]) == 0u) break;                                                 \
+            PX_WORK_ON(T, CLOSES);                                                                   \
+            BARRIER();                                                                                 \
+            PX_SCANS(T, CLOSES);                                                                     \
+            BARRIER();                                                                                 \
+            PX_WALKS(T, CLOSES, 0u);                                                                   \
+            PX_WALKS(T, CLOSES, 1u);                                                                   \
+            ONE(x) {                                                                                   \
+                ukl_atomic_store(&AT(uint32_t, QCTL)[2], 0u);                                          \
+                ukl_atomic_store(&c_[17], px_past_marks(c_) ? 2u : 1u);                                \
+            }                                                                                          \
+            BARRIER();                                                                                 \
+            if (ukl_atomic_poll(&c_[17]) == 2u) {                                                      \
                 if (gives_ == gmax_) { ONE(x) px_refuse(c_, X_QUEUE); break; }                          \
                 PX_GIVE(); gives_++;                                                                   \
-                continue;                                                                              \
             }                                                                                          \
-            if (++runs_ == PX_RUNS) { ONE(x) px_refuse(c_, X_QUEUE); break; }                          \
         }                                                                                              \
     }
 
@@ -178,14 +339,8 @@
         EACH(i, gv_nl) px_free_give(AT(const PxList, LISTS), gv_lp, gv_nl, i);                         \
         BARRIER();                                                                                     \
         EACH(i, gv_nl) px_free_done(AT(PxList, LISTS), i);                                             \
-        /* The queue's ring: the slots taken since its base emptied, then its base at its head. */     \
-        UklWorkQueue gv_q; gv_q.slots = (UKL_GLOBAL uint32_t*)AT(uint32_t, SLOTS);                     \
-        gv_q.control = (UKL_GLOBAL uint32_t*)AT(uint32_t, QCTL); gv_q.capacity = W(Q_CAP); gv_q.ring = 1u; \
-        EACH(k, ukl_min(ukl_wq_taken(gv_q), W(Q_CAP))) ukl_wq_rebase_clear(gv_q, k);                  \
         BARRIER();                                                                                     \
         ONE(x) {                                                                                       \
-            gv_c[13] = ukl_max(gv_c[13], ukl_wq_used(gv_q));                                           \
-            ukl_wq_rebase(gv_q);                                                                       \
             uint32_t front_ = ukl_min(ukl_atomic_poll(&gv_c[0]), gv_tc);                               \
             ukl_atomic_store(&gv_c[15], front_ + AT(const uint32_t, WORDS)[11]);                       \
             ukl_atomic_store(&gv_c[18], ukl_min(ukl_atomic_poll(&gv_c[1]), W(LIST_CAP)) + AT(const uint32_t, WORDS)[12]); \
