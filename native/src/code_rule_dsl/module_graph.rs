@@ -544,7 +544,8 @@ fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize
 /// restoring the modification time (an archive's extraction, `rsync -t`, a copy that keeps times)
 /// still moves: on unix its status-change time and inode; on Windows NTFS's change time, which
 /// every write and every time set moves, and its file id, both read with its folder's listing
-/// (`listing`).
+/// (`listing`). That id is the listing's 64-bit one, which ReFS, whose ids are 128-bit, does not
+/// keep unique: there it tells a file a rename put in place only with the two times beside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stamp {
     modified: SystemTime,
