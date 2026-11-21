@@ -306,7 +306,7 @@ impl Trans {
 }
 
 /// `text` with each match of `regex` replaced by `by` (`$1`, `${name}` its groups, `$$` a dollar), unbounded: the
-/// `replace` transform's rewrite, as `.rr`'s `@replace_all` computes it (`logic::plan`).
+/// `replace` transform's rewrite, as `.rerail`'s `@replace_all` computes it (`logic::plan`).
 pub fn replace(text: &str, regex: &Regex, by: &str) -> String {
     replace_bounded(text, regex, by, usize::MAX).unwrap_or_else(|_| unreachable!("no output limit"))
 }

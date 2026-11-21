@@ -3,15 +3,15 @@
 ## Intro
 
 This directory holds main's 537 Python JSON rules (`rerail.policy/v1`), translated mechanically into the
-engine's `.rr` rules. It exists to test the Datalog engine against main on every rule, not only on the ones that
+engine's `.rerail` rules. It exists to test the Datalog engine against main on every rule, not only on the ones that
 translate easily. Because a program does the translation, nobody picks or tunes a rule to suit the engine.
 
-Each `<id>.rr` file is generated. Do not edit one by hand: the next regeneration overwrites it. There are no
+Each `<id>.rerail` file is generated. Do not edit one by hand: the next regeneration overwrites it. There are no
 hand-written overrides: each file is what the engine itself reads from the JSON rule, so a rule that translates
 badly is fixed in the translator.
 
-Every rule keeps main's logic and regexes. Every rule says `.guests off`, because main matches only files and
-never the strings inside them. No rule includes a library beyond the core relations the translator emits.
+Every rule keeps main's logic and regexes. A rule reaches the code inside a string only through `parsed`, as main
+matches only files and never the strings inside them (decision 0523 retired the `.guests off` each rule said). No rule includes a library beyond the core relations the translator emits.
 
 ## How to regenerate
 
@@ -85,7 +85,7 @@ on one file, under the caps (2 minutes, 2 GB).
 Found on an N806 probe. Main's `binds` holds at the bound name, with its own form names (`assignment`, `named`,
 `definition` and so on). The library keys a binding by its site (the assignment statement, the `def`) and names
 forms its own way, so `Bad = 1` had no binding. The translator now writes `binds` as `bind_name(name, site)`, with
-forms as `main_form(site, form)`. Both libraries define these relations (python and tsx `names.rr`), and Python
+forms as `main_form(site, form)`. Both libraries define these relations (python and tsx `names.rerail`), and Python
 gains bare annotations and type parameters as sites.
 
 The same probe showed two option bugs and one transform bug. A list option's regex (`join` and `template`) is now
@@ -132,7 +132,7 @@ no change in findings (`run-check.txt`, and the Ruff fixtures are unchanged):
   `binds.bindings` (a count of the name's bindings) and `binds.redefines` (an earlier binding of the name in the scope)
   in Datalog, since the engine's matcher compiler has neither. `binds.site` is the statement that binds, not the name.
 - **Fixed: `formatArgs`** (F504, F505, F507, F522; and F523, F524, UP030, UP032). The engine's matcher compiler
-  has no `formatArgs`, so the translator writes it in Datalog over the library `lib/python/format-args.rr`. That
+  has no `formatArgs`, so the translator writes it in Datalog over the library `lib/python/format-args.rerail`. That
   library reads the call's arguments or the `%` operand against the format string's guest tree, as Ruff's
   Pyflakes rules do. It has relations per style (`fa_brace_unused`, `fa_percent_missing`, …), so a guest column holds
   one grammar's nodes, and a kind test on them is resolved in that grammar. Ruff's verdict is three-valued. A

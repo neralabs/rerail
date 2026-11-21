@@ -3,7 +3,7 @@
   "id": "data-layer-admin-async-purity",
   "revision": 1,
   "mode": "block",
-  "description": "Candidate port of nera-data-layer admin_async_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Candidate port of the data-layer repository's admin_async_purity at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "l8000_admin/tools/**/*.py"

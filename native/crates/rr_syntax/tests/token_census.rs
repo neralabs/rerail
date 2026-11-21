@@ -1,5 +1,5 @@
-//! What a `.rr` tape's anonymous tokens are, in each gap between named children, over every
-//! `.rr` file of the repository: the evidence for which of them a named-only tape may leave out
+//! What a `.rerail` tape's anonymous tokens are, in each gap between named children, over every
+//! `.rerail` file of the repository: the evidence for which of them a named-only tape may leave out
 //! (a token the grammar implies, RER-131). Ignored; run by hand:
 //!
 //! `cargo test -p rerail-rr-syntax --test token_census -- --ignored --nocapture`
@@ -8,7 +8,7 @@ use rerail_rr_syntax::tape::{self, FIELD_NAMES, FIRST_ANONYMOUS, KIND_NAMES};
 use std::collections::BTreeMap;
 
 fn corpus() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -17,7 +17,7 @@ fn corpus() -> Vec<(String, String)> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
             }
         }
@@ -47,11 +47,10 @@ fn token_census() {
         nodes += t.len();
         let mut children: Vec<Vec<u32>> = vec![Vec::new(); t.len()];
         for (i, n) in t.iter().enumerate() {
-            if let Some(p) = n.parent {
-                if !n.extra {
+            if let Some(p) = n.parent
+                && !n.extra {
                     children[p as usize].push(i as u32);
                 }
-            }
         }
         for (p, kids) in children.iter().enumerate() {
             if kids.is_empty() || t[p].is_error() {

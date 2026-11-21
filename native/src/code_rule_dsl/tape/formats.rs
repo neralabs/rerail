@@ -42,8 +42,7 @@ impl Format {
         if let Some(format) = AS_RUN.with(std::cell::Cell::get) {
             return format;
         }
-        static RUN: OnceLock<Format> = OnceLock::new();
-        *RUN.get_or_init(|| match std::env::var("RERAIL_TAPE").as_deref() {
+        rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_TAPE").as_deref() {
             Err(_) | Ok("" | "16") => Format::F16,
             Ok("15") => Format::F15,
             Ok("16z") => Format::F16Z,
@@ -143,7 +142,7 @@ impl Columns15 {
 
     /// The view the tape's reads take (decision 0310), its offsets from its bytes' first (`laid_out`): made from
     /// the columns' places, as cheap as the columns' slices; its spans held to the source's `source_len` bytes (its
-    /// image's: decision 0403).
+    /// image's: decision 0463).
     pub fn view(&self, source_len: usize) -> rerail_clif::view::TapeView {
         let (_, at) = self.laid_out();
         let w = |k: usize| u32::from(self.widths[k]);
@@ -258,7 +257,7 @@ impl TreeOps {
             }
         }
         sorted[..count].sort_unstable();
-        let flags = u8::from(v.extra) * super::CODE_EXTRA | u8::from(v.error) * super::CODE_ERROR | u8::from(v.missing) * super::CODE_MISSING;
+        let flags = (u8::from(v.extra) * super::CODE_EXTRA) | (u8::from(v.error) * super::CODE_ERROR) | (u8::from(v.missing) * super::CODE_MISSING);
         let code = Code { kf: v.kf, flags, alias, class_count: count as u8, classes: sorted };
         if let Some(&n) = self.numbers.get(&code) {
             return Ok(n);
@@ -271,7 +270,7 @@ impl TreeOps {
     }
 
     /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
-    pub(super) fn finish(self) -> Option<f16::Finished> {
+    pub(super) fn finish(mut self) -> Option<f16::Finished> {
         let why = match self.bad {
             Some(why) => why,
             None => match self.w.finish() {
@@ -427,14 +426,14 @@ impl TapeImage {
     }
 }
 
-/// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
+/// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image.
 pub(super) enum RrTape {
     Image(Vec<u8>),
-    Written(f16::Finished),
+    Written(Box<f16::Finished>),
 }
 
-/// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
+/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
 /// keys are the codes (`kf | flags << 16`, no supertypes).
 struct Rr<'s> {
     source: &'s str,
@@ -459,7 +458,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
         if w.writes_16() {
             match w.finish_16()? {
-                Ok(f) => return Ok(RrTape::Written(f)),
+                Ok(f) => return Ok(RrTape::Written(Box::new(f))),
                 Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
             // As `Lean`'s: the parse runs again for format 15.
@@ -472,7 +471,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     }
 }
 
-/// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
 pub(super) fn rr_tape(source: &str) -> RrTape {
     rerail_rr_syntax::lean::tape_into(source, &mut Rr { source, f15: false })
 }
@@ -513,6 +512,16 @@ impl DocTape {
     #[inline]
     pub fn reader(&self) -> &AnyTape<'_> {
         &self.reader
+    }
+
+    /// The image, shared: a document over the same tape holds it (`TapeDoc::over`).
+    pub fn image_arc(&self) -> &Arc<TapeImage> {
+        &self.image
+    }
+
+    /// The source the tape is over.
+    pub fn source(&self) -> &Arc<String> {
+        &self.source
     }
 
     pub fn image(&self) -> &TapeImage {

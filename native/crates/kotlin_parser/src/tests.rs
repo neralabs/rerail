@@ -8,7 +8,7 @@ use super::*;
 fn compiled() -> Result<&'static Compiled, &'static str> {
     static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
     match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
-        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Ok(p) => OTHER.get_or_init(|| compile_answered(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
         Err(_) => super::compiled(),
     }
 }
@@ -397,7 +397,7 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
-/// Runs that count their depths (Q222), as `type_args_end` and `lambda_params_end` do: type
+/// Runs that count their depths (Q339), as `type_args_end` and `lambda_params_end` do: type
 /// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
 /// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
 #[test]
@@ -556,6 +556,13 @@ fn what_the_grammar_does_not_read_is_refused() {
     ]);
 }
 
+/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
+/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
+#[test]
+fn a_constructor_off_its_modifiers_line_is_refused() {
+    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
+}
+
 #[test]
 fn soft_names_are_the_lean_parsers() {
     same(&[
@@ -632,10 +639,10 @@ fn annotated_expressions_are_the_lean_parsers() {
         "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
-        // The run to the `)` passes line breaks (Q223): a declaration after is still one.
+        // The run to the `)` passes line breaks (Q340): a declaration after is still one.
         "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
         // An annotation before any expression, as the lean parser's `declaration_ahead` finds no
-        // declaration (Q225); and before a declaration's modifiers and keyword.
+        // declaration (Q342); and before a declaration's modifiers and keyword.
         "fun f() {\n    @A if (y) z\n}\n",
         "fun f() {\n    @A(x) foo()\n}\n",
         "fun f() {\n    @A foo()\n    val q = 1\n}\n",
@@ -661,13 +668,6 @@ fn delegates_and_names_are_the_lean_parsers() {
         "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
         "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
     ]);
-}
-
-/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
-/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
-#[test]
-fn a_constructor_off_its_modifiers_line_is_refused() {
-    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
 }
 
 #[test]
@@ -924,13 +924,13 @@ fn program_size() {
         }
     }
     let mut ops: Vec<_> = by_op.into_iter().collect();
-    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    ops.sort_by_key(|o| std::cmp::Reverse(o.1));
     eprintln!("{} lines; by opcode: {:?}", lines.len(), &ops[..ops.len().min(12)]);
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_WORDS") {
         std::fs::write(out, &c.words).expect("the words written");
     }
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_MACHINE") {
-        std::fs::write(out, format!("{}", c.machine)).expect("the machine written");
+        std::fs::write(out, &c.machine).expect("the machine written");
     }
 }
 
@@ -943,7 +943,7 @@ fn compile_time() {
         Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
         Err(_) => crate::GRAMMAR.to_owned(),
     };
-    // Cold, then with the answers the cold compile made (decision 0488). With
+    // Cold, then with the answers the cold compile made (decision 0414). With
     // `RERAIL_KOTLIN_EDIT` (a grammar file): that grammar with the first's answers, then cold.
     let edit = std::env::var("RERAIL_KOTLIN_EDIT").ok().map(|p| std::fs::read_to_string(p).expect("the edited grammar"));
     let mut passes = vec![("cold", &text), ("warm", &text)];
@@ -980,15 +980,38 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
     h.finish()
 }
 
-/// The answers a compile made, given to another compile of the grammar (decision 0488): it asks
-/// none of its questions again, and makes the same program.
+/// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
+/// asks: a compile from them alone, not the machine's kept answers, proves nothing.
+/// `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again, from a cold compile's.
 #[test]
-fn known_answers_make_the_same_program() {
-    let cold = compiled().expect("compiles");
+fn the_shipped_answers_answer_the_grammar() {
+    if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
+        let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+        let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+        std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
+        return;
+    }
+    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
+    assert!(
+        c.proofs.is_empty(),
+        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
+        c.proofs.len()
+    );
+}
+
+/// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
+/// given to another compile, leave nothing to ask (decision 0414): the answers decide nothing a
+/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier.
+#[test]
+fn a_cold_compile_makes_the_shipped_answers_program() {
+    let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+    let shipped = super::compiled().expect("the grammar compiles");
+    assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
+    assert!(cold.words == shipped.words && cold.program.words == shipped.program.words, "the grammar compiles to two programs");
     let known: crate::Proofs = cold.proofs.iter().cloned().collect();
-    let warm = crate::compile_timed(crate::GRAMMAR, known, &mut |_, _| {}).expect("compiles");
+    let warm = crate::compile_timed(GRAMMAR, known, &mut |_, _| {}).expect("the grammar compiles");
     assert_eq!(warm.proofs.len(), 0, "a question asked again");
-    assert_eq!(fingerprint(&warm), fingerprint(cold));
+    assert_eq!(fingerprint(&warm), fingerprint(&cold));
 }
 
 /// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over
@@ -1035,7 +1058,7 @@ fn tier1_records() {
 
 
 /// Tier 1's operations by output: each output's cone (the operations its value needs) and the
-/// operations only it needs, most first. A tool for 0489's stages 3 and 4.
+/// operations only it needs, most first. A tool for 0415's stages 3 and 4.
 #[test]
 #[ignore = "a tool: run by name"]
 fn tier1_cones() {
@@ -1079,7 +1102,7 @@ fn tier1_cones() {
         *by.entry(o.as_str()).or_default() += 1;
     }
     let mut by: Vec<_> = by.into_iter().collect();
-    by.sort_by(|a, b| b.1.cmp(&a.1));
+    by.sort_by_key(|o| std::cmp::Reverse(o.1));
     for (o, k) in &by {
         eprintln!("  {k:5} made by {o}");
     }
@@ -1092,7 +1115,7 @@ fn tier1_cones() {
         *cpu.entry(o.as_str()).or_default() += 1;
     }
     let mut cpu: Vec<_> = cpu.into_iter().collect();
-    cpu.sort_by(|a, b| b.1.cmp(&a.1));
+    cpu.sort_by_key(|o| std::cmp::Reverse(o.1));
     eprintln!("the CPU body's, roughly: {} operations", kept.iter().filter(|&&k| k).count());
     for (o, k) in cpu.iter().take(40) {
         eprintln!("  {k:5} cpu, made by {o}");
@@ -1403,18 +1426,9 @@ fn lazy_probe() {
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
 
-/// One grammar compiles to one program, each time: the compiler's maps hash with a fixed seed.
+/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change at most what tier 2 is
+/// proved to need: the grammar reads each text as without them, the same tape or the same refusal.
 #[test]
-fn the_grammar_compiles_to_one_program() {
-    let with = super::compiled().expect("the grammar compiles");
-    let again = compile_text(GRAMMAR).expect("the grammar compiles");
-    assert!(with.words == again.words && with.program.words == again.program.words, "the grammar compiles to two programs");
-}
-
-/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved
-/// to need: the grammar reads each text as without them, the same tape or the same refusal.
-#[test]
-#[ignore = "compiles the grammar without the walk lemmas: minutes"]
 fn walk_lemmas_keep_the_tapes() {
     let with = super::compiled().expect("the grammar compiles");
     assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");
@@ -1422,7 +1436,10 @@ fn walk_lemmas_keep_the_tapes() {
     let without = compile_text(GRAMMAR);
     bitlex_compile::NO_WALK_LEMMAS.set(false);
     let without = without.expect("the grammar compiles without the walk lemmas");
-    assert!(with.program.words.len() < without.program.words.len(), "the walk lemmas prove nothing: {} words either way", with.program.words.len());
+    // Since tier 1 reads a string as one token (3a5cf85230) and the comment escapes became questions (86d31b6fae),
+    // Kotlin's tier 2 is proved to need the same without them (5,892 words either way, as `.rerail`'s 2,745; JSON's
+    // grammars have no walk): what is checked is that they never make tier 2 need more.
+    assert!(with.program.words.len() <= without.program.words.len(), "the walk lemmas make tier 2 larger: {} words, {} without", with.program.words.len(), without.program.words.len());
     let texts = [
         "package a\n\nimport b.c\n",
         "val s = \"a // b\" // c \"d\"\n",
@@ -1440,5 +1457,3 @@ fn walk_lemmas_keep_the_tapes() {
         assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
     }
 }
-
-

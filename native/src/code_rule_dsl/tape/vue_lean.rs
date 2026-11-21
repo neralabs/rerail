@@ -50,7 +50,8 @@ impl TreeParser for Lean {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.and_then(|image| FileImage::embedding(image, grammar, source, budget)).map_err(TemplateError::Encode))
+                // Its scripts and template expressions are embedded by the router (`TapeImage::parse`).
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("Vue parse", || format!("a file the lean parser refused ({why:?}): tree-sitter-vue"));

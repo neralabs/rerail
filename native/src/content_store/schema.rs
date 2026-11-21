@@ -1,10 +1,10 @@
 //! The content store's SQLite schema: one current, idempotent DDL.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -23,18 +23,23 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 7;
+pub(super) const SCHEMA_VERSION: i64 = 9;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v7.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 7: every source and tape is in a segment, as it is, and no row holds
-/// an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
+pub const STORE_FILE_NAME: &str = "content-v9.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 9: a space's kept facts are a chain of packed files (decision 0456),
+/// and there are no frames (decision 0439), which an older binary would read as a store that keeps nothing, and a
+/// kept column may be a node id split at its granule, which it would read as wrong values (7 on
+/// final-rerail-shape-rr-align, joined with 8 and 7 below on sync-integration-hub-tape); 8: every check result, call
+/// summary and tree page is in a segment, as it is, its row naming its range (decision 0450 step 2, 2026-11-19), which
+/// an older binary would read as a row with no frame; 7: every source and tape is in a segment, as it is, and no row
+/// holds an object's bytes (decision 0295 step 5, 2026-11-19), which an older binary would read as an empty or corrupt
 /// frame; 6: the atoms are blocks in files beside the store (decision 0401:
 /// `atom_blocks`), which an older binary would read as a store with no atoms; 5: a frame's row points at its bytes in a segment beside the store
 /// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
 /// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
 /// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 7;
+const STORE_FILE_FLOOR: i64 = 9;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -95,6 +100,9 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     seg INTEGER NOT NULL DEFAULT 0,
     seg_at INTEGER NOT NULL DEFAULT 0,
     seg_len INTEGER NOT NULL DEFAULT 0,
+    -- The file's programs (decision 0431 step 6): the number of its `file_documents` rows, written in the transaction
+    -- that writes them; -1 where not known (a tape stored without its programs).
+    programs INTEGER NOT NULL DEFAULT -1,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
 -- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): every
@@ -116,6 +124,9 @@ CREATE TABLE IF NOT EXISTS file_documents (
     document_tape_id INTEGER NOT NULL REFERENCES tape_objects(tape_id),
     source_map BLOB NOT NULL,
     host_errors BLOB NOT NULL,
+    -- The parent's bytes the document stands at, where they are not its text's (`tape::DerivedImage::at`).
+    at_start INTEGER,
+    at_end INTEGER,
     PRIMARY KEY (tape_id, ordinal)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS file_documents_by_document ON file_documents(document_tape_id);
@@ -171,6 +182,136 @@ CREATE INDEX IF NOT EXISTS workspaces_by_lease ON workspaces(state_id, lease_unt
 CREATE INDEX IF NOT EXISTS workspaces_by_repository ON workspaces(repository_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_owner ON workspaces(owner_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_snapshot ON workspaces(snapshot_id);
+-- Store sessions (decision 0450 §2): the durable owners whose latest data is live. `kind` 1 is a workspace, `key` its
+-- root (`paths`); 2 a corpus lane, `key` a digest of its root and lane, its row written by each keep decision; 3 a pin's
+-- owner, `key` its name (`strings`), its source and tape pins its data. `latest` is its latest generation, `last_used` the unix second it was last registered or renewed,
+-- `ended` the second its lease ended (NULL while something keeps it alive), and `aged_bytes` the bytes its data held
+-- then: an ended session's data is aged under one budget and backstop, the oldest-ended released first (0450 step 3).
+CREATE TABLE IF NOT EXISTS store_sessions (
+    kind INTEGER NOT NULL,
+    key INTEGER NOT NULL,
+    latest INTEGER NOT NULL,
+    last_used INTEGER NOT NULL,
+    ended INTEGER,
+    aged_bytes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (kind, key)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS store_sessions_by_ended ON store_sessions(kind, ended) WHERE ended IS NOT NULL;
+CREATE TABLE IF NOT EXISTS analysis_scope_snapshot (
+    scope TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, snapshot_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_snapshot_by_snapshot ON analysis_scope_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_generation (
+    scope TEXT PRIMARY KEY,
+    generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+-- Only a fully observed directory generation has a known maximum control generation.
+-- The separate table preserves the two-column INSERT used by older writers.
+CREATE TABLE IF NOT EXISTS analysis_directory_acquisition (
+    scope TEXT PRIMARY KEY REFERENCES analysis_scope_generation(scope) ON DELETE CASCADE,
+    max_control_generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS analysis_directory_acquisition_unknown BEFORE INSERT ON analysis_scope_generation
+WHEN NEW.scope GLOB 'cwd:*' BEGIN
+    DELETE FROM analysis_directory_acquisition WHERE scope=NEW.scope;
+END;
+CREATE TABLE IF NOT EXISTS analysis_scope_workspace_snapshot (
+    scope TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, workspace)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_workspace_snapshot_by_snapshot ON analysis_scope_workspace_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_collect (
+    snapshot_id INTEGER PRIMARY KEY REFERENCES snapshots(snapshot_id) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE IF NOT EXISTS analysis_scope_pending (
+    id TEXT PRIMARY KEY
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_scope_release (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL DEFAULT '',
+    before INTEGER NOT NULL DEFAULT 0,
+    legacy_scope TEXT,
+    legacy_acquisition INTEGER
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
+CREATE INDEX IF NOT EXISTS analysis_scope_release_legacy ON analysis_scope_release(legacy_scope,before) WHERE legacy_scope IS NOT NULL;
+-- A compacted child receipt can still arrive through an older writer. Ignore its insert before
+-- its delivery captures a new acquisition number or releases memberships. Probe the cutoff
+-- index at each path boundary, including a root that ends in the separator.
+CREATE TRIGGER IF NOT EXISTS analysis_skip_covered_directory_stop BEFORE INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND EXISTS (
+    SELECT 1 FROM analysis_scope_release WHERE before>=NEW.before AND scope IN (RR_NEW_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
+-- A previous writer deletes a lower exact cutoff before inserting its replacement. If an
+-- ancestor will suppress the insert, retain any later acquisition boundary the child carries.
+CREATE TRIGGER IF NOT EXISTS analysis_keep_legacy_directory_fence BEFORE DELETE ON analysis_scope_release
+WHEN OLD.legacy_acquisition > (
+    SELECT max(legacy_acquisition) FROM analysis_scope_release WHERE id<>OLD.id AND before>=OLD.before
+        AND scope IN (RR_OLD_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TABLE IF NOT EXISTS analysis_history_scope (
+    scope TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    stop_scopes TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_history_ancestor (
+    ancestor TEXT NOT NULL,
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope) ON DELETE CASCADE,
+    PRIMARY KEY(ancestor,scope)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_history_ancestor_by_scope ON analysis_history_ancestor(scope);
+INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope)
+    SELECT a.value,h.scope FROM analysis_history_scope h, json_each(h.stop_scopes) a;
+CREATE TRIGGER IF NOT EXISTS analysis_history_index_scope AFTER INSERT ON analysis_history_scope BEGIN
+    INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope) SELECT value,NEW.scope FROM json_each(NEW.stop_scopes);
+END;
+CREATE TABLE IF NOT EXISTS analysis_scope_run (
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope),
+    acquisition INTEGER NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    scan_id TEXT NOT NULL,
+    directory TEXT,
+    repository TEXT,
+    tree TEXT,
+    git_commit TEXT,
+    PRIMARY KEY(scope,acquisition)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_run_workspace_snapshot (
+    scope TEXT NOT NULL,
+    acquisition INTEGER NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    PRIMARY KEY(scope,acquisition,snapshot_id),
+    FOREIGN KEY(scope,acquisition) REFERENCES analysis_scope_run(scope,acquisition) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_run_workspace_by_snapshot ON analysis_run_workspace_snapshot(snapshot_id);
+-- These triggers also run when an older binary delivers a stop.
+CREATE TRIGGER IF NOT EXISTS analysis_runs_end_generation AFTER UPDATE OF generation ON analysis_scope_generation
+WHEN NEW.generation != OLD.generation BEGIN
+    DELETE FROM analysis_scope_run WHERE scope=NEW.scope;
+END;
+-- Reinstall this trigger on upgrade. Earlier stores enumerated all scopes for each delivery.
+DROP TRIGGER IF EXISTS analysis_runs_stop_directory;
+CREATE TRIGGER IF NOT EXISTS analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope != '' BEGIN
+    DELETE FROM analysis_scope_run WHERE acquired_at<=NEW.before AND scope IN (
+        SELECT scope FROM analysis_history_ancestor WHERE ancestor=NEW.scope
+        UNION ALL
+        SELECT a.scope FROM analysis_history_ancestor a JOIN analysis_history_scope h USING(scope)
+        WHERE a.ancestor='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 AND h.scope='cwd:'||h.value
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS analysis_history_forget_empty AFTER DELETE ON analysis_scope_run BEGIN
+    DELETE FROM analysis_history_scope WHERE scope=OLD.scope
+        AND NOT EXISTS (SELECT 1 FROM analysis_scope_run WHERE scope=OLD.scope);
+END;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),
@@ -193,9 +334,51 @@ CREATE INDEX IF NOT EXISTS object_pins_by_lease ON object_pins(lease_until);
 CREATE INDEX IF NOT EXISTS object_pins_by_owner ON object_pins(owner_string_id);
 CREATE TABLE IF NOT EXISTS store_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    generation INTEGER NOT NULL
+    generation INTEGER NOT NULL,
+    analysis_acquisitions INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
+
+-- Older writers also insert zero then read back the generation. Keep the trigger names
+-- they expect, and seed both named and directory scopes from the store-wide sequence.
+DROP TRIGGER IF EXISTS analysis_named_generation_begin;
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_begin AFTER INSERT ON analysis_scope_generation
+WHEN (NEW.scope GLOB 'named:*' OR NEW.scope GLOB 'cwd:*') AND NEW.generation=0 BEGIN
+    UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1 WHERE singleton=1;
+    UPDATE analysis_scope_generation SET generation=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE scope=NEW.scope;
+END;
+DROP TRIGGER IF EXISTS analysis_named_generation_end;
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_end BEFORE DELETE ON analysis_scope_generation
+WHEN OLD.scope GLOB 'named:*' OR OLD.scope GLOB 'cwd:*' BEGIN
+    UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,OLD.generation) WHERE singleton=1;
+END;
+
+-- A home-qualified stop also covers unqualified owners acquired by the time it reaches this store.
+-- Capture that boundary for deliveries from older binaries too. Replays do not insert a receipt.
+CREATE TRIGGER IF NOT EXISTS analysis_scope_legacy_stop AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 BEGIN
+    UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':')),
+        legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE id=NEW.id;
+END;
+-- Reclaim directory generations at first delivery, including deliveries by an older binary.
+-- Replaying a home stop must leave a later, unqualified writer with its original generation.
+CREATE TRIGGER IF NOT EXISTS analysis_release_directory_generation AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' BEGIN
+    DELETE FROM analysis_scope_generation WHERE scope IN (
+        WITH stops(root) AS (
+            SELECT NEW.scope UNION ALL SELECT 'cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            WHERE instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0
+        ), bounds(root,prefix) AS (
+            SELECT root,CASE WHEN substr(root,-1)='RR_PATH_SEPARATOR' THEN root ELSE root||'RR_PATH_SEPARATOR' END FROM stops
+        )
+        SELECT a.scope FROM bounds b JOIN analysis_directory_acquisition a
+            ON a.scope=b.root OR (a.scope>=b.prefix AND a.scope<(substr(b.prefix,1,length(b.prefix)-1)||char(unicode(substr(b.prefix,-1))+1)))
+            WHERE a.max_control_generation<=NEW.before
+    );
+END;
+UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(scope,5+instr(substr(scope,5),':')),
+    legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1)
+    WHERE legacy_acquisition IS NULL AND scope<>'' AND instr(substr(id,instr(id,':')+1),':')>0;
 
 -- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
 -- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
@@ -229,22 +412,15 @@ CREATE TABLE IF NOT EXISTS completed_workspace_revisions (
 ) STRICT;
 CREATE INDEX IF NOT EXISTS completed_workspace_revisions_by_catalog
 ON completed_workspace_revisions(catalog_hash_id);
-CREATE TABLE IF NOT EXISTS local_check_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id),
-    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
-    PRIMARY KEY(source_id, check_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS local_check_results_by_check ON local_check_results(check_id, source_id);
+-- A file's result of a check (a call summary among them) under a context: its bytes as they are, in a segment of
+-- `<store>.objects/`, read there in place (decision 0450 step 2: floor 8); the row names their range.
 CREATE TABLE IF NOT EXISTS context_check_results (
     source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
     context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
     check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY(source_id, context_hash_id, check_id)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS context_check_results_by_check
@@ -329,32 +505,11 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- The cross-file memo's stored rows (decision 0076, cross_rows.rs). `cross_components` maps a component's digest
--- (its plan, key and documents' keys) to a source holding that descriptor; `cross_rows` holds its rows of each
--- memoised relation, clustered by (source, relation), so a run's lookup and its replay are one query each. Additive:
--- every row cascades from its source, which a run's manifest names (decision 0053).
-CREATE TABLE IF NOT EXISTS cross_components (
-    digest TEXT PRIMARY KEY,
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS cross_components_by_source ON cross_components(source_id);
-CREATE TABLE IF NOT EXISTS cross_rows (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    rel TEXT NOT NULL,
-    seq INTEGER NOT NULL,
-    c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
-    PRIMARY KEY (source_id, rel, seq)
-) STRICT, WITHOUT ROWID;
--- The rows as blocks (cross_rows.rs): a component's rows of one relation, its columns delta-coded, one row each.
--- `cross_rows` is what older binaries write and read; components stored as blocks are named apart from theirs.
-CREATE TABLE IF NOT EXISTS cross_blocks (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    rel TEXT NOT NULL,
-    width INTEGER NOT NULL,
-    rows INTEGER NOT NULL,
-    data BLOB NOT NULL,
-    PRIMARY KEY (source_id, rel)
-) STRICT, WITHOUT ROWID;
+-- The cross-file memo's tables (decision 0076), removed with it (decision 0450 §3): a store made before loses them
+-- when SCHEMA is next applied.
+DROP TABLE IF EXISTS cross_blocks;
+DROP TABLE IF EXISTS cross_rows;
+DROP TABLE IF EXISTS cross_components;
 
 -- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
 -- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
@@ -385,6 +540,15 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS analysis_scope_manifest (
+    scope TEXT NOT NULL,
+    manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
+    recorded_run INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, manifest_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);
 CREATE TABLE IF NOT EXISTS corpus_live (
     source_id INTEGER NOT NULL,
     grammar_version INTEGER NOT NULL,
@@ -396,7 +560,7 @@ CREATE TABLE IF NOT EXISTS corpus_plans (
     live INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 -- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
--- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's frames by name. Collected with the plan.
+-- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's entries by name. Collected with the plan.
 CREATE TABLE IF NOT EXISTS corpus_plan_relations (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     relation TEXT NOT NULL,
@@ -407,14 +571,25 @@ CREATE TABLE IF NOT EXISTS corpus_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
     history_bytes INTEGER NOT NULL,
-    due INTEGER NOT NULL
+    due INTEGER NOT NULL,
+    archive_due INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- The archive (decision 0450 step 4, `archive.rs`): an aged source's or tape's bytes as one zstd frame, its row's `seg`
+-- -2 (its `seg_len` its length). `kind` is `object_pins`' object kind (1 a tape, 2 a source). Placed back in a segment
+-- when read again. `corpus_state.archive_due`: set when a session ends or a keep decision is made, cleared by a pass
+-- that archives nothing.
+CREATE TABLE IF NOT EXISTS object_archive (
+    kind INTEGER NOT NULL,
+    id INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (kind, id)
+) STRICT, WITHOUT ROWID;
 -- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
 -- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
 -- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
--- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
--- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable memo entries were last collected (decision
+-- 0227); the memo sweep is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
 CREATE TABLE IF NOT EXISTS corpus_decided (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     run INTEGER NOT NULL,
@@ -464,10 +639,9 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
--- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- A space's kept facts (decisions 0401, 0456 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
 -- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
--- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files. Additive:
--- an older binary reads the frames.
+-- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files.
 CREATE TABLE IF NOT EXISTS facts_chain (
     space BLOB NOT NULL CHECK(length(space) = 32),
     seq INTEGER NOT NULL CHECK(seq >= 1),
@@ -508,19 +682,27 @@ CREATE TABLE IF NOT EXISTS push_pending (
 CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
 
 -- Per-directory result pages (tree_pages.rs, from Tempo's tree_result_segments), keyed by what the
--- directory's result depends on; `digest` is the page derivation's output digest.
+-- directory's result depends on; `digest` is the page derivation's output digest. Each page's bytes are in a
+-- segment of `<store>.objects/`, as they are (decision 0450 step 2: floor 8).
 CREATE TABLE IF NOT EXISTS tree_pages (
     page_key BLOB NOT NULL CHECK(length(page_key) = 32),
     page_index INTEGER NOT NULL CHECK(page_index >= 0),
     page_count INTEGER NOT NULL CHECK(page_count > 0),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
     file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
-    frame BLOB NOT NULL,
+    seg INTEGER NOT NULL,
+    seg_at INTEGER NOT NULL,
+    seg_len INTEGER NOT NULL,
     PRIMARY KEY (page_key, page_index)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+-- Page sets put and not yet bound: the name binding a page derivation records is written with its overlay layer,
+-- later (facts/overlay.rs), and a set no name binds is collected. A set stays here, kept, while the process that put
+-- it lives (`pid`), until collection sees a binding of its digest.
+CREATE TABLE IF NOT EXISTS tree_pages_pending (
+    digest BLOB PRIMARY KEY CHECK(length(digest) = 32),
+    pid INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
 
 -- The prefilter's per-tape access paths (prefilter.rs, from Pulling-it-all-together's anchor
 -- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
@@ -729,40 +911,6 @@ CREATE TABLE IF NOT EXISTS text_pending (
 CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
 END;
--- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
-CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
-    part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
-    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, seg INTEGER NOT NULL DEFAULT 0,
-    seg_at INTEGER NOT NULL DEFAULT 0, seg_len INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
--- The segments frames are in (decision 0295 §4: `<store>.frames/<seg>.seg`, mapped): a frame's row names its range
--- (`seg`, `seg_at`, `seg_len`) and holds no bytes; `seg` 0 is a frame whose bytes are its `data` (a forked process's,
--- whose symbols the writer renumbers, or one written at once by `keep_frames`).
-CREATE TABLE IF NOT EXISTS frame_segments(seg INTEGER PRIMARY KEY);
--- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
--- by it, without reading every frame of the relation (each a page, its rows inline).
-CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
--- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
--- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
--- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
--- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
--- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
-CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
-    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
-INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
--- How many runs each space has counted.
-CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
--- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
-CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
--- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
--- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
--- used its relation.
-CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
-    PRIMARY KEY (space, run)) WITHOUT ROWID;
--- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
--- written when it first puts there. A relation's frames are kept while a live program's row names it
--- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
-CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
-    rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 -- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
 -- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
 -- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
@@ -788,22 +936,31 @@ impl ContentStore {
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
     /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
-        configure_connection(connection)?;
-        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
+    pub(super) fn initialize(connection: &mut Connection, flush: rerail_blocks::block::Flush) -> StoreResult<i64> {
+        configure_connection(connection, flush)?;
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? || holds_retired(connection)? {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
             rerail_accel::exec::scoped(|scope| {
                 scope
                     .spawn(|| -> StoreResult<()> {
                         super::hazards::behind_the_run();
-                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        let transaction =
+                            connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
                         for (table, column, declaration) in missing_columns(&transaction)? {
                             transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                            if (*table, *column) == ("analysis_scope_manifest", "recorded_run") {
+                                transaction.execute_batch("UPDATE analysis_scope_manifest SET recorded_run=(
+                                    SELECT last_run FROM corpus_manifests m WHERE m.manifest_id=analysis_scope_manifest.manifest_id)")?;
+                            }
                         }
-                        transaction.execute_batch(SCHEMA)?;
+                        apply_schema(&transaction)?;
+                        super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
+                        for table in RETIRED_TABLES {
+                            transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+                        }
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -815,10 +972,20 @@ impl ContentStore {
             })?;
             if let Some(path) = connection.path() {
                 super::atoms::forget_identity(path);
-                super::frames::forget_snapshot(path);
+                super::held::forget_snapshot(path);
+                // The retired tables' segments (`<store>.frames`): no row names them now.
+                let mut frames = std::ffi::OsString::from(path);
+                frames.push(".frames");
+                let _ = std::fs::remove_dir_all(frames);
             }
         }
-        let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        let id: Option<i64> = connection
+            .query_row_cached(
+                "SELECT id FROM store_identity WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
         if let Some(id) = id {
             return Ok(id);
         }
@@ -828,8 +995,12 @@ impl ContentStore {
             scope
                 .spawn(|| -> StoreResult<()> {
                     super::hazards::behind_the_run();
-                    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    transaction.execute_cached("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    transaction.execute_cached(
+                        "INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())",
+                        [],
+                    )?;
                     transaction.commit()?;
                     Ok(())
                 })
@@ -839,8 +1010,28 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
+        Ok(connection.query_row_cached(
+            "SELECT id FROM store_identity WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?)
     }
+}
+
+fn apply_schema(connection: &Connection) -> rusqlite::Result<()> {
+    // The trigger also runs in connections from earlier binaries. Embed the same path
+    // boundaries as analysis_scope::receipt_scopes using only SQLite's own functions.
+    let ancestors = "WITH RECURSIVE boundaries(pos) AS (
+        VALUES(0) UNION ALL
+        SELECT pos+instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP') FROM boundaries
+        WHERE instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP')>0
+    ) SELECT INPUT_SCOPE UNION ALL SELECT substr(INPUT_SCOPE,1,pos-1) FROM boundaries WHERE pos>0
+      UNION ALL SELECT substr(INPUT_SCOPE,1,pos) FROM boundaries WHERE pos>0"
+        .replace("PATH_SEP", std::path::MAIN_SEPARATOR_STR);
+    connection.execute_batch(&SCHEMA
+        .replace("RR_PATH_SEPARATOR", std::path::MAIN_SEPARATOR_STR)
+        .replace("RR_NEW_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "NEW.scope"))
+        .replace("RR_OLD_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "OLD.scope")))
 }
 
 /// The store's floor, refused when it is newer than this build's.
@@ -869,14 +1060,42 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
+    Ok(expected.iter().all(|object| present.contains(object))
+        && missing_columns(connection)?.is_empty())
+}
+
+/// Tables SCHEMA no longer makes, dropped from a store that has them when it is opened: their rows are no build's
+/// to read. Dropping one raises no floor: an older binary makes it again (SCHEMA's `IF NOT EXISTS`), and this
+/// build drops it again at its next open, a cache's rows lost.
+///
+/// - The frames (decision 0104's first form of the kept facts, and their bookkeeping of decisions 0117, 0138, 0227
+///   and 0295 §4): the kept facts are blocks (decision 0439). A floor-7 store made where frames were still kept as
+///   metadata beside the chain (decision 0456 step 6a) has them.
+const RETIRED_TABLES: &[&str] = &["frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used"];
+
+/// Whether the store holds a table of `RETIRED_TABLES`.
+fn holds_retired(connection: &Connection) -> StoreResult<bool> {
+    let present: HashSet<(String, String)> = schema_object_names(connection)?.into_iter().collect();
+    Ok(RETIRED_TABLES.iter().any(|t| present.contains(&("table".to_owned(), (*t).to_owned()))))
 }
 
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("store_state", "analysis_acquisitions", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "recorded_run", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "scope", "TEXT NOT NULL DEFAULT ''"),
+    ("analysis_scope_release", "before", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "legacy_scope", "TEXT"),
+    ("analysis_scope_release", "legacy_acquisition", "INTEGER"),
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpus_state", "archive_due", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
@@ -889,10 +1108,15 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
     ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "programs", "INTEGER NOT NULL DEFAULT -1"),
+    ("file_documents", "at_start", "INTEGER"),
+    ("file_documents", "at_end", "INTEGER"),
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
-fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+fn missing_columns(
+    connection: &Connection,
+) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
     let mut missing = Vec::new();
     for added in ADDED_COLUMNS {
         let (table, column, _) = added;
@@ -913,11 +1137,19 @@ fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'stati
 /// compares). It was SCHEMA applied to an in-memory database, once a process: 124 statements written on every
 /// open, which a warm run's check refuses (`RERAIL_WARM`). An object SQLite makes along with one of these (a
 /// table's `sqlite_autoindex_*`, a full-text table's shadow tables) comes and goes with it.
-static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| Ok(schema_objects(SCHEMA)));
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> =
+    LazyLock::new(|| Ok(schema_objects(SCHEMA)));
 
 fn schema_objects(schema: &str) -> Vec<(String, String)> {
-    let text: String = schema.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
-    let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == '(' || c == ';').filter(|w| !w.is_empty()).collect();
+    let text: String = schema
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let words: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+        .filter(|w| !w.is_empty())
+        .collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < words.len() {
@@ -925,8 +1157,16 @@ fn schema_objects(schema: &str) -> Vec<(String, String)> {
             let rest = &words[i + 1..];
             let (kind, at) = match rest {
                 [t, ..] if t.eq_ignore_ascii_case("TABLE") => ("table", 1),
-                [v, t, ..] if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") => ("table", 2),
-                [u, t, ..] if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") => ("index", 2),
+                [v, t, ..]
+                    if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") =>
+                {
+                    ("table", 2)
+                }
+                [u, t, ..]
+                    if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") =>
+                {
+                    ("index", 2)
+                }
                 [t, ..] if t.eq_ignore_ascii_case("INDEX") => ("index", 1),
                 [t, ..] if t.eq_ignore_ascii_case("TRIGGER") => ("trigger", 1),
                 [t, ..] if t.eq_ignore_ascii_case("VIEW") => ("view", 1),
@@ -937,7 +1177,13 @@ fn schema_objects(schema: &str) -> Vec<(String, String)> {
             };
             let rest = &rest[at..];
             let name = match rest {
-                [a, b, c, name, ..] if a.eq_ignore_ascii_case("IF") && b.eq_ignore_ascii_case("NOT") && c.eq_ignore_ascii_case("EXISTS") => name,
+                [a, b, c, name, ..]
+                    if a.eq_ignore_ascii_case("IF")
+                        && b.eq_ignore_ascii_case("NOT")
+                        && c.eq_ignore_ascii_case("EXISTS") =>
+                {
+                    name
+                }
                 [name, ..] => name,
                 [] => break,
             };
@@ -983,21 +1229,57 @@ mod schema_object_tests {
         drop(ContentStore::open(&path).unwrap());
         let c = Connection::open(&path).unwrap();
         assert!(missing_columns(&c).unwrap().is_empty());
-        assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
+        assert_eq!(
+            c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?
+            )))
+            .unwrap(),
+            (7, 0)
+        );
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A store made when the kept facts were frames loses their tables and segments when it is opened: no row of
+    /// theirs is any build's to read (decision 0401 step 9, `RETIRED_TABLES`).
+    #[test]
+    fn a_store_of_before_loses_the_retired_tables_and_their_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        drop(ContentStore::open(&path).unwrap());
+        {
+            let c = Connection::open(&path).unwrap();
+            // As an older binary made them (named from the list, so no scan of the schema's tables reads them as ours).
+            let (frames, spaces) = (RETIRED_TABLES[0], RETIRED_TABLES[3]);
+            c.execute_batch(&format!("CREATE {} {frames}(space BLOB, data BLOB); INSERT INTO {frames} VALUES (x'01', x'02'); CREATE {} {spaces}(space BLOB PRIMARY KEY, runs INTEGER)", "TABLE", "TABLE")).unwrap();
+            assert!(holds_retired(&c).unwrap());
+        }
+        std::fs::create_dir_all(dir.path().join("store.sqlite.frames")).unwrap();
+        std::fs::write(dir.path().join("store.sqlite.frames/1.seg"), [0u8; 64]).unwrap();
+        drop(ContentStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        assert!(!holds_retired(&c).unwrap(), "dropped");
+        assert!(!dir.path().join("store.sqlite.frames").exists(), "their segments removed");
+        assert!(holds_schema_objects(&c).unwrap(), "the rest as it was");
     }
 
     /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
     #[test]
     fn schema_objects_are_what_schema_creates() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
-        let fts: Vec<String> = schema_objects(SCHEMA).into_iter().filter(|(_, n)| n.ends_with("_fts")).map(|(_, n)| n).collect();
+        apply_schema(&connection).unwrap();
+        let fts: Vec<String> = schema_objects(SCHEMA)
+            .into_iter()
+            .filter(|(_, n)| n.ends_with("_fts"))
+            .map(|(_, n)| n)
+            .collect();
         let mut applied: Vec<(String, String)> = schema_object_names(&connection)
             .unwrap()
             .into_iter()
-            .filter(|(_, n)| !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_"))))
+            .filter(|(_, n)| {
+                !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_")))
+            })
             .collect();
         let mut read = schema_objects(SCHEMA);
         applied.sort();

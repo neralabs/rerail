@@ -26,7 +26,10 @@ impl ScopeTable {
         if lookup == Lookup::default() {
             return self.binding(reference, name);
         }
-        { let pack = language_pack::pack(self.family); pack.scope_binding_by(self, reference, name, lookup) }
+        {
+            let pack = language_pack::pack(self.family);
+            pack.scope_binding_by(self, reference, name, lookup)
+        }
     }
 
     /// Python: the binding `ScopeTable::binding_by` reads, as its scope and its index among that

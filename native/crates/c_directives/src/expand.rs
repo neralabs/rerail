@@ -75,10 +75,13 @@ pub fn chains(read: &crate::Read, toks: &[Tok]) -> Option<Vec<(u32, u32)>> {
     Some(out)
 }
 
+/// A file's tokens (C++'s where told), or `None` where its lexer refuses it.
+pub type Lexer = dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>;
+
 /// How a TU's files are lexed and their directives read: by the compiled grammars, or (tests) by
 /// their interpreter.
 pub struct Grammars<'a> {
-    pub tokens: &'a dyn Fn(&[u8], bool) -> Option<Vec<tokens::Tok>>,
+    pub tokens: &'a Lexer,
     pub read: &'a dyn Fn(&[u8]) -> Option<crate::Read>,
 }
 
@@ -219,12 +222,29 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
     expand_tu_with(main, io, cpp, g, &native)
 }
 
-/// The words' CPU path: Cranelift's code of the words, compiled once a thread. Words other than the process's
+/// **Deprecated** (decision 0550): `rerail-pp-aot` is Rust from the JIT's IR; its use goes with it.
+/// Whether the ahead-of-time build (`rerail_pp_aot::BUILD`) is the words this process has: made
+/// from the same text (its `words` fingerprint, `EXPAND`'s) for the harness's interface now
+/// (`native_cpu_pp::ABI`), checked once.
+pub fn aot_build() -> Option<rerail_pp_aot::Build> {
+    static SAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let b = rerail_pp_aot::BUILD?;
+    SAME.get_or_init(|| b.words == rerail_compiler::clif_rust::fingerprint(EXPAND) && b.abi == rerail_compiler::native_cpu_pp::ABI).then_some(b)
+}
+
+/// The words' CPU path: rustc's build of their compiled code (`rerail-pp-aot`, decision 0348 and
+/// t44: 0.44× the interpreter's cycles on the corpus), else, without a build of these words,
+/// Cranelift's code of the same IR, compiled once a thread. Words other than the process's
 /// (`program`) run on the interpreter.
 pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     let ours = self::program().is_ok_and(|p| std::ptr::eq(p, program));
     if !ours {
         return pp_words::run(program, files, env, bounds);
+    }
+    if let Some(b) = aot_build() {
+        // SAFETY: `b.run` is `rust_source`'s `pp_run` for `program`: the build was made from
+        // `EXPAND`'s text (`aot_build`), and `program` is `EXPAND` assembled (`program()`).
+        return unsafe { rerail_compiler::native_cpu_pp::run_aot(b.run, program, files, env, bounds) };
     }
     thread_local! {
         static JIT: std::cell::OnceCell<Option<rerail_compiler::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
@@ -235,39 +255,131 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
     })
 }
 
+/// The words' compiled code as UKL (`native_cpu_pp::ukl_source`, decisions 0348 stage 5, 0440 step D), made once a
+/// process: the device runs the same IR as the CPU.
+pub fn ukl() -> Result<&'static str, String> {
+    static UKL: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    UKL.get_or_init(|| rerail_compiler::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
+}
+
+/// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
+    on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
+}
+
+/// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
+/// runner of `expand_tus_with`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
+    let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
+    let Ok(source) = ukl() else { return refused("the words do not translate to UKL") };
+    match rerail_metal::pp_on::run_batch(source, jobs, jobs.len()) {
+        Ok(ran) => ran.results,
+        Err(_) => refused("the device refused the batch"),
+    }
+}
+
 /// The words' runner: the interpreter (`pp_words::run`) or compiled words.
 pub type Runner<'r> = dyn Fn(&rerail_compiler::program::Words, &[File], &pp_words::Env, &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> + 'r;
 
-/// `expand_tu`, the words run by `run`.
+/// `expand_tu`, the words run by `run`: a batch of one (`expand_tus_with`).
 pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool, g: &Grammars, run: &Runner<'_>) -> Result<Vec<Out>, String> {
-    let program = program()?;
-    let env = pp_words::Env { cpp, ..pp_words::Env::DEFAULT };
-    let mut tu = Tu { io, g, cpp, units: Vec::new(), spelled: Vec::new() };
-    if tu.file(main.to_string(), None, true)? == pp_words::NONE {
-        return Err(format!("{main} cannot be read"));
+    let batch = |jobs: &[Job<'_>]| jobs.iter().map(|&(w, f, e, b)| run(w, f, e, b)).collect();
+    expand_tus_with(&mut [(main, io, cpp)], g, &batch).pop().expect("one TU")
+}
+
+/// A round of one TU: the words, its files, its environment and its bounds.
+pub type Job<'a> = (&'a Words, &'a [File<'a>], &'a pp_words::Env<'a>, &'a Bounds);
+
+/// The words' runner over a batch of TUs' rounds (0408, L3): each job's result, in order.
+pub type BatchRunner<'r> = dyn Fn(&[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> + 'r;
+
+/// Many TUs expanded together, each `(main, io, cpp)`: each round runs every TU not yet done in
+/// one batch (`run`), and between rounds the host reads the files the TUs asked for. Each TU's
+/// result is `expand_tu`'s.
+pub fn expand_tus_with<F: rerail_c_pp::files::Files>(tus: &mut [(&str, &mut F, bool)], g: &Grammars, run: &BatchRunner<'_>) -> Vec<Result<Vec<Out>, String>> {
+    let program = match program() {
+        Ok(p) => p,
+        Err(e) => return tus.iter().map(|_| Err(e.to_string())).collect(),
+    };
+    let n = tus.len();
+    let mut out: Vec<Option<Result<Vec<Out>, String>>> = (0..n).map(|_| None).collect();
+    let envs: Vec<pp_words::Env> = tus.iter().map(|t| pp_words::Env { cpp: t.2, ..pp_words::Env::DEFAULT }).collect();
+    let mains: Vec<String> = tus.iter().map(|t| t.0.to_string()).collect();
+    let mut states: Vec<Tu<'_, F>> = tus.iter_mut().map(|t| Tu { io: &mut *t.1, g, cpp: t.2, units: Vec::new(), spelled: Vec::new() }).collect();
+    for (i, tu) in states.iter_mut().enumerate() {
+        match tu.file(mains[i].clone(), None, true) {
+            Ok(pp_words::NONE) => out[i] = Some(Err(format!("{} cannot be read", mains[i]))),
+            Ok(_) => {}
+            Err(e) => out[i] = Some(Err(e)),
+        }
     }
     for _ in 0..ROUNDS {
-        tu.resolve()?;
-        let n = tu.units.len() as u32;
-        // The respelled literals' buffer is the file after the last.
-        let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect())).collect();
-        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
-        files.push(File { bytes: &tu.spelled, ..File::default() });
-        let e = run(program, &files, &env, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
-        if e.wanted.is_empty() {
-            return Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files, t).to_vec())).collect());
-        }
-        drop(files);
-        for (from, mut w) in e.wanted {
-            let from = from as usize;
-            if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next, n.embed, n.pragma) == (&w.name, w.angle, w.next, w.embed, w.pragma)) {
-                continue;
+        for (i, tu) in states.iter_mut().enumerate() {
+            if out[i].is_none()
+                && let Err(e) = tu.resolve()
+            {
+                out[i] = Some(Err(e));
             }
-            w.to = if w.pragma { tu.pragma(w.name.clone())? } else { tu.find(from, &w.name, w.angle, w.next, !w.embed)? };
-            tu.units[from].named.push(w);
+        }
+        let active: Vec<usize> = (0..n).filter(|&i| out[i].is_none()).collect();
+        if active.is_empty() {
+            break;
+        }
+        let mut asked = Vec::new();
+        {
+            // The respelled literals' buffer is the file after the last.
+            let tapes: Vec<Vec<Vec<Tok>>> = active
+                .iter()
+                .map(|&i| {
+                    let m = states[i].units.len() as u32;
+                    states[i].units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: m + 1, ..*t } } else { *t }).collect())).collect()
+                })
+                .collect();
+            let files: Vec<Vec<File>> = active
+                .iter()
+                .zip(&tapes)
+                .map(|(&i, tapes)| {
+                    let tu = &states[i];
+                    let mut files: Vec<File> = tu.units.iter().zip(tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
+                    files.push(File { bytes: &tu.spelled, ..File::default() });
+                    files
+                })
+                .collect();
+            let bounds: Vec<Bounds> = files.iter().map(|f| Bounds::of(f)).collect();
+            let jobs: Vec<Job<'_>> = active.iter().enumerate().map(|(k, &i)| (program, &files[k][..], &envs[i], &bounds[k])).collect();
+            for (k, r) in run(&jobs).into_iter().enumerate() {
+                let i = active[k];
+                match r {
+                    Err(r) => out[i] = Some(Err(format!("refused at word {}: {}", r.pc, r.why))),
+                    Ok(e) if e.wanted.is_empty() => out[i] = Some(Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files[k], t).to_vec())).collect())),
+                    Ok(e) => asked.push((i, e.wanted)),
+                }
+            }
+        }
+        for (i, wanted) in asked {
+            let tu = &mut states[i];
+            for (from, mut w) in wanted {
+                let from = from as usize;
+                if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next, n.embed, n.pragma) == (&w.name, w.angle, w.next, w.embed, w.pragma)) {
+                    continue;
+                }
+                let to = if w.pragma { tu.pragma(w.name.clone()) } else { tu.find(from, &w.name, w.angle, w.next, !w.embed) };
+                match to {
+                    Ok(to) => {
+                        w.to = to;
+                        tu.units[from].named.push(w);
+                    }
+                    Err(e) => {
+                        out[i] = Some(Err(e));
+                        break;
+                    }
+                }
+            }
         }
     }
-    Err("past the import fixpoint's rounds".into())
+    out.into_iter().map(|o| o.unwrap_or_else(|| Err("past the import fixpoint's rounds".into()))).collect()
 }
 
 /// A TU's files by path, as `Search` reads them from a map (`dirs` its search path).

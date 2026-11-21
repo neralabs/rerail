@@ -480,6 +480,10 @@ pub struct BlockProgram {
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
     pub masks: Vec<u16>,
+    /// The value, also an output, whose bits are the stream's `\n` bytes, where the program has a tree section: the
+    /// format 16 tape's newline index is made from its words (`rerail_tape_format::newlines::index_of`), with no scan of
+    /// the source of its own.
+    pub newlines: Option<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -731,7 +735,7 @@ pub struct BlockRun {
 
 impl BlockRun {
     /// The run less the outputs in `made` (`BlockNative::records_made`), each emptied: the CPU's
-    /// record pass makes their positions (a token's last by its gap, decision 0452), and its
+    /// record pass makes their positions (a token's last by its gap, decision 0411), and its
     /// tier 1 no mask for them. Tier 1's runs are compared on the rest.
     pub fn without(&self, made: &[usize]) -> BlockRun {
         BlockRun {
@@ -778,7 +782,7 @@ impl BlockProgram {
                     BlockOp::Const(_) | BlockOp::Not(_) | BlockOp::And(..) | BlockOp::Or(..) | BlockOp::Xor(..) | BlockOp::AndNot(..) => true,
                     _ => false,
                 });
-                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty()
+                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty() && self.newlines.is_none()
             }
             None => !self.ops.iter().any(|op| matches!(op, BlockOp::Cmp { .. } | BlockOp::Bit { .. })),
         };
@@ -795,7 +799,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(&self.newlines).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -804,7 +808,7 @@ impl BlockProgram {
         let records = self.records.as_ref().is_none_or(|r| {
             usize::from(r.starts) < self.extracts.len()
                 && usize::from(r.lasts) < self.extracts.len()
-                // The gaps' ends (decision 0452): the skip's output, and no end rules.
+                // The gaps' ends (decision 0411): the skip's output, and no end rules.
                 && r.gap.is_none_or(|g| usize::from(g) < self.outputs.len() && r.rules.is_empty() && r.skip.is_none())
                 && r.starts != r.lasts
                 && r.kinds.len() == 256
@@ -894,6 +898,11 @@ impl BlockProgram {
             for v in &self.masks {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+        }
+        // Likewise the newlines, tagged.
+        if let Some(v) = self.newlines {
+            out.extend_from_slice(b"newlines");
+            out.extend_from_slice(&v.to_le_bytes());
         }
         // Likewise the delay, tagged.
         if self.delay != 0 {
@@ -988,6 +997,11 @@ impl BlockProgram {
     }
 
     /// Each mask's output index.
+    pub fn newline_output(&self) -> Option<usize> {
+        self.newlines.map(|v| self.outputs.iter().position(|&o| o == v).expect("verified: the newlines are an output"))
+    }
+
+    /// Each mask's output index.
     pub fn mask_outputs(&self) -> Vec<usize> {
         self.masks
             .iter()
@@ -1036,7 +1050,7 @@ impl BlockProgram {
                 } else if let Some((r, gap)) =
                     self.records.as_ref().and_then(|r| r.gap.map(|g| (r, g)))
                 {
-                    // The lasts by the gaps (decision 0452): each the byte before the next
+                    // The lasts by the gaps (decision 0411): each the byte before the next
                     // start, less the skip's bytes there, as the CPU's record pass makes them.
                     positions[usize::from(r.lasts)] = crate::records::gap_lasts(
                         &outputs[usize::from(gap)],
@@ -1225,7 +1239,7 @@ impl BlockProgram {
                 BlockOp::Escaped(a) => carried(one(a), &first, 0u64, |x, _, c| carry::escaped(x, c)),
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
-                    carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
+                    carried(pairs, &first, 0u64, carry::fill)
                 }
                 // Last block to first, the carry zero at each file's last block.
                 BlockOp::BackFill(a, b) => {
@@ -1616,7 +1630,7 @@ pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
 /// Clear the bits past `len` bytes.
 pub fn mask_tail(words: &mut [u64], len: usize) {
     if let Some(last) = words.last_mut()
-        && len % 64 != 0
+        && !len.is_multiple_of(64)
     {
         *last &= (1u64 << (len % 64)) - 1;
     }
@@ -1812,6 +1826,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     for value in &block.masks {
         let _ = writeln!(out, "  block {at} mask %{value}");
     }
+    if let Some(value) = block.newlines {
+        let _ = writeln!(out, "  block {at} newlines %{value}");
+    }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
@@ -1827,7 +1844,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
         }
         // `block N recgap O` the skip's output, where the tokens' last bytes are the gaps'
-        // (decision 0452).
+        // (decision 0411).
         if let Some(g) = r.gap {
             let _ = writeln!(out, "  block {at} recgap {g}");
         }
@@ -1911,19 +1928,25 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
         }
+        // `block N reckindrows K`: the first bit telling a token mark's kind by its rows.
+        if let Some(k) = r.kind_rows {
+            let _ = writeln!(out, "  block {at} reckindrows {k}");
+        }
         // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
         }
-        // `block N reccheck R count|run O N [at K|after K]`: a token test of rule `R`'s tokens,
-        // refusing the file, or a bit of mark `K` (`CheckThen`).
+        // `block N reccheck R count|run|all O N [at K|after K|cut]`: a token test of rule `R`'s
+        // tokens, refusing the file, a bit of mark `K`, or the token's cut (`CheckThen`).
         for c in &r.checks {
             let then = match c.then {
                 crate::records::CheckThen::Escape => String::new(),
                 crate::records::CheckThen::At(k) => format!(" at {k}"),
                 crate::records::CheckThen::After(k) => format!(" after {k}"),
+                crate::records::CheckThen::Cut => " cut".to_string(),
             };
-            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+            let test = if c.count { "count" } else if c.all { "all" } else { "run" };
+            let _ = writeln!(out, "  block {at} reccheck {} {test} {} {}{then}", c.rule, c.o, c.least);
         }
         // `block N recchecked M`: a mask tier 2's local checks alone read.
         for m in &r.check_masks {

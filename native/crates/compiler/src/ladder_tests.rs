@@ -1,19 +1,19 @@
-//! The Bitlex ladder in this crate (`ladder`): every step parses as the reference.
+//! JSON's grammars in this crate (`ladder`): each parses as the reference.
 
 use crate::ladder::*;
 
-/// Every step: the reference's nodes equal the interpreters' and the compiled path's on every
-/// document; tier 1 compiled equals its interpreter; each step parses some documents and sends
-/// some to tree-sitter. Printed per step: the grammar's sentences and the mutated copies apart,
+/// Each grammar: the reference's nodes equal the interpreters' and the compiled path's on every
+/// document; tier 1 compiled equals its interpreter; each grammar parses some documents and sends
+/// some to tree-sitter. Printed per grammar: the grammar's sentences and the mutated copies apart,
 /// and why the reference refused each sentence it refused.
 #[test]
-fn every_step_parses_as_the_reference() {
-    let differ = check_ladder(&steps_in(DIR), b"<>();=#^ \nav9~,eE-{}", &[], &[], &|_, _, _, _| None);
-    assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
+fn every_grammar_parses_as_the_reference() {
+    let differ = check_ladder(&grammars(), b" \nav9,eE-{}[]\":/*\\tu", &[], &[], &|_, _, _, _| None);
+    assert!(differ.is_empty(), "{} grammars differ:\n{}", differ.len(), differ.join("\n"));
 }
 
 
-/// A gap mark's `before`s and `unless before`s (decision 0490), a token mark's run of tokens,
+/// A gap mark's `before`s and `unless before`s (decision 0416), a token mark's run of tokens,
 /// and token marks tier 2 tests alone (0407): a line break ends a header unless
 /// the token after it is a `.`, which goes on the name, as a parser asks of the token it peeks
 /// at; at the file's end the mark holds (`, end`). The reference's nodes equal the interpreter's
@@ -72,7 +72,7 @@ tree kotlin {
     assert_eq!(check_documents("before", &c, b"pa.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A settling mark's `drops W` (Q220): where `W` holds at the token after it (here an `import`),
+/// A settling mark's `drops W` (Q235): where `W` holds at the token after it (here an `import`),
 /// the extra before that token, after the mark's bit, goes; those before the bit are the header's.
 /// Bitlex's reference and every executor.
 #[test]
@@ -258,7 +258,7 @@ tree t {
     assert_eq!(check_documents("triples", &c, b"ab=!.< ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A token mark's run that counts depths (Q222), as the lean parser's `type_args_end` does: a
+/// A token mark's run that counts depths (Q339), as the lean parser's `type_args_end` does: a
 /// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
 /// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.
 #[test]
@@ -292,10 +292,10 @@ tree t {
 }
 
 /// A level that took a mark at a token does not end there at a hidden `ends` mark (0430 step
-/// 1b, Q228): the line break's one decision is made, as the lean parser asks `asi` once. `goes`,
+/// 1b, Q345): the line break's one decision is made, as the lean parser asks `asi` once. `goes`,
 /// declared before `semi`, says a line that starts with `c` goes on a declaration; after it is
 /// taken, `semi` (live at the same token) ends no level, and `c()` is the declaration's. Elsewhere
-/// `semi` ends the declaration. Bitlex's reference does not implement `ends` (Q229): the
+/// `semi` ends the declaration. Bitlex's reference does not implement `ends` (Q346): the
 /// interpreter's nodes are the expected ones, and every executor's equal them.
 #[test]
 fn a_taken_mark_is_the_line_breaks_decision() {
@@ -373,7 +373,7 @@ fn a_gap_mark_read_from_the_blanks() {
 }
 
 /// A gap mark the token loop sets from the bytes, where the extra's mark is set after the
-/// tokens (Q230): the loop cannot tell a comment from a grammar token, so the mark is set after
+/// tokens (Q347): the loop cannot tell a comment from a grammar token, so the mark is set after
 /// the tokens too, and a comment never takes its bit. One comment kind read by one reader of
 /// two regions.
 #[test]
@@ -488,7 +488,7 @@ tree t {
     assert_eq!(check_documents("with", &c, b"agetpub(). \n", &[], &fixed, &|_, _, _, _| None), None);
 }
 
-/// A run's `ending (C)` (Q225): the rest is tried only where the run's last token, or the token
+/// A run's `ending (C)` (Q342): the rest is tried only where the run's last token, or the token
 /// before it where it took none, is one of `C`, in Bitlex's reference and every executor.
 #[test]
 fn a_run_ends_on_a_token() {
@@ -517,4 +517,180 @@ tree t {
     // `<(`: the run took none, and the token before it, the `<`, is no name.
     assert_eq!(opened, [1, 0, 0, 1, 2, 0, 0]);
     assert_eq!(check_documents("ending", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A rule made a call keeps the reference's meaning (doc 24 §2.3): a rule not `nested` takes
+/// its caller's follow, so a hidden mark its caller takes after it ends it. `ops` is a call
+/// under `Shape::Rules`; inlined, its loop stops at the line's `eol`, which `line` takes. As a
+/// call it must stop there too, not read the next line's first word as its own.
+#[test]
+fn a_called_rule_ends_at_the_hidden_marks_its_caller_takes() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier ops eol
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let fixed = ["a b c d\ne f g h\n", "a b c d\n", "a b c d e\nf g h i", "a b c d\n\ne f g h i j\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("follow", source, shape);
+        let line = c.ids.of("line");
+        let lines: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == line).count()).collect();
+        assert_eq!(lines, [2, 1, 2, 2], "the reference: a line a line break");
+        if shape == crate::bitlex_masks::Shape::Rules {
+            assert!(c.text.lines().any(|l| l.contains(" PUSH ")), "`ops` is a call:\n{}", c.text);
+        }
+        let differ = check_documents("follow", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
+    }
+}
+
+/// A called level that takes only a mark: `rest` is `eol` alone or words then `eol`, a call
+/// under `Shape::Rules`. A taken mark is progress (a mark taken clears it and the marks before
+/// it, and only `TOKEN` sets them again), so the verifier accepts the call, and it parses as
+/// the reference.
+#[test]
+fn a_called_level_may_take_only_a_mark() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name
+token simple_identifier = start name & ~prev(name) run word
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)*
+  node line       = simple_identifier rest
+  choice rest     = eol | simple_identifier (simple_identifier)* eol
+  hidden eol
+}
+"#;
+    let fixed = ["a\nb c d\n", "a\n", "a b\nc\n", "a b c\n\nd\n"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("mark_only", source, shape);
+        assert_eq!(check_documents("mark_only", &c, b"ab \n", &[], &fixed, &|_, _, _, _| None), None, "{shape:?}");
+        if shape != crate::bitlex_masks::Shape::Rules {
+            continue;
+        }
+        // `rest`'s own marks kept (`MARK_KEEP`): taken by nobody, no progress, refused.
+        let first_call = c.text.lines().filter_map(|l| l.strip_prefix("  rule ")).filter_map(|l| l.split_once(" @")).filter(|(r, _)| *r != "0").map(|(_, pc)| pc.to_owned()).min().expect("a called rule");
+        let kept: Vec<String> = c
+            .text
+            .lines()
+            .map(|l| match l.trim_start().split_once(" MARK m=") {
+                Some((pc, rest)) if pc >= first_call.as_str() => {
+                    let (m, operand) = rest.split_once(' ').expect("an operand");
+                    format!("  {pc} MARK m={} {operand}", m.parse::<u8>().expect("a mode") | crate::program::MARK_KEEP)
+                }
+                _ => l.to_owned(),
+            })
+            .collect();
+        let e = crate::rir_asm::assemble(&(kept.join("\n") + "\n")).err().expect("a kept mark is no progress");
+        assert!(e.contains("NonProgressingCycle"), "{e}");
+    }
+}
+
+/// A call whose uses differ in a hidden mark after them, where it may end and go on, is
+/// refused: after `line`'s use the reference ends `ops` at `eol`, after `last`'s it reads on
+/// past it, and one call can not do both. One that can not go on where it may end compiles:
+/// there ending at the mark and skipping it are the same (`a_called_rule_…` above).
+#[test]
+fn a_call_whose_uses_differ_where_it_can_go_on_is_refused() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class word      = 'a'..'z'
+class punct     = '.' ';'
+mask name       = fill(word, ~word)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "." ";" } required
+skip ws
+mark eol        = lf, end
+tree t {
+  node source_file whole = (line)* [last]
+  node line       = simple_identifier ops eol
+  node last       = '.' OPS
+  node ops        = simple_identifier simple_identifier simple_identifier (simple_identifier)*
+  hidden eol
+}
+"#;
+    let open = source.replace("OPS", "ops");
+    let e = compile_error_shaped(&open, crate::bitlex_masks::Shape::Rules).expect("refused");
+    if !e.contains("may end here and take a token it may hold at") {
+        eprintln!("REFUSED: {e}");
+        panic!("the refusal says why");
+    }
+    // `last`'s `ops` closed by a `;`: a call that can not go on where it may end after `last`
+    // ends there whatever follows.
+    let closed = source.replace("OPS", "ops ';'").replace("(simple_identifier)*", "(simple_identifier)* ';'");
+    let fixed = ["a b c d ;\n", "a b c d ;\n. e f g ; ;\n", "a b c d e ;\n. f g h ;\n;", ". a b\nc ; ;"];
+    for shape in [crate::bitlex_masks::Shape::Machine, crate::bitlex_masks::Shape::Rules] {
+        let c = compile_step_shaped("differ", &closed, shape);
+        let differ = check_documents("differ", &c, b"ab .;\n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS {shape:?}: {d}");
+        }
+        assert_eq!(differ, None, "{shape:?}");
+    }
+}
+
+/// A token mark over a kind whose first byte another token's starts too: `annot` (`@a`) and
+/// the punctuation `@` both start with `@`, so the records' kind of a byte can not tell them
+/// apart. The kind's tokens are told by its rows' starts, a mark bit of the code
+/// (`TokenElem::rows`): `tagged` holds at `@a b`, not at `@ a`. The reference and every executor.
+#[test]
+fn a_token_mark_tells_a_kind_by_its_rows_where_a_first_byte_is_shared() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z'
+class at        = '@'
+class dot       = '.'
+mask name       = fill(word, ~word)
+mask lone_at    = at & ~next(word)
+mask p          = lone_at | dot
+error "a byte no token takes" by tokens when ~ws & ~name & ~at & ~dot
+token simple_identifier = start name & ~prev(name) & ~prev(at) run word
+token annot     = start at & next(word) run word
+token punct     = start p
+keywords punct { "@" "." } required
+skip ws
+mark tagged     = tokens annot simple_identifier
+tree t {
+  node source_file whole = (item)*
+  node item       = tagged tagged_item | annot | '@' simple_identifier | '.'
+  node tagged_item = annot simple_identifier
+}
+"#;
+    // In a token loop (`skip`), `annot` shares `@` with the wider `punct`: its tokens have a kind of their own
+    // (decision 0509), which tells them, and no rows bit is made. Without the loop (no `run`), the rows bit tells them.
+    for (name, source, by_rows) in [("shared", source.to_owned(), false), ("shared_rows", source.replace("~prev(at) run word", "~prev(at) last name & ~next(word)").replace("next(word) run word", "next(word) last name & ~next(word)"), true)] {
+        let c = compile_step(name, &source);
+        let rows: Vec<u32> = c.program.token_marks.iter().flat_map(|m| m.elems.iter().map(|e| e.rows)).collect();
+        assert_eq!(rows.iter().any(|&r| r != 0), by_rows, "{name}: `annot` told by its rows: {rows:?}");
+        let fixed = ["@a b\n", "@ a\n", "@a\n.@b c", "@ a @b\n@c d", "@a @b c", "@a .", "@ a b"];
+        let parses: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_some()).collect();
+        assert_eq!(parses, [true, true, true, true, true, true, false], "{name}");
+        let differ = check_documents(name, &c, b"ab@. \n", &[], &fixed, &|_, _, _, _| None);
+        if let Some(d) = &differ {
+            eprintln!("DIFFERS: {name}: {d}");
+        }
+        assert_eq!(differ, None, "{name}");
+    }
 }

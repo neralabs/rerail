@@ -9,6 +9,7 @@ outputs come back on the stream. One scan of a directory serves every compile th
 it. Every file the compile read (its dep-info) must be as it is here, or the caller compiles here.
 """
 import hmac
+import hashlib
 import json
 import os
 import secrets
@@ -23,6 +24,47 @@ import time
 import farm
 
 SOCKET = farm.state("mirror.sock")
+# The daemon's log (`mirror.log`): a line per job (its host, what it ran, what was sent, how long,
+# its result, what came back), each connection, drop and late file, and the daemon's start and end.
+# Rotated at LOG_BYTES, LOG_KEEP old ones kept (`mirror.log.1` the newest): at most 25 MB.
+LOG_BYTES = 5 << 20
+LOG_KEEP = 4
+_log = None
+
+
+def log(message):
+    """A line in the daemon's log (and in RERAIL_FARM_LOG's, when set)."""
+    global _log
+    farm.log(message)
+    try:
+        if _log is None:
+            import logging
+            import logging.handlers
+            _log = logging.getLogger("rerail-farm-mirror")
+            _log.setLevel(logging.INFO)
+            _log.propagate = False
+            handler = logging.handlers.RotatingFileHandler(farm.state("mirror.log"), maxBytes=LOG_BYTES, backupCount=LOG_KEEP)
+            handler.setFormatter(logging.Formatter("%(asctime)s %(process)d %(message)s", "%Y-%m-%d %H:%M:%S"))
+            _log.addHandler(handler)
+        _log.info(message)
+    except OSError:
+        pass  # never fail a compile over its log
+
+
+def rotated(path):
+    """`path` opened to append (an agent's stderr), its last LOG_BYTES moved to `path.1` first once
+    it is over LOG_BYTES: the two stay under 2 × LOG_BYTES."""
+    try:
+        if os.path.getsize(path) > LOG_BYTES:
+            with open(path, "rb") as f:
+                f.seek(-LOG_BYTES, os.SEEK_END)
+                tail = f.read()
+            with open(path + ".1", "wb") as f:
+                f.write(tail)
+            os.unlink(path)
+    except OSError:
+        pass
+    return open(path, "ab")
 IDLE_SECONDS = 15 * 60
 # How long a scan of a checkout's file list (git ls-files) is reused; a file added since is caught by
 # the read check, and the compile then runs here.
@@ -45,6 +87,11 @@ def receive(f):
     return header, payload
 
 
+def staged(path, job_id):
+    """Where a compile's output `path` waits until its caller takes it (`farm.run_mirror`)."""
+    return f"{path}.farm-{os.getpid()}-{job_id}"
+
+
 def stat(path):
     try:
         st = os.stat(path)
@@ -61,7 +108,7 @@ class Host:
         self.name = name
         self.proc = subprocess.Popen(command or farm.ssh(name, farm.on_host("farm-agent"), "mirror"),
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
-                                     stderr=open(farm.state("mirror", f"{name}.err"), "ab"))
+                                     stderr=rotated(farm.state("mirror", f"{name}.err")))
         self.w, self.r = self.proc.stdin, self.proc.stdout
         self.transport = "ssh"
         if farm.config().get("tcp", True) and os.environ.get("RERAIL_FARM_TCP", "1") != "0":
@@ -91,7 +138,7 @@ class Host:
                 ready, _, _ = select.select([listener, self.r], [], [], deadline - time.time())
                 if self.r in ready:
                     header, _ = receive(self.r)  # the agent could not connect, or stopped
-                    farm.log(f"{self.name}: mirror over ssh: {(header or {}).get('why', 'the agent stopped')}")
+                    log(f"{self.name}: mirror over ssh: {(header or {}).get('why', 'the agent stopped')}")
                     return
                 if listener in ready:
                     conn, peer = listener.accept()
@@ -112,11 +159,11 @@ class Host:
                     self.sock = conn
                     self.w, self.r = conn.makefile("wb"), conn.makefile("rb")
                     self.transport = "tcp"
-                    farm.log(f"{self.name}: mirror over tcp")
+                    log(f"{self.name}: mirror over tcp")
                     return
-            farm.log(f"{self.name}: mirror over ssh: the agent did not connect back")
+            log(f"{self.name}: mirror over ssh: the agent did not connect back")
         except OSError as e:
-            farm.log(f"{self.name}: mirror over ssh: {e!r}")
+            log(f"{self.name}: mirror over ssh: {e!r}")
         finally:
             listener.close()
 
@@ -134,7 +181,19 @@ class Host:
             self.waiting[job_id] = {"event": done, "result": None}
             send(self.w, dict(header, id=job_id))
         done.wait(timeout)
-        return self.waiting.pop(job_id, {}).get("result")
+        waiting = self.waiting.pop(job_id, {})
+        result = waiting.get("result")
+        if result is not None and waiting.get("files"):
+            result["staged"] = waiting["files"]
+        else:
+            if waiting.get("files"):
+                log(f"{self.name}: job {job_id} got no reply in {timeout} s: removed its {len(waiting['files'])} staged outputs")
+            for to in waiting.get("files", {}).values():
+                try:
+                    os.unlink(to)
+                except OSError:
+                    pass
+        return result
 
     def stop(self):
         with self.lock:
@@ -213,11 +272,22 @@ class Host:
                     waiting["event"].set()
                 return
             if header["op"] == "file":
+                # Staged beside its place, never put there: the caller moves a compile's outputs in
+                # once it has them all and the compile read what is here (`staged`, farm.run_mirror).
+                # A file of a job no one waits for (the caller gave up and compiled here) is dropped:
+                # put in place late, it would sit beside the newer outputs of another compile, an
+                # `.rmeta` that is not its `.rlib`'s (Q377: E0463 above it).
                 path = header["path"]
-                tmp = f"{path}.farm-{os.getpid()}"
+                waiting = self.waiting.get(header.get("id"))
+                if waiting is None:
+                    log(f"{self.name}: dropped {os.path.basename(path)}: its job {header.get('id')} is no longer waited on")
+                    continue
+                to = staged(path, header["id"])
+                tmp = f"{to}.part"
                 with open(tmp, "wb") as f:
                     f.write(payload)
-                os.replace(tmp, path)
+                os.replace(tmp, to)
+                waiting.setdefault("files", {})[path] = to
             elif header["op"] in ("done", "had", "same?", "unlisted!", "removed"):
                 waiting = self.waiting.get(header["id"])
                 if waiting:
@@ -266,6 +336,7 @@ def drop(name, h, why=None):
     with hosts_lock:
         if hosts.get(name) is h:
             del hosts[name]
+    log(f"{name}: agent dropped" + (f": {why}" if why else ""))
     h.stop()
     if why:
         farm.mark_down(name, why)
@@ -305,6 +376,19 @@ def top(root, test):
         return []
 
 
+def fingerprint(roots):
+    """The tree `roots` (as a job's) hold here now: a hash of each file's path and stat. Two commands
+    of one checkout whose fingerprints are the same run from one copy on a host (`farm.CopyUse`)."""
+    h = hashlib.sha256()
+    for root, kind in roots:
+        files = checkout_files(root) if kind == "checkout" else tree(root)
+        for p in sorted(files):
+            st = stat(p)
+            if st is not None:
+                h.update(f"{p}\0{st[0]}\0{st[1]}\0{st[2]}\n".encode())
+    return h.hexdigest()
+
+
 def needed(job, since):
     """The files `job` may read, with their stats here: (path, (mtime_ns, size, mode))."""
     out = []
@@ -332,7 +416,9 @@ def handle(conn):
         send(f, work(job))
     except Exception as e:
         try:
-            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r}"})
+            import traceback
+            where = traceback.format_exc().strip().splitlines()[-3:-1]
+            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r} ({' / '.join(w.strip() for w in where)})"})
         except OSError:
             pass
     finally:
@@ -344,7 +430,36 @@ def failed(why):
     return {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": why}
 
 
+def what(job):
+    """What a job runs, for the log: a compile's crate, else its command's first words."""
+    argv = job.get("run", {}).get("argv") or []
+    if "--crate-name" in argv:
+        i = argv.index("--crate-name")
+        if i + 1 < len(argv):
+            return "compile " + argv[i + 1]
+    return " ".join(os.path.basename(a) for a in argv[:3])[:80] or "?"
+
+
 def work(job):
+    """`run_job`, with its line in the daemon's log."""
+    started = time.time()
+    reply = run_job(job)
+    t = reply.get("times") or {}
+    stale = [p for p, seen in (reply.get("read") or {}).items() if seen is None and p != "?"]
+    outputs = job.get("run", {}).get("outputs") or []
+    staged = reply.get("staged") or {}
+    missing = [os.path.basename(o) for o in outputs if o not in staged] if outputs and reply.get("code") == 0 else []
+    log(f"{job.get('host')}: {what(job)}: code {reply.get('code')}"
+        + (f" ({reply['why']})" if reply.get("why") else "")
+        + f"; sent {t.get('files', 0)} files in {t.get('sync', '-')} s, ran {t.get('compile', '-')} s ({t.get('transport', '-')})"
+        + f"; {len(staged)} outputs back" + (f", MISSING {missing}" if missing else "")
+        + (f"; {len(stale)} reads unknown" if stale else "")
+        + (f"; stderr {reply.get('stderr', '')[-200:]!r}" if reply.get("code") not in (0, None) and reply.get("stderr") else "")
+        + f"; {round(time.time() - started, 2)} s in all")
+    return reply
+
+
+def run_job(job):
     """Sends what `job` may read, then runs it. What fails here never fails twice the same way: a
     host whose agent stopped or could not write is down for its back-off, and one whose run failed
     or read other files than this machine's is asked again what it holds (it may have been cleaned)."""
@@ -436,6 +551,7 @@ def serve():
     if not lock.held:
         return
     started_as = installed()
+    log(f"daemon started: farm version {farm.VERSION}")
     try:
         os.unlink(SOCKET)
     except OSError:
@@ -452,6 +568,7 @@ def serve():
         threading.Thread(target=counted, args=(conn,), daemon=True).start()
     server.close()
     os.unlink(SOCKET)
+    log("daemon stops taking jobs: " + ("idle" if time.time() - last_job[0] >= IDLE_SECONDS else "another farm version is installed"))
     lock.release()
     # The compiles already taken finish (each is bounded by COMPILE_SECONDS); the next daemon may
     # already serve new ones.
@@ -474,8 +591,12 @@ def connect():
             # The system's Python, whatever started this one: macOS's Local Network privacy keeps
             # another (Homebrew's) from connecting to the hosts ("No route to host").
             python = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
+            # The daemon is every caller's, so it keeps no caller's own log (`RERAIL_FARM_LOG`):
+            # test-mac-compiles' is in a directory it removes, and the daemon then failed every
+            # send it logged (FileNotFoundError, 2026-11-20).
+            env = {k: v for k, v in os.environ.items() if k != "RERAIL_FARM_LOG"}
             subprocess.Popen(["nice", "-n", "5", python, os.path.join(farm.SHARE, "mirror.py")], start_new_session=True,
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
         time.sleep(0.05)
     return None
 

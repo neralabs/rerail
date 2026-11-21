@@ -21,15 +21,16 @@ pub mod tape;
 pub mod f16;
 pub mod home;
 pub mod newlines;
-/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
-mod generated_reads;
-/// The tape's writer's ops as Rust, from CLIF (decision 0434 §6): `rerail_clif::writer::rust_source`.
-mod generated_writer;
+/// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
+pub mod reads;
+/// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
+pub mod writer16;
 
-/// The writer's ops as MSL (decision 0434 §6, R15), generated from their CLIF (`rerail_clif::writer::msl_source`):
-/// a kernel that writes a tape includes it. Each op takes the region's buffer and the state's offset in it.
-pub const WRITER_MSL: &str = include_str!("writer.metal");
 
+/// **Deprecated** (decision 0550): only `rust_stream`, itself deprecated, reads it.
+/// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
+/// holds it as its module `w` (`rerail_compiler::rust_stream`).
+pub const WRITER_RUST: &str = include_str!("writer16.rs");
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -74,7 +75,7 @@ pub const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
 /// ERROR's `kf`.
 pub const ERROR_CODE: u16 = 0;
-/// The `.rr` dialect's language tag (`languages/rr.json`'s `tapeTag`).
+/// The `.rerail` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
 /// A kind's bits in a code's `kf`: the field is above them.
@@ -151,7 +152,7 @@ pub struct Widths {
 
 impl Widths {
     /// The guess for a source of `len` bytes (decision 0140). An offset and a tail are at most
-    /// the source's length, and a `.rr` file has fewer nodes than bytes: below 64 KiB every
+    /// the source's length, and a `.rerail` file has fewer nodes than bytes: below 64 KiB every
     /// column fits 2 bytes, so nearly every file is written once. Above it, offsets and tails
     /// stay 2 (they are short distances), and sizes take 4 from `SIZE_GUESS_BYTES` on.
     pub fn guess(len: usize) -> Self {
@@ -193,7 +194,7 @@ impl Layout for Widths {
 }
 
 /// From this many source bytes on, `Widths::guess` writes sizes at 4 bytes. Calibrated on the
-/// repository's 1,362 `.rr` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
+/// repository's 1,362 `.rerail` files (`rr_syntax`'s `widths_guess_calibration`, 2026-11-13): the
 /// densest has 0.334 nodes a byte, the densest of 64 KiB or more 0.205 (42,081 nodes in
 /// 205,423 bytes); none needs 4. At 0.205 a file has 65,535 nodes at about 320,000 bytes. With
 /// this bound no file is parsed twice; at 160,000, six were.
@@ -1454,14 +1455,59 @@ pub struct View<'a> {
     tail: &'a [u8],
     widths: [u8; 3],
     from_start: bool,
-    /// Each code's key, by id.
-    keys: Vec<u32>,
+    /// Each code's key, by id: read from the code table, or a holder's (`with_keys`).
+    keys: std::borrow::Cow<'a, [u32]>,
+    /// Where the code table starts, and how many codes it holds.
+    table: usize,
+    codes: usize,
 }
 
 impl<'a> View<'a> {
     /// The image `bytes`, checked as `decode` checks it: the header, the columns' lengths, the code table, and
     /// each code id and size in range.
     pub fn new(bytes: &'a [u8]) -> Result<Self, String> {
+        let view = Self::columns(bytes)?;
+        for i in 0..view.n {
+            if usize::from(u16::from_le_bytes([view.code[2 * i], view.code[2 * i + 1]])) >= view.keys.len() {
+                return Err("a node's code is not in the table".into());
+            }
+            if i + view.size(i).max(1) > view.n {
+                return Err("a node's size runs past the tape".into());
+            }
+        }
+        Ok(view)
+    }
+
+    /// An image `new` checked before, `keys` its code table's keys as `keys` gave them then (its holder keeps both,
+    /// unchanged): its header and columns read again, the nodes not checked again and the code table not read.
+    pub fn with_keys(bytes: &'a [u8], keys: &'a [u32]) -> Self {
+        let mut v = Self::columns_only(bytes).expect("an image checked before");
+        debug_assert_eq!(keys.len(), v.codes, "the image's own keys");
+        v.keys = std::borrow::Cow::Borrowed(keys);
+        v
+    }
+
+    /// Each code's key, by id, for a holder to keep (`with_keys`): those `new` read, not copied again.
+    pub fn into_keys(self) -> Box<[u32]> {
+        self.keys.into_owned().into_boxed_slice()
+    }
+
+    /// The header, the columns and the code table.
+    fn columns(bytes: &'a [u8]) -> Result<Self, String> {
+        let mut v = Self::columns_only(bytes)?;
+        let (code_count, mut c) = (v.codes, v.table);
+        let mut keys = Vec::with_capacity(code_count);
+        for _ in 0..code_count {
+            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+            c += 6 + 2 * usize::from(entry[5]);
+        }
+        v.keys = std::borrow::Cow::Owned(keys);
+        Ok(v)
+    }
+
+    /// The header and the columns, and where the code table starts; no key read.
+    fn columns_only(bytes: &'a [u8]) -> Result<Self, String> {
         let u64_at = |at: usize| -> Result<usize, String> {
             let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
             usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
@@ -1486,23 +1532,7 @@ impl<'a> View<'a> {
         };
         let w = widths.map(usize::from);
         let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
-        let mut keys = Vec::with_capacity(code_count);
-        let mut c = at;
-        for _ in 0..code_count {
-            let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
-            keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
-            c += 6 + 2 * usize::from(entry[5]);
-        }
-        let view = View { n, code, size, base, off, tail, widths, from_start, keys };
-        for i in 0..n {
-            if usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]])) >= code_count {
-                return Err("a node's code is not in the table".into());
-            }
-            if i + view.size(i).max(1) > n {
-                return Err("a node's size runs past the tape".into());
-            }
-        }
-        Ok(view)
+        Ok(View { n, code, size, base, off, tail, widths, from_start, keys: std::borrow::Cow::Borrowed(&[]), table: at, codes: code_count })
     }
 
     #[inline(always)]

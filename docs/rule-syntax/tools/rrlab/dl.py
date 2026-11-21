@@ -1,9 +1,9 @@
 """rrlab dl: score a hand-written data-layer rule against the data-layer port's recorded events.
 
-  rrlab dl CHECK [RULE.rr] [--fixtures DIR] [--entry NAME] [--test TEXT] [--show N] [--jobs N] [--codeless CODE]
+  rrlab dl CHECK [RULE.rerail] [--fixtures DIR] [--entry NAME] [--test TEXT] [--show N] [--jobs N] [--codeless CODE]
 
 CHECK is the linter's name (`bootstrap_cache_health`). RULE defaults to docs/rule-syntax/data-layer/<check-with-
-hyphens>.rr. The events come from the Data-layer-rule-expressivity worktree's fixtures/host/data-layer-port:
+hyphens>.rerail. The events come from the Data-layer-rule-expressivity worktree's fixtures/host/data-layer-port:
 
 - batch-NN-recording.json and batch-NN-*probes.json: one event per linter call in its upstream test suite, with
   the files it was given and the findings it returned (path, line, code);
@@ -23,7 +23,7 @@ the set of (path, line, code) keys.
   has only one code, every recorded finding is compared under it: an internal entry may give the message instead.
   An event whose recorded codes are none of the rule's (fixed) codes is compared on (path, line) only, and counted. A record whose
   call raised is left out.
-- A file with a syntax error is withheld, as core.rr says: only `.on syntax_error`'s finding is kept for it.
+- A file with a syntax error is withheld, as core.rerail says: only `.on syntax_error`'s finding is kept for it.
 - Events with more than `--max-files` files (500) are not run: rrlab's facts grow with the whole tree.
 - Events the upstream run did not pass, and retained ones, are left out. Events that compare messages or
   fields are compared on their keys.
@@ -102,7 +102,7 @@ def log_codes(rule_text, codes_of):
 
 def score(args, Run, here):
     check = args.check
-    rule = os.path.abspath(args.rule or os.path.join(here, "..", "..", "data-layer", check.replace("_", "-") + ".rr"))
+    rule = os.path.abspath(args.rule or os.path.join(here, "..", "..", "data-layer", check.replace("_", "-") + ".rerail"))
     fixtures = args.fixtures or os.path.join(here, "..", "..", "..", "..", "..", "Data-layer-rule-expressivity",
                                              "fixtures", "host", "data-layer-port")
     evs = events(fixtures, check)
@@ -153,7 +153,7 @@ def score(args, Run, here):
             run = Run(rule, rels, root, options=e["options"] or None)
             run.use_scope = e["production"]
             found = run.execute()
-            # core.rr: a document that does not parse is withheld; only `.on syntax_error`'s finding is left
+            # core.rerail: a document that does not parse is withheld; only `.on syntax_error`'s finding is left
             on = run.prog.on_syntax[0] if run.prog.on_syntax else None
             got = {(f["path"], int(f["line"]), f["code"]) for f in found if not f["syntax_error"] or f["code"] == on}
             return k, got, None

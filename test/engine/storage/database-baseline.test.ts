@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -20,11 +20,12 @@ import { RERAIL_SCHEMA_STATEMENTS } from "../../../src/engine/storage/schema-sql
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { installPack, uninstallPack } from "../../support/installed-packs.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {
@@ -164,10 +165,12 @@ describe("the baseline schema", () => {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, "plain text, not a database\n".repeat(200));
     chmodSync(path, 0o644);
+    // The mode as the platform reports it: Windows keeps no permission bits and reports 0o666 for a writable file.
+    const mode = statSync(path).mode;
     const before = readFileSync(path);
     expectRefused(path, unreadable(path, "not an SQLite database"));
     expect(readFileSync(path)).toEqual(before);
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode).toBe(mode);
   });
 
   // A file another program wrote keeps its rollback journal and mode: a writable open refuses it before it
@@ -182,10 +185,11 @@ describe("the baseline schema", () => {
       other.close();
     }
     chmodSync(path, 0o644);
+    const mode = statSync(path).mode;
     const before = readFileSync(path);
     expectRefused(path, unreadable(path, "no Rerail schema version"));
     expect(readFileSync(path)).toEqual(before);
-    expect(statSync(path).mode & 0o777).toBe(0o644);
+    expect(statSync(path).mode).toBe(mode);
     expect(existsSync(`${path}-wal`)).toBe(false);
     const reopened = new Database(path, { readonly: true });
     try {
@@ -475,17 +479,55 @@ describe("the migration path", () => {
     settledBytes(path);
     const before = readFileSync(path);
     chmodSync(path, 0o400);
+    // Read-only as the platform reports it: 0o444 on Windows, which keeps a read-only flag and no permission bits.
+    const mode = statSync(path).mode;
     try {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
-        expect(statSync(path).mode & 0o777).toBe(0o400);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode, audit-rule-provenance-once, repositories-merge-assist, rule-settings-origin, audits-origin, rules-title, analysis-scope-release-retry, analysis-scope-probe-failures\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+        expect(statSync(path).mode).toBe(mode);
       }
     } finally {
       chmodSync(path, 0o600);
     }
     expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("gives an existing file's rule settings an origin column, every row a person's, and keeps lint-config writes", async () => {
+    const path = await temporaryDatabase();
+    // A file from before the step: rule_settings without `origin`, the step not recorded.
+    stampedFile(path, `${SETTING_ROW};
+      ALTER TABLE rule_settings DROP COLUMN origin;
+      DELETE FROM schema_migrations WHERE id = 'rule-settings-origin'`);
+    const database = openRerailDatabase(path);
+    try {
+      database.insert(ruleSettings).values({ ownerKind: "repository", ownerId: "repo", targetKind: "rule", targetId: "q", on: false, origin: "lint-config", updatedAt: 1 }).run();
+      expect(database.select({ targetId: ruleSettings.targetId, on: ruleSettings.on, origin: ruleSettings.origin }).from(ruleSettings).orderBy(ruleSettings.targetId).all()).toEqual([
+        { targetId: "q", on: false, origin: "lint-config" },
+        { targetId: "r", on: true, origin: null },
+      ]);
+    } finally {
+      database.$client.close();
+    }
+    expect(migrationState(path).recorded).toEqual(WITHOUT_NOTE);
+  });
+
+  it("makes existing queued stops due and preserves deferred probes on upgrade", async () => {
+    const path = await baselineFile(`
+      CREATE TABLE analysis_scope_releases (id TEXT PRIMARY KEY NOT NULL, directory TEXT NOT NULL);
+      INSERT INTO analysis_scope_releases VALUES ('prior-stop', 'checkout');
+      CREATE TABLE analysis_scope_release_probes (release_id TEXT NOT NULL, directory TEXT NOT NULL, store TEXT NOT NULL, next_attempt_at INTEGER NOT NULL, PRIMARY KEY(release_id, store));
+      INSERT INTO analysis_scope_release_probes VALUES ('older-stop', 'checkout', 'offline.sqlite', 123);
+    `);
+    const database = openRerailDatabase(path);
+    try {
+      expect(database.$client.prepare("SELECT * FROM analysis_scope_releases").all())
+        .toEqual([{ id: "prior-stop", directory: "checkout", next_attempt_at: 0 }]);
+      expect(database.$client.prepare("SELECT * FROM analysis_scope_release_probes").all()).toEqual([
+        { release_id: "older-stop", directory: "checkout", store: "offline.sqlite", next_attempt_at: 123, attempts: 0, last_error: null },
+      ]);
+    } finally { database.$client.close(); }
   });
 
   it("approves, at the content it has, every library rule a file held before approvals, and nothing added after", async () => {
@@ -639,12 +681,13 @@ describe("the migration path", () => {
     stampedFile(locked, SETTING_ROW);
     settledBytes(locked);
     chmodSync(locked, 0o400);
+    const lockedMode = statSync(locked).mode;
     try {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => openRerailDatabase(locked, { readonly: true, migrations: [noteStep({ count: 0 })] }))
           .toThrow(/needs this Rerail's schema steps \(add-rule-settings-note\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
-        expect(statSync(locked).mode & 0o777).toBe(0o400);
+        expect(statSync(locked).mode).toBe(lockedMode);
       }
     } finally {
       chmodSync(locked, 0o600);

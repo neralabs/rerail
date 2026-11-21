@@ -69,9 +69,9 @@ Root: `Pulling-it-all-together/docs/rule-engine-direction/`. Sections are append
 
 ---
 
-## research/tape-v8-measurements.md (215 lines) + experiments/tape-v8/results/tables.md (67), read in full
+## research/tape-v8-measurements.md (215 lines) + experiments/tape-v8/results/tables.md (67; removed; at 7efcac9c67), read in full
 
-Corpora (:3): CPython 3.13 `Lib/`, nera-data-layer `impl/`, rerail TS, Rust and PHP fixtures, **24.2M nodes**. Grammars are from crates.io, not Rerail's patched ones (caveat :196).
+Corpora (:3): CPython 3.13 `Lib/`, the data-layer repository's `impl/`, rerail TS, Rust and PHP fixtures, **24.2M nodes**. Grammars are from crates.io, not Rerail's patched ones (caveat :196).
 
 ### Recommendation (:5-20)
 1. **Do not adopt v8.** It is 11.1–13.5 B/node logical, **1.24–1.59× v7**, and **1.47–1.90× v7 after zstd** (M).
@@ -273,7 +273,7 @@ Normative §20 (Part E, :215-306) is already in t1. These notes cover the eviden
 Normative output: spec §21 + decision 0005 (§21 text is in t1). These notes cover the evidence and inventory.
 
 ### Prior designs (a)
-- **PR 2539** (nera-data-layer `281f500d7c`):
+- **PR 2539** (the data-layer repository at `281f500d7c`):
   - four passes (0 paths, 1 AST primitives, **2 generic derived facts**, 3 YAML policy), with Pass 2 "still belongs to fact materialization" (`LINTER_GENERIC_FRAMEWORK_FACTS_DESIGN.md:93-147`);
   - SQL-only boundary: no linter-shaped collectors, adapters or precomputed candidate tables (:21-29); operators from/join/left_join/recursive/group_by/aggregate/project/union/materialized (:67-71); a relation named after a linter or rule is suspect (:105-106); **projection invalidation by declared dependency edges and the dependency cone** (:136-143);
   - **"Process Failure"** (:169-186): "Python prepares convenient rows, YAML queries them".
@@ -584,7 +584,7 @@ Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b
 ## research/regex.md (251 lines, read in full). M on the 9,010-file gate corpus, M5 Max, 18 cores
 
 ### Answers (§0)
-- The 14 whole-file regex rules are ports of nera-data-layer `scripts/lint_*.py` line linters (9 of 14 never parse Python). The exact-parity port rebuilt a tokenizer by hand: the line state machine for triple-quoted strings, `^\s*#`, `excludeUnder: TYPE_CHECKING`. The loose contract removes the reason for all of it.
+- The 14 whole-file regex rules are ports of the data-layer repository's `scripts/lint_*.py` line linters (9 of 14 never parse Python). The exact-parity port rebuilt a tokenizer by hand: the line state machine for triple-quoted strings, `^\s*#`, `excludeUnder: TYPE_CHECKING`. The loose contract removes the reason for all of it.
 - **Census of 113 clauses: 107 AST now, 2 need line-position facts, 4 path-only, 0 textual (M).**
 - **All 113 produce 0 findings on the gate corpus** (M). Today's regex stage costs 9–17 s for nothing.
 - Identifier regexes are evaluated **once per distinct name**: 396/444 are exact literal sets; the rest takes 0.11 s; per occurrence it would be 33–69 s.

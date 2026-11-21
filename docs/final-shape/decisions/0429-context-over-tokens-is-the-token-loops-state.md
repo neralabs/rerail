@@ -1,6 +1,6 @@
 # 0429: Context over tokens is the token loop's state
 
-Status: decided (2026-11-18), 0489's stage 3 made concrete. Follows 0489, 0177 and 0407.
+Status: decided (2026-11-18), 0415's stage 3 made concrete. Follows 0415, 0177 and 0407.
 
 ## Intro
 
@@ -71,11 +71,11 @@ readers fall into three kinds:
 | Kind | Examples | What it means | The lean parser's form |
 |---|---|---|---|
 | A lexing decision | `jat`, `jat_last`, `p_start`, `three`, `asq` | whether `return@` and `===` are one token | the lexer's reader for the token |
-| The fallback's comment placement | `goes_now`, `awe_word`, `else_odd`, `ctor_reach`, `ann_ctor` (the escapes "a block comment before a token that goes on the line", …) | where tree-sitter places a comment that the parser would place otherwise | the parser places the comment as tree-sitter does; since 0490 a mark's `settles` and `drops` can say that |
+| The fallback's comment placement | `goes_now`, `awe_word`, `else_odd`, `ctor_reach`, `ann_ctor` (the escapes "a block comment before a token that goes on the line", …) | where tree-sitter places a comment that the parser would place otherwise | the parser places the comment as tree-sitter does; since 0416 a mark's `settles` and `drops` can say that |
 | Context over tokens | `class_head`, `line_mod`, `hdr_line`, `decl_stop` | being in a class's header, or on a line that starts with modifiers | a rule's level in tier 2 |
 
 So 0429's lowering applies only once each reader says what it means. That is the grammar's work,
-as 0490 did for the next token's back fills. The order of the work becomes:
+as 0416 did for the next token's back fills. The order of the work becomes:
 
 1. The escapes of comment placement go: the grammar places those comments as tree-sitter does,
    by `settles` and `drops` where the lean parser decides. Their cones leave tier 1, and the files

@@ -48,7 +48,7 @@ measure() { # <log> -> "cpu wall rssMB footprintMB"
 printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" step engine cpu_s wall_s rss_MB foot_MB findings note
 for r in $STEPS; do
   if [ $r = rule ]; then
-    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rr
+    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rerail
     sed -i '' 's/Replace this assert with/Replace this assert statement with/' $PACK/rules/bandit-b101-assert-used.json
   elif [ $r != cold ] && [ $r != warm ]; then
     edit $r $R/corpus-dl; edit $r $R/corpus-main

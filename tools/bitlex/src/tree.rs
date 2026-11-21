@@ -18,7 +18,7 @@
 //!   before, are the nodes' it is taken in (they end at them, and hold them), as a leaf taken
 //!   after them would; with `drops …`, where its question holds at its token (`GapPattern`: the
 //!   records around it, extras included), the extra before that token goes into the mark, as the lean lexer's semicolon swallows it: no node, and the nodes end at
-//!   the token after it, where the semicolon of no width is (decision 0490, Q220, 0429).
+//!   the token after it, where the semicolon of no width is (decision 0416, Q235, 0429).
 //!
 //! - **A mark that loses** (`mark … , loses …`): where the grammar asks for it after a token,
 //!   and its question holds at the next token, the extra before that token is lost: of no width at the

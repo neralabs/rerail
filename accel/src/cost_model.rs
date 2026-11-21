@@ -109,8 +109,18 @@ mod on {
     use rerail_forest::cost_model::{CostConfig, CostMemo, CostModel, CostQuery, CostSample, JobKey};
     use std::sync::{Arc, RwLock};
 
-    static MODEL: RwLock<Option<Arc<CostModel>>> = RwLock::new(None);
-    static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    /// The machine's learned model (decision 0442), and its version: 0 before one is installed, else a number no
+    /// other machine's model has (`NEXT`), so a thread's copy (`COPY`, `PRICED`) is never another machine's.
+    #[derive(Default)]
+    struct Model {
+        model: RwLock<Option<Arc<CostModel>>>,
+        version: std::sync::atomic::AtomicU64,
+    }
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+    fn model() -> Arc<Model> {
+        rerail_context::machine::<Model>()
+    }
 
     thread_local! {
         static COPY: std::cell::RefCell<(u64, Option<Arc<CostModel>>)> = const { std::cell::RefCell::new((0, None)) };
@@ -145,13 +155,14 @@ mod on {
 
     pub fn current() -> Option<Arc<CostModel>> {
         crate::price::first_price();
-        let version = VERSION.load(std::sync::atomic::Ordering::Acquire);
+        let held = model();
+        let version = held.version.load(std::sync::atomic::Ordering::Acquire);
         if version == 0 {
             return None;
         }
         COPY.with_borrow_mut(|(seen, copy)| {
             if *seen != version {
-                *copy = MODEL.read().ok().and_then(|m| m.clone());
+                *copy = held.model.read().ok().and_then(|m| m.clone());
                 *seen = version;
             }
             copy.clone()
@@ -159,16 +170,17 @@ mod on {
     }
 
     pub fn install(model: Option<Arc<CostModel>>) {
-        if let Ok(mut m) = MODEL.write() {
+        let held = self::model();
+        if let Ok(mut m) = held.model.write() {
             *m = model;
-            VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+            held.version.store(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Release);
         }
     }
 
     pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; Lane::COUNT]> {
         let mut out = vec![[None; Lane::COUNT]; kernels.len()];
         let Some(model) = current() else { return out };
-        let version = VERSION.load(std::sync::atomic::Ordering::Acquire);
+        let version = self::model().version.load(std::sync::atomic::Ordering::Acquire);
         let shared = model.shared_buckets(1, false, load, crate::exec::threads() as u32);
         PRICED.with_borrow_mut(|priced| {
             if priced.version != version {
@@ -209,13 +221,13 @@ mod on {
             cpu.1.push((s.host_estimate, s.cpu));
             // The medians' job: the lane's submission and launches, and the rate times the units (`fit_rates`).
             let name = s.forms.split(',').next().unwrap_or("");
-            if s.forms.split(',').all(|f| f == name) {
-                if let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name) {
-                    let f = prices.fixed[s.lane.index()];
-                    rated.0.push((p.wall, s.wall));
-                    rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
-                    rated.2.push((s.estimate, s.wall));
-                }
+            if s.forms.split(',').all(|f| f == name)
+                && let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name)
+            {
+                let f = prices.fixed[s.lane.index()];
+                rated.0.push((p.wall, s.wall));
+                rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
+                rated.2.push((s.estimate, s.wall));
             }
         }
         let c = Comparison {

@@ -105,7 +105,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for s in program.switches.iter().filter(|s| !s.words.is_empty()) {
         let in_order = s.words.windows(2).all(|w| w[0].0 < w[1].0);
         let named = s.words.iter().all(|&(w, _)| usize::from(w) < program.strings.len());
-        if s.offset != 0 || !in_order || !named || !records.is_some_and(|r| r.words == program.strings) {
+        if s.offset != 0 || !in_order || !named || records.is_none_or(|r| r.words != program.strings) {
             return Err(Error::InvalidTarget(0));
         }
     }
@@ -159,9 +159,10 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         }
     }
     // Every cycle passes a `TOKEN` or a `RETURN`: with their edges cut, the graph is acyclic.
-    // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` (below):
-    // a cycle with no `TOKEN` pushes nothing, so it turns at most once per call made, and calls
-    // are made only between tokens. The returns of a file are at most its calls.
+    // A `RETURN` pops a call, and from a `PUSH` no `RETURN` is reached before a `TOKEN` or a
+    // taken mark (below): a cycle with no `TOKEN` pushes nothing, so it turns at most once per
+    // call made, and calls are made only between tokens and taken marks. The returns of a file
+    // are at most its calls.
     let step = |pc: usize, cut_return: bool| -> Vec<usize> {
         let (opcode, mode, operand) = split(words[pc]);
         match opcode {
@@ -186,29 +187,35 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     // From a `PUSH`, no `RETURN` before a `TOKEN`; but a `RETURN m=0` after a `SPAN`: the call
     // took the token, and its return lands on the caller's `TOKEN`, which takes the next. (A
     // call that takes no token itself, a function a rule's, goes to its callee's start, whose arm
-    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first.
+    // takes it.) A `RETURN m=1` switches on the token again: a `TOKEN` must come first, or a
+    // mark taken: a `MARK` that holds (its next word) and is not kept clears itself and the marks
+    // before it, and only `TOKEN` sets them again, so a token's calls that take only marks are
+    // at most the marks, 32. A kept mark (`MARK_KEEP`, its callee's to take) is no progress.
     for (pc, &w) in words.iter().enumerate() {
         if split(w).0 != PUSH {
             continue;
         }
-        // Each place, seen before or after a `SPAN`.
-        let mut seen = vec![[false; 2]; words.len()];
-        let mut todo = vec![(pc, false)];
-        while let Some((q, spanned)) = todo.pop() {
-            let spanned = spanned || split(words[q]).0 == SPAN;
+        // Each place, seen before or after a `SPAN` (bit 0) and a taken mark (bit 1).
+        let mut seen = vec![[false; 4]; words.len()];
+        let mut todo = vec![(pc, 0u8)];
+        while let Some((q, done)) = todo.pop() {
+            let (op_q, mode_q, _) = split(words[q]);
+            let done = done | u8::from(op_q == SPAN);
             for n in step(q, false) {
                 if n >= words.len() {
                     return Err(Error::InvalidTarget(q));
                 }
+                // The mark's next word runs where it holds: taken, unless kept.
+                let done = done | if op_q == MARK && n == q + 1 && mode_q & MARK_KEEP == 0 { 2 } else { 0 };
                 let (op, mode, _) = split(words[n]);
                 if op == RETURN {
-                    if spanned && mode == 0 {
+                    if done & 2 != 0 || (done & 1 != 0 && mode == 0) {
                         continue;
                     }
                     return Err(Error::NonProgressingCycle(n));
                 }
-                if !std::mem::replace(&mut seen[n][usize::from(spanned)], true) {
-                    todo.push((n, spanned));
+                if !std::mem::replace(&mut seen[n][usize::from(done)], true) {
+                    todo.push((n, done));
                 }
             }
         }
@@ -480,7 +487,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     if let Some((r, rd, table)) = late.as_ref().and_then(|(r, t)| Some((*r, split_reader(r, bytes.get(start as usize).copied()?)?, t))) {
                         let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
                         if opens && rec_end > start + 1 {
-                            let Ok(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
+                            let Some(tokens) = crate::records::read_parts(rd, start as usize, &tier1.outputs) else {
                                 return refuse!(pc - 1, "a region with no closer");
                             };
                             let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
@@ -836,6 +843,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => {
+                // Calls nested at most `DEPTH` deep, as tier 2's runs and simdjson's `DEFAULT_MAX_DEPTH` (0537).
+                if returns.len() >= crate::native_cpu_stream::DEPTH as usize {
+                    return refuse!(pc - 1, "calls nested past the depth");
+                }
                 returns.push((operand, word, flags));
                 match push_flag_of(mode) {
                     Some((k, true)) => flags |= 1 << k,
@@ -1043,7 +1054,7 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         if m.refuses && usize::from(m.order) >= bits {
             return Err(Error::InvalidOperand(i));
         }
-        // Rising by order; a mark's entries together (decision 0490), one where it refuses (its
+        // Rising by order; a mark's entries together (decision 0416), one where it refuses (its
         // `TOKEN` test is the one entry's), and none an `unless` alone of a refusing mark.
         let rising = i == 0 || program.token_marks[i - 1].order < m.order || (program.token_marks[i - 1].order == m.order && !m.refuses && !program.token_marks[i - 1].refuses);
         let rising = rising && !(m.refuses && m.unless);
@@ -1054,12 +1065,12 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
         // which has an `end` (no token before holds), and the mark's own token's `not`, a gap
-        // mark's `unless before` (decision 0490: its mask gives the token's bytes); an `end`
+        // mark's `unless before` (decision 0416: its mask gives the token's bytes); an `end`
         // only last after the mark's.
         let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == 0 && !e.end) || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         // A run's depths only on a run: each side of kinds and words, its counter below
-        // `NESTS`, each counter with an opener and a closer (Q222).
+        // `NESTS`, each counter with an opener and a closer (Q339).
         let nests = m.elems.iter().all(|e| {
             let counters = |open: bool| e.nests.iter().filter(|n| n.open == open).fold(0u8, |a, n| a | 1 << n.counter);
             (e.run || (e.nests.is_empty() && e.ending.is_none()))
@@ -1092,7 +1103,7 @@ pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
 /// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): the element
 /// at -1 at the record before, the others in turn from the token on, each at the next record
 /// that is no extra (`extra_bit`, the code's bit; none for a grammar without extras); a run
-/// (decision 0490) any number of records it takes, then the elements after it from any of them
+/// (decision 0416) any number of records it takes, then the elements after it from any of them
 /// on.
 pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Option<u32>) -> bool {
     let is_extra = |c: u32| extra_bit.is_some_and(|b| c >> (crate::records::MARK_SHIFT + b) & 1 == 1);
@@ -1129,8 +1140,8 @@ pub fn gap_pattern_holds(m: &TokenMark, codes: &[u32], starts: &[u32], bytes: &[
 fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, last: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
     let Some((e, tail)) = rest.split_first() else { return true };
     if e.run {
-        // Its depths (Q222): the rest only where each is 0; a closer at 0 ends the run.
-        // Its `ending` (Q225): the rest only where its last record is one the test takes.
+        // Its depths (Q339): the rest only where each is 0; a closer at 0 ends the run.
+        // Its `ending` (Q342): the rest only where its last record is one the test takes.
         let mut depth = [0u32; crate::program::NESTS];
         let (mut at, mut last) = (at, last);
         loop {

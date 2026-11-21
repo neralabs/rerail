@@ -21,5 +21,19 @@
     "formatArgs": "supported"
   },
   "suppressions": ["noqa", "nosec"],
-  "fragments": [{ "name": "annotation", "dialect": "python", "start": "expression" }]
+  "fragments": [
+    { "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 },
+    { "name": "python-pattern", "dialect": "python", "start": "pattern_module", "tapeTag": 34 }
+  ],
+  "embeds": [
+    {
+      "language": "html",
+      "via": "call-argument",
+      "places": [
+        { "callee": "markupsafe.Markup", "argument": 0 },
+        { "callee": "django.utils.safestring.mark_safe", "argument": 0 },
+        { "callee": "django.utils.html.format_html", "argument": 0 }
+      ]
+    }
+  ]
 }

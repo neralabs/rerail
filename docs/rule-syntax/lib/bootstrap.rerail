@@ -1,0 +1,117 @@
+// bootstrap: phase 0, the loading of rule files (t23, t25). The engine starts from its builtin facts, runs this
+// program over `.rerail` documents, and ends at a fixed point where every module a program includes is loaded.
+//
+// A rule file is loaded like any document: by `load(path, name, "rr")`, answered by the engine's loader, so its
+// source and tape are stored and memoised as a source's are, and it is checked by `stat` on the next run. Each loaded
+// file's `#include`s are facts of its tree (`include` nodes), which ask for further loads, until none is new.
+//
+// The builtin facts, from the engine:
+//   env("rerail.lib", dir)   the library directory (a root the loader may read)
+//   p0_text(t)               a program text t ("text:<k>"), which is not a file
+//   p0_t_shape(t)            text t is in T's shape (it declares `doc`): it gets no `core.rerail`
+//   p0_ask(t, at, name)      text t includes `name` at offset `at`
+//   env("rerail.program_dir", dir)   a program file's directory (a root the loader may read)
+//   p0_file(path)            a program file the engine was given: it is loaded, and named `core.rerail` first unless it
+//                            is in T's shape (`p0_file_t_shape`, known once it is loaded)
+//
+// The outputs, which the engine reads to assemble each program from its stored modules:
+//   p0_include(from, at, name, path)   `from` (a text, or a module's path) includes `name` at `at`: the file `path`
+//   p0_missing(from, at, name)          no file is `name` for `from`
+//   p0_absent(path)                     a candidate that is not there: a file appearing there changes the graph
+//   p0_phase(from, phase, path)         `from` declares a relation of phase program `phase` (`<phase>__<export>`):
+//                                       its candidate `path`, loaded as an include is when it is there (`p0_absent`
+//                                       names it when not)
+//
+// A phase program is a rule file of every run that reads its exports, as an include is: the whole-run cutoff names
+// them all (O-cutoff-phases, decision 0246). So phase 0 resolves them too, and nothing parses a module again to list
+// them. Two more builtin facts:
+//   env("rerail.phase_lib", dir)  the engine's phase programs' directory (a root the loader may read)
+//   p0_text_phase(t, phase)       text t declares a relation of phase `phase` (its own phase's are not asked)
+#include "core.rerail"
+.language rr
+
+.decl p0_lib(dir: symbol)
+.decl p0_text(t: symbol)
+.decl p0_t_shape(t: symbol)
+.decl p0_ask(t: symbol, at: number, name: symbol)
+.decl p0_file(path: symbol)
+p0_lib(l) :- env("rerail.lib", l).
+load(f, f, "rr") :- p0_file(f).
+// A load returns its canonical path. Its module column preserves the path the include requested.
+// Resolve children once per canonical document and report the edges for every spelling used to reach it.
+.decl p0_alias(canonical: symbol, requested: symbol)
+p0_alias(f, p) :- loaded(f, p, "rr"), !env("rerail.windows_paths", "1"), f != p.
+p0_alias(f, p) :- loaded(native, p, "rr"), env("rerail.windows_paths", "1"), f = @replace_all(native, "\\\\", "/"), f != p.
+.decl p0_doc(d: number, path: symbol)
+p0_doc(d, f) :- doc(d, f, _), !env("rerail.windows_paths", "1").
+p0_doc(d, @replace_all(f, "\\\\", "/")) :- doc(d, f, _), env("rerail.windows_paths", "1").
+// What each document says, made per document (the request cone reads no base relation): its includes, and whether
+// it declares `doc` (T's shape).
+// (Each is located by its node: a loaded document's rows reach the requests by their nodes' document.)
+.decl p0_names(i: node, f: symbol, at: number, name: symbol)
+p0_names(i, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), p0_doc(d, f), node(d, i, _, at, _).
+.decl p0_declares_doc(i: node, f: symbol)
+p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), p0_doc(d, f).
+.decl p0_file_t_shape(path: symbol)
+p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
+
+// What each text and each loaded module names. A text names `core.rerail` first unless it is in T's shape.
+// The engine requests components.rerail as a file seed only when a program consumes its relations.
+.decl p0_from(from: symbol, at: number, name: symbol)
+p0_from(t, at, n) :- p0_ask(t, at, n).
+p0_from(t, -1, "core.rerail") :- p0_text(t), !p0_t_shape(t).
+p0_from(f, -1, "core.rerail") :- p0_file(f), loaded(_, f, "rr"), !p0_file_t_shape(f).
+p0_from(f, at, n) :- p0_names(_, f, at, n).
+
+// The candidates, in order: the library, then (for a module) the file's own directory.
+.decl p0_cand(from: symbol, at: number, name: symbol, rank: number, path: symbol)
+p0_cand(f, at, n, 1, c) :- p0_from(f, at, n), p0_lib(l), c = cat(l, "/", n).
+p0_cand(f, at, n, 2, c) :- p0_from(f, at, n), !p0_text(f), f != "engine", match("(?<dir>.*)/[^/]*", f), c = cat(dir, "/", n).
+
+// Each candidate's directory is listed, asked by the directory alone (`rr::lower`'s world demand).
+.decl p0_split(c: symbol, dir: symbol, base: symbol)
+p0_split(c, dir, base) :- p0_cand(_, _, _, _, c), match("(?<dir>.*)/(?<base>[^/]*)", c).
+.decl p0_listed(dir: symbol)
+p0_listed(dir) :- p0_split(_, dir, _), dir_entry(dir, _, _).
+.decl p0_exists(c: symbol)
+p0_exists(c) :- p0_split(c, dir, base), dir_entry(dir, base, 0).
+
+// The first candidate that exists.
+.decl p0_before(from: symbol, at: number, name: symbol, rank: number)
+p0_before(f, at, n, r) :- p0_cand(f, at, n, q, c), p0_exists(c), p0_cand(f, at, n, r, _), q < r.
+.decl p0_resolved(from: symbol, at: number, name: symbol, path: symbol)
+p0_resolved(f, at, n, c) :- p0_cand(f, at, n, r, c), p0_exists(c), !p0_before(f, at, n, r).
+.decl p0_found(from: symbol, at: number, name: symbol)
+p0_found(f, at, n) :- p0_resolved(f, at, n, _).
+load(c, c, "rr") :- p0_resolved(_, _, _, c).
+
+// The phase programs a module's declarations name: `<phase>__<export>`, where `<phase>` has no `__` and is no
+// typing program's or the engine's own (`typing_`, `rr_`), found in the phase programs' directory, loaded as an
+// include is, so its includes and the phases it names follow.
+.decl p0_decl(i: node, f: symbol, name: symbol)
+p0_decl(i, f, s) :- kind(i, "declaration"), field(i, "name", n), text(n, s), match(".+__.+", s), docof(i, d), p0_doc(d, f).
+.decl p0_text_phase(t: symbol, phase: symbol)
+.decl p0_phase_named(from: symbol, phase: symbol)
+p0_phase_named(f, p) :- p0_decl(_, f, s), match("(?<p>[^_]+(?:_[^_]+)*)__.+", s), !prefix("typing_", p), !prefix("rr_", p).
+p0_phase_named(t, p) :- p0_text_phase(t, p).
+.decl p0_phase_lib(dir: symbol)
+p0_phase_lib(l) :- env("rerail.phase_lib", l).
+.decl p0_phase_cand(from: symbol, phase: symbol, path: symbol)
+p0_phase_cand(f, p, c) :- p0_phase_named(f, p), p0_phase_lib(l), c = cat(l, "/", p, ".rerail").
+p0_split(c, dir, base) :- p0_phase_cand(_, _, c), match("(?<dir>.*)/(?<base>[^/]*)", c).
+load(c, c, "rr") :- p0_phase_cand(_, _, c), p0_exists(c).
+.decl p0_phase(from: symbol, phase: symbol, path: symbol)
+p0_phase(f, p, c) :- p0_phase_cand(f, p, c).
+p0_phase(a, p, c) :- p0_alias(f, a), p0_phase_cand(f, p, c).
+
+// The outputs, once the loads are done.
+.decl p0_include(from: symbol, at: number, name: symbol, path: symbol)
+p0_include(f, at, n, c) :- p0_resolved(f, at, n, c).
+p0_include(a, at, n, c) :- p0_alias(f, a), p0_resolved(f, at, n, c).
+.decl p0_missing(from: symbol, at: number, name: symbol)
+p0_missing(f, at, n) :- p0_from(f, at, n), !p0_found(f, at, n).
+p0_missing(a, at, n) :- p0_alias(f, a), p0_from(f, at, n), !p0_found(f, at, n).
+.decl p0_absent(path: symbol)
+p0_absent(c) :- p0_split(c, _, _), !p0_exists(c).
+
+.output p0_include, p0_missing, p0_absent, p0_phase

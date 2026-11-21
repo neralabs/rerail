@@ -51,7 +51,7 @@ Out of scope for the engine, and owned by the integration: presentation, orderin
 
 ## 3. Tape: v9np (decision 0003)
 
-Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Lib, nera-data-layer `impl/`, and rerail's TS, Rust and PHP. Code is in `experiments/tape-v8/`. All variants decode to identical checksums.
+Measured in `research/tape-v8-measurements.md` over 24.2M nodes: CPython 3.13 Lib, the data-layer repository's `impl/`, and rerail's TS, Rust and PHP. Code is in `experiments/tape-v8/` (removed; at 7efcac9c67). All variants decode to identical checksums.
 
 **Content: structure only.** The tape holds exactly the parser's tree for one document in one grammar, and nothing else:
 
@@ -173,7 +173,7 @@ Verifier obligations:
 
 ## 7. Lowering and fusion
 
-**Normative text: `spec-fusion.md`.** It gives the formal set-mode semantics; exact encodings of every new operation in Tempo's word layout; the group header format; the fusion algorithm in pseudo-code; the cost model with every parameter sourced; legality per transformation; limitations with the planner's response to each; and the test and debug obligations. The evidence is measured on CPU in `research/fusion.md` (8.54M-node Python corpus; code in `experiments/fusion/`). The Metal side is in `research/metal-recursion.md`.
+**Normative text: `spec-fusion.md`.** It gives the formal set-mode semantics; exact encodings of every new operation in Tempo's word layout; the group header format; the fusion algorithm in pseudo-code; the cost model with every parameter sourced; legality per transformation; limitations with the planner's response to each; and the test and debug obligations. The evidence is measured on CPU in `research/fusion.md` (8.54M-node Python corpus; code in `experiments/fusion/`, removed; at 7efcac9c67). The Metal side is in `research/metal-recursion.md`.
 
 **Two-level execution model.**
 - **Instruction programs** handle node-local tests and bounded paths (Tempo classes 1–3).
@@ -371,7 +371,7 @@ Normative text: `spec-tooling.md`. In summary:
 
 ## 19. Performance model, heavy-rule profiles and the gap to target
 
-Evidence: `research/heavy-rule-profiles.md` (8 heaviest data-layer rules on the 9,010-file, 28.23M-node gate corpus) and `research/fusion-model.md` (fusion opportunity and the corpus × rules cost model). Tools are in `experiments/rule-profiles/` and `experiments/fusion-model/`. Every estimate is labelled measured, derived or assumed in those documents.
+Evidence: `research/heavy-rule-profiles.md` (8 heaviest data-layer rules on the 9,010-file, 28.23M-node gate corpus) and `research/fusion-model.md` (fusion opportunity and the corpus × rules cost model). Tools are in `experiments/rule-profiles/` and `experiments/fusion-model/` (both removed; at 7efcac9c67). Every estimate is labelled measured, derived or assumed in those documents.
 
 ### 19.1 Cost model
 
@@ -442,7 +442,7 @@ M1–M9 and the phase each one gates are listed in `architecture.md` (Integratio
 
 ## 20. Tape residency and caching
 
-Evidence and the Tempo/main survey: `research/tempo-residency.md`. Bare document paths below are in the Tempo tree (`nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/`).
+Evidence and the Tempo/main survey: `research/tempo-residency.md`. Bare document paths below are in the Tempo tree (`scale-test-the-re-railer/tempo/docs/`).
 
 Tempo evidence: first-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the wait 30–60× (`shared-sparse-bump-arena-design.md:14-35,260`). A 32 MiB / 30 s decompressed cache got 0 hits on full scans and spent 37.6 worker-seconds decompressing in a warm run. Heap decompression left 3.3 GiB of malloc high-water (`workspace-store-runtime-journal.md:536-681`). Per-object mappings were rejected for VM metadata cost (`:517-520`).
 

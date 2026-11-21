@@ -38,7 +38,13 @@ From the daemon:
   [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
   (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
   code 71, and the compile runs on the build machine. A put that fails makes every later run fail
-  with code 70: the daemon then drops this agent and forgets what it sent.
+  with code 70: the daemon then drops this agent and forgets what it sent. An output the compile
+  did not write: code 72, and the compile runs on the build machine.
+  With "xc": {"home", "toolchain"} (a Mac's compile on a Linux host), the compile runs in this
+  host's container instead (`xc_container`), where the build machine's paths are real: ROOT's copy
+  of the build machine's top directory at its own path (the daemon sends the crate's sources
+  there too), and this host's rustup at /opt/rustup. Nothing is mapped; the same toolchain's Linux rustc compiles for aarch64-apple-darwin, and the bytes are the
+  build machine's own (README, "Mac compiles on a Linux host").
 
 The stream starts on ssh. The daemon's first frame may be {"op": "tcp", "port", "token"}: the agent
 then connects back to the build machine (at the address this connection came from: the fast link,
@@ -47,7 +53,7 @@ over that plain TCP connection, which costs no encryption and no ssh flow contro
 the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
 {"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
+import ctypes, glob, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
 
 
 def leave(kind, value, tb):
@@ -64,19 +70,49 @@ def leave(kind, value, tb):
 
 sys.excepthook = leave
 
-ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
-XATTR = b"org.rerail.farm.sent"
+# The farm's own directory on the host: macOS's caches, or on Linux XDG's.
+MACOS = sys.platform == "darwin"
+FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm") if MACOS else \
+    os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "rerail-farm")
+# A Windows host's builds: its farm directory on the Windows drive, as its WSL mounts it (`windows_dir`).
+WINDIR = os.environ.get("RERAIL_FARM_WINDIR")
+ROOT = os.path.join(FARM, "root.noindex")
+# Linux keeps a program's attributes in the `user.` namespace.
+XATTR = b"org.rerail.farm.sent" if MACOS else b"user.org.rerail.farm.sent"
 
 out = sys.stdout.buffer
 inp = sys.stdin.buffer
 write_lock = threading.Lock()
 refused = []
 
-libc = ctypes.CDLL(None, use_errno=True)
-libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
-libc.getxattr.restype = ctypes.c_ssize_t
-libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
-libc.setxattr.restype = ctypes.c_int
+if MACOS:
+    # Python has no xattr calls on macOS: libc's, which take a position and options.
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.getxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.getxattr.restype = ctypes.c_ssize_t
+    libc.setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32, ctypes.c_int]
+    libc.setxattr.restype = ctypes.c_int
+
+
+def get_tag(path, follow=True):
+    """The attribute's bytes on `path` (None: it has none)."""
+    if not MACOS:
+        try:
+            return os.getxattr(path, XATTR, follow_symlinks=follow)
+        except OSError:
+            return None
+    buf = ctypes.create_string_buffer(96)
+    n = libc.getxattr(path.encode(), XATTR, buf, 96, 0, 0 if follow else 0x0001)  # XATTR_NOFOLLOW
+    return buf.raw[:n] if n > 0 else None
+
+
+def set_tag(path, tag):
+    if not MACOS:
+        os.setxattr(path, XATTR, tag)
+        return
+    if libc.setxattr(path.encode(), XATTR, tag, len(tag), 0, 0) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, "setxattr failed", path)
 
 
 def at(path):
@@ -116,11 +152,10 @@ def seen(kept, touch=False):
             os.utime(kept, ns=(time.time_ns(), st.st_mtime_ns))
         except OSError:
             pass
-    buf = ctypes.create_string_buffer(96)
-    n = libc.getxattr(kept.encode(), XATTR, buf, 96, 0, 0)
-    if n > 0:
+    tag = get_tag(kept)
+    if tag:
         try:
-            mtime, size, written = (int(x) for x in buf.raw[:n].split())
+            mtime, size, written = (int(x) for x in tag.split())
             if written == st.st_mtime_ns and size == st.st_size:
                 return [mtime, size]
         except ValueError:
@@ -152,7 +187,8 @@ def under(path, dirs):
 
 
 def under_mount(path):
-    mounts = [l.split(" on ", 1)[1].rsplit(" (", 1)[0] for l in
+    # macOS: `X on /path (nfs, ...)`; Linux: `X on /path type nfs (...)`.
+    mounts = [re.sub(r" type \S+$", "", l.split(" on ", 1)[1].rsplit(" (", 1)[0]) for l in
               subprocess.run(["mount", "-t", "nfs,autofs"], capture_output=True, text=True).stdout.splitlines() if " on " in l]
     return any(path == m or path.startswith(m.rstrip("/") + "/") for m in mounts)
 
@@ -168,16 +204,17 @@ def put(header, payload):
     # The attribute before the mode: macOS refuses it on a read-only file (EACCES), and a tree's
     # git objects are read-only: every one failed, and the daemon dropped this agent each time
     # (2026-11-17).
-    if libc.setxattr(tmp.encode(), XATTR, tag, len(tag), 0, 0) != 0:
-        e = ctypes.get_errno()
+    try:
+        set_tag(tmp, tag)
+    except OSError as e:
         os.unlink(tmp)
-        raise OSError(e, "setxattr failed", kept)
+        raise OSError(e.errno, "setxattr failed", kept)
     os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     os.replace(tmp, kept)
 
 
 def has_tag(path):
-    return libc.getxattr(path.encode(), XATTR, None, 0, 0, 0x0001) > 0  # XATTR_NOFOLLOW
+    return get_tag(path, follow=False) is not None
 
 
 def unlisted(header):
@@ -214,6 +251,193 @@ def remove(header):
                 break
             d = os.path.dirname(d)
     send({"op": "removed", "id": header["id"], "paths": removed})
+
+
+# ---- a Mac's compile on a Linux host (farm 32)
+
+XC_NAME = "rerail-farm-xc"
+# Only glibc is needed: rustc's own libraries. No linker: only libraries' compiles come here.
+XC_IMAGE = "ubuntu:24.04"
+xc_lock = threading.Lock()
+xc_ready = set()
+
+
+def docker(*args, timeout=120):
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout)
+
+
+def xc_container(home):
+    """Starts this host's compile container for the build machine's `home` unless it runs: None, or
+    why it could not. Only the farm's own container (by its name) is ever removed or replaced."""
+    with xc_lock:
+        if home in xc_ready:
+            return None
+        top = "/" + home.strip("/").split("/")[0]
+        r = docker("inspect", "-f", '{{.State.Running}} {{index .Config.Labels "rerail.farm.home"}}', XC_NAME)
+        if r.returncode == 0 and r.stdout.split() == ["true", home]:
+            xc_ready.add(home)
+            return None
+        if r.returncode == 0:
+            docker("rm", "-f", XC_NAME)
+        if docker("image", "inspect", XC_IMAGE).returncode != 0:
+            p = docker("pull", "-q", XC_IMAGE, timeout=600)
+            if p.returncode:
+                return f"docker pull {XC_IMAGE}: {p.stderr[-300:]}"
+        os.makedirs(ROOT + top, exist_ok=True)
+        mounts = [(ROOT + top, top, "rw"), (os.path.expanduser("~/.rustup"), "/opt/rustup", "ro")]
+        cmd = ["run", "-d", "--name", XC_NAME, "--label", "rerail.farm=xc", "--label", f"rerail.farm.home={home}",
+               "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}", "--entrypoint", "sleep"]
+        for src, dst, mode in mounts:
+            cmd += ["-v", f"{src}:{dst}:{mode}"]
+        r = docker(*cmd, XC_IMAGE, "infinity")
+        if r.returncode:
+            return f"docker run: {r.stderr[-300:]}"
+        xc_ready.add(home)
+        return None
+
+
+# The Linux builds of the proc-macros a Mac's compile loads, and of what they link: one directory a
+# recorded compile (by its record's hash), shared by every proc-macro that links it.
+XC_PM = os.path.join(FARM, "xc-pm.noindex")
+# This host's own target (an x86_64 host as well as an ARM one): its rustc, and its proc-macros' builds.
+HOST_TRIPLE = ("x86_64" if os.uname().machine in ("x86_64", "amd64") else "aarch64") + "-unknown-linux-gnu"
+TRIPLE_LINUX = HOST_TRIPLE.encode()
+TRIPLE_MAC = b"aarch64-apple-darwin"
+
+
+def svh_at(data, triple):
+    """Where a crate's SVH is in its metadata: the 16 bytes after its header's target triple (its
+    length, its bytes, and the 0xC1 that ends every string there). The crates that load it record
+    the same 16 bytes. None: not found once."""
+    tag = bytes([len(triple)]) + triple + b"\xc1"
+    at_ = data.find(tag)
+    if at_ < 0 or data.find(tag, at_ + 1) >= 0:
+        return None
+    return at_ + len(tag)
+
+
+def outputs_of(args):
+    crate = value_of(args, "--crate-name")
+    extra = next((a.split("=", 1)[1] for i, a in enumerate(args) if a.startswith("extra-filename=") and args[i - 1] == "-C"), "")
+    return crate, extra
+
+
+def value_of(args, flag):
+    for i, a in enumerate(args):
+        if a == flag and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(flag + "="):
+            return a[len(flag) + 1:]
+    return None
+
+
+def stem_of(path):
+    d, f = os.path.split(path)
+    return os.path.join(d, os.path.splitext(f[3:] if f.startswith("lib") else f)[0])
+
+
+def pm_build(pm, toolchain):
+    """Builds `pm["dylib"]` (a proc-macro the build machine compiled) for this host from its record
+    and its dependencies' (`pm["calls"]`, dependencies first), each in a directory of its own here,
+    with this host's rustc and linker, at the copies of their sources under ROOT. Then puts the
+    build machine's SVH into the Linux library (`svh_at`) and writes it beside the dylib's copy, as
+    `.so`: the compile in the container loads it from there. None, or why it could not."""
+    import fcntl, hashlib, shutil
+    rustc = os.path.expanduser(f"~/.rustup/toolchains/{toolchain}-{HOST_TRIPLE}/bin/rustc")
+    built = {}  # the build machine's stem -> this host's output directory
+    closure = {}  # the build machine's stem -> the directories of all it links (rustc's -L dependency)
+    for rec in pm["calls"]:
+        args = rec["args"]
+        crate, extra = outputs_of(args)
+        stem = os.path.join(os.path.abspath(os.path.join(rec["cwd"], value_of(args, "--out-dir"))), crate + extra)
+        deps = []
+        out = []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            nxt = args[i + 1] if i + 1 < len(args) else ""
+            if a == "--out-dir" or (a == "-C" and nxt.startswith("incremental=")):
+                i += 2
+                continue
+            if a == "-L" and nxt.startswith("dependency="):
+                i += 2
+                continue
+            if a == "--extern" and "=" in nxt:
+                name, path = nxt.split("=", 1)
+                dep = stem_of(os.path.abspath(os.path.join(rec["cwd"], path)))
+                d = built.get(dep)
+                if d is None:
+                    return f"{crate}: its dependency {os.path.basename(path)} was not built first"
+                f = os.path.basename(path)
+                if f.endswith(".dylib"):
+                    f = f[:-len(".dylib")] + ".so"
+                out += [a, f"{name}={os.path.join(d, f)}"]
+                deps += [d] + sorted(closure[dep])
+                i += 2
+                continue
+            out.append(a)
+            i += 1
+        key = hashlib.sha256(json.dumps([rec, sorted(set(deps)), toolchain], sort_keys=True).encode()).hexdigest()[:24]
+        d = os.path.join(XC_PM, key)
+        built[stem] = d
+        closure[stem] = set(deps)
+        main = os.path.join(d, f"lib{crate}{extra}" + (".so" if rec.get("proc_macro") else ".rlib"))
+        if os.path.exists(os.path.join(d, ".done")) and os.path.exists(main):
+            # (every file used now: the prune goes file by file, and a build lacking one is redone)
+            try:
+                for f in os.listdir(d):
+                    os.utime(os.path.join(d, f))
+                continue
+            except OSError:
+                pass
+        os.makedirs(XC_PM, exist_ok=True)
+        with open(d + ".lock", "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if os.path.exists(os.path.join(d, ".done")) and os.path.exists(main):
+                continue
+            if os.path.exists(d):
+                shutil.rmtree(d)
+            os.makedirs(d)
+            m = mapper([rec["cwd"]] + ([rec["env"]["OUT_DIR"]] if rec["env"].get("OUT_DIR") else []))
+            env = dict(os.environ)
+            env.update({k: m(v) for k, v in rec["env"].items()})
+            argv = map_args([rustc] + out, m) + ["--out-dir", d] + [x for dd in sorted(set(deps)) for x in ("-L", f"dependency={dd}")]
+            done = subprocess.run(argv, cwd=at(rec["cwd"]), env=env, stdin=subprocess.DEVNULL, capture_output=True)
+            if done.returncode:
+                return f"{crate}: its Linux build failed: {done.stderr.decode('latin-1')[-400:]}"
+            open(os.path.join(d, ".done"), "w").close()
+    crate, extra = outputs_of(pm["calls"][-1]["args"])
+    so = os.path.join(built[stem_of(pm["dylib"])], f"lib{crate}{extra}.so")
+    try:
+        linux = open(so, "rb").read()
+        mac = open(at(pm["dylib"]), "rb").read()
+    except OSError as e:
+        return f"{crate}: {e}"
+    i, j = svh_at(linux, TRIPLE_LINUX), svh_at(mac, TRIPLE_MAC)
+    if i is None or j is None:
+        return f"{crate}: its SVH was not found (once) in its metadata"
+    patched = linux.replace(linux[i:i + 16], mac[j:j + 16])
+    dest = at(pm["dylib"][:-len(".dylib")] + ".so")
+    with open(dest + ".tmp", "wb") as f:
+        f.write(patched)
+    os.chmod(dest + ".tmp", 0o755)
+    os.replace(dest + ".tmp", dest)
+    return None
+
+
+def xc_argv(job):
+    """The `docker exec` that runs the build machine's compile `job` in the container."""
+    xc = job["xc"]
+    rustc = f"/opt/rustup/toolchains/{xc['toolchain']}-{HOST_TRIPLE}/bin/rustc"
+    args = job["argv"][1:]
+    # On the Mac the target is the host's: named here, it is the same compile (the outputs' bytes too).
+    if not any(a == "--target" or a.startswith("--target=") for a in args):
+        args = ["--target", "aarch64-apple-darwin"] + args
+    # A proc-macro it loads: this host's build of it, beside the dylib (`pm_build`).
+    dylibs = {pm["dylib"] for pm in job.get("pm", [])}
+    args = [a[:-len(".dylib")] + ".so" if "=" in a and a.split("=", 1)[1] in dylibs else a for a in args]
+    env = [f"{k}={v}" for k, v in job["env"].items() if k != "PATH"] + ["PATH=/usr/bin:/bin"]
+    return ["docker", "exec", "-w", job["cwd"], XC_NAME, "env", "-i", *env, rustc, *args]
 
 
 def mapper(prefixes):
@@ -256,26 +480,46 @@ def run(job):
     try:
         for d in job["dirs"]:
             os.makedirs(at(d), exist_ok=True)
-        cwd = m(job["cwd"])
-        argv = map_args(job["argv"], m) if len(job["argv"]) > 1 else job["argv"]
-        env = {k: m(v) for k, v in job["env"].items()}
-        done = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True)
+        if job.get("xc"):
+            why = xc_container(job["xc"]["home"])
+            for pm in job.get("pm", []):
+                why = why or pm_build(pm, job["xc"]["toolchain"])
+            if why:
+                raise OSError(why)
+            done = subprocess.run(xc_argv(job), stdin=subprocess.DEVNULL, capture_output=True)
+            if done.returncode != 0 and (b"is not running" in done.stderr or b"No such container" in done.stderr):
+                # (stopped since: a reboot, docker's restart) started again, once
+                xc_ready.discard(job["xc"]["home"])
+                why = xc_container(job["xc"]["home"])
+                if why:
+                    raise OSError(why)
+                done = subprocess.run(xc_argv(job), stdin=subprocess.DEVNULL, capture_output=True)
+        else:
+            cwd = m(job["cwd"])
+            argv = map_args(job["argv"], m) if len(job["argv"]) > 1 else job["argv"]
+            env = {k: m(v) for k, v in job["env"].items()}
+            done = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True)
         code, stdout, stderr = done.returncode, done.stdout, done.stderr
     except OSError as e:
         code, stdout, stderr = 127, b"", str(e).encode()
     read = {}
     root = ROOT.encode()
+    # In the container nothing names ROOT; what must not leak there is this host's own paths.
+    leaks = [root] + ([os.path.expanduser("~").encode() + b"/", b"/opt/rustup/"] if job.get("xc") else [])
     if code == 0:
         files = []
         for path in job["outputs"]:
             try:
                 data = open(at(path), "rb").read()
             except OSError:
-                continue
+                # Every output or none: the build machine compiles it itself (an output left out
+                # kept the last compile's there, beside this one's others: Q377).
+                code, stderr = 72, f"{path}: not written by the compile".encode()
+                break
             if path == job.get("depinfo"):
                 data = data.replace(root + b"/", b"/")
-            if root in data:
-                code, stderr = 71, f"{path} names this host's farm root: compiled on the build machine instead".encode()
+            if any(x in data for x in leaks):
+                code, stderr = 71, f"{path} names this host's farm root or home: compiled on the build machine instead".encode()
                 break
             files.append((path, data))
         if code == 0:
@@ -332,7 +576,6 @@ def over_tcp(header):
     return True
 
 
-FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm")
 TARGETS = os.path.join(FARM, "targets.noindex")
 # The commands' TMPDIR: the farm's, so what their runs leave (stores, scratch) is the farm's to free,
 # never the host's own temporary directory (pruned as the root is, every file counting).
@@ -420,10 +663,19 @@ def busy():
     return out
 
 
+# A target used this recently is kept while the disk is over `min_free_gb`, under the headroom
+# above it: a host whose own data holds it there (an M3 at 50-60 GB free, the farm's part 67 GB of
+# it) had every target no command held that minute removed by each sweep, and the next command of
+# its checkout rebuilt it whole; runs never reached their tests (2026-11-18).
+RECENT_TARGET_SECONDS = 2 * 3600
+
+
 def prune(keep, min_free_gb):
     """Removes test target directories of TARGETS (never anything else): those unused for TARGET_DAYS,
-    then the least recently used while the disk is short of `min_free_gb`. Never one a command is
-    running in (its lock is held): removing those failed other checkouts' builds mid-run (2026-11-16)."""
+    then the least recently used while the disk is short of `min_free_gb` + PRUNE_HEADROOM_GB: under
+    the headroom only those unused for RECENT_TARGET_SECONDS, under `min_free_gb` itself any. Never
+    one a command is running in (its lock is held): removing those failed other checkouts' builds
+    mid-run (2026-11-16)."""
     import shutil, time
     used = []
     for name in os.listdir(TARGETS):
@@ -436,7 +688,8 @@ def prune(keep, min_free_gb):
             used.append((0, d))
     used.sort()
     for when, d in used:
-        if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+        age, free = time.time() - when, free_gb()
+        if age > TARGET_DAYS * 86400 or free < min_free_gb or (free < min_free_gb + PRUNE_HEADROOM_GB and age > RECENT_TARGET_SECONDS):
             lock = target_lock(os.path.basename(d), True)
             if lock is None:
                 continue
@@ -589,6 +842,59 @@ def sweep(job):
         lock.close()
 
 
+GPU_GUARD = os.path.join(FARM, "gpu-guard")
+
+
+def ensure_gpu_guard(text):
+    """On a Mac: starts the GPU watchdog (scripts/build/farm/gpu-guard, its text sent with the job)
+    unless one runs, and holds its `users` lock shared while this command runs, so it stays. Returns
+    the lock's file (held until this process exits)."""
+    import fcntl
+    os.makedirs(GPU_GUARD, exist_ok=True)
+    path = os.path.join(GPU_GUARD, "gpu-guard.py")
+    try:
+        old = open(path).read()
+    except OSError:
+        old = None
+    if old != text:
+        with open(path + ".part", "w") as f:
+            f.write(text)
+        os.rename(path + ".part", path)
+    users = open(os.path.join(GPU_GUARD, "users"), "a+")
+    fcntl.flock(users, fcntl.LOCK_SH)
+    # This agent's pid: the guard takes every process under it for the farm's (removed at the end).
+    os.makedirs(os.path.join(GPU_GUARD, "agents"), exist_ok=True)
+    open(os.path.join(GPU_GUARD, "agents", str(os.getpid())), "w").close()
+    with open(os.path.join(GPU_GUARD, "lock"), "a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            running = False
+        except BlockingIOError:
+            running = True
+    if not running:
+        with open(os.path.join(GPU_GUARD, "guard.err"), "a") as err:
+            subprocess.Popen(["/usr/bin/python3", "-I", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=err, start_new_session=True)
+    return users
+
+
+def gpu_kills_of(pid, since):
+    """The GPU watchdog's kills of processes under `pid` (this command) since `since`."""
+    found = []
+    try:
+        for line in open(os.path.join(GPU_GUARD, "kills.log")):
+            try:
+                k = json.loads(line)
+            except ValueError:
+                continue
+            if k.get("time", 0) >= since and pid in k.get("ancestors", []):
+                found.append(k)
+    except OSError:
+        pass
+    return found
+
+
 def watchdog(job):
     while True:
         sweep(job)
@@ -639,8 +945,25 @@ def run_command(job):
     except (ValueError, OSError) as e:
         print(f"farm-agent: the open-file limit stays {soft}: {e}", file=sys.stderr, flush=True)
     argv = [m(a) for a in job["argv"]]
+    global GPU_USERS
+    started = time.time()
+    if MACOS and job.get("gpu_guard"):
+        try:
+            GPU_USERS = ensure_gpu_guard(job["gpu_guard"])
+        except OSError as e:
+            print(f"farm-agent: no GPU watchdog: {e}", file=sys.stderr, flush=True)
+    windows = None
+    if job.get("windows"):
+        try:
+            windows = windows_job(job, argv, m(job["cwd"]), env)
+        except OSError as e:
+            print(f"farm-agent: {e}", file=sys.stderr, flush=True)
+            os._exit(127)
+        argv, env = windows["argv"], windows["env"]
     try:
-        proc = subprocess.Popen(["nice", "-n", str(job.get("nice", 10))] + argv, cwd=m(job["cwd"]), env=env,
+        # (Windows' cmd started in a WSL directory says it cannot use it: started on its drive)
+        proc = subprocess.Popen(argv if windows else ["nice", "-n", str(job.get("nice", 10))] + argv,
+                                cwd=WINDIR if windows else m(job["cwd"]), env=env,
                                 stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
         print(f"farm-agent: {e}", file=sys.stderr, flush=True)
@@ -649,6 +972,8 @@ def run_command(job):
     def watch():
         while sys.stdin.buffer.read(65536):
             pass
+        if windows:
+            windows_kill(windows)
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except OSError:
@@ -657,6 +982,22 @@ def run_command(job):
     if job.get("target"):
         threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
+    if MACOS:
+        try:
+            os.remove(os.path.join(GPU_GUARD, "agents", str(os.getpid())))
+        except OSError:
+            pass
+        for k in gpu_kills_of(proc.pid, started):
+            print(f"farm-agent: the farm's GPU watchdog killed {os.path.basename(k['path'])} (pid {k['pid']}): "
+                  f"{k.get('why')}; macOS restarts a Mac whose WindowServer stops for 120 s "
+                  f"(scripts/build/farm/README.md, \"The GPU watchdog\")",
+                  file=sys.stderr, flush=True)
+    if windows:
+        for p in (windows["script"], windows["launcher"]):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     for f in (sys.stdout, sys.stderr):
         try:
             f.flush()
@@ -667,6 +1008,140 @@ def run_command(job):
     if job.get("target"):
         tidy_root(job.get("min_free_gb", 40))
     os._exit(code if code >= 0 else 128 - code)
+
+
+def win_path(path):
+    """A path on a Windows drive as WSL mounts it (/mnt/c/x/y) as Windows names it (C:\\x\\y)."""
+    m = re.match(r"^/mnt/([a-z])(/.*)?$", path)
+    if not m:
+        raise OSError(f"{path} is not on a Windows drive (the host's farm_dir must be under /mnt/)")
+    return m.group(1).upper() + ":" + (m.group(2) or "/").replace("/", "\\")
+
+
+def bat_quote(arg):
+    """`arg` for a batch file's command line: in quotes (cmd's `&|<>^` stay literal inside them, and
+    the C runtime takes them off), `%` doubled (a batch file expands it even there)."""
+    return '"' + arg.replace('"', '\\"').replace("%", "%%") + '"'
+
+
+WINDOWS_PRIORITY = [(0, "NORMAL"), (10, "BELOWNORMAL"), (19, "LOW")]
+
+
+def windows_job(job, argv, cwd, env):
+    """A test command run as a Windows build (`windows` in the job: a Windows host, "Windows
+    hosts"): the checkout's copy is on the Windows drive, so the command runs natively there, in a
+    batch file Windows' cmd runs through WSL's interop, at a low priority (its children inherit it),
+    with its target directory on that drive. A leading `nice -n N` sets the priority; `env` that
+    the job set goes in the batch file, a path in it as Windows names it."""
+    nice = job.get("nice", 10)
+    if len(argv) >= 3 and argv[0] == "nice" and argv[1] == "-n":
+        nice, argv = int(argv[2]), argv[3:]
+    priority = next(p for n, p in reversed(WINDOWS_PRIORITY) if nice >= n)
+    if not WINDIR:
+        raise OSError("a Windows job on a host with no windows_dir")
+    wenv = interop_env()
+    # The checkout's copy here (the machine's Linux one) to the Windows drive, then the command
+    # runs in that one, with its target directory there too.
+    for p in job.get("map", []):
+        if p.startswith("/") and p != "/":
+            windows_sync(ROOT + os.path.normpath(p), WINDIR + "/r" + os.path.normpath(p), wenv)
+    cwd = WINDIR + "/r" + cwd[len(ROOT):] if cwd.startswith(ROOT + "/") else cwd
+    if job.get("target"):
+        env = dict(env, CARGO_TARGET_DIR=os.path.join(WINDIR, "t", job["target"]))
+        os.makedirs(env["CARGO_TARGET_DIR"], exist_ok=True)
+    tag = f"farm-job-{os.getpid()}"
+    os.makedirs(os.path.join(WINDIR, "tmp"), exist_ok=True)
+    script, launcher = os.path.join(WINDIR, "tmp", tag + ".cmd"), os.path.join(WINDIR, "tmp", tag + "-run.cmd")
+    lines = ["@echo off", f"cd /d {bat_quote(win_path(cwd))}"]
+    for k, v in job.get("env", {}).items():
+        v = env.get(k, v)
+        lines.append(f'set "{k}={win_path(v) if v.startswith("/mnt/") else v}"')
+    if env.get("CARGO_TARGET_DIR"):
+        lines.append(f'set "CARGO_TARGET_DIR={win_path(env["CARGO_TARGET_DIR"])}"')
+    lines += ['set "PATH=%USERPROFILE%\\.cargo\\bin;%PATH%"', " ".join(bat_quote(a) for a in argv), "exit /b %ERRORLEVEL%"]
+    with open(script, "w", newline="\r\n") as f:
+        f.write("\n".join(lines) + "\n")
+    # `start /WAIT` runs it at the priority; the launcher's next line hands its exit status back.
+    with open(launcher, "w", newline="\r\n") as f:
+        f.write(f'@echo off\nstart "" /B /WAIT /{priority} cmd /d /c {bat_quote(win_path(script))}\nexit /b %ERRORLEVEL%\n')
+    return {"argv": ["/mnt/c/Windows/System32/cmd.exe", "/d", "/c", win_path(launcher)], "env": wenv,
+            "script": script, "launcher": launcher, "tag": tag}
+
+
+def interop_env():
+    """This environment with WSL's interop socket: a command from ssh has none, and Windows'
+    programs are then not runnable (the first one WSL made serves every session)."""
+    wenv = dict(os.environ)
+    if not wenv.get("WSL_INTEROP"):
+        socks = sorted(glob.glob("/run/WSL/*_interop"), key=lambda p: int(os.path.basename(p).split("_")[0]))
+        if socks:
+            wenv["WSL_INTEROP"] = socks[0]
+    return wenv
+
+
+def windows_sync(src, dst, wenv):
+    """Brings the Windows drive's copy `dst` up to the copy `src` here: the files changed since
+    the last sync (size or time, from its manifest) in one tar stream to Windows' own tar, which
+    writes them natively (WSL's mount wrote 13 files a second); the files gone, removed. A
+    `target` directory and `.git` stay out: the mirror's compile outputs, and no build reads them."""
+    import hashlib, tarfile
+    started = time.time()
+    manifest = os.path.join(FARM, "winsync", hashlib.sha256(dst.encode()).hexdigest()[:16] + ".json")
+    try:
+        old = json.load(open(manifest))
+    except (OSError, ValueError):
+        old = {}
+    new, changed = {}, []
+    for d, dirs, files in os.walk(src):
+        dirs[:] = [x for x in dirs if x not in ("target", ".git")]
+        for name in files:
+            p = os.path.join(d, name)
+            st = os.lstat(p)
+            if not os.path.isfile(p) or os.path.islink(p):
+                continue
+            rel = os.path.relpath(p, src)
+            new[rel] = [st.st_size, st.st_mtime_ns]
+            if old.get(rel) != new[rel]:
+                changed.append(rel)
+    os.makedirs(dst, exist_ok=True)
+    if changed:
+        tar = subprocess.Popen(["/mnt/c/Windows/System32/tar.exe", "-x", "-f", "-", "-C", win_path(dst)], env=wenv,
+                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            with tarfile.open(fileobj=tar.stdin, mode="w|", format=tarfile.PAX_FORMAT) as t:
+                for rel in changed:
+                    t.add(os.path.join(src, rel), arcname=rel.replace(os.sep, "/"), recursive=False)
+            tar.stdin.close()
+        except OSError:
+            pass
+        err = tar.stderr.read().decode(errors="replace")
+        if tar.wait() != 0:
+            raise OSError(f"tar on Windows: {err.strip()[-500:]}")
+    gone = [rel for rel in old if rel not in new]
+    for rel in gone:
+        try:
+            os.remove(os.path.join(dst, rel))
+        except OSError:
+            pass
+    os.makedirs(os.path.dirname(manifest), exist_ok=True)
+    with open(manifest + ".tmp", "w") as f:
+        json.dump(new, f)
+    os.replace(manifest + ".tmp", manifest)
+    if changed or gone:
+        print(f"farm-agent: {len(changed)} files to the Windows drive, {len(gone)} removed, in {time.time() - started:.1f} s",
+              file=sys.stderr, flush=True)
+
+
+def windows_kill(w):
+    """Stops a Windows command's processes: every process tree whose command line names its batch
+    file (Windows' processes are not this agent's children)."""
+    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*" + w["tag"] + "*' } | "
+          "ForEach-Object { taskkill.exe /T /F /PID $_.ProcessId | Out-Null }")
+    try:
+        subprocess.run(["/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe", "-NoProfile", "-Command", ps],
+                       env=w["env"], stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 # What the root holds that no run has used for ROOT_DAYS goes (prune_root); while the disk is short
@@ -689,9 +1164,14 @@ def tidy_root(min_free_gb):
     except OSError:
         pass
     open(stamp, "w").close()
+    import warnings
     try:
-        if os.fork():
-            return
+        # (Python 3.12, the Linux hosts' own, warns at every fork of a process with threads, into
+        # the command's output: the child here holds to the rule below.)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            if os.fork():
+                return
     except OSError:
         return
     # The child: only file system calls from here, never this process's streams or threads' locks.
@@ -719,8 +1199,9 @@ def prune_roots(min_free_gb, days_list, say):
         keep = [relax] + busy()
         n, b = prune_root(days, keep)
         n2, b2 = prune_root(days, keep, TMP, every_file=True)
-        say(f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n + n2} paths, "
-            f"{(b + b2) / 1e9:.1f} GB; {free_gb():.0f} GB free")
+        n3, b3 = prune_root(days, keep, XC_PM, every_file=True) if os.path.isdir(XC_PM) else (0, 0)
+        say(f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n + n2 + n3} paths, "
+            f"{(b + b2 + b3) / 1e9:.1f} GB; {free_gb():.0f} GB free")
 
 
 def free_space(job):
@@ -898,6 +1379,22 @@ def clean(target, source, relax_home):
 os.makedirs(ROOT, exist_ok=True)
 if sys.argv[1:2] == ["exec"]:
     run_command(json.loads(sys.argv[2]))
+if sys.argv[1:2] == ["fetch"]:
+    # One file of a test-remote command's target directory, to stdout (`--fetch`): a program the
+    # host built, for this Mac to run. Only a file inside that target directory.
+    base = os.path.realpath(os.path.join(TARGETS, sys.argv[2]))
+    path = os.path.realpath(os.path.join(base, sys.argv[3]))
+    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+        print(f"farm-agent: no file {sys.argv[3]} in the command's target directory", file=sys.stderr, flush=True)
+        os._exit(66)
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+    sys.stdout.buffer.flush()
+    os._exit(0)
 if sys.argv[1:2] == ["free"]:
     os.setpriority(os.PRIO_PROCESS, 0, 19)
     free_space(json.loads(sys.argv[2]))

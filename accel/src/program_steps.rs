@@ -38,10 +38,18 @@ pub struct Observation {
     pub over_budget: bool,
 }
 
-static KEEP: AtomicBool = AtomicBool::new(false);
-static DROPPED: AtomicU64 = AtomicU64::new(0);
-static PENDING: Mutex<Vec<Observation>> = Mutex::new(Vec::new());
-static RATES: RwLock<Option<HashMap<String, Sums>>> = RwLock::new(None);
+/// The machine's program rates and their observations' queue (decision 0442: its learned cost model's).
+#[derive(Default)]
+struct Steps {
+    keep: AtomicBool,
+    dropped: AtomicU64,
+    pending: Mutex<Vec<Observation>>,
+    rates: RwLock<Option<HashMap<String, Sums>>>,
+}
+
+fn steps() -> std::sync::Arc<Steps> {
+    rerail_context::machine::<Steps>()
+}
 
 /// A program's steps and sizes summed over its evaluations: its rate is their ratio.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -70,11 +78,11 @@ impl Sums {
 
 /// Keeps observations for the store's writer (it is on), or not.
 pub fn keep(on: bool) {
-    KEEP.store(on, Ordering::Relaxed);
+    steps().keep.store(on, Ordering::Relaxed);
 }
 
 pub fn keeping() -> bool {
-    KEEP.load(Ordering::Relaxed)
+    steps().keep.load(Ordering::Relaxed)
 }
 
 /// Folds each observation into its program's rate, and keeps it for the writer while one is on.
@@ -84,7 +92,8 @@ pub fn observe(observations: impl IntoIterator<Item = Observation>) {
         return;
     }
     {
-        let mut rates = RATES.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let held = steps();
+        let mut rates = held.rates.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         let rates = rates.get_or_insert_with(HashMap::new);
         for observation in &observations {
             // Get before insert: no key string made for a program already priced.
@@ -98,13 +107,14 @@ pub fn observe(observations: impl IntoIterator<Item = Observation>) {
             }
         }
     }
-    if !KEEP.load(Ordering::Relaxed) {
+    if !steps().keep.load(Ordering::Relaxed) {
         return;
     }
-    let mut pending = PENDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let held = steps();
+    let mut pending = held.pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     for observation in observations {
         if pending.len() >= PENDING_MOST {
-            DROPPED.fetch_add(1, Ordering::Relaxed);
+            steps().dropped.fetch_add(1, Ordering::Relaxed);
         } else {
             pending.push(observation);
         }
@@ -113,14 +123,14 @@ pub fn observe(observations: impl IntoIterator<Item = Observation>) {
 
 /// The observations since the last drain, and how many were dropped.
 pub fn drain() -> (Vec<Observation>, u64) {
-    let taken = std::mem::take(&mut *PENDING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
-    (taken, DROPPED.swap(0, Ordering::Relaxed))
+    let taken = std::mem::take(&mut *steps().pending.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+    (taken, steps().dropped.swap(0, Ordering::Relaxed))
 }
 
 /// The store's sums (program, steps, size, evaluations), for this run's predictions.
 pub fn install_sums(sums: impl IntoIterator<Item = (String, f64, f64, u64)>) {
     let sums = sums.into_iter().map(|(program, steps, size, samples)| (program, Sums { steps, size, samples })).collect();
-    *RATES.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sums);
+    *steps().rates.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(sums);
 }
 
 /// Rates as they are (a test's): each as one evaluation of size 1.
@@ -129,6 +139,6 @@ pub fn install(rates: HashMap<String, Rate>) {
 }
 
 pub fn rate(program: &str) -> Option<Rate> {
-    RATES.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref()?.get(program).copied()?.rate()
+    steps().rates.read().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref()?.get(program).copied()?.rate()
 }
 

@@ -3,8 +3,8 @@
 #[cfg(any(test, feature = "test-hooks"))]
 use super::SEARCH_INDEX_FAMILY_WRITES;
 use super::{
-    ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError,
-    StoreResult, StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
+    ContentStore, HashKey, MAX_PUBLICATION_BATCH, SearchKindLookup, StoreError, StoreResult,
+    StoredKindPresence, TapeId, TapeSearchIndex, UnindexedTape,
 };
 use rusqlite::{TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -60,7 +60,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         // The schema requires a positive node count; nothing reads the count of an incomplete set.
         let mut put_set = transaction.prepare_cached(
             "INSERT INTO search_index_sets(tape_id,index_version,node_count,complete,has_errors) \
@@ -104,7 +105,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut remove_kind =
             transaction.prepare_cached("DELETE FROM search_kind_fts WHERE rowid=?1")?;
         let mut put_kind =
@@ -187,7 +189,9 @@ impl ContentStore {
                 .collect::<Result<Vec<_>, _>>()?
         };
         // A source is checked against its hash; its tape against its identity (`HashKey::tape_identity`).
-        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed.
+        // In a segment (decision 0295 step 5): read there; one whose segment is gone is not indexed, nor an archived
+        // one (decision 0450 step 4): placed back to be indexed in the background, it would undo the archive. An index
+        // made before its archive is kept; a run that reads the tape places it back, and it is indexed after.
         let mut maps = super::segments::SegmentMaps::new(super::object_segments::object_dir(&self.database_path));
         let mut decode = |(length, hash, [seg, at, len]): Frame, identity: &dyn Fn(&[u8]) -> HashKey| -> StoreResult<Option<super::ObjectBytes>> {
             let Some(frame) = super::object_segments::row_frame(&mut maps, seg, at, len) else { return Ok(None) };

@@ -35,6 +35,9 @@ pub enum Error {
     /// again with deep stacks, then interpreted. Not a size refusal: the batch fits; its walks'
     /// pools do not.
     WalkFrames,
+    /// A label run's chain (a targets image's reach, decision 0475) had more levels than its phases hold: the run
+    /// again with twice them.
+    ChainLevels,
     BackendFailure,
     /// A generated function with a call or an unstated loop (`native_cpu_shape`): refused.
     RefusedShape(String),

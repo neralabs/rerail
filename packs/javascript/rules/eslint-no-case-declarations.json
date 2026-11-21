@@ -1,7 +1,7 @@
 {
  "format": "rerail.policy/v1",
  "id": "eslint-no-case-declarations",
- "revision": 3,
+ "revision": 4,
  "mode": "steer",
  "description": "Wrap let, const, function and class declarations inside a switch case in braces; otherwise they leak into the whole switch.",
  "scope": {
@@ -34,30 +34,7 @@
         "kind": "abstract_class_declaration"
        },
        {
-        "kind": "expression_statement",
-        "has": {
-         "stopBy": "neighbor",
-         "any": [
-          {
-           "kind": "assignment_expression",
-           "has": {
-            "stopBy": "neighbor",
-            "regex": "^using$"
-           }
-          },
-          {
-           "kind": "await_expression",
-           "has": {
-            "stopBy": "neighbor",
-            "kind": "assignment_expression",
-            "has": {
-             "stopBy": "neighbor",
-             "regex": "^using$"
-            }
-           }
-          }
-         ]
-        }
+        "kind": "using_declaration"
        }
       ],
       "inside": {

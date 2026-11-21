@@ -1,12 +1,12 @@
 # 0422: The Bitlex ladders keep their last step only
 
-Status: decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows 0490.
+Status: decided (the user, 2026-11-18: "get rid of all of the old grammars"). Follows 0416.
 
 ## Intro
 
 A ladder builds a grammar a step at a time: each step is a whole Bitlex file, the grammar so far
 plus one construct. The tree kept every step, so it held many near-copies of each grammar:
-Kotlin's 36 steps were 1.4 MB, and since 0490 its steps 1 to 35 did not even parse. A step that
+Kotlin's 36 steps were 1.4 MB, and since 0416 its steps 1 to 35 did not even parse. A step that
 is not the grammar is history, and git keeps history.
 
 ## The decision
@@ -31,3 +31,6 @@ steps against the engine) run on the steps that remain. The `.rr` tests that ope
 (`refuse M in L`) and step 12 (`reread R`) open step 22, which has both.
 
 The last removed commit with every step: `d3070e67c`.
+
+Since roll-up 20 (2026-11-20, 0484): Kotlin keeps no ladder. Its last step is the grammar itself,
+`kotlin_parser/kotlin.bitlex`, with no step number.

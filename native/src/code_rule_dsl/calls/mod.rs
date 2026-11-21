@@ -27,6 +27,7 @@ use crate::content_store::HashKey;
 /// A super edge's kind (`Summary::supers`): the class-like's parent class, `(class, parent)`, which a closure
 /// also reads the other way (its children).
 pub const PARENT: u8 = 0;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use ast_grep_core::{Doc, Node};
 use closure::{DefRef, Graph, GraphUpdate, Hop, Region};
 use names::Name;
@@ -37,7 +38,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use summary::{ASYNC, CLASS, Callee, Summary};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Which definitions a chain may pass through: the callee and every definition after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -373,10 +373,10 @@ pub(crate) fn seed_query(
     if mentions(inner, &|key, _| key == "calls") {
         return Err(nested());
     }
-    let (seed_language, function_kinds) = { let pack = language_pack::pack(family); (
-        pack.calls_seed_language(),
-        pack.calls_function_kinds(),
-    ) };
+    let (seed_language, function_kinds) = {
+        let pack = language_pack::pack(family);
+        (pack.calls_seed_language(), pack.calls_function_kinds())
+    };
     let language = seed_language.unwrap_or(language);
     let mut seed = Map::new();
     seed.insert("language".into(), Value::String(language.into()));
@@ -1204,7 +1204,7 @@ impl Drop for EvaluationSlot {
 
 /// How `calls` reads a file's bindings: `resolves`' default reading, as a stub where the path is
 /// one (what `matcher::calls_tables` builds at a call node).
-pub(crate) fn reading(path: &str) -> Reading {
+pub fn reading(path: &str) -> Reading {
     Reading {
         stub: is_stub_file(path),
         ..Reading::default()
@@ -1217,7 +1217,10 @@ pub const MAX_TABLE_NODES: usize = 5_000_000;
 /// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
 /// the call graph (`CallRules::SUPPORTED`).
 pub(crate) fn summarizes(language: GrammarDialect) -> bool {
-    { let pack = language_pack::pack(Family::of(language)); pack.calls_supported() }
+    {
+        let pack = language_pack::pack(Family::of(language));
+        pack.calls_supported()
+    }
 }
 
 /// The document a `language` file's calls are read from, and its dialect: of a file that embeds
@@ -1227,7 +1230,7 @@ pub(crate) fn calls_document(
     doc: crate::code_rule_dsl::tape::TapeDoc,
     language: GrammarDialect,
 ) -> Option<(crate::code_rule_dsl::tape::TapeDoc, GrammarDialect)> {
-    if language.embeds().is_empty() {
+    if language.program_embeds().is_empty() {
         return Some((doc, language));
     }
     doc.guests()?.iter().find_map(|guest| {
@@ -1264,13 +1267,13 @@ pub fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    let mut summary = { let pack = language_pack::pack(Family::of(language)); {
+    let mut summary = {
+        let pack = language_pack::pack(Family::of(language));
         language_pack::calls_summary(pack, &root, path, module, table, has_errors)
-    } };
+    };
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
 }
-
 
 /// A seed query's witnesses in one file, by their spans: the definitions (by node start) they
 /// stand for, read through the file's summary where they are nodes the definitions hold. `None`
@@ -1375,16 +1378,17 @@ pub(crate) fn holds<'t, D: Doc>(
         Some(callee) => callee,
         None => {
             // A table that cannot be built fails the clause for the file (`UTIL_EXCEEDED`).
-            let Some(callee) = ({ let pack = language_pack::pack(test.family); language_pack::calls_callee_at(pack, 
-                node,
-                &summary,
-                || tables(node, test.language),
-            ) }) else {
+            let Some(callee) = ({
+                let pack = language_pack::pack(test.family);
+                language_pack::calls_callee_at(pack, node, &summary, || tables(node, test.language))
+            }) else {
                 return Reach::Unknown;
             };
             // A callee's name is in the namespace of the family's summaries (Blade's are PHP's).
-            let names =
-                { let pack = language_pack::pack(test.family); pack.calls_names() };
+            let names = {
+                let pack = language_pack::pack(test.family);
+                pack.calls_names()
+            };
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
                 Callee::Name(name) => names.map(|family| Name::new(family, &name)),

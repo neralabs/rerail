@@ -1,6 +1,7 @@
 //! Per-thread SQLite connections, connection pragmas, and the busy retry every store write runs
 //! under.
 
+use rerail_blocks::block::Flush;
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
@@ -242,29 +243,51 @@ pub(super) fn jittered(backoff: Duration) -> Duration {
 type SharedConnection = Arc<ParkingMutex<Option<Connection>>>;
 
 thread_local! {
-    /// By database path: the store's identity (`store_identity`) and the connection to it.
-    static THREAD_CONNECTIONS: RefCell<HashMap<PathBuf, (i64, SharedConnection)>> =
+    /// By shared object (its `Connections`' number) and database path: the store's identity (`store_identity`) and
+    /// the connection to it.
+    static THREAD_CONNECTIONS: RefCell<HashMap<(u64, PathBuf), (i64, SharedConnection)>> =
         RefCell::new(HashMap::new());
 }
 
 /// Every thread's store connections by database, so an idle store closes them from whichever
 /// thread releases it (Rayon workers and libuv threads both read the store).
 type ConnectionRegistry = Vec<(PathBuf, std::sync::Weak<ParkingMutex<Option<Connection>>>)>;
-static ALL_CONNECTIONS: std::sync::LazyLock<ParkingMutex<ConnectionRegistry>> =
-    std::sync::LazyLock::new(|| ParkingMutex::new(Vec::new()));
 
-/// The store handles open in this process, by database path (`ThreadConnection`).
-static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
-    std::sync::LazyLock::new(Default::default);
+/// The shared object's store connections (decision 0442): every thread's, by database, and the store handles open,
+/// by database path (`ThreadConnection`). Another object's handles on the same store have connections of their own,
+/// as another process's would.
+pub(super) struct Connections {
+    all: ParkingMutex<ConnectionRegistry>,
+    handles: ParkingMutex<HashMap<PathBuf, usize>>,
+    /// Its number, unique in the process: a thread's connections are kept by it.
+    number: u64,
+}
+
+impl Default for Connections {
+    fn default() -> Self {
+        /// The registries' numbers, unique in the process.
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        Connections { all: Default::default(), handles: Default::default(), number: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+    }
+}
+
+fn connections() -> Arc<Connections> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Connections>()
+}
 
 /// A store handle's connections: one per thread, shared by the handles on the store. The last handle on a store
 /// closes every thread's idle connection to it (`close`), so nothing in the process holds the file open once the
 /// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
     database_path: PathBuf,
+    pinned: Option<SharedConnection>,
+    /// The registry of the shared object it was opened in: its connections are that object's.
+    connections: Arc<Connections>,
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
+    /// How the store's writes reach the disk (decision 0481): each connection's `synchronous`.
+    flush: Flush,
 }
 
 /// A locked thread connection, reopened if an idle release closed it.
@@ -284,9 +307,26 @@ impl std::ops::DerefMut for ConnectionGuard {
 }
 
 impl ThreadConnection {
-    pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
-        *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, identity }
+    pub(super) fn new(database_path: PathBuf, identity: i64, flush: Flush) -> Self {
+        let connections = connections();
+        *connections.handles.lock().entry(database_path.clone()).or_default() += 1;
+        Self { database_path, connections, identity, pinned: None, flush }
+    }
+
+    /// Keep the verified file open for all phases of collection, including after a path replacement.
+    pub(super) fn pinned(database_path: PathBuf, connection: Connection, identity: i64, flush: Flush) -> Self {
+        let mut counted = Self::new(database_path, identity, flush);
+        counted.pinned = Some(Arc::new(ParkingMutex::new(Some(connection))));
+        counted
+    }
+
+    pub(super) fn memory(connection: Connection, identity: i64, flush: Flush) -> Self {
+        Self { database_path: PathBuf::new(), connections: connections(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))), flush }
+    }
+
+    /// How the store's writes reach the disk.
+    pub(super) fn flush(&self) -> Flush {
+        self.flush
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).
@@ -297,8 +337,11 @@ impl ThreadConnection {
     /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
     /// connection to it is closed.
     pub(super) fn close(&self) -> bool {
+        if self.database_path.as_os_str().is_empty() {
+            return true;
+        }
         let last = {
-            let mut handles = HANDLES.lock();
+            let mut handles = self.connections.handles.lock();
             let open = handles.get_mut(&self.database_path).expect("a handle counted when made");
             *open -= 1;
             let last = *open == 0;
@@ -314,16 +357,21 @@ impl ThreadConnection {
     }
 
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
+        if let Some(connection) = &self.pinned {
+            return Ok(ConnectionGuard(connection.lock_arc()));
+        }
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
-            match connections.get(&self.database_path) {
+            let key = (self.connections.number, self.database_path.clone());
+            match connections.get(&key) {
                 Some((identity, connection)) if *identity == self.identity => Arc::clone(connection),
                 _ => {
                     let connection = SharedConnection::default();
-                    ALL_CONNECTIONS
+                    self.connections
+                        .all
                         .lock()
                         .push((self.database_path.clone(), Arc::downgrade(&connection)));
-                    connections.insert(self.database_path.clone(), (self.identity, Arc::clone(&connection)));
+                    connections.insert(key, (self.identity, Arc::clone(&connection)));
                     connection
                 }
             }
@@ -332,22 +380,47 @@ impl ThreadConnection {
         if guard.is_none() {
             // Its configuring reads (`page_count`, `journal_mode`) wait for another process's writer as a write
             // does: busy past one wait, they are tried again, not failed (every caller expects its connection).
-            let opened = retry_busy(&mut BusyRetries::default(), || open_runtime_connection(&self.database_path));
-            *guard = Some(opened.map_err(|error| error.to_string())?);
+            let opened = retry_busy(&mut BusyRetries::default(), || {
+                open_runtime_connection(&self.database_path, self.flush)
+            })
+            .map_err(|error| error.to_string())?;
+            // The file at the path is this handle's store only while its identity is: a store deleted and created
+            // again there is another, which this handle's writes (its atoms) must not reach.
+            let identity: i64 = opened
+                .query_row(
+                    "SELECT id FROM store_identity WHERE singleton = 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            if identity != self.identity {
+                return Err(format!(
+                    "the store at {} was created again: this handle's store is gone",
+                    self.database_path.display()
+                ));
+            }
+            *guard = Some(opened);
         }
         Ok(ConnectionGuard(guard))
     }
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        release_all_at(&self.database_path);
+        if !self.database_path.as_os_str().is_empty() {
+            release_in(&self.connections, &self.database_path);
+        }
     }
 }
 
 /// Closes every thread's idle connection to the database at `database_path`, whatever store was opened there; one
 /// in use stays open. A test's temporary database (`test_support::TemporaryDatabase`) calls it as it drops.
+#[cfg(test)]
 pub(super) fn release_all_at(database_path: &Path) {
-    ALL_CONNECTIONS.lock().retain(|(path, connection)| {
+    release_in(&connections(), database_path);
+}
+
+fn release_in(connections: &Connections, database_path: &Path) {
+    connections.all.lock().retain(|(path, connection)| {
         let Some(connection) = connection.upgrade() else {
             return false;
         };
@@ -366,8 +439,10 @@ pub(super) fn release_all_at(database_path: &Path) {
 /// that are open (a test checks a closed store's are none).
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn holding(database_path: &Path) -> (usize, usize) {
-    let handles = HANDLES.lock().get(database_path).copied().unwrap_or(0);
-    let open = ALL_CONNECTIONS
+    let connections = connections();
+    let handles = connections.handles.lock().get(database_path).copied().unwrap_or(0);
+    let open = connections
+        .all
         .lock()
         .iter()
         .filter(|(path, _)| path == database_path)
@@ -384,15 +459,29 @@ pub(super) const CACHE_KIB: i64 = 1_024;
 /// thread runs while waves are under way as hazards (decision 0104: no wave waits for SQL).
 fn trace_for_hazards(connection: &Connection) {
     use rusqlite::ffi;
-    unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, x: *mut std::ffi::c_void) -> std::ffi::c_int {
-        if event == ffi::SQLITE_TRACE_STMT as u32 {
+    unsafe extern "C" fn trace(
+        event: u32,
+        _: *mut std::ffi::c_void,
+        p: *mut std::ffi::c_void,
+        x: *mut std::ffi::c_void,
+    ) -> std::ffi::c_int {
+        if event == ffi::SQLITE_TRACE_STMT {
             // SAFETY: for SQLITE_TRACE_STMT, P is the statement.
-            let text = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())) }.to_string_lossy();
+            let text = unsafe {
+                std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>()))
+            }
+            .to_string_lossy();
             super::hazards::statement("store", &text);
         }
-        if event == ffi::SQLITE_TRACE_PROFILE as u32 {
+        if event == ffi::SQLITE_TRACE_PROFILE {
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
-            let (text, ns) = unsafe { (std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>())).to_string_lossy(), *x.cast::<i64>() as u64) };
+            let (text, ns) = unsafe {
+                (
+                    std::ffi::CStr::from_ptr(ffi::sqlite3_sql(p.cast::<ffi::sqlite3_stmt>()))
+                        .to_string_lossy(),
+                    *x.cast::<i64>() as u64,
+                )
+            };
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             super::hazards::sql_in_wave("store", &text, ns);
         }
@@ -400,12 +489,20 @@ fn trace_for_hazards(connection: &Connection) {
     }
     if super::hazards::on() {
         // SAFETY: the callback keeps no state; the connection is live.
-        unsafe { ffi::sqlite3_trace_v2(connection.handle(), (ffi::SQLITE_TRACE_PROFILE | ffi::SQLITE_TRACE_STMT) as u32, Some(trace), std::ptr::null_mut()) };
+        unsafe {
+            ffi::sqlite3_trace_v2(
+                connection.handle(),
+                ffi::SQLITE_TRACE_PROFILE | ffi::SQLITE_TRACE_STMT,
+                Some(trace),
+                std::ptr::null_mut(),
+            )
+        };
     }
 }
 
 /// SQL functions every connection gets, beside the store's own: the engine's, set as it loads.
-static CONNECTION_FUNCTIONS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> = std::sync::OnceLock::new();
+static CONNECTION_FUNCTIONS: std::sync::OnceLock<fn(&Connection) -> rusqlite::Result<()>> =
+    std::sync::OnceLock::new();
 
 /// Sets the SQL functions every connection the store opens gets, beside its own; the first setting stays. The
 /// engine sets them as it loads, before it opens a store.
@@ -413,7 +510,35 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
     let _ = CONNECTION_FUNCTIONS.set(install);
 }
 
-pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
+/// The store's flush mode (decision 0481): how a write reaches the disk, for SQLite (`synchronous`) and for the
+/// blocks the store's rows name, which follow it. `RERAIL_FLUSH` (`synced`, `os`, `none`) names it; by default
+/// `os`, and `none` in the store's own tests (the engine's test binary sets `none` too, `test_flush`).
+pub fn store_flush() -> StoreResult<Flush> {
+    Flush::from_env_or(if cfg!(test) { Flush::None } else { Flush::Os }).map_err(StoreError::Invalid)
+}
+
+/// SQLite's `synchronous` for `flush`: `FULL` waits for the disk at each commit, as `Synced` blocks do; `NORMAL` (in
+/// WAL) syncs only at checkpoints; `OFF` never.
+fn synchronous(flush: Flush) -> &'static str {
+    match flush {
+        Flush::Synced => "FULL",
+        Flush::Os => "NORMAL",
+        Flush::None => "OFF",
+    }
+}
+
+/// The flush mode of `connection`'s store, as its `synchronous` says (`configure_connection`): what code that holds
+/// only a connection (the atoms, the kept facts) writes its blocks back by. A connection the store did not configure
+/// (SQLite's default, `FULL`) reads as `Synced`.
+pub fn flush_of(connection: &Connection) -> Flush {
+    match connection.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0)) {
+        Ok(0) => Flush::None,
+        Ok(1) => Flush::Os,
+        _ => Flush::Synced,
+    }
+}
+
+pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) -> StoreResult<()> {
     trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(256);
     connection.busy_handler(Some(wait_for_writer))?;
@@ -427,15 +552,14 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.
     let _: String = connection.query_row("PRAGMA journal_mode=WAL", [], |row| row.get(0))?;
-    connection.pragma_update(None, "synchronous", "NORMAL")?;
+    connection.pragma_update(None, "synchronous", synchronous(flush))?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
     connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
     // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
     // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
     // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
-    static MMAP: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-    let mmap = *MMAP.get_or_init(|| std::env::var("RERAIL_STORE_MMAP_MB").ok().and_then(|v| v.parse::<i64>().ok()).unwrap_or(4096) << 20);
+    let mmap = rerail_prof::code_rule_dsl::logic::profile::setting(|| mmap_bytes(std::env::var("RERAIL_STORE_MMAP_MB").ok().as_deref()));
     connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
@@ -454,6 +578,18 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     Ok(())
 }
 
+/// The store map's bound in MB when `RERAIL_STORE_MMAP_MB` does not set it: 4 GB, and none on Windows, which keeps
+/// the map off as every platform had it before.
+const DEFAULT_MMAP_MB: i64 = if cfg!(windows) { 0 } else { 4096 };
+
+/// The store map's bound in bytes for a `RERAIL_STORE_MMAP_MB` setting: the MB it names, or `DEFAULT_MMAP_MB`.
+fn mmap_bytes(setting: Option<&str>) -> i64 {
+    setting
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_MMAP_MB)
+        << 20
+}
+
 /// SQLite's memory from jemalloc, the process's allocator, once and before SQLite initializes (it
 /// refuses afterwards, and then keeps the system allocator). Freed SQLite pages are then returned
 /// with the heap's (`purge_allocator_pages`) instead of staying fragmented in the system's zones:
@@ -466,7 +602,11 @@ pub fn sqlite_on_jemalloc() {
     unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
         let p = unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) };
         if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc_by(p as usize, bytes.max(1) as usize, rerail_prof::heap::SQLITE);
+            rerail_prof::heap::alloc_by(
+                p as usize,
+                bytes.max(1) as usize,
+                rerail_prof::heap::SQLITE,
+            );
         }
         p
     }
@@ -482,7 +622,11 @@ pub fn sqlite_on_jemalloc() {
         }
         let p = unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) };
         if rerail_prof::heap::on() {
-            rerail_prof::heap::alloc_by(p as usize, bytes.max(1) as usize, rerail_prof::heap::SQLITE);
+            rerail_prof::heap::alloc_by(
+                p as usize,
+                bytes.max(1) as usize,
+                rerail_prof::heap::SQLITE,
+            );
         }
         p
     }
@@ -508,21 +652,30 @@ pub fn sqlite_on_jemalloc() {
             pAppData: std::ptr::null_mut(),
         };
         // SQLite copies the methods.
-        let code = unsafe { rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw const methods) };
+        let code = unsafe {
+            rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw const methods)
+        };
         if std::env::var_os("RERAIL_PROF").is_some() {
-            eprintln!("SQLite allocator: {}", if code == rusqlite::ffi::SQLITE_OK { "jemalloc" } else { "the system's (already initialized)" });
+            eprintln!(
+                "SQLite allocator: {}",
+                if code == rusqlite::ffi::SQLITE_OK {
+                    "jemalloc"
+                } else {
+                    "the system's (already initialized)"
+                }
+            );
         }
     });
 }
 
-fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
+fn open_runtime_connection(path: &Path, flush: Flush) -> StoreResult<Connection> {
     #[cfg(not(any(windows, target_family = "wasm")))]
     sqlite_on_jemalloc();
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
         | OpenFlags::SQLITE_OPEN_CREATE
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
-    configure_connection(&mut connection)?;
+    configure_connection(&mut connection, flush)?;
     Ok(connection)
 }
 
@@ -546,7 +699,7 @@ impl ContentStore {
     /// A new connection to this store's file, configured as the store's own: for an owner that
     /// keeps its own temp schema and modules (the waves' SQL owner).
     pub fn open_connection(&self) -> StoreResult<Connection> {
-        open_runtime_connection(&self.database_path)
+        open_runtime_connection(&self.database_path, self.connection.flush())
     }
 
     /// The store's file.
@@ -610,7 +763,11 @@ impl ContentStore {
             Ok(value)
         });
         // Left installed, the handler would stop the connection's next statements: its error is the result's.
-        let cleared = if stop.is_some() { connection.progress_handler(0, None::<fn() -> bool>) } else { Ok(()) };
+        let cleared = if stop.is_some() {
+            connection.progress_handler(0, None::<fn() -> bool>)
+        } else {
+            Ok(())
+        };
         let value = value?;
         cleared?;
         Ok(value)
@@ -627,7 +784,8 @@ impl ContentStore {
         // another writer, and must not fail as one.
         let mut connection = self.connection.lock().map_err(StoreError::Invalid)?;
         let _no_wait = NoBusyWait::enter();
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
         self.commit(transaction)?;
         Ok(value)
@@ -701,22 +859,34 @@ impl Tx<'_> {
 /// A write's `BEGIN` waits for another writer as every store write does (`retry_busy`): nothing has run yet, so it
 /// is tried again until the write's deadline. Callers that began one here and failed it after one busy timeout
 /// (a collection pass, a pin, a snapshot file) failed under load, while every other write waited.
-pub(super) fn begin(connection: &mut Connection, behavior: TransactionBehavior) -> StoreResult<Tx<'_>> {
+pub(super) fn begin(
+    connection: &mut Connection,
+    behavior: TransactionBehavior,
+) -> StoreResult<Tx<'_>> {
     if BATCH.with(std::cell::Cell::get) && !connection.is_autocommit() {
         return Ok(connection.savepoint().map(Tx::Inner)?);
     }
     if !matches!(behavior, TransactionBehavior::Deferred) {
-        let sql = if matches!(behavior, TransactionBehavior::Exclusive) { "BEGIN EXCLUSIVE" } else { "BEGIN IMMEDIATE" };
+        let sql = if matches!(behavior, TransactionBehavior::Exclusive) {
+            "BEGIN EXCLUSIVE"
+        } else {
+            "BEGIN IMMEDIATE"
+        };
         if NO_BUSY_WAIT.get() || IN_RETRY.get() {
             // A write that must not wait (`NoBusyWait`) tries once; one inside a retry leaves it to that retry.
             connection.execute_batch(sql)?;
         } else {
-            retry_busy(&mut BusyRetries::default(), || Ok(connection.execute_batch(sql)?))?;
+            retry_busy(&mut BusyRetries::default(), || {
+                Ok(connection.execute_batch(sql)?)
+            })?;
         }
     } else {
         connection.execute_batch("BEGIN DEFERRED")?;
     }
-    Ok(Tx::Top(Begun { connection, open: true }))
+    Ok(Tx::Top(Begun {
+        connection,
+        open: true,
+    }))
 }
 
 impl ContentStore {
@@ -761,12 +931,13 @@ impl ContentStore {
         }
         // The batch's jobs declared their rows' symbols mapped, or ran not at all, after a fork (`write_back::Syms`).
         let atoms = super::hazards::span("the batch's new atoms");
-        let committed = super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
-            drop(atoms);
-            let _commit = super::hazards::span("the batch's commit");
-            connection.execute_batch("COMMIT")?;
-            Ok(upto)
-        });
+        let committed =
+            super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
+                drop(atoms);
+                let _commit = super::hazards::span("the batch's commit");
+                connection.execute_batch("COMMIT")?;
+                Ok(upto)
+            });
         match committed {
             Ok(upto) => {
                 let _held = super::hazards::span("the batch's atoms, held as stored");
@@ -787,16 +958,57 @@ impl ContentStore {
 /// plain forms parse their SQL at every call, and the store's writer made several such calls a tape (the tape's
 /// generation, its source's hash), parsing SQL for each of 27,000 files.
 pub(crate) trait Cached {
-    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T>;
+    fn query_row_cached<
+        T,
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    >(
+        &self,
+        sql: &str,
+        params: P,
+        f: F,
+    ) -> rusqlite::Result<T>;
     fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize>;
 }
 
 impl Cached for Connection {
-    fn query_row_cached<T, P: rusqlite::Params, F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>>(&self, sql: &str, params: P, f: F) -> rusqlite::Result<T> {
+    fn query_row_cached<
+        T,
+        P: rusqlite::Params,
+        F: FnOnce(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    >(
+        &self,
+        sql: &str,
+        params: P,
+        f: F,
+    ) -> rusqlite::Result<T> {
         self.prepare_cached(sql)?.query_row(params, f)
     }
 
     fn execute_cached<P: rusqlite::Params>(&self, sql: &str, params: P) -> rusqlite::Result<usize> {
         self.prepare_cached(sql)?.execute(params)
+    }
+}
+
+#[cfg(test)]
+mod mmap_tests {
+    use super::mmap_bytes;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn the_store_is_mapped_up_to_4_gb_by_default() {
+        assert_eq!(mmap_bytes(None), 4096 << 20);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_store_is_not_mapped_by_default_on_windows() {
+        assert_eq!(mmap_bytes(None), 0);
+    }
+
+    #[test]
+    fn rerail_store_mmap_mb_sets_the_bound_on_every_platform() {
+        assert_eq!(mmap_bytes(Some("64")), 64 << 20);
+        assert_eq!(mmap_bytes(Some("0")), 0);
     }
 }

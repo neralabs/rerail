@@ -6,7 +6,7 @@
 //! token of a kind sets. The operations after it are still written out (an `and` with the
 //! zero, its count of bits, a compare of that count), and so is a branch on it. Neither
 //! backend folds them: the JIT runs Cranelift without its optimizer, and the Rust that
-//! the backends would carry them.
+//! `clif_rust` prints would carry them for `rustc` to remove.
 //!
 //! `fold` does that work on the IR itself, before either backend sees it:
 //!
@@ -522,7 +522,7 @@ fn fold_once(func: &mut ir::Function, callees: &Summaries) -> bool {
                     };
                     let k = signed(k, w);
                     // A small constant only, as an instruction's immediate is: a wide one (an
-                    // address the backends place) stays a constant.
+                    // address the backends place, `clif_rust`'s tables) stays a constant.
                     if i32::try_from(k).is_err() {
                         continue;
                     }
@@ -728,8 +728,7 @@ fn merge_straight(func: &mut ir::Function) -> bool {
         if gone.contains(&p) {
             continue;
         }
-        loop {
-            let Some(last) = func.layout.last_inst(p) else { break };
+        while let Some(last) = func.layout.last_inst(p) {
             let InstructionData::Jump { destination, .. } = func.dfg.insts[last] else { break };
             let pool = &func.dfg.value_lists;
             let b = destination.block(pool);

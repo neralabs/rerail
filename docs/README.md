@@ -23,6 +23,8 @@ Install Rerail, write rules, and see what it does in a session.
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
+- [threat-model.md](threat-model.md): who can attack Rerail and through what, each threat's mitigations, and what
+  remains
 - [internal-testing.md](internal-testing.md): unreleased features and where each surfaces
 - [headless-scan.md](headless-scan.md): `rerail scan` of a checkout for CI, with no daemon or session, and its
   `rerail.scan/1` report (internal testing)
@@ -32,6 +34,7 @@ Install Rerail, write rules, and see what it does in a session.
 ## Rules, packs and languages
 How rule packs are built, ported, checked and extended.
 
+- [rule-syntax/git.md](rule-syntax/git.md): query commit history and Git objects in native `.rerail` rules
 - [rule-packs.md](rule-packs.md): packs, matching and recommendation, the shipped packs, and a worktree's own rules
 - [pack-format.md](pack-format.md): pack layout, pack data, provenance records and the validation contract
 - [upstream.md](upstream.md): upstream snapshots and pack data, samples and their licences, new snapshots, the
@@ -48,6 +51,8 @@ How core and packs are published.
 - [release.md](release.md): how core is built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first npm publish and its trusted
   publisher
+- [environment-matrix.md](environment-matrix.md): the operating systems a release is installed and exercised on, and
+  what each run checks
 
 ## Repository
 How the project is run and laid out.
@@ -58,15 +63,16 @@ How the project is run and laid out.
 ## Design notes
 Internal designs for contributors.
 
+- [Git inputs and the rule library](final-shape/notes/git-inputs/design.md): proposed Git source and metadata interfaces,
+  native contracts, and Datalog cache rules
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
 - [sql-executor.md](sql-executor.md): SQL sessions over facts, rule lowering, wave execution, and extension queries
-- [data-layer-rule-port.md](data-layer-rule-port.md): current data-layer linter inventory, engine capability gaps,
-  historical performance evidence, and migration order
-- [data-layer-port-execution-plan.md](data-layer-port-execution-plan.md): upstream test recording, strict parity gates,
-  native replay requirements, and the complete batch plan
-- [data-layer-batch-two.md](data-layer-batch-two.md): the next ten candidate ports, upstream and supplemental parity, and cumulative measurements
-- [data-layer-batch-three.md](data-layer-batch-three.md): the third ten ports, direct AST visitor recording, configuration parity, and cumulative measurements
-- [data-layer-batch-four.md](data-layer-batch-four.md): Completed SQL grammar candidates, Rust coverage, upstream ambiguities, and performance measurements
-- [data-layer-batch-four-root-causes.md](data-layer-batch-four-root-causes.md): Failure analysis, source requirements, and TDD ladders
-- [data-layer-engine-gaps.md](data-layer-engine-gaps.md): demonstrated engine features, withdrawn issues, and required approval before new Linear issues
+- [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (experimental, off by default), which detects
+  in-flight conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person
+  and their coding agent before they merge
+- [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
+  holds it
+- [blade-parser.md](blade-parser.md): the Blade parser, a Rust port of Forte, what is ported and how it is checked
+- [repository-packs.md](repository-packs.md): the rule packs a repository enables, declared in its
+  `.rerail/packs.json`, so every machine runs the same rules for the same commit (a design)

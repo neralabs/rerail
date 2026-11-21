@@ -1166,6 +1166,17 @@ fn first_clear(x: &[u64], from: usize, n: usize) -> Option<usize> {
     (i < n).then_some(i)
 }
 
+/// The last byte of the run of `r`'s bits after byte `s` with one bit of `d` in it at most: the second ends the
+/// run before it, as a lexer reads a number's one `.` and stops at the next.
+#[inline(always)]
+fn run_once_last(r: &[u64], d: &[u64], s: usize) -> usize {
+    let l = run_last(r, s);
+    match first_bit(d, s + 1).filter(|&p| p <= l).and_then(|p| first_bit(d, p + 1)).filter(|&q| q <= l) {
+        Some(q) => q - 1,
+        None => l,
+    }
+}
+
 /// The last byte of the run of `r`'s bits after byte `s`: `s` with none, a word at a time.
 #[inline(always)]
 fn run_last(r: &[u64], s: usize) -> usize {

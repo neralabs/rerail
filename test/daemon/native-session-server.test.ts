@@ -1,11 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import { RerailRuntime, SqliteSessionReader } from "../../src/runtime/index.js";
-import { CodeRuleBridge, SqliteAuditStore } from "../../src/engine/index.js";
+import { CodeRuleBridge, RepositoryWorktreeWalks, SqliteAuditStore } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 
 describe("NativeSessionServer request boundary", () => {
@@ -15,7 +16,7 @@ describe("NativeSessionServer request boundary", () => {
   afterEach(async () => {
     await server?.close();
     vi.useRealTimers();
-    if (root !== undefined) await rm(root, { recursive: true, force: true });
+    if (root !== undefined) await removeFolder(root);
     vi.unstubAllEnvs();
   });
 
@@ -407,5 +408,21 @@ describe("NativeSessionServer request boundary", () => {
       opening.resolve();
       spy.mockRestore();
     }
+  });
+
+  it("walks a session's other worktrees with the walks it was given, which the daemon's hook sessions share", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-native-server-"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    const worktreeWalks = new RepositoryWorktreeWalks();
+    const of = vi.spyOn(worktreeWalks, "of");
+    server = new NativeSessionServer({ workspaceRoot: root, modelPath: resolve("model"), databasePath, worktreeWalks });
+    const session = { workspaceRoot: root, sessionId: "s", host: "omp" as const };
+    await server.handle({ ...session, operation: "initialize", entries: [] });
+    await server.handle({ ...session, operation: "await-code-rules" });
+    // The session looks its repository's walk up at its first walk, which a prompt's boundary asks for.
+    await server.handle({ ...session, operation: "ingest", event: { kind: "user-prompt", sessionId: "s", eventId: "p", text: "hi" } });
+    await vi.waitFor(() => expect(of).toHaveBeenCalledTimes(1), { timeout: 10_000 });
   });
 });

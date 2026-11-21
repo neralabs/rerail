@@ -1,0 +1,35 @@
+// Commit message trailers under Git's default configuration. The input is a stored commit, without a patch divider.
+// Discard the scissors line, trailing comments and the old "Conflicts:" list. Take the paragraph after the last blank line.
+.decl git_trailer_paragraph(repo: symbol, commit: symbol, paragraph: symbol)
+git_trailer_paragraph(r, c, block) :-
+    git_message(r, c, msg),
+    cut = @replace_all(msg, "(?ms)(?:^# ------------------------ >8 ------------------------\n|\\x00).*", ""),
+    no_conflicts = @replace_all(cut, "(?m)^Conflicts:\n(?:[\\t#][^\n]*(?:\n|\\z)|\n|Conflicts:\n)*\\z", ""),
+    tail = @replace_all(no_conflicts, "(?m)^(?:(?:#[^\n]*|[ \\t\\r]*)(?:\n|\\z))+\\z", ""),
+    match("(?s)(?:.*\n)?[ \\t\\r]*\n(?<block>.+)", tail).
+
+// Remove fields with their continuation lines before counting ordinary lines. Git accepts a mixed paragraph
+// when it contains a generated prefix and at least one out of every four counted lines is a trailer.
+.decl git_trailer_counts(paragraph: symbol, fields: number, ordinary: number)
+git_trailer_counts(b, fields, ordinary) :-
+    git_trailer_paragraph(_, _, b),
+    header = "(?m)^(?:[a-zA-Z0-9-]+[ \\t]*:|\\(cherry picked from commit )",
+    fields = @count_matches(header, b),
+    rest = @replace_all(b, cat(header, "[^\n]*(?:\n[ \\t\\r][^\n]*)*"), ""),
+    ordinary = @count_matches("(?m)^[^#\n][^\n]*", rest).
+
+.decl git_trailer_block(paragraph: symbol)
+git_trailer_block(b) :- git_trailer_counts(b, n, 0), n > 0.
+git_trailer_block(b) :- git_trailer_counts(b, n, k), n * 3 >= k,
+    match_all("(?m)^(?:Signed-off-by: |\\(cherry picked from commit )", b).
+
+.decl git_trailer_key(repo: symbol, commit: symbol, version: symbol)
+git_trailer_key(r, c, "git-trailers-1") :- git_message(r, c, _).
+
+.decl git_trailer(repo: symbol, commit: symbol, position: number, name: symbol, value: symbol)
+git_trailer(r, c, i, name, value) :-
+    git_trailer_key(r, c, _), git_trailer_paragraph(r, c, b), git_trailer_block(b),
+    match_all("(?m)^(?<name>[a-zA-Z0-9-]+)[ \\t]*:(?<raw>[^\n]*(?:\n[ \\t\\r][^\n]*)*)", b, i, _, _),
+    trimmed = @replace_all(raw, "^[ \\t\\r\n]+|[ \\t\\r\n]+\\z", ""),
+    value = @replace_all(trimmed, "\n[ \\t\\r\n]*", " ").
+.cache git_trailer by git_trailer_key

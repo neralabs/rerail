@@ -1,6 +1,7 @@
 /** compute_kernel_host.h                                                -*- C++ -*-
     Jeremy Barnes, 27 March 2016
     This file is part of MLDB. Copyright 2016 mldb.ai inc. All rights reserved.
+    Used here under the Apache License, Version 2.0: MLDB's license is https://github.com/mldbai/mldb/blob/e3caed6fa44782d08eb640702fd60e9a2576d939/LICENSE
 
     Compute kernel runtime for CPU devices.
 */

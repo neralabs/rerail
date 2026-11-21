@@ -28,6 +28,9 @@ const MAX_DEPTH: u32 = 250;
 /// The class bit of `{expression}` (`Tw::set_class`).
 const EXPR_CLASS: u32 = 1;
 
+/// A layout token asked and not read: (where, valid, the answer, the scanner after it).
+type Memo = (u32, V, Option<(Ext, u32, u32)>, Scanner);
+
 pub(crate) struct P<'a> {
     src: &'a [u8],
     lx: &'a Lexer<'a>,
@@ -46,7 +49,7 @@ pub(crate) struct P<'a> {
     /// The external tokens the constructs around the one read take after it.
     fol: V,
     /// A layout token asked and not read: (where, valid, the answer, the scanner after it).
-    memo: Option<(u32, V, Option<(Ext, u32, u32)>, Scanner)>,
+    memo: Option<Memo>,
     /// The kind a definition read is given when it closes (a `def` without a body).
     retype: Option<K>,
     /// Reading an infix expression's right operand: type arguments after it are the infix's.
@@ -403,11 +406,10 @@ impl<'a> P<'a> {
         let valid = own | self.fol | v::BLOCK_COMMENT;
         // The token after the scanner's place is lexed first: its comments are in `extras`.
         self.tok();
-        if let Some((at, vv, r, _)) = &self.memo {
-            if *at == self.sp && *vv == valid {
+        if let Some((at, vv, r, _)) = &self.memo
+            && *at == self.sp && *vv == valid {
                 return Ok(r.map(|x| x.0));
             }
-        }
         loop {
             let mut sc = self.sc;
             let pos = self.sp as usize;

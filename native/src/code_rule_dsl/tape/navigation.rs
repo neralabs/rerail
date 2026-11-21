@@ -57,6 +57,5 @@ pub fn take() -> Counters {
 
 /// Whether the profile is on (`RERAIL_PROFILE`, as `profile::trace::enabled` reads it).
 fn enabled() -> bool {
-    static ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_PROFILE").is_some());
-    *ENABLED
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some())
 }

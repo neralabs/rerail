@@ -55,7 +55,9 @@ mod aot {
 }
 
 /// The fewest floating-point operations (dense) a model's prediction must do: below about this, Core ML places a
-/// model on the CPU whatever the Neural Engine supports (the spike's A1), so the lane does not compile one.
+/// model on the CPU whatever the Neural Engine supports (the spike's A1), so the lane does not compile one. A floor,
+/// not the cutoff: above it, the chip's planner decides, and the placement check (`coreml::check_placement`) refuses
+/// a constant it puts elsewhere (the M3 placed 0.46e9 operations on the CPU, Q294).
 pub const MIN_FLOPS: f64 = 0.25e9;
 /// Loaded models kept at once (Core ML holds at most about 119 compiled models per process).
 pub const MAX_LOADED: usize = 64;
@@ -102,14 +104,16 @@ fn hex(k: &[u8; 32]) -> String {
     k.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The process's model store, when its host has one (the engine's content store: compiled models are facts there,
-/// decision 0098 §3); `None` keeps them in memory.
-static STORE: std::sync::RwLock<Option<Arc<dyn ModelStore>>> = std::sync::RwLock::new(None);
+/// The caller's model store, when its host has one (the engine's content store: compiled models are facts there,
+/// decision 0098 §3); `None` keeps them in memory. Its caller's (decision 0442: `rerail_context::Shared`): a store is
+/// a caller's resource.
+#[derive(Default)]
+struct Store(std::sync::RwLock<Option<Arc<dyn ModelStore>>>);
 
 /// Makes `store` where this process's Neural Engine models are kept from now on: JIT-compiled models are written
 /// there and read back by later runs. AOT models are part of the executable and never stored.
 pub fn set_store(store: Arc<dyn ModelStore>) {
-    *STORE.write().unwrap() = Some(store);
+    *rerail_context::shared::<Store>().0.write().unwrap() = Some(store);
 }
 
 /// The host's store when set, else memory.
@@ -118,13 +122,13 @@ struct HostStore(MemoryStore);
 
 impl ModelStore for HostStore {
     fn get(&self, key: &[u8; 32]) -> Option<Arc<[u8]>> {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.get(key),
             None => self.0.get(key),
         }
     }
     fn put(&self, key: [u8; 32], archive: Arc<[u8]>) {
-        match STORE.read().unwrap().as_ref() {
+        match rerail_context::shared::<Store>().0.read().unwrap().as_ref() {
             Some(s) => s.put(key, archive),
             None => self.0.put(key, archive),
         }
@@ -197,10 +201,13 @@ struct Model {
     outputs: Vec<String>,
 }
 
+/// A constant digest's template and model key, or why it has none.
+type Plan = Result<(Template, [u8; 32]), String>;
+
 #[derive(Default)]
 struct State {
     /// Per constant digest: its template and model key, or why it has none.
-    plans: HashMap<[u8; 32], Result<(Template, [u8; 32]), String>>,
+    plans: HashMap<[u8; 32], Plan>,
     loaded: HashMap<[u8; 32], Arc<Model>>,
     order: VecDeque<[u8; 32]>,
     refused: HashMap<[u8; 32], String>,
@@ -324,11 +331,11 @@ impl Ane {
         match r {
             Ok(m) => {
                 let m = Arc::new(m);
-                if st.order.len() >= MAX_LOADED {
-                    if let Some(old) = st.order.pop_front() {
-                        st.loaded.remove(&old);
-                        let _ = std::fs::remove_dir_all(self.dir.join(format!("{}.mlmodelc", hex(&old))));
-                    }
+                if st.order.len() >= MAX_LOADED
+                    && let Some(old) = st.order.pop_front()
+                {
+                    st.loaded.remove(&old);
+                    let _ = std::fs::remove_dir_all(self.dir.join(format!("{}.mlmodelc", hex(&old))));
                 }
                 st.loaded.insert(key, m.clone());
                 st.order.push_back(key);
@@ -557,12 +564,14 @@ impl Ane {
                             let (w0, w1) = t.pieces[p];
                             let k = t.k(p);
                             let mut buf = vec![0u16; t.m * k];
-                            buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
-                                let g = tile * t.m + r;
-                                if g < total {
-                                    let (a, i) = row_of(g);
-                                    expand(&a.row(i)[w0..w1], out);
-                                }
+                            rerail_context::on_cores(|| {
+                                buf.par_chunks_mut(k).enumerate().for_each(|(r, out)| {
+                                    let g = tile * t.m + r;
+                                    if g < total {
+                                        let (a, i) = row_of(g);
+                                        expand(&a.row(i)[w0..w1], out);
+                                    }
+                                })
                             });
                             buf
                         })
@@ -589,10 +598,12 @@ impl Ane {
                 let tile = first + item;
                 let lo = tile * t.m;
                 let hi = (lo + t.m).min(total);
-                counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
-                    if !add_counts(out, &data[r * stride..r * stride + n]) {
-                        bad.store(true, Ordering::Relaxed);
-                    }
+                rerail_context::on_cores(|| {
+                    counts[lo * n..hi * n].par_chunks_mut(n).enumerate().for_each(|(r, out)| {
+                        if !add_counts(out, &data[r * stride..r * stride + n]) {
+                            bad.store(true, Ordering::Relaxed);
+                        }
+                    })
                 });
                 Ok(())
             })?;
@@ -760,8 +771,8 @@ static EXPAND: [[u16; 8]; 256] = {
 
 /// Bits as fp16 0/1 values, one per bit.
 fn expand(words: &[u64], out: &mut [u16]) {
-    for (w, o) in words.iter().zip(out.chunks_exact_mut(64)) {
-        for (byte, o8) in w.to_le_bytes().iter().zip(o.chunks_exact_mut(8)) {
+    for (w, o) in words.iter().zip(out.as_chunks_mut::<64>().0) {
+        for (byte, o8) in w.to_le_bytes().iter().zip(o.as_chunks_mut::<8>().0) {
             o8.copy_from_slice(&EXPAND[*byte as usize]);
         }
     }

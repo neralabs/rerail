@@ -21,7 +21,7 @@ fn contents(store: &ContentStore) -> Vec<HashKey> {
         store.put_source(source.as_bytes(), &[blob]).unwrap();
         let entry = GitTreeEntry { name: "a.py".to_owned(), mode: 0o100644, target: blob };
         let tree = GitTree { id: HashKey::git_sha1([100 + n; 20]), prefix: String::new(), entries: vec![entry] };
-        store.put_git_trees_bulk(&[tree.clone()]).unwrap();
+        store.put_git_trees_bulk(std::slice::from_ref(&tree)).unwrap();
         roots.push(tree.id);
     }
     roots

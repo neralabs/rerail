@@ -31,7 +31,11 @@
 //! A kernel that does not compile is a bug, and fatal: the run stops and says which kernel and why. A kernel not
 //! compiled yet is not an error: `ready` says `None`, and its caller runs another form of the work.
 
+#[cfg(target_os = "macos")]
 use metal::{ComputePipelineState, Device, Library};
+/// A kernel as the device layer launches it (decision 0440 step C): on Metal a pipeline with its arguments'
+/// reflection, made through this store; elsewhere the device layer's compile, kept in its store.
+pub type Function = rerail_device::device::ComputeFunction;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,9 +52,11 @@ pub enum Mode {
     Defer,
 }
 
-static MODE: OnceLock<Mutex<Option<Mode>>> = OnceLock::new();
+/// The mode its caller set on a machine (`set_mode`; decision 0442: the machine's, as its pipelines are).
+#[derive(Default)]
+struct ModeSet(Mutex<Option<Mode>>);
 
-/// The mode: `RERAIL_METAL_COMPILE`, else what `set_mode` set, else `Wait`.
+/// The mode: `RERAIL_METAL_COMPILE`, else what `set_mode` set on the run's machine, else `Wait`.
 pub fn mode() -> Mode {
     match std::env::var("RERAIL_METAL_COMPILE").as_deref() {
         Ok("wait") => return Mode::Wait,
@@ -58,12 +64,12 @@ pub fn mode() -> Mode {
         Ok("defer") => return Mode::Defer,
         _ => {}
     }
-    MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
+    rerail_context::machine::<ModeSet>().0.lock().unwrap_or_else(|p| p.into_inner()).unwrap_or(Mode::Wait)
 }
 
-/// Sets the mode for this process (the engine's runs: `Defer`); `RERAIL_METAL_COMPILE` still wins.
-pub fn set_mode(mode: Mode) {
-    *MODE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
+/// Sets the mode for the runs on `machine` (the engine's command: `Defer`); `RERAIL_METAL_COMPILE` still wins.
+pub fn set_mode(machine: &rerail_context::Machine, mode: Mode) {
+    *machine.get::<ModeSet>().0.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
 }
 
 /// A kernel's identity: its library (the source's digest) and its pipeline (the library, the kernel's name and
@@ -76,7 +82,15 @@ pub struct Key {
 
 impl Key {
     pub fn of(source: &str, name: &str, constant: Option<u32>) -> Key {
-        let library: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+        // A source that takes UKL's library names its headers, not their text: the library's fingerprint keys it too.
+        let library: [u8; 32] = if rerail_ukl::takes_library(source) {
+            let mut d = Sha256::new();
+            d.update(source.as_bytes());
+            d.update(rerail_ukl::fingerprint().to_le_bytes());
+            d.finalize().into()
+        } else {
+            Sha256::digest(source.as_bytes()).into()
+        };
         let mut d = Sha256::new();
         d.update(library);
         d.update(name.as_bytes());
@@ -105,9 +119,13 @@ struct Places {
     run: String,
 }
 
-fn places() -> &'static Places {
-    static P: OnceLock<Places> = OnceLock::new();
-    P.get_or_init(|| {
+/// The machine's places, found the first time they are asked for (decision 0442: the machine's).
+#[derive(Default)]
+struct PlacesFound(OnceLock<Arc<Places>>);
+
+fn places() -> Arc<Places> {
+    let found = rerail_context::machine::<PlacesFound>();
+    let places = found.0.get_or_init(|| {
         let store = match std::env::var("RERAIL_METAL_KERNELS") {
             Ok(v) if v == "off" => None,
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
@@ -118,32 +136,39 @@ fn places() -> &'static Places {
             Ok(v) if !v.is_empty() => Some(PathBuf::from(v)),
             _ => std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join("rerail-kernels"))).filter(|p| p.is_dir()),
         };
+        #[cfg(target_os = "macos")]
         let tag = super::shared::get().map(|s| device_tag(&s.device)).unwrap_or_else(|| "no-device".to_owned());
+        // Elsewhere the device layer's store keeps the backend's compiled kernels, by its own device and driver.
+        #[cfg(not(target_os = "macos"))]
+        let tag = "no-device".to_owned();
         let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) }
-    })
+        Arc::new(Places { store, shipped, tag, run: format!("{started:024}-{}", std::process::id()) })
+    });
+    Arc::clone(places)
 }
 
 /// The store's directory, when it is on.
-pub fn store_dir() -> Option<&'static Path> {
-    places().store.as_deref()
+pub fn store_dir() -> Option<PathBuf> {
+    places().store.clone()
 }
 
 /// The shipped kernels' directory, when there is one.
-pub fn shipped_dir() -> Option<&'static Path> {
-    places().shipped.as_deref()
+pub fn shipped_dir() -> Option<PathBuf> {
+    places().shipped.clone()
 }
 
 /// A device's tag: its name. A binary archive is the GPU code of one device and driver; Metal refuses an archive of
 /// another driver (`FailOnBinaryArchiveMiss`: a miss, not an error), and the store's is then compiled again and
 /// replaced, so an update of the OS costs each kernel one compile, and shipped archives of an older OS are
 /// replaced only when Metal refuses them.
+#[cfg(target_os = "macos")]
 pub fn device_tag(device: &Device) -> String {
     device.name().chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect()
 }
 
 /// A file URL of `path`, owned. Not `metal::URL::new_with_string`: it wraps `URLWithString:`'s autoreleased URL as
 /// owned, so dropping it releases the URL once too often (a crash in the next autorelease drain).
+#[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 fn url_of(path: &Path) -> metal::URL {
     use metal::foreign_types::ForeignType;
@@ -162,6 +187,7 @@ fn url_of(path: &Path) -> metal::URL {
 
 /// Writes `bytes` to `path` whole: a temporary file renamed over it, so a reader in another process sees the old
 /// file or the new one.
+#[cfg(target_os = "macos")]
 fn write_whole(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -177,24 +203,35 @@ type Slot<T> = Arc<Mutex<Option<T>>>;
 /// while another compiles one waits for that compile. Released by `release` (the residency's drop).
 #[derive(Default)]
 struct Made {
+    #[cfg(target_os = "macos")]
     libraries: HashMap<[u8; 32], Slot<Library>>,
-    pipelines: HashMap<[u8; 32], Slot<ComputePipelineState>>,
+    pipelines: HashMap<[u8; 32], Slot<Arc<Function>>>,
     /// Pipelines a background compile is making (`Mode::Background`).
+    #[cfg(target_os = "macos")]
     compiling: std::collections::HashSet<[u8; 32]>,
     /// Pipelines this process recorded as wanted (once each).
+    #[cfg(target_os = "macos")]
     wanted: std::collections::HashSet<[u8; 32]>,
     /// Fixed pipelines this process recorded in the manifest (once each).
+    #[cfg(target_os = "macos")]
     fixed: std::collections::HashSet<[u8; 32]>,
+    /// The kernels on a device other than Metal (`elsewhere`), by pipeline key and constant.
+    elsewhere: HashMap<([u8; 32], Option<u32>), Arc<Function>>,
 }
 
-fn made() -> &'static Mutex<Made> {
-    static M: OnceLock<Mutex<Made>> = OnceLock::new();
-    M.get_or_init(Default::default)
+/// The machine's compiled kernels (decision 0442: the device's pipelines are the machine's).
+#[derive(Default)]
+struct MadeHeld(Mutex<Made>);
+
+fn made() -> Arc<MadeHeld> {
+    rerail_context::machine::<MadeHeld>()
 }
 
 /// Releases every compiled library and pipeline this process holds (the store keeps them).
 pub fn release() {
-    let mut m = made().lock().unwrap_or_else(|p| p.into_inner());
+    let made = made();
+    let mut m = made.0.lock().unwrap_or_else(|p| p.into_inner());
+    #[cfg(target_os = "macos")]
     m.libraries.clear();
     m.pipelines.clear();
 }
@@ -210,11 +247,21 @@ pub struct Counts {
     pub wanted: u64,
 }
 
-static COUNTS: Mutex<Counts> = Mutex::new(Counts { from_memory: 0, from_archive: 0, compiled: 0, front_end_s: 0.0, back_end_s: 0.0, wanted: 0 });
+/// The machine's counts (decision 0442: the machine's, as the kernels they count).
+#[derive(Default)]
+struct CountsHeld(Mutex<Counts>);
 
 thread_local! {
     /// Pipelines this thread made (compiled, or from an archive), not found in the process's memory.
     static MADE_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Of them, those made from an archive and those compiled (`here`).
+    static HERE: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// The pipelines this thread made from an archive, and compiled: a test's own counts, which the process's
+/// (`counts`) are not while other tests make pipelines beside it.
+pub fn here() -> (u64, u64) {
+    HERE.get()
 }
 
 /// The pipelines this thread made, not found in the process's memory (a test's own, whatever other tests make).
@@ -224,23 +271,35 @@ pub fn made_here() -> u64 {
 
 /// The pipelines the process holds.
 pub fn held() -> usize {
-    made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.values().filter(|s| s.try_lock().is_ok_and(|p| p.is_some())).count()
+    made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.values().filter(|s| s.try_lock().is_ok_and(|p| p.is_some())).count()
 }
 
 pub fn counts() -> Counts {
-    *COUNTS.lock().unwrap_or_else(|p| p.into_inner())
+    *rerail_context::machine::<CountsHeld>().0.lock().unwrap_or_else(|p| p.into_inner())
 }
 
 fn count(f: impl FnOnce(&mut Counts)) {
-    f(&mut COUNTS.lock().unwrap_or_else(|p| p.into_inner()));
+    f(&mut rerail_context::machine::<CountsHeld>().0.lock().unwrap_or_else(|p| p.into_inner()));
 }
 
-/// The pipeline `name` (with `constant` at function constant 0) of `source`: from this process, else from an
-/// archive (shipped or in the store), else compiled on this thread and archived in the store. For a caller with
-/// no other form of the work. A kernel that does not compile is fatal.
-pub fn pipeline(source: &str, name: &str, constant: Option<u32>) -> ComputePipelineState {
+/// The kernel `name` (with `constant` at function constant 0) of `source` (UKL), as the device layer launches it, on
+/// the process's device. On Metal: from this process, else from an archive (shipped or in the store), else compiled
+/// on this thread and archived in the store, with its arguments' reflection. For a caller with no other form of the
+/// work. A kernel that does not compile is fatal. Elsewhere `source`
+/// (UKL) compiled by the device layer, `constant` given as the define `UKL_CONSTANT_0` (`UKL_CONSTANT_U32`).
+pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
+    #[cfg(target_os = "macos")]
+    if super::shared::get().is_some() {
+        return on_metal(source, name, constant);
+    }
+    elsewhere(source, name, constant).unwrap_or_else(|e| panic!("the kernel {name}: {e}"))
+}
+
+/// [`function`] through Metal's tier: this process's pipeline, else an archive's, else the compile.
+#[cfg(target_os = "macos")]
+fn on_metal(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
     let key = Key::of(source, name, constant);
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
     let mut s = match slot.try_lock() {
         Ok(s) => s,
         Err(std::sync::TryLockError::WouldBlock) => crate::score::phase("pipeline wait", || slot.lock().unwrap_or_else(|p| p.into_inner())),
@@ -248,28 +307,59 @@ pub fn pipeline(source: &str, name: &str, constant: Option<u32>) -> ComputePipel
     };
     if let Some(p) = &*s {
         count(|c| c.from_memory += 1);
-        return p.clone();
+        return Arc::clone(p);
     }
     let p = make(key, source, name, constant, true).expect("a pipeline made with compiling allowed");
-    *s = Some(p.clone());
+    *s = Some(Arc::clone(&p));
     p
 }
 
-/// [`pipeline`] of a fixed source: an interpreter's or a relational kernel's, the same for every rule set. Recorded
+/// A kernel on a device other than Metal: compiled by the device layer (`rerail_gpu::kernels`, its store keeping
+/// the backend's compiled form).
+fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Function>, String> {
+    let k = Key::of(source, name, constant);
+    let key = (k.pipeline, constant);
+    let held = made();
+    if let Some(f) = held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.get(&key) {
+        count(|c| c.from_memory += 1);
+        return Ok(Arc::clone(f));
+    }
+    let value = constant.map(|c| format!("{c}u"));
+    let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
+    // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
+    // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
+    // the CPU, three for the preprocessor's first evaluation).
+    let program = rerail_gpu::kernels::program_with(&format!("{}.ukl", &hex(&k.library)[..16]), source, &defines)?;
+    let shared = rerail_gpu::shared::get().ok_or("no device")?;
+    let f = Arc::new(program.library().get_function(&shared.device, name)?);
+    // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.
+    count(|c| c.compiled += 1);
+    // Made here, not found in this process's memory: as Metal's kernels are counted (`made_here`).
+    MADE_HERE.set(MADE_HERE.get() + 1);
+    held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.insert(key, Arc::clone(&f));
+    Ok(f)
+}
+
+/// [`function`] of a fixed source: an interpreter's or a relational kernel's, the same for every rule set. Recorded
 /// in the store's manifest of fixed kernels (`fixed.list`), which `ship` compiles ahead of time for the engine's
 /// bundle: the tier between a kernel generated for the work and the CPU.
-pub fn pipeline_fixed(source: &str, name: &str, constant: Option<u32>) -> ComputePipelineState {
-    let p = pipeline(source, name, constant);
-    record_fixed(source, name, constant);
-    p
+pub fn function_fixed(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
+    let f = function(source, name, constant);
+    #[cfg(target_os = "macos")]
+    if super::shared::get().is_some() {
+        record_fixed(source, name, constant);
+    }
+    f
 }
 
+#[cfg(target_os = "macos")]
 fn record_fixed(source: &str, name: &str, constant: Option<u32>) {
     let key = Key::of(source, name, constant);
-    if !made().lock().unwrap_or_else(|p| p.into_inner()).fixed.insert(key.pipeline) {
+    if !made().0.lock().unwrap_or_else(|p| p.into_inner()).fixed.insert(key.pipeline) {
         return;
     }
-    let Some(store) = places().store.as_ref() else { return };
+    let p = places();
+    let Some(store) = p.store.as_ref() else { return };
     let src = store.join("src").join(format!("{}.metal", hex(&key.library)));
     if !src.is_file() {
         let _ = write_whole(&src, source.as_bytes());
@@ -283,55 +373,65 @@ fn record_fixed(source: &str, name: &str, constant: Option<u32>) {
     let _ = std::fs::File::options().create(true).append(true).open(&list).and_then(|mut f| f.write_all(line.as_bytes()));
 }
 
-/// The pipeline when there is a form of it this process can have without the back end's compile (made here
-/// before, or an archive); otherwise `None`, and what the mode says (`Mode`): the caller runs another form of the
-/// work meanwhile. In `Wait` it is compiled here and returned.
-pub fn ready(source: &str, name: &str, constant: Option<u32>) -> Option<ComputePipelineState> {
-    ready_in(mode(), source, name, constant)
+/// The kernel ([`function`]) when there is a form of it this process can have without the back end's compile (made
+/// here before, or an archive); otherwise `None`, and what the mode says (`Mode`): the caller runs another form of the
+/// work meanwhile. In `Wait` it is compiled here and returned. Elsewhere than Metal, compiled on the caller's
+/// thread: the device layer's store is its tier.
+pub fn ready_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
+    #[cfg(target_os = "macos")]
+    if super::shared::get().is_some() {
+        return ready_in(mode(), source, name, constant);
+    }
+    Some(function(source, name, constant))
 }
 
-/// [`ready`] that never waits: in `Wait`, the compile runs behind the caller as in `Background` (decision 0012's
-/// callers, which swap to the kernel at a later batch).
-pub fn ready_behind(source: &str, name: &str, constant: Option<u32>) -> Option<ComputePipelineState> {
-    let mode = match mode() {
-        Mode::Wait => Mode::Background,
-        m => m,
-    };
-    ready_in(mode, source, name, constant)
+/// [`ready_function`] that never waits: in `Wait`, the compile runs behind the caller as in `Background` (decision
+/// 0012's callers, which swap to the kernel at a later batch). Elsewhere than Metal, compiled on the caller's thread.
+pub fn ready_behind_function(source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
+    #[cfg(target_os = "macos")]
+    if super::shared::get().is_some() {
+        let mode = match mode() {
+            Mode::Wait => Mode::Background,
+            m => m,
+        };
+        return ready_in(mode, source, name, constant);
+    }
+    Some(function(source, name, constant))
 }
 
-fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Option<ComputePipelineState> {
+#[cfg(target_os = "macos")]
+fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Option<Arc<Function>> {
     if mode == Mode::Wait {
-        return Some(pipeline(source, name, constant));
+        return Some(function(source, name, constant));
     }
     let key = Key::of(source, name, constant);
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).pipelines.entry(key.pipeline).or_default());
     // A slot held is a compile in progress (or a load): the other form, now.
     let mut s = slot.try_lock().ok()?;
     if let Some(p) = &*s {
         count(|c| c.from_memory += 1);
-        return Some(p.clone());
+        return Some(Arc::clone(p));
     }
     if let Some(p) = make(key, source, name, constant, false) {
-        *s = Some(p.clone());
+        *s = Some(Arc::clone(&p));
         return Some(p);
     }
     drop(s);
     want(key, source, name, constant);
     crate::forms::interpreted("msl-pipeline", &hex(&key.pipeline), name, 1);
     if mode == Mode::Background {
-        let first = made().lock().unwrap_or_else(|p| p.into_inner()).compiling.insert(key.pipeline);
+        let first = made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.insert(key.pipeline);
         if first {
             let (source, name) = (source.to_owned(), name.to_owned());
             let spawned = crate::exec::service("rerail-msl-compile", None, move || {
                 crate::upkeep::lower_this_thread();
                 let started = std::time::Instant::now();
-                let _ = pipeline(&source, &name, constant);
+                let _ = function(&source, &name, constant);
                 crate::forms::compiled("msl-pipeline", &hex(&key.pipeline), &name, started.elapsed().as_secs_f64(), true);
-                made().lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
+                made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             });
             if spawned.is_err() {
-                made().lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
+                made().0.lock().unwrap_or_else(|p| p.into_inner()).compiling.remove(&key.pipeline);
             }
         }
     }
@@ -340,7 +440,8 @@ fn ready_in(mode: Mode, source: &str, name: &str, constant: Option<u32>) -> Opti
 
 /// Makes the pipeline: its library (this process's, a shipped AIR library, or the front end's compile), then the
 /// pipeline from an archive, or (when `compile`) the back end's compile into a new archive, kept in the store.
-fn make(key: Key, source: &str, name: &str, constant: Option<u32>, compile: bool) -> Option<ComputePipelineState> {
+#[cfg(target_os = "macos")]
+fn make(key: Key, source: &str, name: &str, constant: Option<u32>, compile: bool) -> Option<Arc<Function>> {
     let made = make_uncounted(key, source, name, constant, compile);
     if made.is_some() {
         MADE_HERE.set(MADE_HERE.get() + 1);
@@ -348,7 +449,8 @@ fn make(key: Key, source: &str, name: &str, constant: Option<u32>, compile: bool
     made
 }
 
-fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, compile: bool) -> Option<ComputePipelineState> {
+#[cfg(target_os = "macos")]
+fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, compile: bool) -> Option<Arc<Function>> {
     let device = &super::shared::get().unwrap_or_else(|| panic!("the Metal kernel {name}: no Metal device")).device;
     let archive = archive_path(&key);
     if !compile && archive.is_none() {
@@ -366,14 +468,21 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
     let descriptor = metal::ComputePipelineDescriptor::new();
     descriptor.set_label(name);
     descriptor.set_compute_function(Some(&function));
+    // The pipeline with its arguments' reflection: the device layer binds a launch's arguments by their names.
+    let kernel = |(state, reflection): (ComputePipelineState, metal::ComputePipelineReflection)| {
+        let f = rerail_device::compute_kernel_metal::MetalComputeFunction::from_reflection(function.clone(), state, &reflection)
+            .unwrap_or_else(|e| panic!("the Metal kernel {name}'s arguments: {e}"));
+        Arc::new(Function::Native(f))
+    };
     if let Some(path) = archive {
         let loaded = crate::score::phase("pipeline from archive", || from_archive(device, &descriptor, &path));
         match loaded {
             Some(p) => {
                 count(|c| c.from_archive += 1);
+                HERE.set((HERE.get().0 + 1, HERE.get().1));
                 // Its use, for the store's pruning (the oldest unused first).
                 let _ = std::fs::File::options().append(true).open(&path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
-                return Some(p);
+                return Some(kernel(p));
             }
             // An archive of another driver's build, or damaged: compiled again (when allowed) and replaced.
             None if !compile => return None,
@@ -388,63 +497,52 @@ fn make_uncounted(key: Key, source: &str, name: &str, constant: Option<u32>, com
         c.compiled += 1;
         c.back_end_s += seconds;
     });
-    Some(p)
+    HERE.set((HERE.get().0, HERE.get().1 + 1));
+    Some(kernel(p))
 }
 
 /// The archive that holds `key`'s pipeline for this device: the shipped one, else the store's.
+#[cfg(target_os = "macos")]
 fn archive_path(key: &Key) -> Option<PathBuf> {
     let p = places();
     let file = format!("{}.archive", hex(&key.pipeline));
     [p.shipped.as_ref(), p.store.as_ref()].into_iter().flatten().map(|d| d.join(&p.tag).join(&file)).find(|f| f.is_file())
 }
 
-fn from_archive(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, path: &Path) -> Option<ComputePipelineState> {
+/// A pipeline with its reflection.
+#[cfg(target_os = "macos")]
+type Reflected = (ComputePipelineState, metal::ComputePipelineReflection);
+
+/// What a pipeline is made with: its arguments' reflection.
+#[cfg(target_os = "macos")]
+fn reflected() -> metal::MTLPipelineOption {
+    metal::MTLPipelineOption::ArgumentInfo | metal::MTLPipelineOption::BufferTypeInfo
+}
+
+#[cfg(target_os = "macos")]
+fn from_archive(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, path: &Path) -> Option<Reflected> {
     objc::rc::autoreleasepool(|| {
         let d = metal::BinaryArchiveDescriptor::new();
         d.set_url(&url_of(path));
         let archive = device.new_binary_archive_with_descriptor(&d).ok()?;
         descriptor.set_binary_archives(&[&archive]);
-        let p = with_options(device, descriptor, metal::MTLPipelineOption::FailOnBinaryArchiveMiss);
+        let p = device.new_compute_pipeline_state_with_reflection(descriptor, metal::MTLPipelineOption::FailOnBinaryArchiveMiss | reflected());
         descriptor.set_binary_archives(&[]);
         p.ok()
     })
 }
 
-/// `newComputePipelineStateWithDescriptor:options:reflection:error:`, without reflection.
-#[allow(unexpected_cfgs)]
-fn with_options(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, options: metal::MTLPipelineOption) -> Result<ComputePipelineState, String> {
-    use metal::foreign_types::ForeignType;
-    use objc::runtime::Object;
-    use objc::{msg_send, sel, sel_impl};
-    // SAFETY: the selector's arguments as Metal declares them; a null reflection asks for none.
-    unsafe {
-        let mut err: *mut Object = std::ptr::null_mut();
-        let none: *mut *mut Object = std::ptr::null_mut();
-        let dev: &metal::DeviceRef = device;
-        let state: *mut metal::MTLComputePipelineState = msg_send![dev, newComputePipelineStateWithDescriptor:descriptor options:options reflection:none error:&mut err];
-        if state.is_null() {
-            let message = if err.is_null() {
-                "no pipeline".to_owned()
-            } else {
-                let desc: *mut Object = msg_send![err, localizedDescription];
-                let c: *const std::os::raw::c_char = msg_send![desc, UTF8String];
-                std::ffi::CStr::from_ptr(c).to_string_lossy().into_owned()
-            };
-            return Err(message);
-        }
-        Ok(ComputePipelineState::from_ptr(state))
-    }
-}
-
 /// The back end's compile, into an archive the store keeps: adding the pipeline to a new archive compiles it, and
 /// the pipeline is then made from that archive (no second compile). Without a store, a plain compile.
-fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key) -> Result<ComputePipelineState, String> {
-    let Some(store) = places().store.as_ref() else {
-        return device.new_compute_pipeline_state(descriptor);
+#[cfg(target_os = "macos")]
+fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescriptorRef, key: &Key) -> Result<Reflected, String> {
+    let p = places();
+    let Some(store) = p.store.as_ref() else {
+        return device.new_compute_pipeline_state_with_reflection(descriptor, reflected());
     };
     let archive = device.new_binary_archive_with_descriptor(&metal::BinaryArchiveDescriptor::new())?;
     archive.add_compute_pipeline_functions_with_descriptor(descriptor)?;
-    let path = store.join(&places().tag).join(format!("{}.archive", hex(&key.pipeline)));
+    let path = store.join(&p.tag).join(format!("{}.archive", hex(&key.pipeline)));
     let tmp = path.with_extension(format!("tmp{}", std::process::id()));
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -454,26 +552,44 @@ fn compile_archived(device: &Device, descriptor: &metal::ComputePipelineDescript
         let _ = std::fs::rename(&tmp, &path);
     }
     descriptor.set_binary_archives(&[&archive]);
-    let p = with_options(device, descriptor, metal::MTLPipelineOption::FailOnBinaryArchiveMiss).or_else(|_| device.new_compute_pipeline_state(descriptor));
+    let p = device
+        .new_compute_pipeline_state_with_reflection(descriptor, metal::MTLPipelineOption::FailOnBinaryArchiveMiss | reflected())
+        .or_else(|_| device.new_compute_pipeline_state_with_reflection(descriptor, reflected()));
     descriptor.set_binary_archives(&[]);
     p
 }
 
+/// `source` as the Metal front end takes it: a source that takes UKL's library (`#include <ukl/...>`: the reads
+/// written once in CLIF, decision 0440 §3.3) preprocessed with it in place, any other as it is.
+#[cfg(target_os = "macos")]
+pub fn msl<'a>(source: &'a str, name: &str) -> Result<std::borrow::Cow<'a, str>, String> {
+    if !rerail_ukl::takes_library(source) {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    rerail_ukl::metal_source(name, source).map(std::borrow::Cow::Owned).map_err(|e| format!("{name}: {e}"))
+}
+
 /// The library of `source` (its digest `library`): this process's, else the shipped AIR library, else the front
 /// end's compile.
+#[cfg(target_os = "macos")]
 fn library(library: [u8; 32], source: &str, name: &str) -> Library {
-    let slot = Arc::clone(made().lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
+    let slot = Arc::clone(made().0.lock().unwrap_or_else(|p| p.into_inner()).libraries.entry(library).or_default());
     let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
     if let Some(l) = &*s {
         return l.clone();
     }
     let device = &super::shared::get().expect("a Metal device").device;
+    // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is loaded.
+    if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE a library loaded, kernel {name} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+    }
     let shipped = places().shipped.as_ref().map(|d| d.join(format!("{}.metallib", hex(&library)))).filter(|f| f.is_file());
     let started = std::time::Instant::now();
     let l = match shipped {
         Some(file) => crate::score::phase("msl from shipped", || objc::rc::autoreleasepool(|| device.new_library_with_file(&file)))
             .unwrap_or_else(|e| panic!("the shipped Metal library {} (kernel {name}) does not load: {e}", file.display())),
         None => {
+            let source = &*msl(source, name).unwrap_or_else(|e| panic!("the Metal library of kernel {name} does not preprocess: {e}"));
             let nonce;
             // `RERAIL_DIAG_MSL_NONCE`: every source made new to the system's shader cache, to measure first compiles.
             let text = match std::env::var("RERAIL_DIAG_MSL_NONCE") {
@@ -483,6 +599,18 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
                 }
                 Err(_) => source,
             };
+            // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source by its digest, and the kernels
+            // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`).
+            if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+                let stem = Path::new(&dir).join(hex(&library[..6]));
+                if !stem.with_extension("metal").exists() {
+                    let _ = std::fs::write(stem.with_extension("metal"), text);
+                }
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
+                    use std::io::Write as _;
+                    let _ = writeln!(f, "{name}");
+                }
+            }
             let l = crate::score::phase("msl front end", || objc::rc::autoreleasepool(|| device.new_library_with_source(text, &metal::CompileOptions::new())))
                 .unwrap_or_else(|e| panic!("the Metal library of kernel {name} ({}) does not compile: {e}", hex(&library[..8])));
             let seconds = started.elapsed().as_secs_f64();
@@ -495,8 +623,9 @@ fn library(library: [u8; 32], source: &str, name: &str) -> Library {
 }
 
 /// Records `key` as wanted: its source in the store (once), and a line in this run's wanted list.
+#[cfg(target_os = "macos")]
 fn want(key: Key, source: &str, name: &str, constant: Option<u32>) {
-    if !made().lock().unwrap_or_else(|p| p.into_inner()).wanted.insert(key.pipeline) {
+    if !made().0.lock().unwrap_or_else(|p| p.into_inner()).wanted.insert(key.pipeline) {
         return;
     }
     count(|c| c.wanted += 1);
@@ -577,6 +706,7 @@ pub fn pending(which: Which) -> Vec<Wanted> {
 }
 
 /// One compile `compile_wanted` did.
+#[cfg(target_os = "macos")]
 #[derive(Clone, Debug)]
 pub struct Compiled {
     pub name: String,
@@ -589,6 +719,7 @@ pub struct Compiled {
 /// Compiles the wanted pipelines of `which` lists not in the store yet, on this thread, each under a lock that
 /// other processes compiling the store respect (a pipeline another holds is skipped). `limit` bounds how many (an
 /// upkeep step's one). Lists whose every pipeline is in the store are removed.
+#[cfg(target_os = "macos")]
 pub fn compile_wanted(which: Which, limit: usize) -> Vec<Compiled> {
     let p = places();
     let Some(store) = p.store.as_ref() else { return Vec::new() };
@@ -624,8 +755,10 @@ pub fn compile_wanted(which: Which, limit: usize) -> Vec<Compiled> {
 }
 
 /// An exclusive lock on a file, released when dropped or when the process ends (`flock`).
+#[cfg(target_os = "macos")]
 struct Lock(#[allow(dead_code, reason = "held for its flock")] std::fs::File);
 
+#[cfg(target_os = "macos")]
 impl Lock {
     fn take(path: &Path) -> Option<Lock> {
         use std::os::fd::AsRawFd;
@@ -649,7 +782,7 @@ pub struct Size {
 pub fn size() -> Size {
     let mut s = Size::default();
     let Some(store) = store_dir() else { return s };
-    for e in walk(store) {
+    for e in walk(&store) {
         let len = e.1;
         match e.0.extension().and_then(|x| x.to_str()) {
             Some("archive") => {
@@ -688,7 +821,7 @@ fn walk(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
 /// was made from.
 pub fn prune(max_bytes: u64) -> u64 {
     let Some(store) = store_dir() else { return 0 };
-    let mut archives: Vec<_> = walk(store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
+    let mut archives: Vec<_> = walk(&store).into_iter().filter(|e| e.0.extension().is_some_and(|x| x == "archive")).collect();
     let mut total: u64 = archives.iter().map(|e| e.1).sum();
     archives.sort_by_key(|e| e.2);
     let mut removed = 0;
@@ -711,22 +844,26 @@ pub fn max_bytes() -> u64 {
 
 /// Upkeep's job (decision 0190): when the machine is idle, compiles the wanted pipelines one a step, newest run's
 /// first, and keeps the store within its bound.
+#[cfg(target_os = "macos")]
 pub struct Maintenance {
     pruned: bool,
 }
 
+#[cfg(target_os = "macos")]
 impl Maintenance {
     pub fn new() -> Maintenance {
         Maintenance { pruned: false }
     }
 }
 
+#[cfg(target_os = "macos")]
 impl Default for Maintenance {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(target_os = "macos")]
 impl crate::upkeep::Job for Maintenance {
     fn name(&self) -> String {
         "metal-kernels compile and prune".to_owned()
@@ -743,6 +880,8 @@ impl crate::upkeep::Job for Maintenance {
     fn step(&mut self, _slice: &crate::upkeep::Slice) -> Result<crate::upkeep::Step, String> {
         if compile_wanted(Which::All, 1).is_empty() {
             prune(max_bytes());
+            // The device layer's store (CUDA's cubins, OpenCL's binaries, the CPU's libraries; decision 0440 step B).
+            rerail_device::store::prune(rerail_device::store::max_bytes());
             self.pruned = true;
             return Ok(crate::upkeep::Step::Done);
         }
@@ -755,6 +894,7 @@ impl crate::upkeep::Job for Maintenance {
 /// which skips the back end) and, with `air`, each library's AIR (`<library>.metallib`, any Apple GPU: skips the
 /// front end), made by Xcode's offline compiler (its Metal Toolchain component). Run on another device into the same
 /// `dir`, it adds that device's archives. A source that does not compile is an error.
+#[cfg(target_os = "macos")]
 pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
     let device = &super::shared::get().ok_or("no Metal device")?.device;
     let tag = device_tag(device);
@@ -772,6 +912,7 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
     let mut lines = Vec::new();
     for (library, kernels) in &by_library {
         let source = std::fs::read_to_string(from.join("src").join(format!("{library}.metal"))).map_err(|e| format!("the source of {library}: {e}"))?;
+        let source = msl(&source, library)?.into_owned();
         let lib = dir.join(format!("{library}.metallib"));
         let started = std::time::Instant::now();
         if air && !lib.is_file() {
@@ -829,6 +970,7 @@ pub fn ship(dir: &Path, from: &Path, air: bool) -> Result<Vec<String>, String> {
 /// Starts this run's maintenance compile when it went without kernels (`Mode::Defer`): the engine, again, as
 /// `kernels compile --last --idle` in a process of its own, detached, at the background priority. Off with
 /// `RERAIL_METAL_MAINTENANCE=off`.
+#[cfg(target_os = "macos")]
 pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
     if wanted_here() == 0 || std::env::var("RERAIL_METAL_MAINTENANCE").is_ok_and(|v| v == "off") || store_dir().is_none() {
         return None;
@@ -846,7 +988,7 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
     c.spawn().ok().map(|child| child.id())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
@@ -858,15 +1000,16 @@ mod tests {
         if super::super::shared::get().is_none() || store_dir().is_none() {
             return;
         }
-        let source = "#include <metal_stdlib>\nusing namespace metal;\nkernel void kernels_store_test(device uint* o [[buffer(0)]], uint i [[thread_position_in_grid]]) { o[i] = i * 3u; }\n";
+        let source = "#include <ukl/backend.h>\nDEFINE_KERNEL2(store, kernels_store_test, RWBUFFER, uint32_t, o, \"[n]\", GID0, uint32_t, i, ) { o[i] = i * 3u; }\n";
         let name = "kernels_store_test";
-        let _ = pipeline(source, name, None);
+        let _ = function(source, name, None);
         assert!(archive_path(&Key::of(source, name, None)).is_some(), "its archive is in the store");
         release();
-        let before = counts();
-        let _ = pipeline(source, name, None);
-        assert_eq!(counts().from_archive, before.from_archive + 1, "made again from its archive");
-        assert_eq!(counts().compiled, before.compiled, "not compiled again");
+        // This thread's counts: other tests make pipelines beside this one, and `release` drops theirs too.
+        let before = here();
+        let _ = function(source, name, None);
+        assert_eq!(here().0, before.0 + 1, "made again from its archive");
+        assert_eq!(here().1, before.1, "not compiled again");
 
         let other = source.replace("i * 3u", "i * 5u");
         let key = Key::of(&other, name, None);
@@ -874,13 +1017,13 @@ mod tests {
             std::fs::remove_file(old).unwrap();
         }
         release();
-        set_mode(Mode::Defer);
-        assert!(ready(&other, name, None).is_none(), "not compiled: the caller runs another form");
-        assert!(made().lock().unwrap().wanted.contains(&key.pipeline), "recorded as wanted");
+        set_mode(rerail_context::shared_here().machine(), Mode::Defer);
+        assert!(ready_function(&other, name, None).is_none(), "not compiled: the caller runs another form");
+        assert!(made().0.lock().unwrap().wanted.contains(&key.pipeline), "recorded as wanted");
         assert!(store_dir().unwrap().join("src").join(format!("{}.metal", hex(&key.library))).is_file(), "its source in the store");
         let _ = make(key, &other, name, None, true);
         release();
-        assert!(ready(&other, name, None).is_some(), "compiled, it is ready from its archive");
-        set_mode(Mode::Wait);
+        assert!(ready_function(&other, name, None).is_some(), "compiled, it is ready from its archive");
+        set_mode(rerail_context::shared_here().machine(), Mode::Wait);
     }
 }

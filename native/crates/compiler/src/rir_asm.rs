@@ -213,6 +213,8 @@ pub struct Line<'a> {
 }
 
 impl Line<'_> {
+    // A missing operand is an error, not the end of a sequence: no `Iterator`.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Token, String> {
         self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
     }
@@ -575,6 +577,15 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     elems.last_mut().ok_or("a `run` before its element")?.run = true;
                 } else if w == "since" {
                     elems.last_mut().ok_or("a `since` before its element")?.since = true;
+                } else if let Some(h) = w.strip_prefix('r') {
+                    // A kind of a shared first byte: its rows' start's mark bits (`TokenElem::rows`).
+                    let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad row mark set `{w}`"))?;
+                    let el = elems.last_mut().ok_or("a row mark set before its element")?;
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's row marks")?.test.rows = bits,
+                        2 => el.ending.as_mut().ok_or("an ending's row marks")?.rows = bits,
+                        _ => el.rows = bits,
+                    }
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;
@@ -730,12 +741,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 program.totals.push(line.number("%")?);
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
+            } else if first == "newlines" {
+                program.newlines = Some(line.number("%")?);
             } else if first == "records" {
                 let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -871,18 +884,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "reccheck" {
                 let r = program.records.as_mut().ok_or(format!("block {at} reccheck before its records"))?;
                 let rule: u8 = line.number("")?;
-                let count = match line.word()?.as_str() {
-                    "count" => true,
-                    "run" => false,
-                    w => return Err(format!("block {at} reccheck: `count` or `run`, not {w}")),
+                let (count, all) = match line.word()?.as_str() {
+                    "count" => (true, false),
+                    "run" => (false, false),
+                    "all" => (false, true),
+                    w => return Err(format!("block {at} reccheck: `count`, `run` or `all`, not {w}")),
                 };
                 let (o, least): (u16, u32) = (line.number("")?, line.number("")?);
                 let then = match line.word() {
                     Ok(w) if w == "at" => crate::records::CheckThen::At(line.number("")?),
                     Ok(w) if w == "after" => crate::records::CheckThen::After(line.number("")?),
+                    Ok(w) if w == "cut" => crate::records::CheckThen::Cut,
                     _ => crate::records::CheckThen::Escape,
                 };
-                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then });
+                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then, all });
             } else if first == "recchecked" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recchecked before its records"))?;
                 r.check_masks.push(line.number("")?);
@@ -916,6 +931,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recextra" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recextra before its records"))?;
                 r.extra = Some(line.number("")?);
+            } else if first == "reckindrows" {
+                let r = program.records.as_mut().ok_or(format!("block {at} reckindrows before its records"))?;
+                r.kind_rows = Some(line.number("")?);
             } else if first == "recskip" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recskip before its records"))?;
                 r.skip = Some(line.number("")?);

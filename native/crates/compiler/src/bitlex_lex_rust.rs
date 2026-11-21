@@ -545,6 +545,7 @@ impl Gen<'_> {
             let k = self.kind_of(*row);
             let (how, l) = match rule {
                 Some(TokenRule::Run(r)) => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),
+                Some(TokenRule::RunOnce(r, d)) => (format!("run {} once {}", show(r), show(d)), format!("run_once_last(&{}, &{}, s)", self.val(r)?, self.val(d)?)),
                 Some(TokenRule::Pair(p)) => (format!("pair {}", show(p)), format!("s + usize::from(bit(&{}, s))", self.val(p)?)),
                 Some(TokenRule::Pairs { pairs, .. }) => {
                     let f = format!("pair_{row}");
@@ -613,6 +614,7 @@ impl Gen<'_> {
                 let holds = match test {
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
+                    TokenTest::All => format!("l + 1 - s >= {least} && first_clear(&{v}, s, l + 1).is_none()"),
                 };
                 let at = if *after { 16 + u32::from(*bit) } else { u32::from(*bit) };
                 let _ = write!(hits, "            if {holds} {{\n                hits |= 1 << {at};\n            }}\n");
@@ -626,6 +628,7 @@ impl Gen<'_> {
                 let holds = match test {
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
+                    TokenTest::All => format!("l + 1 - s >= {least} && first_clear(&{v}, s, l + 1).is_none()"),
                 };
                 let _ = write!(hits, "            // {why}\n            if {holds} {{\n                refused = true;\n                break;\n            }}\n");
             }
@@ -863,6 +866,17 @@ fn first_clear(x: &[u64], from: usize, n: usize) -> Option<usize> {
     }
     let i = 64 * q + w.trailing_zeros() as usize;
     (i < n).then_some(i)
+}
+
+/// The last byte of the run of `r`'s bits after byte `s` with one bit of `d` in it at most: the second ends the
+/// run before it, as a lexer reads a number's one `.` and stops at the next.
+#[inline(always)]
+fn run_once_last(r: &[u64], d: &[u64], s: usize) -> usize {
+    let l = run_last(r, s);
+    match first_bit(d, s + 1).filter(|&p| p <= l).and_then(|p| first_bit(d, p + 1)).filter(|&q| q <= l) {
+        Some(q) => q - 1,
+        None => l,
+    }
 }
 
 /// The last byte of the run of `r`'s bits after byte `s`: `s` with none, a word at a time.

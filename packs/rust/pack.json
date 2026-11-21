@@ -3,7 +3,7 @@
   "id": "rust",
   "name": "Rust",
   "category": "language",
-  "covers": "Clippy's lints for readable, idiomatic Rust.",
+  "covers": "Linter-equivalent to Clippy 0.1.99 (Rust 1.99.0), for readable, idiomatic Rust.",
   "reason": "matches Rust",
   "match": {
     "any": [

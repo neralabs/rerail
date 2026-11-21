@@ -467,7 +467,7 @@ pub type OpRef = (cranelift_module::FuncId, cranelift_codegen::ir::Signature);
 pub struct Ops {
     pub open: OpRef,
     pub close: OpRef,
-    /// `w_leaf`: a node and its close in one, where its key is known at its word (`native_cpu_direct::direct_keys`).
+    /// `w_leaf`: a node and its close in one, where its key is known at its word (`rust_stream::direct_keys`).
     pub leaf: OpRef,
     pub commit: OpRef,
     pub retag: OpRef,

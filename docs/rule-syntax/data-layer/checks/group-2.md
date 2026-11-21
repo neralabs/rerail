@@ -1,4 +1,4 @@
-# Data-layer checks, group 2: what `.rr` lacks
+# Data-layer checks, group 2: what `.rerail` lacks
 
 Oracle: the scripts at 2b1504ad. Line cites are `script.py:LINE`. When a script has both a suite plugin and a CLI,
 the suite plugin is the hard-fail path, so it is the one followed here. Shared conventions:
@@ -62,10 +62,10 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     value's name, and a call gives its function's name (`:135-144`). Every class and constructor match is by this
     unresolved leaf text (`:289-292`).
   - `EXISTS within, text, kind`: an annotation "contains Callable" when it is a name or attribute with leaf
-    `Callable`, or has one below it (`:147-152`). This is not names.rr `annotation`, because string annotations
+    `Callable`, or has one below it (`:147-152`). This is not names.rerail `annotation`, because string annotations
     are not parsed.
   - `LIB sig_param(f, p, x, kind, ann, dflt)` (see the summary table): the constructor parameters are `args` +
-    `kwonlyargs` only, never posonly or splats (`:370-374`). names.rr `param` cannot tell those apart.
+    `kwonlyargs` only, never posonly or splats (`:370-374`). names.rerail `param` cannot tell those apart.
   - `LIB last_asg`-like "last wins" (see serverplan_steps): `_init_field_assignments` is a dict, so for a field
     assigned twice, the *last in `ast.walk` order* wins (`:245-256`). `ast.walk` is breadth-first, so this is
     (depth, position) order, not source order.
@@ -74,7 +74,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     `async def`) gives True, and a local binding gives False. The local bindings are parameters, plus
     assign/augassign/annassign/for/with-as targets found by `ast.walk` (`:185-212`). Two quirks: `ast.walk` still
     enters nested defs (the `continue` only skips the def node itself, `:199-201`), and `async def`, lambdas and
-    classes push no scope (`:278-286`). This is recursive Datalog over `nearest(s, s2, sync_def)`. names.rr
+    classes push no scope (`:278-286`). This is recursive Datalog over `nearest(s, s2, sync_def)`. names.rerail
     `ref_site` + `site_form(…, "def")` is LEGB-correct and gives different answers.
   - `LIB def_extent(n, f)` (see the summary table): the scope is pushed before the decorators and defaults are visited.
   - `EXISTS call_arg, kind`: a lambda or name in positional or keyword arguments; `**kw` has no value and is skipped (`:293-297`).
@@ -157,7 +157,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
   - `EXISTS leaf_name` (summary), `.scope dirs`, `.scope tests false`.
   - `LIB local_qualname` variant `ctx(n, s)`: `"{innermost class}.{innermost def}"`, `"{def}"` or `"<module>"`
     (`:291-299`). The two stacks are independent: a call in a class body nested in a def gets `Inner.outer`, and a
-    class with no def around the call gives `<module>`. names.rr `scope_name` takes the class *around the def*
+    class with no def around the call gives `<module>`. names.rerail `scope_name` takes the class *around the def*
     instead.
   - `LIB def_extent(n, f)` (summary): the stacks are pushed before decorators, bases and defaults are visited, so a call
     in a decorator takes the def's context.
@@ -218,11 +218,11 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     (`:376-386`).
   - `EXISTS match, count : { match_all(…) }` on the module text (`text(m, t)`), for MIT-007/008. These are raw
     substrings, comments included (`:388-401`).
-  - `EXISTS facts + negation`: MIT-017/018 compare constants of the linter itself (`:402-408`). In `.rr` both
+  - `EXISTS facts + negation`: MIT-017/018 compare constants of the linter itself (`:402-408`). In `.rerail` both
     sets are facts in the rule file, so the check is a self-test of the policy.
   - `POLICY required input missing or unparsable`: the oracle raises when any of the five files is missing or
     purity.py does not parse (`:347-348, :388, :399`). The subprocess then exits non-zero, which is a hard
-    failure. `.rr` needs a declared outcome: a finding, or an engine error that blocks.
+    failure. `.rerail` needs a declared outcome: a finding, or an engine error that blocks.
 - **Hard parts:**
   - MIT-002 and MIT-003 apply to the *whole* purity.py, not just the guard.
   - MIT-010's "parent" is the immediate AST parent, so a `return` inside `if a: for …: return` is unconditional.
@@ -248,7 +248,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     the tuple assigned to `EXPLICIT_EXECUTION_AUTHORITY_CALLSITES`. That file is in scope.
   - `LIB local_qualname` variant with `<locals>` (`:306-322`): class names are appended plainly. Each def that
     has any enclosing *def* gets `<locals>.` before it, and a class inside a def does not. So `f.C.m` comes out
-    as `f.C.<locals>.m`, which is not Python's `f.<locals>.C.m`. Use `"<module>"` when the stack is empty. names.rr
+    as `f.C.<locals>.m`, which is not Python's `f.<locals>.C.m`. Use `"<module>"` when the stack is empty. names.rerail
     `qualname` has the module prefix and no `<locals>`.
   - `EXISTS replace_all(path)`: the module is the path parts joined with dots, `__init__` kept (`:141-142`).
   - `LIB py_name_node` for AUTH001's Name case. `field(_, "attribute", n)` gives the Attribute case (`:154-159`).
@@ -706,7 +706,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     Caveat: the oracle follows only module-level `NAME = "str"` assignments, last one wins. core's `static_value`
     says "file-local constant bindings", which may be broader.
   - `EXISTS` Annotation name sets (:879): every `identifier` within the annotation node. String annotations are
-    not parsed, so do not use names.rr `annotation`, which adds `parsed` strings. Union detection (:831) is
+    not parsed, so do not use names.rerail `annotation`, which adds `parsed` strings. Union detection (:831) is
     `binary_operator` with op `|` or a subscript of `Union`/`Optional` anywhere below.
   - `EXISTS` The visitor codes are single-node predicates once the scope relations below exist:
     - SPT-001 :2659/:2758; SPT-002 :2673/:2868/:2881; SPT-004 :3211; SPT-005 :3014/:3034.
@@ -716,8 +716,8 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     - SPT-032 :2460; SPT-033 :2842; SPT-034 :2855.
   - `LIB` `local_qualname(n, q)`: the oracle's `stack` (:608), the class and def names from the module down,
     without the module prefix. Calls are `@dot(stack, callname)`, `if` statements `@dot(stack, "if")`. Body:
-    like names.rr `qualname`, with `""` at the module. Needed because every finding's qualname and ratchet key
-    use it (:461–466). names.rr `qualname` carries the module and `scope_name` keeps only one class.
+    like names.rerail `qualname`, with `""` at the module. Needed because every finding's qualname and ratchet key
+    use it (:461–466). names.rerail `qualname` carries the module and `scope_name` keeps only one class.
   - `LIB` `def_extent(n, f)`: n is inside def f, decorators and the parameter list included. The visitor pushes the
     def before visiting decorators, defaults and annotations (:2669–2697, `generic_visit` after push). In
     tree-sitter, decorators sit in `decorated_definition`, outside `function_definition`, so `within` misses
@@ -736,7 +736,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     `xs[0].execute` gives `("execute",)`. The tests are `chain[-2:]` (query.execute, conn.fetchone, np.array, …)
     and "`graph_query_builder_lazy` anywhere in the chain". Recursive over `field(…, "object"/"function", …)`.
   - `LIB` `sig_param(f, p, x, ann, dflt)`: the oracle's `method_args`, posonly + args + kwonly, *without*
-    `*args`/`**kwargs` (:2485). Each has its annotation node and default node. names.rr `param` includes splats
+    `*args`/`**kwargs` (:2485). Each has its annotation node and default node. names.rerail `param` includes splats
     and has no annotation or default. `site_annotation` misses `typed_default_parameter`. SPT-016 needs defaults
     paired as Python does (:1115).
   - `LIB` `step_class(c)` / `intent_class(c)` / `direct_method(f, c)`: a positional base's text contains
@@ -768,7 +768,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     - `CompiledStep(post_op=|post_op_with_refs=|on_commit=|on_rollback= h)` with h a Name or `partial(h, …)`
       resolves to a nested def or a module function. A nested def maps to `class_stack.h`, which has no facts, so
       that edge dead-ends (:1932).
-    - calls.rr `calls`/`call_target` resolve by value flow and across imports, so they over-approximate this.
+    - calls.rerail `calls`/`call_target` resolve by value flow and across imports, so they over-approximate this.
   - `LIB` `ret_kind(name, k)`, keyed by *bare function name* across the project (:1545, :1594, :3756):
     - "authority"/"provider" when the return annotation names AUTHORITY/PROVIDER types.
     - Per file this tests identifiers (:879). Project-wide (the JSON) it is a *substring* test on the unparsed
@@ -837,7 +837,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     take part in multiplicity.
   - `POLICY` Extraction failure. In the plugin path a collector that raises is stored as a failed fact
     (fact_engine.py:905–907) and the reporter reads `bundle.facts.get(…, [])`, so the file contributes no
-    findings silently (:4075). An `.rr` policy should choose: report the file, or match this.
+    findings silently (:4075). An `.rerail` policy should choose: report the file, or match this.
 - **Hard parts:**
   - **Two entry points differ.** The suite plugin (:4032) passes empty project builder sets (:4013), so SPT-028's
     project branch never fires. It uses the *generated JSON* as project return kinds. The CLI
@@ -846,7 +846,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     the CLI, so SPT-006 executor dispatch, SPT-019 and SPT-025 depend on which path runs. The plugin path is the
     hard-fail one.
   - **Name-keyed, not resolved.** Return kinds, the reachable-function closure and taint are all keyed by bare
-    name text. Names.rr's binding-site resolution (`ref_site`, `sym_of`, `call_target`) is more precise and gives
+    name text. Names.rerail's binding-site resolution (`ref_site`, `sym_of`, `call_target`) is more precise and gives
     different keys: an import-aliased function, a same-named method in another class, a shadowed local. Parity
     needs text-keyed library relations, kept apart from the resolving ones.
   - **Nesting rules differ by layer.** Visitor scope flags look at *every* enclosing def (`any(stack)`). The
@@ -876,7 +876,7 @@ Needs that are the same thing under different names are merged into one row. Che
 | tag | signature or construct | checks that need it |
 |---|---|---|
 | LIB | `expr_name(e, s)` / `leaf_name(e, s)`: the unresolved dotted text of a Name/Attribute chain, and its last segment (oracle `_name`, `_call_name`, `_dotted_name`, `_node_name`, `cname`, `_call_chain`). A variant looks through a subscript or call to its value or function. | grammar_callable_constructors, generated_index_sources, serverplan_bypass, mandatory_imperative_tripwire, execution_authority_bypass, serverplan_steps, post_op_side_effects, versioned_table_name_manipulation, history_serverplan_projection, serverplan_state_tripwires (10) |
-| LIB | `sig_param(f, p, x, kind, ann, dflt)`: parameters with their kind (posonly / arg / kwonly / vararg / kwarg), annotation node and default node. names.rr `param` includes splats and keeps none of this | grammar_callable_constructors, grammar_str_params, generated_index_sources, mandatory_imperative_tripwire, serverplan_steps, serverplan_state_tripwires (6) |
+| LIB | `sig_param(f, p, x, kind, ann, dflt)`: parameters with their kind (posonly / arg / kwonly / vararg / kwarg), annotation node and default node. names.rerail `param` includes splats and keeps none of this | grammar_callable_constructors, grammar_str_params, generated_index_sources, mandatory_imperative_tripwire, serverplan_steps, serverplan_state_tripwires (6) |
 | POLICY | Outcome when a required input is missing, unparsable or unreadable as a literal (oracle crash, `PARSE` finding, or silent skip): a declared finding or a blocking engine error, per policy | mandatory_imperative_tripwire, execution_authority_bypass, post_op_side_effects, serverplan_steps, serverplan_state_tripwires, grammar_callable_constructors (6) |
 | NATIVE | `py_str_const(n, v)`: the string `ast.Constant`s CPython would build. Implicit concatenation is one value, and f-string literal pieces are values (escapes decoded, adjacent pieces merged). It extends `value`/`str` | mandatory_imperative_tripwire, post_op_side_effects, serverplan_steps, versioned_table_name_manipulation, history_serverplan_projection (5) |
 | LIB | `def_extent(n, f)`: n is inside def/class f, its decorators, bases, defaults and annotations included. Sketch: `within(n,f) ; (decorator(f,e), (n=e ; within(n,e)))` | grammar_callable_constructors, generated_index_sources, serverplan_bypass, execution_authority_bypass, serverplan_state_tripwires (5) |

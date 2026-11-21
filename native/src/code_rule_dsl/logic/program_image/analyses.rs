@@ -1,7 +1,7 @@
 //! The whole-program analyses over a version (decision 0173, stage 2 step 2), each relation by its id: the strata
-//! (`front::strata`), what the outputs need (`front::needed`), the projections (`plan::projections`), and whether
-//! the composed path accepts the program (`compose::accepts`). Each reads the rules by their heads and the other
-//! fields by `About`, and is checked against its tree form on the pack programs (`tests`).
+//! (`strata`), what the outputs need (`needed`), the projections (`plan::projections`), and whether the composed
+//! path accepts the program (`compose::accepts`). Each reads the rules by their heads and the other fields by
+//! `About`.
 //!
 //! The strata come in an order of ids, where the tree form's come in an order of names: each is dependencies first.
 //! `components_by_name` gives them in the tree form's order, for a reader whose output follows it.
@@ -9,31 +9,10 @@ use super::about::{About, NativeKind};
 use super::handles::{AggRef, Lit, TermRef};
 use super::version::Version;
 use super::RelId;
+pub use crate::code_rule_dsl::logic::front::graph::{Edges, components_by_name, edges_by_name};
+use crate::code_rule_dsl::logic::front::graph::components;
 use crate::code_rule_dsl::logic::front::{Error, Value};
 use std::collections::BTreeSet;
-
-/// Dependency edges, head → dependency, with whether each is negative (an aggregate's is, a gated negation's is
-/// not): sorted by head and dependency, each once.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Edges {
-    edges: Vec<(RelId, RelId, bool)>,
-}
-
-impl Edges {
-    fn of(mut edges: Vec<(RelId, RelId, bool)>) -> Edges {
-        edges.sort_unstable();
-        edges.dedup();
-        Edges { edges }
-    }
-    /// What `head` depends on, and whether negatively.
-    pub fn of_head(&self, head: RelId) -> impl Iterator<Item = (RelId, bool)> + '_ {
-        let s = self.edges.partition_point(|e| e.0 < head);
-        self.edges[s..].iter().take_while(move |e| e.0 == head).map(|e| (e.1, e.2))
-    }
-    pub fn iter(&self) -> impl Iterator<Item = (RelId, RelId, bool)> + '_ {
-        self.edges.iter().copied()
-    }
-}
 
 /// The program's components, dependencies first, each sorted by id; and its dependency edges.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -42,51 +21,9 @@ pub struct Strata {
     pub edges: Edges,
 }
 
-/// The derived relations (heads, and what answers produce), the edges, and the non-monotone aggregation edges.
-fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId, RelId)>) {
-    let n = v.rel_end() as usize;
-    let mut derived = vec![false; n];
-    for r in v.rules() {
-        derived[r.head().rel().index()] = true;
-    }
-    let mut edges = Vec::new();
-    for (p, req) in about.produced() {
-        derived[p.index()] = true;
-        edges.push((p, req, false));
-    }
-    for nat in &about.natives {
-        if derived[nat.rel.index()] {
-            edges.extend(nat.reads.iter().filter(|r| derived[r.index()]).map(|&r| (nat.rel, r, false)));
-        }
-    }
-    let mut aggs = Vec::new();
-    for r in v.rules() {
-        let head = r.head().rel();
-        for l in r.body() {
-            let Some(a) = l.atom() else { continue };
-            if !derived[a.rel().index()] {
-                continue;
-            }
-            // Aggregation that is not monotone in the head's lattice is negative.
-            let agg = match l.view() {
-                Lit::Agg { op, .. } => !about.lattice_of(head).is_some_and(|lat| {
-                    matches!((op, v.text(lat)), (AggRef::Count | AggRef::Max, "max") | (AggRef::Min, "min"))
-                }),
-                _ => false,
-            };
-            if agg && !a.gated() {
-                aggs.push((head, a.rel()));
-            }
-            edges.push((head, a.rel(), (a.neg() || agg) && !a.gated()));
-        }
-    }
-    aggs.sort_unstable();
-    aggs.dedup();
-    let derived = (0..n as u32).map(RelId).filter(|r| derived[r.index()]).collect();
-    (derived, Edges::of(edges), aggs)
-}
-
-/// The strata (`front::strata`): an error if a negation or a non-monotone aggregate closes a cycle.
+/// The program's components, dependencies first, and its dependency edges: T's `strata`, with aggregation in
+/// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
+/// `max` lattice, `min` into a `min` lattice). An error if a negation or a non-monotone aggregate closes a cycle.
 pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
@@ -96,45 +33,8 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     }
 }
 
-/// The dependency edges by name, as `front::strata` gives them: each derived relation's dependencies among the derived
-/// relations, with whether each is negative.
-pub fn edges_by_name(v: &Version, about: &About) -> crate::code_rule_dsl::logic::front::Edges {
-    let (_, edges, _) = components(v, about);
-    let mut out = crate::code_rule_dsl::logic::front::Edges::new();
-    for (h, w, neg) in edges.iter() {
-        out.entry(v.rel_name(h).to_owned()).or_default().insert((v.rel_name(w).to_owned(), neg));
-    }
-    out
-}
-
-/// The components as `front::components_of` makes them, in its order: the relations numbered in the order of their
-/// names, each set of `together` (a maintained program's, `body::Maint`) one component where it can be, and the
-/// tree's error where a negation closes a cycle. For a reader whose output follows the components' order (the
-/// composed query lists its definitions in it); `strata` gives them in an order of ids.
-pub fn components_by_name(v: &Version, about: &About, together: &[BTreeSet<String>]) -> Result<Vec<BTreeSet<String>>, Error> {
-    let (mut by_name, edges, aggs) = components(v, about);
-    by_name.sort_unstable_by(|a, b| v.rel_name(*a).cmp(v.rel_name(*b)));
-    const NONE: u32 = u32::MAX;
-    let mut place = vec![NONE; v.rel_end() as usize];
-    for (i, r) in by_name.iter().enumerate() {
-        place[r.index()] = i as u32;
-    }
-    let mut succ: Vec<Vec<(u32, bool)>> = vec![Vec::new(); by_name.len()];
-    for (h, w, neg) in edges.iter() {
-        let (h, w) = (place[h.index()], place[w.index()]);
-        if h != NONE && w != NONE {
-            succ[h as usize].push((w, neg));
-        }
-    }
-    for s in &mut succ {
-        s.sort_unstable();
-    }
-    let aggs = aggs.iter().map(|(h, w)| (place[h.index()], place[w.index()])).collect();
-    crate::code_rule_dsl::logic::front::components_of_graph(by_name.iter().map(|&r| v.rel_name(r)).collect(), succ, aggs, together)
-}
-
-/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each
-/// (`front::unstratified`; `strata` stops at the first).
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
+/// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
 pub fn unstratified(v: &Version, about: &About) -> Vec<Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
@@ -189,7 +89,7 @@ fn tarjan(n: usize, nodes: &[RelId], edges: &Edges) -> Vec<Vec<RelId>> {
     let (mut stack, mut sccs, mut counter) = (Vec::<RelId>::new(), Vec::new(), 0u32);
     // Frames: a node and the position of its next edge in `edges`.
     let mut frames: Vec<(RelId, usize)> = Vec::new();
-    let first = |r: RelId| edges.edges.partition_point(|e| e.0 < r);
+    let first = |r: RelId| edges.as_slice().partition_point(|e| e.0 < r);
     for &root in nodes {
         if index[root.index()] != NONE {
             continue;
@@ -201,7 +101,7 @@ fn tarjan(n: usize, nodes: &[RelId], edges: &Edges) -> Vec<Vec<RelId>> {
         on[root.index()] = true;
         frames.push((root, first(root)));
         while let Some(&mut (v, ref mut at)) = frames.last_mut() {
-            if let Some(&(h, w, _)) = edges.edges.get(*at)
+            if let Some(&(h, w, _)) = edges.as_slice().get(*at)
                 && h == v
             {
                 *at += 1;
@@ -242,7 +142,8 @@ fn tarjan(n: usize, nodes: &[RelId], edges: &Edges) -> Vec<Vec<RelId>> {
     sccs
 }
 
-/// The relations `roots` read, directly or through other rules or natives, the roots included (`front::needed`).
+/// The relations `roots` read, directly or through other rules or natives, the roots included (`Prune`'s, from the
+/// outputs).
 /// Indexed by relation id.
 pub fn needed(v: &Version, about: &About, roots: impl IntoIterator<Item = RelId>) -> Vec<bool> {
     let mut need = vec![false; v.rel_end() as usize];
@@ -262,7 +163,7 @@ pub fn needed(v: &Version, about: &About, roots: impl IntoIterator<Item = RelId>
 }
 
 /// The relations whose one rule's body is a single positive atom of distinct variables, wildcards and integers,
-/// with the integers' columns (`plan::projections`). Sorted by relation.
+/// with the integers' columns. Sorted by relation.
 pub fn projections(v: &Version) -> Vec<(RelId, Vec<(usize, i64)>)> {
     let mut seen = vec![false; v.rel_end() as usize];
     let mut out = Vec::new();
@@ -373,7 +274,7 @@ impl Analysis for Strata {
                 _ => return None,
             }
         }
-        Some(Strata { sccs, edges: Edges { edges } })
+        Some(Strata { sccs, edges: Edges::of(edges) })
     }
 }
 
@@ -405,8 +306,7 @@ impl Analysis for Needed {
     }
 }
 
-/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`, no sets run
-/// together): what the run's readers of a version's strata read (`Placed::components`).
+/// The components, dependencies first, in the tree form's order, each by name (`components_by_name`): what the run's readers of a version's strata read (`Placed::components`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Components(pub Vec<BTreeSet<String>>);
 
@@ -421,7 +321,7 @@ impl Analysis for Components {
     const NAME: &'static str = "components";
     const READS: Reads = Reads::RULES.or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<Components, String> {
-        components_by_name(cx.v(), &*cx.get::<About>()?, &[]).map(Components).map_err(|e| e.to_string())
+        components_by_name(cx.v(), &*cx.get::<About>()?).map(Components).map_err(|e| e.to_string())
     }
     /// One row per member, `(k, name)`, components in order (decision 0333 §4).
     fn rows(&self, _v: &Version) -> Option<Vec<super::manager::Row>> {

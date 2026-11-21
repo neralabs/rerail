@@ -22,6 +22,8 @@ pub struct BlockNative {
     pub totals: Vec<usize>,
     /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
     pub masks: Vec<usize>,
+    /// The output (an index into `outputs`) of the stream's newlines (`block::BlockProgram::newlines`).
+    pub newlines: Option<usize>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -164,6 +166,7 @@ impl BlockNative {
             extracts: program.extract_outputs(),
             totals: program.total_outputs(),
             masks: program.mask_outputs(),
+            newlines: program.newline_output(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
@@ -283,8 +286,8 @@ impl BlockNative {
                 }
             }
         }
-        for x in 0..insts.len() {
-            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+        for (x, &kept) in keep.iter().enumerate().take(insts.len()) {
+            if kept && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -311,6 +314,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -331,7 +335,7 @@ impl BlockNative {
     }
 
     /// The output of the records' lasts extract, where their end rules (decision 0177) or
-    /// their gaps (0452) give the lasts instead: the CPU makes no last-byte mask for it.
+    /// their gaps (0411) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
         let r = self
             .records
@@ -419,7 +423,10 @@ impl BlockNative {
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
         let blanks = crate::native_cpu_block::blank_marks(r, &|o| bytes.can(o));
         let looped: u32 = lift.iter().chain(&at).chain(&blanks).fold(0, |a, &(k, _)| a | 1 << k);
-        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o));
+        // An output another mask names too (a `ROW`'s, the row's start a token mark's kind is
+        // told by, `TokenElem::rows`) stays stored: tier 2 reads it from its row.
+        let named = |o: u16| self.masks.iter().filter(|&&x| x == usize::from(o)).count() > 1;
+        read.extend(lift.iter().chain(&at).chain(&blanks).map(|&(_, o)| o).filter(|&o| !named(o)));
         let stored: Vec<u16> = r.marks.iter().enumerate().filter(|&(k, _)| looped >> k & 1 == 0).map(|(_, m)| m.0).collect();
         // The masks tier 2's local checks alone read: tier 2 on the CPU reads them from the
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
@@ -557,6 +564,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -579,6 +587,7 @@ impl BlockNative {
 
 /// A pass over a file's blocks, of a program in passes (`BlockNative::passes`).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Pass {
     /// First block to first: a body, as a program without passes runs it. Its `Load`s read the
     /// slots of passes before it. Before the last pass, output `k` is stored to slot
@@ -703,9 +712,9 @@ impl BlockNative {
                 slots += 1;
             }
         };
-        for x in 0..n {
+        for (x, inst) in self.insts.iter().enumerate() {
             for p in (0..=last).filter(|&p| made[p][x]) {
-                for o in self.insts[x].operands() {
+                for o in inst.operands() {
                     if !in_pass(o, p) {
                         give(o, &mut slot);
                     }
@@ -814,6 +823,7 @@ impl BlockNative {
                 extracts: if last { self.extracts.clone() } else { Vec::new() },
                 totals: if last { self.totals.clone() } else { Vec::new() },
                 masks: if last { self.masks.clone() } else { Vec::new() },
+                newlines: if last { self.newlines } else { None },
                 delay: self.delay,
                 groups: groups.clone(),
                 records: if last { self.records.clone() } else { None },
@@ -859,11 +869,10 @@ impl PlaneFormulas {
     fn push(&mut self, inst: BlockInst) -> u16 {
         // A carry is its group's own value, never another's, however alike their starts.
         let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
-        if pure {
-            if let Some(&i) = self.shared.get(&inst) {
+        if pure
+            && let Some(&i) = self.shared.get(&inst) {
                 return i;
             }
-        }
         let i = self.insts.len() as u16;
         self.insts.push(inst);
         if pure {

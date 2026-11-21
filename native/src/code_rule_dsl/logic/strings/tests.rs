@@ -1,5 +1,19 @@
 use super::*;
 
+/// The text passes (`plan::corpus::preparation::text`) over program `text`, as a program of no Python parts reads them:
+/// the version they make, and its vocabulary.
+fn prepared(text: &str) -> std::result::Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Vocabulary), String> {
+    let v = crate::code_rule_dsl::logic::rr::parse_version(text).map_err(|e| format!("{e:?}"))?;
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("the text passes", v);
+    let found = crate::code_rule_dsl::logic::plan::corpus::preparation::text::passes(&mut p, crate::code_rule_dsl::language::GrammarDialect::TypeScript)?;
+    Ok((p.finish()?.0, found.vocabulary))
+}
+
+/// Each rule of `v`, a line each.
+fn rules_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> String {
+    v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>().join("\n")
+}
+
 #[test]
 fn literal_tests() {
     assert!(test("prefix", "_private", "_"));
@@ -67,34 +81,38 @@ fn words_are_whole_and_phrases_in_order() {
 
 #[test]
 fn tests_on_text_relations_become_relations() {
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(
+    let (prog, v) = prepared(
         ".decl name(n: node, s: symbol)\n.input name\n.decl a(n: node)\n.decl b(n: node)\n.decl c(s: symbol)\n\
          a(n) :- name(n, s), (glob(\"_*\", s) ; glob(\"x*\", s)), !suffix(\"_async\", s).\n\
          b(n) :- name(n, s), (s = \"conn\" ; s = \"db\"), (glob(\"x*\", s) ; glob(\"_*\", s)).\n\
          c(s) :- name(_, t), s = @dot(t, \"x\"), prefix(\"_\", s).\n.output a, b, c\n",
     )
     .unwrap();
-    let v = as_relations(&mut prog).unwrap();
-    // The glob set is one relation for both rules (patterns in any order); the computed string stays per row.
+    // The glob set is one relation for both rules (patterns in any order); the computed string stays per row. The
+    // tests are numbered by their content (operator, then patterns), not by the rules' order: the equality set 0,
+    // the globs 1, the suffix 2.
     assert_eq!(v.tests.len(), 3, "{:?}", v.tests.iter().map(|t| &t.0).collect::<Vec<_>>());
-    let text = prog.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>().join("\n");
-    assert!(text.contains("!strtest_1($s)"), "{text}");
-    assert!(text.contains("@prefix"), "{text}");
+    let text = rules_of(&prog);
+    // The tests are numbered by their content, not the rules' order: each is named here by what it matches.
     let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
-    assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
+    let suffix = rows.iter().position(|r| *r == [2]).expect("the suffix test");
+    assert!(text.contains(&format!("!strtest_{suffix}($s)")), "{text}");
+    assert!(text.contains("@prefix"), "{text}");
+    let mut sorted = rows.clone();
+    sorted.sort();
+    assert_eq!(sorted, [vec![1, 2], vec![2], vec![3]], "the glob set, the suffix, the names");
 }
 
 /// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
 #[test]
 fn fstring_template_markers_are_constants() {
     let decls = ".decl fstring_template(n: node, marker: symbol, v: symbol)\n.input fstring_template\n.decl a(n: node)\n";
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!(
+    let prog = format!(
         "{decls}a(n) :- fstring_template(n, \"{{...}}\", v), glob(\"*FROM*\", v).\na(n) :- fstring_template(n, \"{{}}\", _), !fstring_template(n, \"{{...}}\", \"x\").\n.output a\n"
-    ))
-    .unwrap();
-    assert_eq!(as_relations(&mut prog).unwrap().markers, ["{...}", "{}"]);
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}.decl m(s: symbol)\n.input m\na(n) :- m(k), fstring_template(n, k, _).\n.output a\n")).unwrap();
-    assert!(as_relations(&mut prog).err().unwrap().contains("constant marker"));
+    );
+    assert_eq!(prepared(&prog).unwrap().1.markers, ["{...}", "{}"]);
+    let prog = format!("{decls}.decl m(s: symbol)\n.input m\na(n) :- m(k), fstring_template(n, k, _).\n.output a\n");
+    assert!(prepared(&prog).err().unwrap().contains("constant marker"));
 }
 
 #[test]
@@ -111,7 +129,7 @@ fn regexes_and_their_rewrites_agree() {
     }
 }
 
-/// `core.rr`'s text functors give the values its comments give as examples.
+/// `core.rerail`'s text functors give the values its comments give as examples.
 #[test]
 fn text_functors_follow_core_rr() {
     use super::functions::*;
@@ -128,11 +146,11 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
     assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
-    // W's json_group_array: non-ASCII kept, controls escaped (core.rr's @json_str).
+    // W's json_group_array: non-ASCII kept, controls escaped (core.rerail's @json_str).
     assert_eq!(json_str("a\"b\u{e9}\u{1f600}\u{1}\n"), "\"a\\\"b\u{e9}\u{1f600}\\u0001\\n\"");
 }
 
-/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rerail`'s `hint`).
 #[test]
 fn globs_nest_alternatives() {
     let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";
@@ -149,7 +167,7 @@ fn globs_nest_alternatives() {
 /// These tests must still use the vocabulary batch, including predicates on those aliases.
 #[test]
 fn logical_line_predicates_and_aliases_use_the_vocabulary_batch() {
-    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+    let (program, vocabulary) = prepared(r##"
 .decl split_line(d: number, l: number, t: symbol)
 .input split_line
 .decl candidate(d: number, l: number, t: symbol)
@@ -160,19 +178,20 @@ selected(d,l,t) :- candidate(d,l,t).
 finding(d,l) :- selected(d,l,t), contains("inspect",t).
 .output finding
 "##).unwrap();
-    let vocabulary = as_relations(&mut program).unwrap();
     assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
-    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let rendered = rules_of(&program);
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
-    assert_eq!(vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]),
-               [vec![11], vec![11,12]]);
+    // Numbered by their content: `prefix` and `contains` in either order.
+    let mut rows = vocabulary.rows(&["#inspect".into(), "inspect".into(), "clean".into()], &[11,12,13]);
+    rows.sort();
+    assert_eq!(rows, [vec![11], vec![11,12]]);
 }
 
 /// A second writer can construct strings that the prepared vocabulary never saw.
 /// Optimising only the first writer would silently discard those findings.
 #[test]
 fn computed_or_fact_writers_prevent_alias_vocabulary_rewrites() {
-    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+    let (_, vocabulary) = prepared(r##"
 .decl split_line(d: number, l: number, t: symbol)
 .input split_line
 .decl combined(t: symbol)
@@ -186,7 +205,6 @@ finding(t) :- combined(t), suffix("added",t).
 finding(t) :- constant(t), prefix("invented",t).
 .output finding
 "##).unwrap();
-    let vocabulary = as_relations(&mut program).unwrap();
     assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
 }
 
@@ -216,7 +234,7 @@ fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
 /// table as one set before it, which the vocabulary answers once per string; the per-value test still decides.
 #[test]
 fn a_test_of_a_constant_tables_values_gains_the_whole_table_as_one_set() {
-    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+    let (program, vocabulary) = prepared(r##"
 .decl split_line(d: number, l: number, t: symbol)
 .input split_line
 .decl table(k: symbol, x: symbol)
@@ -227,10 +245,9 @@ surface(x) :- table("dead", x).
 finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
 .output finding
 "##).unwrap();
-    let vocabulary = as_relations(&mut program).unwrap();
     let specs: Vec<_> = vocabulary.specs.iter().map(|(op, p)| format!("{op} {p:?}")).collect();
     assert_eq!(specs, [r#"contains ["alpha", "beta"]"#], "only the dead rows, as one set");
-    let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let rendered = rules_of(&program);
     assert!(rendered.contains("strtest_") && rendered.contains("@contains"), "the set first, then each value: {rendered}");
     assert_eq!(vocabulary.rows(&["an alpha".into(), "gamma".into()], &[1, 2]), [vec![1]]);
 }
@@ -242,8 +259,12 @@ finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
 #[test]
 fn batches_test_their_strings_at_once_on_one_pool() {
     let (done, wait) = std::sync::mpsc::channel();
+    // The test's threads, its pool's among them, on its object (decision 0442).
+    let caller = rerail_prof::code_rule_dsl::logic::profile::caller();
     std::thread::spawn(move || {
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+        let _caller = caller.enter();
+        let starts = caller.clone();
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).start_handler(move |_| std::mem::forget(starts.enter())).build().unwrap();
         for round in 0..4u32 {
             let vocabulary = Vocabulary::from_specs(&["strtest_0".to_owned()], vec![("prefix".to_owned(), vec!["item_1".to_owned()])]).unwrap();
             let (passed, expected) = (std::sync::Mutex::new(0usize), std::sync::Mutex::new(0usize));
@@ -254,8 +275,8 @@ fn batches_test_their_strings_at_once_on_one_pool() {
                         // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
                         // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
                         use rayon::prelude::*;
-                        let symbols: Vec<u32> = (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect();
-                        let strings: Vec<String> = symbols.par_iter().map(|s| format!("item_{s}")).collect();
+                        let symbols: Vec<u32> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect());
+                        let strings: Vec<String> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| symbols.par_iter().map(|s| format!("item_{s}")).collect());
                         let rows = vocabulary.rows(&strings, &symbols);
                         *passed.lock().unwrap() += rows[0].len();
                         *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();
@@ -314,7 +335,7 @@ fn sqlite_functions_as_sqlite_has_them() {
 /// native under its own name: preparing the read program again makes no second native under the first.
 #[test]
 fn a_printed_native_text_test_is_read_back_as_itself() {
-    let mut program = crate::code_rule_dsl::logic::rr::parse(r##"
+    let (program, _) = prepared(r##"
 .decl ask(n: node)
 .input ask
 .decl node_text(n: node, t: symbol)
@@ -323,13 +344,13 @@ node_text(n, t) :- ask(n), t = @rr_node_text_any(n).
 hit(n) :- node_text(n, t), contains("pass", t).
 .output hit
 "##).unwrap();
-    as_relations(&mut program).unwrap();
-    let natives = |p: &Program| p.natives.iter().map(|(k, v)| format!("{k} {v:?}")).collect::<Vec<_>>();
+    let natives = |p: &crate::code_rule_dsl::logic::program_image::Version| {
+        crate::code_rule_dsl::logic::program_image::fields::ProgramFields::natives(p).iter().map(|(k, v)| format!("{k} {v:?}")).collect::<Vec<_>>()
+    };
     let made = natives(&program);
     assert_eq!(made.len(), 1, "one native text test: {made:?}");
-    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap();
-    let mut again = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
-    as_relations(&mut again).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap();
+    let (again, _) = prepared(&text).unwrap();
     assert_eq!(natives(&again), made, "{text}");
-    assert_eq!(again.rules.len(), program.rules.len(), "{text}");
+    assert_eq!(again.rules().count(), program.rules().count(), "{text}");
 }

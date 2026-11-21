@@ -21,9 +21,9 @@ upstream:
   recommended_configs:
     - default
   # The file types lizard reads for the languages the pack ports (lizard_languages/: python.py, typescript.py,
-  # javascript.py, tsx.py, php.py, rust.py, vue.py; a .blade.php file is a .php file to it, and it reads no .mts or
-  # .cts). Each port declares its own in conformance.json (`lints`).
-  lints: [".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".php", ".blade.php", ".rs", ".vue"]
+  # javascript.py, tsx.py, php.py, rust.py, vue.py, java.py; a .blade.php file is a .php file to it, and it reads no
+  # .mts or .cts). Each port declares its own in conformance.json (`lints`).
+  lints: [".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".php", ".blade.php", ".rs", ".vue", ".java"]
 popularity:
   observed_on: 2026-10-29
   evidence:

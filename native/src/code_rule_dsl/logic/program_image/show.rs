@@ -8,19 +8,19 @@ use std::fmt::Write as _;
 type Nm<'a> = Option<&'a dyn Fn(super::Slot) -> String>;
 
 impl Version {
-    /// Term `t` of rule `r`, as `front::ast::Term` writes it.
+    /// Term `t` of rule `r`, as the rule language writes it.
     pub fn show_term(&self, r: RuleRef<'_>, t: TermRef<'_>) -> String {
         let mut s = String::new();
         self.write_term(&mut s, r, t, None);
         s
     }
-    /// Atom `a` of rule `r`, as `front::ast::Atom` writes it.
+    /// Atom `a` of rule `r`, as the rule language writes it.
     pub fn show_atom(&self, r: RuleRef<'_>, a: AtomRef<'_>) -> String {
         let mut s = String::new();
         self.write_atom(&mut s, r, a, None);
         s
     }
-    /// Literal `l` of rule `r`, as `front::ast::Literal` writes it.
+    /// Literal `l` of rule `r`, as the rule language writes it.
     pub fn show_lit(&self, r: RuleRef<'_>, l: LitRef<'_>) -> String {
         let mut s = String::new();
         self.write_lit(&mut s, r, l, None);
@@ -58,7 +58,13 @@ impl Version {
         }
         s
     }
-    /// Rule `r`, as `front::ast::Rule` writes it.
+    /// Each rule's head relation and the relations its body reads, each with whether it is negated, in order: what a
+    /// test asks of a program's shape.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn heads_and_reads(&self) -> Vec<(String, Vec<(bool, String)>)> {
+        self.rules().map(|r| (self.rel_name(r.head().rel()).to_owned(), r.reads().map(|a| (a.neg(), self.rel_name(a.rel()).to_owned())).collect())).collect()
+    }
+    /// Rule `r`, as the rule language writes it.
     pub fn show_rule(&self, r: RuleRef<'_>) -> String {
         let mut s = String::new();
         self.write_atom(&mut s, r, r.head(), None);
@@ -148,8 +154,14 @@ impl Version {
                         };
                         let _ = write!(out, "${} = {op} ${over} : {{ ", var(v));
                     }
+                    AggRef::Bounded { max, .. } => {
+                        let _ = write!(out, "${} = {} ${over} : {{ ", var(v), if max { "max" } else { "min" });
+                    }
                 }
                 self.write_atom(out, r, atom, nm);
+                if let AggRef::Bounded { max, bound, strict } = op {
+                    let _ = write!(out, ", ${over} {} ${}", crate::code_rule_dsl::logic::front::ast::AggOp::bound_cmp(max, strict), var(bound));
+                }
                 out.push_str(" }");
             }
             Lit::Nearest { n, a, kindset } => {

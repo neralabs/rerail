@@ -150,7 +150,7 @@ def main() -> None:
     for result in results:
         if selection is not None and result.name == 'serverplan_state_tripwires':
             # Generated-file freshness is an upstream integration contract, as documented in
-            # docs/data-layer-batch-six.md. A restricted view necessarily changes that digest.
+            # docs/data-layer-batch-six.md (removed; at 7efcac9c67). A restricted view necessarily changes that digest.
             # Keep the reporter observation and compare its unchanged source/allowlist path.
             module = importlib.import_module('scripts.lint_serverplan_state_tripwires')
             reporter_results.append({'check': result.name, 'contract': 'generated-artifact freshness and aggregate reporters remain upstream integration contracts',

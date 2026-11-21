@@ -115,6 +115,9 @@ pub struct Records {
     /// but those it keeps of the gap before it (`own`), as the lean lexer's `skip` knows a
     /// line end before each comment it passes (tier 2 reads them where it places comments).
     pub extra: Option<u8>,
+    /// The first of the bits that tell a token mark's kind by its rows' starts
+    /// (`TokenElem::rows`), after the marks' and the extras': no mark's bit.
+    pub kind_rows: Option<u8>,
     /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
     /// token at that no token begins with refuses the file. The CPU makes none of them.
     pub untaken: Vec<u16>,
@@ -163,14 +166,14 @@ pub struct Records {
     /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
     /// stream, and the loop, start after them. Empty: no prefix.
     pub prefix: Vec<u8>,
-    /// The skip's mask (decision 0452), an output: where set, a token's last byte is the byte
+    /// The skip's mask (decision 0411), an output: where set, a token's last byte is the byte
     /// before the next token's start (the file's end) less the run of this mask's bytes before
     /// it (`gap_last`), as the lasts extract's, proved. The CPU's tier 1 then makes no lasts; its
     /// record pass makes them.
     pub gap: Option<u16>,
 }
 
-/// A token's last byte (decision 0452, `Records::gap`): the byte before `next` (the next
+/// A token's last byte (decision 0411, `Records::gap`): the byte before `next` (the next
 /// token's start, or the file's length), less the run of `gap`'s bits before it, found a word
 /// at a time (the leading zeros of the word's bits not in the run).
 pub fn gap_last(gap: &[u64], start: usize, next: usize) -> usize {
@@ -202,7 +205,8 @@ pub fn gap_lasts(gap: &[u64], starts: &[u32], len: usize) -> Vec<u32> {
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
 /// output `o`'s bits in the token at least `least` (`count`), or `o` at each of the token's
-/// first `least` bytes (not `count`: a run, the token that long; `least` at most 64).
+/// first `least` bytes (not `count`: a run, the token that long; `least` at most 64), or at
+/// every byte of a token `least` long at least (`all`, not `count`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TokenCheck {
     pub rule: u8,
@@ -210,9 +214,16 @@ pub struct TokenCheck {
     pub o: u16,
     pub least: u32,
     pub then: CheckThen,
+    pub all: bool,
 }
 
 impl TokenCheck {
+    /// A count whose hit a loop makes with the rule's others (fused into one call or one
+    /// vector): not a cut, which ends the token before they are made.
+    pub fn counted(&self) -> bool {
+        self.count && !self.always() && self.then != CheckThen::Cut
+    }
+
     /// A count of at least none: it holds at every token its rule reads (the lowering proves
     /// a count of one so, `bitlex_masks`), so nothing reads its mask. A reader's rule reads a
     /// token where an arm's opener holds at its first byte; at another, its other rule's
@@ -238,12 +249,32 @@ pub fn test_holds(records: &Records, c: &TokenCheck, s: usize, l: usize, outputs
 
 /// What a token that passes a test (`TokenCheck`) does: refuses the file (`escape … at KIND`),
 /// or is a bit of gap mark `k` at its first byte (`At`) or at the byte after its last (`After`):
-/// the mark of the grammar token at or after that byte (`mark … , at KIND when …`).
+/// the mark of the grammar token at or after that byte (`mark … , at KIND when …`). Or, a
+/// count's (`Cut`, `run R once D`), the token ends before its mask's `least`th bit (`cut`),
+/// before any other test of it is made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CheckThen {
     Escape,
     At(u8),
     After(u8),
+    Cut,
+}
+
+impl CheckThen {
+    /// A mark's bit (`At`, `After`).
+    pub fn marks(self) -> bool {
+        matches!(self, CheckThen::At(_) | CheckThen::After(_))
+    }
+}
+
+/// Token `s..=l` of rule `rule` cut by its rule's `Cut` test (`run R once D`): it ends before
+/// the test's mask's `least`th bit in it, as a lexer stops at a number's second `.`.
+pub fn cut(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> usize {
+    records.checks.iter().filter(|c| c.rule == rule && c.then == CheckThen::Cut).fold(l, |l, c| {
+        let w = outputs.get(usize::from(c.o)).map_or(&[][..], |v| v.as_slice());
+        let bit = |i: usize| w.get(i / 64).is_some_and(|x| x >> (i % 64) & 1 == 1);
+        (s..=l).filter(|&i| bit(i)).nth(c.least as usize - 1).map_or(l, |i| i - 1)
+    })
 }
 
 /// A token's hits of the marks' tests (`CheckThen::At`, `After`): the `At` marks' bits, and the
@@ -253,7 +284,7 @@ pub const AFTER_SHIFT: u32 = 16;
 /// The marks' tests' hits at token `s..=l` of rule `rule` (`AFTER_SHIFT`).
 pub fn check_hits(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> u32 {
     records.checks.iter().filter(|c| c.rule == rule && test_holds(records, c, s, l, outputs)).fold(0, |a, c| match c.then {
-        CheckThen::Escape => a,
+        CheckThen::Escape | CheckThen::Cut => a,
         CheckThen::At(k) => a | 1 << k,
         CheckThen::After(k) => a | 1 << (AFTER_SHIFT + u32::from(k)),
     })
@@ -266,6 +297,8 @@ pub fn check_holds(c: &TokenCheck, s: usize, l: usize, outputs: &[Vec<u64>]) -> 
     let n = c.least as usize;
     if c.count {
         (s..=l).filter(|&i| bit(i)).count() >= n
+    } else if c.all {
+        l + 1 - s >= n && (s..=l).all(bit)
     } else {
         l + 1 - s >= n && (s..s + n).all(bit)
     }
@@ -370,7 +403,7 @@ impl Records {
     /// extras' bits come after them; a mark of a later order (a token mark that tier 2 tests
     /// alone, a mark past `MARKS`) holds no bit of the code.
     pub fn mark_bits(&self) -> usize {
-        self.extra.map_or(self.marks.len(), usize::from)
+        self.extra.or(self.kind_rows).map_or(self.marks.len(), usize::from)
     }
 
     /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
@@ -507,13 +540,13 @@ fn first_bit(outputs: &[Vec<u64>], o: u16, from: usize) -> Option<usize> {
 /// lasts, in order, as a lexer reads a string: the opener's byte; then from the byte after,
 /// the nearer of the closer's next bit and each part's next bit, the bytes before it a token
 /// of their own (the content's), a part its bytes, and on after it, until the closer, its
-/// bytes the last token. `Err` where the closer never comes (the file is refused).
-pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec<(usize, usize)>, ()> {
-    let a = reader.arms.first().ok_or(())?;
+/// bytes the last token. `None` where the closer never comes (the file is refused).
+pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Option<Vec<(usize, usize)>> {
+    let a = reader.arms.first()?;
     let mut out = vec![(s, s)];
     let mut at = s + 1;
     loop {
-        let c = first_bit(outputs, a.closer, at).ok_or(())?;
+        let c = first_bit(outputs, a.closer, at)?;
         let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));
         let to = part.map_or(c, |(e, ..)| e);
         if to > at {
@@ -521,17 +554,17 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
         }
         match part {
             Some((e, _, p)) => {
-                let l = p.last_at(e, outputs).ok_or(())?;
+                let l = p.last_at(e, outputs)?;
                 out.push((e, l));
                 at = l + 1;
             }
             None => {
                 let l = match a.last {
-                    Some(o) => first_bit(outputs, o, c).ok_or(())?,
+                    Some(o) => first_bit(outputs, o, c)?,
                     None => c.wrapping_add_signed(isize::from(a.off)),
                 };
                 out.push((c, l));
-                return Ok(out);
+                return Some(out);
             }
         }
     }
@@ -539,6 +572,7 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
 
 /// A reader's token's last byte from its first, `s` (`Reader`), a word of the closer's bits at
 /// a time; `Err` where the file is refused. `n`: the file's length.
+#[allow(clippy::result_unit_err, reason = "a refusal says nothing more: the caller leaves the file to the grammar's parser")]
 pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], outputs: &[Vec<u64>]) -> Result<usize, ()> {
     let n = bytes.len();
     let words = |o: u16| outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
@@ -624,13 +658,14 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .iter()
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
-            match records.rules.get(usize::from(records.ends[usize::from(first)])) {
+            let k = records.ends[usize::from(first)];
+            match records.rules.get(usize::from(k)) {
                 // A region's token: to its closer (`read_last`), a region tier 2 reads in parts
                 // whole (`Split::Tier2`).
                 // Split in tier 1, its parts are rows of their own, and its opener is a byte.
                 Some(&EndRule::Read(i)) if records.readers[usize::from(i)].parts_in_tier1() => Some(s),
                 Some(&EndRule::Read(i)) => read_last(records, &records.readers[usize::from(i)], s as usize, bytes, outputs).ok().map(|l| l.max(s as usize) as u32),
-                Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| l as u32),
+                Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| cut(records, k, s as usize, l, outputs) as u32),
                 None => Some(s),
             }
         })
@@ -676,7 +711,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
             let opens = reader.arms.first().is_some_and(|a| outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1));
             if reader.parts_in_tier1() && opens {
                 match read_parts(reader, s, outputs) {
-                    Ok(tokens) => {
+                    Some(tokens) => {
                         let l = tokens.last().map_or(s, |t| t.1);
                         for (a, b) in tokens {
                             starts.push(a as u32);
@@ -684,7 +719,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         }
                         at = l + 1;
                     }
-                    Err(()) => {
+                    None => {
                         read = true;
                         starts.push(s as u32);
                         lasts.push(s as u32);
@@ -707,7 +742,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                 l
             }
             Some(&rule) => {
-                let l = last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s);
+                let l = cut(records, k, s, last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s), outputs);
                 checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
                 l
             }

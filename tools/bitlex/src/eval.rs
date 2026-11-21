@@ -41,7 +41,7 @@ pub struct Token {
     /// A mark (`mark K = E`): no width, before the token at `start`.
     pub mark: bool,
     /// A settling mark's (`, settles`): its least bit since the grammar token before, and
-    /// whether its `drops` mask holds at the token's start (Q220). The extras before the bit
+    /// whether its `drops` mask holds at the token's start (Q235). The extras before the bit
     /// are the nodes' that it is taken in; where it drops, the extra before the token goes.
     pub settle: Option<(usize, bool)>,
     /// The marks whose `loses` mask holds at this token's start: where a level asks for one
@@ -1196,6 +1196,7 @@ impl<'a> Ev<'a> {
             match test {
                 TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
                 TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
+                TokenTest::All => t.end - t.start >= n && (t.start..t.end).all(|i| m.get(i)),
             }
         };
         let mut failed = Vec::new();
@@ -1526,7 +1527,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
 mod run_tests {
     use super::*;
 
-    /// A run that counts depths (Q222), as `type_args_end` does: the rest only where `<` and `(`
+    /// A run that counts depths (Q339), as `type_args_end` does: the rest only where `<` and `(`
     /// are closed, and a closer at depth 0 ends the run.
     #[test]
     fn a_run_counts_its_depths() {

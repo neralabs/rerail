@@ -86,6 +86,10 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
+    /// The output of the stream's newlines (`BlockNative::newlines`), where the body stores its rows: the format 16
+    /// tape's newline index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
+    /// a token loop's tier 1 (0177), which makes no mask, as the lean lexer makes none; its index is the scan's.
+    pub newlines: Option<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -113,8 +117,8 @@ pub struct CompiledBlock {
     /// bytes after it, and `Batch` brings what they wrote back to the file's positions
     /// (`strip_prefix`, 0389). Empty where there is none, or the passes make it themselves.
     pub prefix: Vec<u8>,
-    /// With `native_cpu_stream::KEEP_IR`: each function's IR as Cranelift was given it (its
-    /// `FuncId`), and the entries' ids in order.
+    /// With `native_cpu_codegen::Options::keep_ir`: each function's IR as Cranelift was given it (its
+    /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     pub entry_ids: Vec<u32>,
 }
@@ -127,6 +131,10 @@ pub struct PassShape {
     /// A forward pass with a block loop: false where its body makes nothing, so the block loop
     /// is cut and its hot loop is the token loop's (`bodiless_body`).
     pub block_loop: bool,
+    /// The blocks the full body leaves to, by their CLIF names: the blocks' head, and the token
+    /// loop over the final blocks where the pass runs it (`tokened`). The body's hot loop is
+    /// what it reaches before them (`clif_text::hot_loop_until`).
+    pub exits: Vec<String>,
     pub clif: String,
     pub ascii_branch: bool,
     pub gate_branches: usize,
@@ -137,6 +145,8 @@ pub struct PassShape {
     /// The rare paths' branches in the full blocks' body: a toggle's escaped quotes (`toggle`),
     /// the edge part on an edge block (`Emit::edge_part`, 0383).
     pub rare_branches: usize,
+    /// The extracts its body flattens: none whose positions its record pass writes instead
+    /// (`BlockNative::records_made`).
     pub extracts: usize,
     /// Its machine code, disassembled.
     pub disassembly: String,
@@ -156,6 +166,9 @@ pub struct PassShape {
     /// The run rules its token loop reads in their arm (`RuleMode::Short`'s form there, no
     /// call), as the lean lexer reads a number in its `match` arm.
     pub arms: usize,
+    /// The rules whose short form is the loop's arm (`arms`'s, each once), by their index in
+    /// `Records::rules`: a test names the rule it expects there.
+    pub arm_rules: Vec<u8>,
     /// The rare arms whose tail knows its first bytes' entry (`rare_entry`), as the lean
     /// lexer's arm knows its kind.
     pub known_entries: usize,
@@ -221,15 +234,12 @@ impl CompiledBlock {
         self.records.as_ref().map(|t| (t.words.as_ptr() as i64, 8 * t.words.len() as i64))
     }
 
-    /// Every output's words over `bytes`; bits past the end are zero.
     /// The calls in the passes' IR: each of a function the same lowering made from the same
-    /// program (`native_cpu_shape::check`), the only calls the machine code may have.
+    /// program (`native_cpu_shape::check`), the only calls the machine code may have. A call in a
+    /// block no branch reaches is none: the backend compiles it out (`calls_of`).
     pub fn own_calls(&self) -> usize {
-        let call = |l: &str| {
-            let t = l.trim();
-            t.starts_with("call ") || t.contains(" = call ")
-        };
-        self.passes.iter().map(|p| p.clif.lines().filter(|l| call(l)).count() + p.outlined.iter().map(|o| o.clif.lines().filter(|l| call(l)).count()).sum::<usize>()).sum()
+        let calls = |clif: &str| crate::clif_text::reached_calls(clif);
+        self.passes.iter().map(|p| calls(&p.clif) + p.outlined.iter().map(|o| calls(&o.clif)).sum::<usize>()).sum()
     }
 
     /// The passes' own machine code, the outlined functions' left out: where the hot loops are.
@@ -237,6 +247,7 @@ impl CompiledBlock {
         self.passes.iter().map(|p| p.disassembly.as_str()).collect()
     }
 
+    /// Every output's words over `bytes`; bits past the end are zero.
     pub fn run(&self, bytes: &[u8]) -> Vec<Vec<u64>> {
         self.extract(bytes).outputs
     }
@@ -774,7 +785,7 @@ fn lane_and(f: &FunctionBuilder<'_>, x: Value) -> Option<(Value, Vec<(Value, boo
     let dfg = &f.func.dfg;
     let ValueDef::Result(inst, _) = dfg.value_def(x) else { return None };
     match dfg.insts[inst] {
-        InstructionData::BinaryImm8 { opcode: Opcode::Extractlane, arg, imm } if u8::from(imm) == 0 && dfg.value_type(arg) == types::I64X2 => Some((x, Vec::new())),
+        InstructionData::BinaryImm8 { opcode: Opcode::Extractlane, arg, imm } if imm == 0 && dfg.value_type(arg) == types::I64X2 => Some((x, Vec::new())),
         InstructionData::Binary { opcode: Opcode::Band, args: [a, b] } => {
             if let Some((lane, mut terms)) = lane_and(f, a) {
                 terms.push((b, false));
@@ -1004,7 +1015,7 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
     // its words over them.
     let edge = at.edge.filter(|_| at.full).and_then(|ea| plan.edge(native).map(|ed| (ea, ed)));
     let fixed: Vec<usize> = edge.map_or(Vec::new(), |(_, ed)| edge_fixed(native, ed));
-    let mut lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, at.len, !at.full, at.bytes, c.nibble);
+    let mut lanes = Lanes::new(&mut *f, native, plan, at.base, (!at.full).then_some((at.i, at.len)), at.bytes, c.nibble);
     if at.full {
         lanes = lanes.packed(Some(std::rc::Rc::new(places_pack(native, state, &live_at))));
     }
@@ -1044,11 +1055,11 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
     }
     let mut order = Order { done: vec![false; n], regions: vec![0; regions], ran: vec![false; native.groups.len()] };
     let mut gates = 0;
-    if let Some((flag, made, slow)) = at.ascii_split.filter(|_| at.full) {
-        if let Some(g) = ascii_split(&mut e, &mut *f, flag, &grouped, &store_at, &sink_at, regions, &mut order, slow) {
-            gates += g;
-            made.set(true);
-        }
+    if let Some((flag, made, slow)) = at.ascii_split.filter(|_| at.full)
+        && let Some(g) = ascii_split(&mut e, &mut *f, flag, &grouped, &store_at, &sink_at, regions, &mut order, slow)
+    {
+        gates += g;
+        made.set(true);
     }
     gates += demand_order(&mut e, &mut *f, &grouped, &store_at, &sink_at, regions, None, &mut order);
     if let Some((ea, ed)) = edge.filter(|_| !fixed.is_empty()) {
@@ -1229,7 +1240,6 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
 /// another reads as a word, an output, or a carried one (`exits`). A value on the vectors that
 /// another on the vectors reads is made again there by its reader (`Lanes`), so it leaves none.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>], regions: usize, order: &mut Order, slow_blocks: &std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>) -> Option<usize> {
     let native = e.native;
     let state = e.state;
@@ -1237,8 +1247,14 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
     let n = native.insts.len();
     let known = ascii_known(native, plan);
     let output: Vec<bool> = (0..n).map(|x| native.outputs.contains(&(x as u16))).collect();
+    // A gated region's values, its members and its values on the vectors, are made in its branch (decision 0423), not
+    // in this one: a class of non-ASCII bytes only a region reads (a `\w` past ASCII) was made on every non-ASCII block.
+    let mut regional: Vec<bool> = (0..n).map(|x| plan.region_of[x].is_some()).collect();
+    for x in plan.regions.iter().flat_map(|r| &r.vectors) {
+        regional[*x] = true;
+    }
     let inside: Vec<bool> = (0..n)
-        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && plan.region_of[x].is_none() && grouped[x].is_none())
+        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && !regional[x] && grouped[x].is_none())
         .collect();
     // A value on the vectors is made from its operands' vectors, again in each reader
     // (`Lanes`): one past the branch that reads a known value there would make it on every
@@ -1261,7 +1277,10 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
         }
         for o in inst.operands() {
             let on_vectors = plan.lanes[o] && plan.lanes[x] && !words[x];
-            if inside[o] && !inside[x] && !on_vectors {
+            // A region's value on the vectors leaves for no member of it: the region makes it in its own branch
+            // (decision 0423), and this way runs on blocks the region skips.
+            let regions_own = plan.region_of[x].is_some_and(|r| plan.regions[r].vectors.contains(&o));
+            if inside[o] && !inside[x] && !on_vectors && !regions_own {
                 exit[o] = true;
             }
             if inside[x] && !inside[o] && !(plan.lanes[o] && plan.lanes[x]) {
@@ -1644,7 +1663,7 @@ impl<'a, 'b> Emit<'a, 'b> {
             err_in: at.err.filter(|_| at.full),
             absorbed: vec![false; n],
             as_words: vec![false; n],
-            syms: vec![Sym::Known(0); n],
+            syms: vec![Sym::Unmade; n],
             values: vec![None; n],
             packed_out: vec![None; state.words],
             consts: vec![0; state.words],
@@ -1791,6 +1810,9 @@ impl Emit<'_, '_> {
             self.set(at, Sym::Known(c));
             self.carry(&mut *f, at);
             return;
+        }
+        if let Some(o) = inst.operands().into_iter().find(|&o| matches!(self.syms[o], Sym::Unmade) && self.values[o].is_none()) {
+            panic!("value %{at} = {inst:?} reads %{o} = {:?} before it is made (region {:?}, its {:?}; on the vectors {}, masked {}, as words {})", native.insts[o], plan.region_of[at], plan.region_of[o], plan.lanes[o], self.masked[o], self.as_words[o]);
         }
         let logic = |x: u16| self.syms[usize::from(x)];
         let folded = match inst {
@@ -2025,8 +2047,10 @@ impl Emit<'_, '_> {
         }
         // Its values on the vectors that a member reads as words (one made from words,
         // `Emit::as_words`): their masks made here, never in a block that skips the region
-        // (decision 0423). The others are made on the vectors where read.
-        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && self.masked[v]).collect();
+        // (decision 0423); and those made from words themselves (bit logic over a word the ASCII
+        // split gives, `ascii_split`'s `words`), which no reader makes on the vectors: unmade, a
+        // member read them as 0. The others are made on the vectors where read.
+        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && (self.masked[v] || self.as_words[v])).collect();
         for v in as_words {
             self.emit(&mut *f, v);
         }
@@ -2092,11 +2116,14 @@ impl Emit<'_, '_> {
         let reg = &plan.regions[r];
         let inner: Vec<usize> = reg.members.iter().copied().filter(|m| !early.contains(m)).collect();
         // What the region reads from outside: on the vectors, a value on the vectors is made
-        // again from the bytes (`native_cpu_lanes`); any other is passed.
+        // again from the bytes (`native_cpu_lanes`); any other is passed, and so is the word of
+        // one a member made from words reads (`Emit::as_words`), made at the branch's top
+        // (decision 0423).
         let mut inputs: Vec<usize> = Vec::new();
         for &m in &inner {
             for o in native.insts[m].operands() {
-                if !inner.contains(&o) && !(plan.lanes[o] && plan.lanes[m]) && !inputs.contains(&o) {
+                let remade = plan.lanes[o] && plan.lanes[m] && !self.as_words[m];
+                if !inner.contains(&o) && !remade && !inputs.contains(&o) {
                     inputs.push(o);
                 }
             }
@@ -2184,7 +2211,7 @@ impl Emit<'_, '_> {
             let packed_in: Vec<Value> = (0..state.words).map(|_| get(&mut f)).collect();
             let so_far: Vec<Value> = words.iter().map(|_| get(&mut f)).collect();
             let given: Vec<Value> = inputs.iter().map(|_| get(&mut f)).collect();
-            let lanes = Lanes::new(&mut f, native, &state.plan, base, i, len, false, None, c.nibble);
+            let lanes = Lanes::new(&mut f, native, &state.plan, base, None, None, c.nibble);
             let n = native.insts.len();
             let mut e = Emit {
                 sinks: None,
@@ -2206,7 +2233,7 @@ impl Emit<'_, '_> {
                 err_in: None,
                 absorbed: vec![false; n],
                 as_words: self.as_words.clone(),
-                syms: vec![Sym::Known(0); n],
+                syms: vec![Sym::Unmade; n],
                 values: vec![None; n],
                 packed_out: vec![None; state.words],
                 consts: vec![0; state.words],
@@ -2473,8 +2500,10 @@ impl Emit<'_, '_> {
         // What to make: the differing values; and what they read that is not a word the body
         // made (a byte test, or a value the body did not keep: made on the vectors only, or
         // inside a region or the ASCII split), transitively. A value made on the vectors reads
-        // its operands there, from the bytes.
-        let valid = |o: usize| (matches!(self.syms[o], Sym::Value(..) | Sym::Slot(..)) && !plan.lanes[o]) || matches!(native.insts[o], BlockInst::Const(_));
+        // its operands there, from the bytes. A constant is no exception: one a region reads is
+        // made inside it, and its symbol after the region is the one from before, `Known(0)`
+        // (`Emit::region`); made again here it folds to its word, no instruction (Q197).
+        let valid = |o: usize| matches!(self.syms[o], Sym::Value(..) | Sym::Slot(..)) && !plan.lanes[o];
         let mut remake = ed.differs.clone();
         // The totals the running word holds: made exactly here, its word the one taken.
         for &k in &ored {
@@ -2604,6 +2633,9 @@ impl Emit<'_, '_> {
         let outputs = (0..self.native.outputs.len())
             .map(|k| match (self.sunk[k], self.fixed[k]) {
                 (Some(v), _) | (None, Some(v)) => v,
+                // A flag's leaf the ASCII branch or a sink ORed in where made (`absorbed`): its bits
+                // are in the flag, and no word of its own is made.
+                (None, None) if self.absorbed[usize::from(self.native.outputs[k])] && matches!(self.syms[usize::from(self.native.outputs[k])], Sym::Unmade) => f.ins().iconst(types::I64, 0),
                 (None, None) => plain(&mut *f, &self.syms, &mut self.values, usize::from(self.native.outputs[k])),
             })
             .collect();
@@ -2740,7 +2772,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         crate::clif_fold::fold_with(func, &s);
         let r = crate::clif_fold::returns(func, &s);
         s.insert(id.as_u32(), r);
-        if crate::native_cpu_stream::KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::native_cpu_codegen::options().keep_ir.load(std::sync::atomic::Ordering::Relaxed) {
             ir.push((id.as_u32(), func.clone()));
         }
     };
@@ -2754,7 +2786,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         context.func.signature = signature.clone();
         context.set_disasm(true);
         let mut hot = Vec::new();
-        let mut shape = PassShape { back: false, block_loop: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, general: false, rare_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, known_entries: 0 };
+        let mut shape = PassShape { back: false, block_loop: false, exits: Vec::new(), clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, general: false, rare_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, arm_rules: Vec::new(), known_entries: 0 };
         match pass {
             Pass::Forward { body, stores } => {
                 // The general body, outlined (`general`): declared, built with the pass, defined
@@ -2764,10 +2796,13 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let mut general_context: Context = module.make_context();
                 general_context.func.signature = signature.clone();
                 general_context.set_disasm(true);
-                let regions;
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches, shape.rare_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
+                let jit = Jit { context: &mut context, general_context: &mut general_context, outlined: (general_id, signature), module: &mut module, name: &name };
+                let records = native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len()));
+                let Forwarded { regions, hot: blocks } = forward(jit, body, made, stores, passes.slots, records, &mut shape)?;
+                hot = blocks;
                 // The extracts the body flattens: not those the record pass writes.
-                shape.extracts = body.extracts.iter().filter(|k| !native.records_made().contains(k)).count();
+                let made = body.records_made();
+                shape.extracts = counted(body).into_iter().take(body.extracts.len()).filter(|k| !made.contains(k)).count();
                 // `forward` gives the block loop's blocks, none where it cut the loop.
                 shape.block_loop = !hot.is_empty();
                 general_context.func.srclocs.clear();
@@ -2843,6 +2878,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
+        newlines: native.newlines.filter(|o| !native.cpu_unstored().contains(o)),
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,
@@ -3313,6 +3349,8 @@ struct FileCols {
     /// The run rules whose short form is the loop's arm (`rule_last`'s `arm`), for its shape
     /// (`PassShape::arms`).
     arms: std::cell::Cell<usize>,
+    /// Their rules (`PassShape::arm_rules`).
+    arm_rules: std::cell::RefCell<Vec<u8>>,
     /// The rare arms whose entry is a constant (`PassShape::known_entries`).
     known_entries: std::cell::Cell<usize>,
 }
@@ -3326,7 +3364,7 @@ impl FileCols {
     }
 
     fn of(p: &[Value], layout: crate::records::RecordLayout) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() }
     }
 
     /// As `of`, the grammar's tables, their slots and the word table's multiplier constants
@@ -3411,7 +3449,7 @@ impl FileCols {
 
 }
 
-/// A token's last byte by its gap (decision 0452, `records::gap_last`): the byte before the next
+/// A token's last byte by its gap (decision 0411, `records::gap_last`): the byte before the next
 /// token's start (the file's end at the last token), less the run of the skip's bits (output
 /// `gap`) before it. A word of the mask at a time, from the one holding the byte before the next
 /// start: the highest bit not in the run is the last, a count of leading zeros. A run of 64
@@ -3742,6 +3780,7 @@ fn tests_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_b
             crate::records::CheckThen::Escape => 63,
             crate::records::CheckThen::At(k) => i64::from(k),
             crate::records::CheckThen::After(k) => i64::from(crate::records::AFTER_SHIFT) + i64::from(k),
+            crate::records::CheckThen::Cut => unreachable!("a cut is no count's hit (`TokenCheck::counted`)"),
         };
         let bit = f.ins().ishl_imm(hit, at);
         result = f.ins().bor(result, bit);
@@ -4029,6 +4068,8 @@ fn hit_into(f: &mut FunctionBuilder<'_>, then: crate::records::CheckThen, hit: V
             let b = f.ins().ishl_imm(hit, i64::from(crate::records::AFTER_SHIFT) + i64::from(k));
             (refuse, f.ins().bor(hits, b))
         }
+        // Made before the others (`cut_last`): no hit.
+        crate::records::CheckThen::Cut => (refuse, hits),
     }
 }
 
@@ -4044,6 +4085,7 @@ fn read_test_hits(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenChe
             crate::records::CheckThen::Escape => 63,
             crate::records::CheckThen::At(k) => i64::from(k),
             crate::records::CheckThen::After(k) => i64::from(crate::records::AFTER_SHIFT) + i64::from(k),
+            crate::records::CheckThen::Cut => unreachable!("a cut is no count's hit (`TokenCheck::counted`)"),
         };
         let bit = f.ins().ishl_imm(hit, at);
         result = f.ins().bor(result, bit);
@@ -4210,7 +4252,7 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let (tables, mult, slots) = tables_consts(&mut f, t);
     // The records' columns: not read by the rules.
     let zero = f.ins().iconst(types::I64, 0);
-    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() };
+    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
     let (exits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, (first, false), None, None, mode, Side::Both, &mut heads);
@@ -4313,7 +4355,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let blocks = f.ins().load(types::I64, ro, at, 8);
     let len = f.ins().load(types::I64, ro, at, 16);
     let (tables, mult, slots) = tables_consts(f, t);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() }
 }
 
 /// The record pass's tables' address, its word table's multiplier and its slots' address, as
@@ -4322,6 +4364,14 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    (tables, mult, slots)
+}
+
+/// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
+pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 
@@ -4756,7 +4806,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // register (`Run`), each the rule most first bytes take of its form, where their tests
     // are all by first-byte bits (`TOKEN_TESTS`, each on its rule's bytes alone). Both lasts
     // straight-line and one `select`, no branch between them: a run past its block's word
-    // goes to its rule's block. Most tokens are of the two (`.rr`: punctuation and words).
+    // goes to its rule's block. Most tokens are of the two (`.rerail`: punctuation and words).
     let reg_of = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v));
     // The fused rules' exit of their own (`fdone`, as `done`'s): their tokens are never a
     // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).
@@ -4972,6 +5022,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let own = rd.calls.iter().find(|x| x.0 == RULES_CALL | k as u16).filter(|_| !arm);
         if arm {
             c.arms.set(c.arms.get() + 1);
+            c.arm_rules.borrow_mut().push(k as u8);
         }
         if let (RuleMode::Calls, Some((_, id, sig)), false) = (mode, own, fused.is_some_and(|(kn, kr)| k == kn || k == kr)) {
             f.set_cold_block(b);
@@ -5014,7 +5065,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             _ => None,
         };
         let run_outs: Vec<u16> = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() && by_way.is_none() => run_tests(r, b, k, &tests),
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() && by_way.is_none() => run_tests(r, b, k, &tests, short),
             _ => Vec::new(),
         };
         // The window's terms: the run's (its split's byte term, else its output), its tests'.
@@ -5430,7 +5481,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         RuleMode::Calls if in_arm => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16),
                         _ => None,
                     };
-                    let counts: Vec<crate::records::TokenCheck> = tests.iter().map(|(t, _)| *t).filter(|t| t.count && !t.always()).collect();
+                    let counts: Vec<crate::records::TokenCheck> = tests.iter().map(|(t, _)| *t).filter(|t| t.counted()).collect();
                     if let (Some(_), Some(rest), Some((_, id, sig)), Some((b, file))) = (read, rest, whole, rd.bytes) {
                         let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
                         let signature = f.import_signature(sig.clone());
@@ -5705,7 +5756,7 @@ fn tag_known(r: &crate::records::Records, k: usize) -> Option<(i64, u32)> {
             return None;
         }
         hits |= match c.then {
-            CheckThen::Escape => 0,
+            CheckThen::Escape | CheckThen::Cut => 0,
             CheckThen::At(m) => 1 << m,
             CheckThen::After(m) => 1 << (crate::records::AFTER_SHIFT + u32::from(m)),
         };
@@ -5809,6 +5860,14 @@ pub fn lean_starts(r: &crate::records::Records, native: &crate::block_native::Bl
     let pt = r.nexts.get(usize::from(pi)).filter(|t| t.thirds.is_empty())?;
     let alone = |o: u16| crate::native_cpu_bytes::needs(native, o).filter(|n| n.lo == 0 && n.hi == 0);
     let (word, space) = (alone(o)?, alone(skip)?);
+    // A cut (`run R once D`) ends a token before a byte of `D`: one the starts must hold, so no
+    // run byte (which they leave out after a run byte), and its bytes those `D` tests alone.
+    for c in r.checks.iter().filter(|c| c.then == crate::records::CheckThen::Cut) {
+        let d = alone(c.o)?;
+        if (0..=255u8).any(|x| d.has(x) && word.has(x)) {
+            return None;
+        }
+    }
     let of = |x: u8, k: usize| r.ends.get(usize::from(x)).is_some_and(|&e| usize::from(e) == k);
     let pairs_apart = (0..=255u8).filter(|&a| of(a, kn)).all(|a| !word.has(a) && (0..=255u8).filter(|&b| pt.holds(a, b)).all(|b| !word.has(b) && !space.has(b) && b != 0));
     // A run byte may be zero (JSON's `wordbyte`, `~(ws | op | quote)`): the bytes past the file
@@ -6009,9 +6068,9 @@ pub fn set_nibbles(set: &[bool; 256]) -> Option<[[u8; 16]; 2]> {
         n[1][h] = 1 << g;
     }
     for (g, &lows) in groups.iter().enumerate() {
-        for l in 0..16 {
+        for (l, n0) in n[0].iter_mut().enumerate() {
             if lows >> l & 1 == 1 {
-                n[0][l] |= 1 << g;
+                *n0 |= 1 << g;
             }
         }
     }
@@ -6322,9 +6381,12 @@ fn first_bytes(r: &crate::records::Records, k: usize) -> [u64; 4] {
 /// (`tested`'s `pre`): each output a byte set at its own byte (`native_cpu_bytes::exact`, no
 /// delay), read from the bytes, that none of the rule's first bytes is in, so the token's first
 /// byte has no bit.
-fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)]) -> Vec<u16> {
+fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)], short: bool) -> Vec<u16> {
     let firsts: Vec<u8> = (0..256).filter(|&x| r.ends.get(x).is_some_and(|&e| usize::from(e) == k)).map(|x| x as u8).collect();
-    let mut v: Vec<u16> = tests.iter().filter(|(t, _)| t.count && !t.always() && b.can(t.o)).filter(|(t, _)| {
+    // A short form's cut too (`run R once D`, `cut_in_window`): its `D` in the run's window, as a
+    // lexer reads a number's `.`. The whole function cuts by words (`cut_last`) and has no use
+    // for those lanes.
+    let mut v: Vec<u16> = tests.iter().filter(|(t, _)| (t.counted() || short && t.then == crate::records::CheckThen::Cut) && b.can(t.o)).filter(|(t, _)| {
         crate::native_cpu_bytes::exact(b.native, t.o).is_some_and(|n| n.lo == 0 && n.hi == 0 && !firsts.iter().any(|&x| n.has(x)))
     }).map(|(t, _)| t.o).collect();
     v.sort_unstable();
@@ -6345,8 +6407,8 @@ pub enum RunForm {
 }
 
 pub fn run_form() -> RunForm {
-    static FORM: std::sync::OnceLock<RunForm> = std::sync::OnceLock::new();
-    *FORM.get_or_init(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
+    // The run's setting (decision 0442).
+    rerail_context::setting(|| match std::env::var("RERAIL_RUN_FORM").as_deref() {
         Ok("block") => RunForm::Block,
         Ok("window") => RunForm::Window,
         _ => RunForm::Bytes,
@@ -6392,6 +6454,8 @@ fn split_counts(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewi
                     crate::records::CheckThen::Escape => ways[way].0 = true,
                     crate::records::CheckThen::At(m) => ways[way].1 |= 1i64 << m,
                     crate::records::CheckThen::After(m) => ways[way].1 |= 1i64 << (crate::records::AFTER_SHIFT + u32::from(m)),
+                    // A cut (`run R once D`) moves the token's end: no count of the two ways.
+                    crate::records::CheckThen::Cut => return None,
                 }
             }
         }
@@ -6399,10 +6463,93 @@ fn split_counts(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewi
     Some(ways)
 }
 
+/// Token `s..=l`'s last after its rule's cut `t`, 16 bytes at most, from the run's window `m`
+/// (`stride` bits a lane, lane `i` the byte `s + 1 + i`): its lanes below the token's end, the
+/// lowest cleared; the token ends before the one left, else at `l`.
+fn cut_in_window(f: &mut FunctionBuilder<'_>, t: &crate::records::TokenCheck, m: Value, stride: u32, s: Value, l: Value) -> Value {
+    assert_eq!(t.least, 2, "a cut at the second bit (`once`)");
+    let n = f.ins().isub(l, s);
+    let below = lanes_below(f, n, stride, 15);
+    let bits = f.ins().band(m, below);
+    let bits = if stride > 1 { f.ins().band_imm(bits, lane_bits(stride)) } else { bits };
+    let less = f.ins().iadd_imm(bits, -1);
+    let second = f.ins().band(bits, less);
+    let lane = f.ins().ctz(second);
+    let at = if stride > 1 { f.ins().ushr_imm(lane, i64::from(stride.trailing_zeros())) } else { lane };
+    // Lane `at` is byte `s + 1 + at`: the byte before it, `s + at`.
+    let cut = f.ins().iadd(s, at);
+    let has = f.ins().icmp_imm(IntCC::NotEqual, second, 0);
+    f.ins().select(has, cut, l)
+}
+
+/// Token `s..=l`'s last after its rule's cut `t` (`records::cut`, `run R once D`): the byte
+/// before the mask's second bit in it, else `l`. Its words from `s`'s, a word a step, the bits
+/// so far counted, as a lexer stops at a number's second `.`.
+fn cut_last<W>(f: &mut FunctionBuilder<'_>, t: &crate::records::TokenCheck, word_at: &W, s: Value, l: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value
+where
+    W: Fn(&mut FunctionBuilder<'_>, Value, u16, &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value,
+{
+    assert_eq!(t.least, 2, "a cut at the second bit (`once`)");
+    let (head, more, found, out) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    for _ in 0..2 {
+        f.append_block_param(head, types::I64);
+        f.append_block_param(found, types::I64);
+    }
+    f.append_block_param(found, types::I64);
+    f.append_block_param(out, types::I64);
+    let q0 = f.ins().ushr_imm(s, 6);
+    let ql = f.ins().ushr_imm(l, 6);
+    let sh = f.ins().band_imm(s, 63);
+    let ones = f.ins().iconst(types::I64, -1);
+    let need = f.ins().iconst(types::I64, i64::from(t.least));
+    f.ins().jump(head, &[q0.into(), need.into()]);
+    heads.push((head, Step::Word));
+    f.switch_to_block(head);
+    let (q, need) = (f.block_params(head)[0], f.block_params(head)[1]);
+    let x = word_at(f, q, t.o, heads);
+    let first = f.ins().icmp(IntCC::Equal, q, q0);
+    let from = f.ins().ishl(ones, sh);
+    let from = f.ins().select(first, from, ones);
+    let x = f.ins().band(x, from);
+    let last = f.ins().icmp(IntCC::Equal, q, ql);
+    let lb = f.ins().band_imm(l, 63);
+    let lb = f.ins().irsub_imm(lb, 63);
+    let to = f.ins().ushr(ones, lb);
+    let to = f.ins().select(last, to, ones);
+    let x = f.ins().band(x, to);
+    let pc = f.ins().popcnt(x);
+    let enough = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, pc, need);
+    f.ins().brif(enough, found, &[q.into(), need.into(), x.into()], more, &[]);
+    // Fewer: on to the next word, else the token as its rule ends it.
+    f.switch_to_block(more);
+    let q1 = f.ins().iadd_imm(q, 1);
+    let left = f.ins().isub(need, pc);
+    let on = f.create_block();
+    f.ins().brif(last, out, &[l.into()], on, &[]);
+    f.switch_to_block(on);
+    f.ins().jump(head, &[q1.into(), left.into()]);
+    // The `need`th bit of `x` (one or two): the byte before it the last.
+    f.switch_to_block(found);
+    let p = f.block_params(found).to_vec();
+    let (q, need, x) = (p[0], p[1], p[2]);
+    let x1 = f.ins().iadd_imm(x, -1);
+    let x1 = f.ins().band(x, x1);
+    let two = f.ins().icmp_imm(IntCC::Equal, need, 2);
+    let x = f.ins().select(two, x1, x);
+    let bit = f.ins().ctz(x);
+    let base = f.ins().ishl_imm(q, 6);
+    let at = f.ins().iadd(base, bit);
+    let before = f.ins().iadd_imm(at, -1);
+    f.ins().jump(out, &[before.into()]);
+    f.switch_to_block(out);
+    f.block_params(out)[0]
+}
+
 /// The refusal and the hits of the tests that hold at every token (`TokenCheck::always`).
 fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) -> (i64, i64) {
     tests.filter(|t| t.always()).fold((0i64, 0i64), |(r, h), t| match t.then {
         crate::records::CheckThen::Escape => (-1, h),
+        crate::records::CheckThen::Cut => (r, h),
         crate::records::CheckThen::At(k) => (r, h | 1i64 << k),
         crate::records::CheckThen::After(k) => (r, h | 1i64 << (crate::records::AFTER_SHIFT + u32::from(k))),
     })
@@ -6412,7 +6559,6 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// (`records::check_holds`), then on to `done` with the last and the refusal (a sign bit). A
 /// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
 /// `least` bits from `s` compared at once, from one word or two.
-#[allow(clippy::too_many_arguments)]
 ///
 /// `pre`: outputs' bits from `s + 1` on, 16 of them, from the run's own window (`run_tests`):
 /// a count of one of them over a token of 16 bytes at most is its bits below the token's
@@ -6429,6 +6575,21 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     f.switch_to_block(ended);
     let (mut l, mut tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
+    // The rule's cut first (`run R once D`, `records::cut`): the token ends before it, and the
+    // other tests are of the token it leaves.
+    // A token of 16 bytes at most whose run's window has `D` (`pre`, `run_tests`) is cut there:
+    // the window's lanes below the token's end, the lowest cleared, as the lean lexer's number
+    // arm finds its `.` in its digits' pass. The whole function (a run past the window) by its
+    // words (`cut_last`), one call of `D`'s bytes a 64 bytes.
+    for (t, _) in tests.iter().filter(|(t, _)| t.then == crate::records::CheckThen::Cut) {
+        let window = pre.iter().find(|&&(o, _)| o == t.o).map(|&(_, m)| m);
+        l = match (window, most) {
+            (Some(m), Some(mo)) if mo <= 16 => cut_in_window(f, t, m, pre_stride, s, l),
+            _ => cut_last(f, t, &word_at, s, l, heads),
+        };
+    }
+    let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = tests.iter().filter(|(t, _)| t.then != crate::records::CheckThen::Cut).copied().collect();
+    let tests = &tests[..];
     let mut q0 = f.ins().ushr_imm(s, 6);
     let mut sh = f.ins().band_imm(s, 63);
     let mut ql = f.ins().ushr_imm(l, 6);
@@ -6447,9 +6608,9 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let never = |t: &crate::records::TokenCheck| most.is_some_and(|m| t.least > m);
     let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = tests.iter().filter(|(t, _)| !never(t)).copied().collect();
     let tests = &tests[..];
-    let fused = rd.calls.iter().find(|x| x.0 == TESTS_CALL | u16::from(rule)).cloned().filter(|_| tests.iter().any(|(t, _)| t.count && !t.always()));
+    let fused = rd.calls.iter().find(|x| x.0 == TESTS_CALL | u16::from(rule)).cloned().filter(|_| tests.iter().any(|(t, _)| t.counted()));
     if let Some((_, id, sig)) = &fused {
-        let least = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| t.least).min().unwrap_or(0);
+        let least = tests.iter().filter(|(t, _)| t.counted()).map(|(t, _)| t.least).min().unwrap_or(0);
         let (on, join) = (f.create_block(), f.create_block());
         f.append_block_param(join, types::I64);
         f.append_block_param(join, types::I64);
@@ -6459,7 +6620,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         // What the tests need of the bytes, together (`native_cpu_bytes::needs`): a token whose
         // bytes (and the few its masks look past) fit one vector has none of them where no byte
         // there is in the set, a compare a run of bytes, and the call is skipped.
-        let counts: Vec<crate::records::TokenCheck> = tests.iter().filter(|(t, _)| t.count && !t.always()).map(|(t, _)| *t).collect();
+        let counts: Vec<crate::records::TokenCheck> = tests.iter().filter(|(t, _)| t.counted()).map(|(t, _)| *t).collect();
         // Where each count's mask is its bytes exactly (`native_cpu_bytes::exact`), a token of
         // 16 bytes at most has its counts from one vector each, as a lexer counts a float's `.`
         // as it reads it, and the call is made for a longer one alone.
@@ -6586,7 +6747,7 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
         rest = Some(after);
     }
     for &(ref t, filter) in tests {
-        if t.always() || t.count && fused.is_some() {
+        if t.always() || t.counted() && fused.is_some() {
             continue;
         }
         let next = f.create_block();
@@ -6625,13 +6786,13 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             f.switch_to_block(on);
             f.set_cold_block(on);
         }
-        if t.count && t.least > 1 {
+        if (t.count || t.all) && t.least > 1 {
             let on = f.create_block();
             let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(t.least));
             f.ins().brif(long, on, &[], next, &[kept.into()]);
             f.switch_to_block(on);
         }
-        if t.count {
+        if t.count || t.all {
             // The mask's bits over the token's words: the first from `s`, the last to `l`.
             let (head, body) = (f.create_block(), f.create_block());
             f.append_block_param(head, types::I64);
@@ -6657,7 +6818,8 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
             let q1 = f.ins().iadd_imm(q, 1);
             f.ins().brif(last, body, &[], head, &[q1.into(), acc.into()]);
             f.switch_to_block(body);
-            let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, acc, i64::from(t.least));
+            // `all`: the mask at every byte, the token `least` long (above).
+            let hit = if t.all { f.ins().icmp(IntCC::Equal, acc, len) } else { f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, acc, i64::from(t.least)) };
             let hit = f.ins().uextend(types::I64, hit);
             let hit = into(f, hit, refuse, hits);
             f.ins().jump(next, &[hit.into()]);
@@ -6780,7 +6942,7 @@ pub fn lazy_code_bits(block: &crate::block_native::BlockNative) -> u32 {
 pub fn lazy_coded(r: &crate::records::Records) -> u32 {
     r.checks.iter().fold(0, |a, c| match c.then {
         crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
-        crate::records::CheckThen::Escape => a,
+        crate::records::CheckThen::Escape | crate::records::CheckThen::Cut => a,
     })
 }
 
@@ -6826,7 +6988,7 @@ pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) 
     r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
 }
 
-/// Whether the token loop knows an extra at its token (Q230): it tells one by the extra's mark
+/// Whether the token loop knows an extra at its token (Q347): it tells one by the extra's mark
 /// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
 /// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
 /// `blank_marks`) go past an extra to the grammar token after it only so.
@@ -7387,7 +7549,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                     // classified again, as the refill's own classes (`words_with`).
                     let stored = rd.bytes.is_none_or(|(b, _)| b.rows_stored);
                     let load = |f: &mut FunctionBuilder<'_>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| -> Vec<Value> {
-                        if let (false, Some(need), Some((b, file))) = (stored, rare_need.clone(), classify) {
+                        if let (false, Some(need), Some((b, file))) = (stored, rare_need, classify) {
                             let p = f.ins().ishl_imm(q, 6);
                             let (mut w, more) = b.words_with(f, &file, &all, &[need], p, heads);
                             if rare_slot.is_some() {
@@ -8042,7 +8204,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // the grammar token before's first to its own, but where the word before says none
     // (`unless after`); an extra's token leaves all of its own to the next, and keeps the
     // marks of its own gap (`Records::own`).
-    let tests = r.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape);
+    let tests = r.checks.iter().any(|c| c.then.marks());
     if tests || !lift.is_empty() || !blanks.is_empty() {
         let h = cv[STATE_WORDS + 1];
         // The blank marks' bits from the run before the token (`blanks_before`): with the
@@ -8310,7 +8472,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let bad = f.block_params(finish)[0];
     let n = c.index(f, f.block_params(finish)[1]);
     let unplaced_lift: Vec<(u8, u16)> = lift.iter().copied().filter(|&(m, _)| r.unplaced >> m & 1 == 1).collect();
-    let bad = if r.unplaced != 0 && (r.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape) || !unplaced_lift.is_empty()) {
+    let bad = if r.unplaced != 0 && (r.checks.iter().any(|c| c.then.marks()) || !unplaced_lift.is_empty()) {
         let mut rest = f.block_params(finish)[2];
         if !unplaced_lift.is_empty() {
             // The gap marks' bits after the last grammar token's first byte.
@@ -8768,7 +8930,6 @@ impl Loop<'_> {
 /// One block's step, from the loop's parameters `p`: the body, the cut to the stream outside
 /// full blocks, the mask stores, the running counts and the flattenings. Gives the next block's
 /// parameters, and the body's gate and round branches; the loops' heads go to `heads`.
-#[allow(clippy::too_many_arguments)]
 /// With, in a full block, the words the token loop's refill reads (`Loop::hand`): the block's
 /// own, handed on as values.
 #[allow(clippy::type_complexity)]
@@ -9009,13 +9170,6 @@ fn main_run(r: &crate::records::Records) -> Option<u16> {
     }
 }
 
-/// A forward pass (`native_ir::Pass::Forward`): the body over each file's blocks, first to last.
-/// Before the last pass, `slot_of` gives each output's slot: the block's word is stored there as
-/// the body made it. The full blocks' body is the hot loop, inlined; the others call `outlined`,
-/// the general body (`general`), built into `general_context`. Gives whether the full body
-/// branches on ASCII, the gated regions' branches and the fixed points' loops.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 /// The vector constants the slow way of the ASCII branch makes (`blocks`, the UTF-8 check), held
 /// in registers round the hot loop (`body`), as simdjson holds its UTF-8 tables and splats
 /// across its loop (decision 0418). Each is a parameter of the hot body: made where the loop is
@@ -9127,8 +9281,8 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
 /// A gated region's values on the vectors (`Region::vectors`) are made in its branch, never in
 /// a block that skips it (decision 0423): the first instruction made for one (its source
 /// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
-/// value. Cold blocks (the edge part) make values without the regions.
-fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+/// value, with the instruction and its block. Cold blocks (the edge part) make values without the regions.
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize, String)> {
     if entered.is_empty() {
         return None;
     }
@@ -9143,7 +9297,7 @@ fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::
             let v = loc.bits() as usize - 1;
             for &(r, active) in entered {
                 if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
-                    return Some((r, v));
+                    return Some((r, v, format!("`{}` in {b}, its branch {active}", func.dfg.display_inst(i))));
                 }
             }
         }
@@ -9188,7 +9342,35 @@ fn sink_extracts(func: &mut cranelift_codegen::ir::Function, body: cranelift_cod
     }
 }
 
-fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
+/// The JIT a forward pass is built in: the pass's context, the general body's (`outlined`: its id and
+/// signature), the module and the pass's name.
+struct Jit<'a> {
+    context: &'a mut Context,
+    general_context: &'a mut Context,
+    outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature),
+    module: &'a mut JITModule,
+    name: &'a str,
+}
+
+/// What a forward pass gives back besides its shape: the regions' functions, to define, and the
+/// block loop's blocks (none where it cut the loop).
+struct Forwarded {
+    regions: Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>,
+    hot: Vec<cranelift_codegen::ir::Block>,
+}
+
+/// A forward pass (`native_ir::Pass::Forward`): the body over each file's blocks, first to last.
+/// Before the last pass, `slot_of` gives each output's slot: the block's word is stored there as
+/// the body made it. The full blocks' body is the hot loop, inlined; the others call `jit.outlined`,
+/// the general body (`general`), built into `jit.general_context`. Writes into `pass_shape` whether the full
+/// body branches on ASCII, the gated regions' branches and the fixed points' loops, its exits and
+/// its arms' rules; gives back the regions' functions and the block loop's blocks.
+fn forward(jit: Jit<'_>, native: &BlockNative, made: &BlockNative, slot_of: &[u16], slots: u16, records: Option<(&crate::records::Records, &RecordTables, usize)>, pass_shape: &mut PassShape) -> Result<Forwarded, Error> {
+    let Jit { context, general_context, outlined, module, name } = jit;
+    let (exits, arm_rules) = (&mut pass_shape.exits, &mut pass_shape.arm_rules);
+    let mut hot = Vec::new();
+    // This build's alone (`forward` builds the body in rounds).
+    arm_rules.clear();
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
     let mut bytewise = crate::native_cpu_bytes::Bytewise::of(made);
@@ -9317,7 +9499,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         // Each rule's count tests, fused (`tests_fn`), where the bytes make all their masks.
         for (k, _) in rec.rules.iter().enumerate() {
-            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count && !c.always()).copied().collect();
+            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.counted()).copied().collect();
             if tests.is_empty() || !tests.iter().all(|c| bytewise.can(c.o)) {
                 continue;
             }
@@ -9332,7 +9514,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // string's bytes for its end and its tests.
         for (k, rule) in rec.rules.iter().enumerate() {
             let crate::records::EndRule::Read(i) = *rule else { continue };
-            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.count && !c.always()).copied().collect();
+            let tests: Vec<crate::records::TokenCheck> = rec.checks.iter().filter(|c| usize::from(c.rule) == k && c.counted()).copied().collect();
             for (j, a) in rec.readers[usize::from(i)].arms.iter().enumerate() {
                 let Some(counts) = byte_calls.iter().find(|x| x.0 == TESTS_CALL | k as u16).map(|x| (x.0, x.1, x.2.clone())) else { continue };
                 if !read_fused(&bytewise, a, &tests) || j >= 8 {
@@ -9458,6 +9640,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The last pass's body makes nothing but constants, and stores none of them.
         let bodiless = tokened && bodiless_body(native, slot_of, true);
         let (tokens, after, row_end) = (f.create_block(), f.create_block(), f.create_block());
+        // Each round builds the body again (`worth_calling`): its exits once.
+        exits.clear();
+        exits.push(head.to_string());
+        if tokened {
+            exits.push(tokens.to_string());
+        }
         let states = if tokened { STATE_WORDS } else { 0 };
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
@@ -9547,6 +9735,15 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
         let zero = f.ins().iconst(types::I64, 0);
+        // The totals' flag, which the token loop's parts OR a refusal into before the row's end
+        // ORs the body's in (`finish`): zero at the row's start, as a store there leaves it.
+        if tokened && counted.len() > native.extracts.len() {
+            let first_count = field(&mut f, 6);
+            let offset = f.ins().ishl_imm(first_count, 3);
+            let counts_all = reload(&mut f, 5);
+            let counts_at = f.ins().iadd(counts_all, offset);
+            f.ins().store(MemFlags::new().with_notrap(), zero, counts_at, 8 * native.extracts.len() as i32);
+        }
         // The token loop's state: the end of the token before where the stream starts
         // (`stream_start`), the rest zero.
         let outer_zero = zero;
@@ -9766,6 +9963,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init, hand }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             reads_back += cols.reads_back.get();
             arms += cols.arms.get();
+            arm_rules.extend(cols.arm_rules.borrow().iter().copied());
+            arm_rules.sort_unstable();
+            arm_rules.dedup();
             known_entries += cols.known_entries.get();
             f.switch_to_block(after);
             let st = f.block_params(after).to_vec();
@@ -9854,6 +10054,13 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             } else {
                 let any = f.ins().icmp_imm(IntCC::NotEqual, v, 0);
                 v = f.ins().uextend(types::I64, any);
+                // The token loop's parts before this ran between the blocks (`tokened`): a
+                // refusal of theirs is already in the totals' flag, which it ORs in memory
+                // (`record_tokens`), so the flag is ORed, not stored over.
+                if tokened && c == native.extracts.len() {
+                    let before = f.ins().load(types::I64, MemFlags::trusted(), counts_at, 8 * c as i32);
+                    v = f.ins().bor(v, before);
+                }
             }
             f.ins().store(stores, v, counts_at, 8 * c as i32);
         }
@@ -9897,8 +10104,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         if let Some(&body) = hot.first() {
             sink_extracts(&mut context.func, body);
         }
-        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
-            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
+        if let Some((r, v, at)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423): {at}")));
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
@@ -9968,7 +10175,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
     }
     let rare_branches = rare.len();
-    Ok((ascii_branch, gate_branches, round_branches, rare_branches, regions, kept, inlined, reads_back, arms, known_entries))
+    (pass_shape.ascii_branch, pass_shape.gate_branches, pass_shape.round_branches, pass_shape.rare_branches) = (ascii_branch, gate_branches, round_branches, rare_branches);
+    (pass_shape.region_calls, pass_shape.inlined_regions, pass_shape.reads_back, pass_shape.arms, pass_shape.known_entries) = (kept, inlined, reads_back, arms, known_entries);
+    Ok(Forwarded { regions, hot })
 }
 
 /// The last pass's body makes nothing but constants and stores none (`forward`): every output
@@ -9993,10 +10202,10 @@ pub fn calls_of(func: &cranelift_codegen::ir::Function) -> Vec<u32> {
     }
     for b in func.layout.blocks().filter(|b| reached.contains(b)) {
         for inst in func.layout.block_insts(b) {
-            if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst] {
-                if let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name {
-                    v.push(func.params.user_named_funcs()[r].index);
-                }
+            if let cranelift_codegen::ir::InstructionData::Call { func_ref, .. } = func.dfg.insts[inst]
+                && let cranelift_codegen::ir::ExternalName::User(r) = func.dfg.ext_funcs[func_ref].name
+            {
+                v.push(func.params.user_named_funcs()[r].index);
             }
         }
     }
@@ -10049,6 +10258,8 @@ pub enum Sym {
     Known(u64),
     Value(Value, bool),
     Slot(cranelift_codegen::ir::StackSlot, i32, bool),
+    /// Not made yet: every value's state until `Emit` makes it. Read, it is the compiler's error, never a zero.
+    Unmade,
 }
 
 impl Sym {
@@ -10057,6 +10268,7 @@ impl Sym {
             Sym::Known(c) => Sym::Known(!c),
             Sym::Value(v, neg) => Sym::Value(v, !neg),
             Sym::Slot(s, at, neg) => Sym::Slot(s, at, !neg),
+            Sym::Unmade => unmade(),
         }
     }
 
@@ -10071,6 +10283,9 @@ impl Sym {
     /// `a & b`, one instruction at most: a complemented side is a `bic`; both complemented,
     /// the complement of an `or`.
     fn and(f: &mut FunctionBuilder<'_>, a: Sym, b: Sym) -> Sym {
+        if let (Sym::Unmade, _) | (_, Sym::Unmade) = (a, b) {
+            unmade();
+        }
         if let (Sym::Known(0), _) | (_, Sym::Known(0)) = (a, b) {
             return Sym::Known(0);
         }
@@ -10087,6 +10302,7 @@ impl Sym {
             (Sym::Value(x, false), Sym::Value(y, true)) | (Sym::Value(y, true), Sym::Value(x, false)) => Sym::Value(f.ins().band_not(x, y), false),
             (Sym::Value(x, true), Sym::Value(y, true)) => Sym::Value(f.ins().bor(x, y), true),
             (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
+            (Sym::Unmade, _) | (_, Sym::Unmade) => unmade(),
         }
     }
 
@@ -10102,8 +10318,15 @@ impl Sym {
             }
             (Sym::Value(x, nx), Sym::Value(y, ny)) => Sym::Value(f.ins().bxor(x, y), nx != ny),
             (Sym::Slot(..), _) | (_, Sym::Slot(..)) => unreachable!("loaded"),
+            (Sym::Unmade, _) | (_, Sym::Unmade) => unmade(),
         }
     }
+}
+
+/// A value read before it is made (`Sym::Unmade`): the order of the compiler's making is wrong.
+#[track_caller]
+fn unmade() -> ! {
+    panic!("a value read before it is made")
 }
 
 /// Value `x` plain (not complemented), made once; a slot's word loaded at each use, not kept.
@@ -10119,6 +10342,7 @@ fn plain(f: &mut FunctionBuilder<'_>, syms: &[Sym], values: &mut [Option<Value>]
             let w = f.ins().stack_load(types::I64, s, at);
             return if neg { f.ins().bnot(w) } else { w };
         }
+        Sym::Unmade => panic!("value %{x} read before it is made"),
     };
     values[x] = Some(v);
     v

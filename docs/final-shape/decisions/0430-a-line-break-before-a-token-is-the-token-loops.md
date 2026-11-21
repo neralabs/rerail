@@ -1,7 +1,7 @@
 # 0430: A line break before a token is the token loop's, as the lean lexer's `nl`
 
 Status: decided (2026-11-18), the first step of 0429's "marks at every token" and "automatic
-semicolons" (items 3 and 6). Follows 0429, 0177 and 0490.
+semicolons" (items 3 and 6). Follows 0429, 0177 and 0416.
 
 ## Intro
 
@@ -46,7 +46,7 @@ escape for a block comment before a token that goes on (0429's going-on comments
 
 Two constructs made it work:
 
-1. **A level that took a mark at a token does not end there at a hidden `ends` mark** (Q228).
+1. **A level that took a mark at a token does not end there at a hidden `ends` mark** (Q345).
    After `head_ctor` is taken, `semi` is still live at the same token, and `class_rest` may end
    there (all its parts after are optional). So `semi`'s `ends` ended the level, and the
    statement took `semi` instead. The lean parser makes one decision at a line break. So in a
@@ -72,7 +72,7 @@ Tests: `constructor_lines_are_the_lean_parsers` (six more cases), and
 `a_constructor_off_its_modifiers_line_is_refused`. The corpus is unchanged: 447 the same, 44
 refused, 0 differ. `aot_tapes_are_the_jits` passes on the 447 files.
 
-Bitlex's reference does not implement `, ends` (Q229). It accepts the refused texts above,
+Bitlex's reference does not implement `, ends` (Q346). It accepts the refused texts above,
 because its `past_marks` skips the hidden `semi` inside `class_rest`, and its
 `primary_constructor` reads `private⏎constructor`.
 
@@ -112,7 +112,7 @@ bytes after it, so `'\u1'` and a line break after it made one token. The lean le
 The loop tells an extra by its mark in the code, so a blank mark is read so only where the
 extra's mark is the loop's: its reader's, or its first byte's. A mark set after the tokens is
 too late (`blank_marks`). The lifted gap marks the loop sets from the bytes (`loop_marks`) rest
-on the same condition; they now check it too (`extra_known`, Q230).
+on the same condition; they now check it too (`extra_known`, Q347).
 
 Test: `ladder_tests::a_gap_mark_read_from_the_blanks`. Its grammar has line breaks in block
 comments and strings, between extras and after `;`. The test checks the reference, the

@@ -1,5 +1,5 @@
-//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each the tree pass of
-//! `file_local` it replaces, one for one, reading the split from the version (`FileLocal`).
+//! The split's preparation passes on the pass manager (decision 0281's path, step 5), each reading the split from the
+//! version (`FileLocal`).
 
 use super::FileLocal;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
@@ -13,7 +13,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 mod factorize;
 mod push;
 mod requests;
-pub use factorize::FactorizeExports;
+pub use factorize::{FactorCaches, FactorizeExports, factorize_intermediates};
 pub use requests::RequestsFileLocal;
 pub use push::PushLocalJoins;
 
@@ -30,11 +30,12 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
     }
 }
 
-/// `file_local::locate` on the version: every relation the chunks hand on (an export, or a file-local output) given
-/// a location column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is
-/// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its
-/// rules bind, and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also
-/// read, a lattice, or one whose rule binds no location is left, and named in `blocked`.
+/// One round of `locate_all`: every relation the chunks hand on (an export, or a file-local output) given a location
+/// column, so each of its rows names its document (decision 0052). A relation without one, `r(p, l)`, is derived by
+/// the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind
+/// (from `node`, `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`),
+/// and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// one whose rule binds no location is left, and named in `blocked`: its rows are not attributable.
 #[derive(Default)]
 pub struct Locate {
     pub located: Vec<String>,
@@ -42,13 +43,39 @@ pub struct Locate {
 }
 
 impl Locate {
-    /// The tree pass's result: the relations located, or those left.
+    /// The round's result: the relations located, or those left.
     pub fn result(&self) -> Result<Vec<String>, Vec<String>> {
         if self.blocked.is_empty() { Ok(self.located.clone()) } else { Err(self.blocked.clone()) }
     }
 }
 
-/// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
+/// Every relation the chunks hand on made to name its document per row, so a file's rows can be memoised (decision
+/// 0052): `Locate`, and a relation a round leaves (its rows name no document) moved to the cross-file part
+/// (`MoveCrossFile`, decision 0290), with every file-local relation that reads it, and the program located again,
+/// until every row handed on is located. The chunks then hand on only located rows, and the per-file memo holds for the
+/// rest of the program. The relations located; the `Err` names the moved relations where a round blocks one the moves
+/// cannot place, which none is.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+    let mut moved: Vec<String> = Vec::new();
+    let mut located: Vec<String> = Vec::new();
+    loop {
+        let mut locate = Locate::default();
+        p.program(&mut locate);
+        located.extend(locate.located);
+        if locate.blocked.is_empty() {
+            return Ok(located);
+        }
+        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+        if fresh.is_empty() {
+            moved.sort();
+            return Err(moved);
+        }
+        moved.extend(fresh.iter().cloned());
+        p.program(&mut MoveCrossFile(fresh));
+    }
+}
+
+/// A round of `locate_all`'s move: the relations a round of `Locate` left, their rows naming no document,
 /// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
 /// program is located again (`preparation::run`).
 pub struct MoveCrossFile(pub Vec<String>);
@@ -60,7 +87,7 @@ impl ProgramPass for MoveCrossFile {
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
-        w.on()?.add_qualifiers(&words);
+        w.on()?.fields().add_qualifiers(&words);
         Ok(())
     }
 }
@@ -183,7 +210,7 @@ impl ProgramPass for Locate {
         let b = w.derive()?;
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(at, &cols);
+            b.fields().declare(at, &cols);
         }
         const D: &str = "__located_d";
         for item in items {
@@ -228,18 +255,24 @@ impl ProgramPass for Locate {
 
 // ---- rules a pass makes from its input's, written into a derivation (`FactorizeExports`, `PushLocalJoins`) ----
 
-/// A body item: a literal of the source rule, or an atom made (`rel`, args).
+/// A body item: a literal of the source rule, or an atom made (`rel`, args); a negated atom made; a count of a
+/// relation's rows into a variable (`var = count : { rel(_, …) }`, its width); a comparison made.
 #[derive(Clone)]
 pub(super) enum BodyItem<'v> {
     Orig(LitRef<'v>),
     New(String, Vec<NOwned<'v>>),
+    Not(String, Vec<NOwned<'v>>),
+    Count { var: String, rel: String, width: usize },
+    Cmp(NOwned<'v>, crate::code_rule_dsl::logic::program_image::CmpOp, NOwned<'v>),
 }
 
-/// A term of a rule being made: one of its source rule's, or a variable by name.
+/// A term of a rule being made: one of its source rule's, a variable by name, a number, or a call made.
 #[derive(Clone)]
 pub(super) enum NOwned<'v> {
     T(TermRef<'v>),
     V(String),
+    Int(i64),
+    Call(String, Vec<NOwned<'v>>),
 }
 
 /// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
@@ -257,6 +290,8 @@ fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> 
     match n {
         NOwned::T(t) => t_of(input, src, *t),
         NOwned::V(s) => T::Var(s.as_str()),
+        NOwned::Int(i) => T::Int(*i),
+        NOwned::Call(f, args) => T::Call(f.as_str(), args.iter().map(|a| t_from(input, src, a)).collect()),
     }
 }
 
@@ -266,18 +301,26 @@ pub(super) struct Round<'v> {
     pub(super) undeclared: Vec<String>,
     pub(super) rules: Vec<Made<'v>>,
     pub(super) no_inline: Vec<String>,
+    /// Relations it makes nullary (decision 0488's pair caches' guards).
+    pub(super) nullary: Vec<String>,
 }
 
 pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> Result<(), String> {
-    write_onto(b, input, round, false)
+    write_onto(b, input, round, false, true)
+}
+
+/// `write`, into a derivation of `input` that is itself a derivation (`first` false): its rules' sources are its
+/// own rules' sources, as `product_demand::Program::derive` records them.
+pub(super) fn write_derived(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, first: bool) -> Result<(), String> {
+    write_onto(b, input, round, false, first)
 }
 
 /// A round's program as an overlay of `input` holding only what the round changes (the rules it rewrites or drops
 /// removed, the ones it makes added), and its split, carried from `input`'s across that edit: a round costs its
-/// change, as the tree's rounds did through `split_memo`, where a derivation of the whole program split it whole.
+/// change, where a derivation of the whole program split it whole.
 pub(super) fn candidate(input: &std::sync::Arc<Version>, round: &Round<'_>) -> Result<(std::sync::Arc<Version>, std::sync::Arc<FileLocal>), String> {
     let mut b = Builder::on(input);
-    write_onto(&mut b, input, round, true)?;
+    write_onto(&mut b, input, round, true, true)?;
     let candidate = b.finish_overlay()?;
     let split = crate::code_rule_dsl::logic::program_image::manager::carried::<FileLocal>(input, &candidate)?;
     Ok((candidate, split))
@@ -285,7 +328,7 @@ pub(super) fn candidate(input: &std::sync::Arc<Version>, round: &Round<'_>) -> R
 
 /// `write`, into a derivation of `input` (`onto` false: every rule written, in order), or onto an edit of it (`onto`:
 /// the rules kept are there already, and the others are removed).
-fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: bool) -> Result<(), String> {
+fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: bool, first: bool) -> Result<(), String> {
     if onto {
         let kept: HashSet<u32> = round.rules.iter().filter(|m| m.kept).map(|m| m.src.id().0).collect();
         let gone: Vec<_> = input.rules().map(|r| r.id()).filter(|id| !kept.contains(&id.0)).collect();
@@ -295,19 +338,25 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     }
     for (rel, cols) in &round.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &cols);
+        b.fields().declare(rel, &cols);
     }
     for rel in &round.undeclared {
-        b.undeclare(rel);
+        b.fields().undeclare(rel);
     }
     for m in &round.rules {
         if m.kept {
-            if !onto {
+            if !onto && first {
                 b.keep(input, m.src);
+            } else if !onto {
+                b.copy_as_is(input, m.src);
             }
             continue;
         }
-        let mut rb = b.rule().source(m.src.id());
+        let source = if first { Some(m.src.id()) } else { m.src.source() };
+        let mut rb = b.rule();
+        if let Some(id) = source {
+            rb = rb.source(id);
+        }
         rb = match &m.head {
             None => rb.head_from(input, m.src, m.src.head()),
             Some((rel, args)) => {
@@ -322,18 +371,31 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
                     let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
                     rb.atom(rel.as_str(), &args)
                 }
+                BodyItem::Not(rel, args) => {
+                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                    rb.not(rel.as_str(), &args)
+                }
+                BodyItem::Count { var, rel, width } => {
+                    let wild = vec![T::Wild; *width];
+                    rb.agg(T::Var(var.as_str()), &crate::code_rule_dsl::logic::front::ast::AggOp::Count, None, rel.as_str(), &wild)
+                }
+                BodyItem::Cmp(l, op, r) => rb.cmp(t_from(input, m.src, l), *op, t_from(input, m.src, r)),
             };
         }
         rb.finish()?;
     }
+    if !round.nullary.is_empty() {
+        b.fields().add_nullary(&round.nullary);
+    }
     if !round.no_inline.is_empty() {
         let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
-        b.add_qualifiers(&words);
+        b.fields().add_qualifiers(&words);
     }
     Ok(())
 }
 
-/// A variable of `rule` by its name (the passes ported from the tree read variables as it does).
+/// A variable of `rule` by its name (the passes read variables by name, so their sets and searches run in a fixed
+/// order).
 pub(super) fn name(v: &Version, rule: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
     v.text(rule.var(s)).to_owned()
 }

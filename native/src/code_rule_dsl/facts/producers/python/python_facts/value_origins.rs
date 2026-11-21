@@ -58,8 +58,8 @@ pub fn value_origins<'t>(
         out.push(unparen(value));
     }
     if let Some(site) = binding.site.and_then(find) {
-        if site.kind() == "assignment" {
-            if let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
+        if site.kind() == "assignment"
+            && let (Some(left), Some(right)) = (site.field("left"), site.field("right")) {
                 let list = |node: &Node<'_, TapeDoc>| {
                     matches!(
                         node.kind().as_ref(),
@@ -101,7 +101,6 @@ pub fn value_origins<'t>(
                     }
                 }
             }
-        }
         if with_context
             && site.kind() == "as_pattern"
             && site.parent().is_some_and(|p| p.kind() == "with_item")

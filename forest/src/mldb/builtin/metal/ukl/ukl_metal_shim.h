@@ -26,6 +26,8 @@
 
 #define RWLOCAL(Type) threadgroup Type *
 
+#define UKL_SIMD_WIDTH 32
+
 #define CONSTBUFFER(Type) constant const Type *
 
 #define CAST_RWBUFFER(Buf, Type) reinterpret_cast<Type device *>(Buf)
@@ -167,6 +169,16 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 #define GEN_INNER_PARAMETER_LSZ1(Type) const Type
 #define GEN_INNER_PARAMETER_LSZ2(Type) const Type
 
+#define GEN_INNER_PARAMETER_ARGS(Type) constant const Type &
+#define GEN_INNER_PARAMETER_CONSTBUFFER(Type) constant const Type *
+#define GEN_INNER_PARAMETER_TGID0(Type) const Type
+#define GEN_INNER_PARAMETER_TGID1(Type) const Type
+#define GEN_INNER_PARAMETER_TGID2(Type) const Type
+#define GEN_INNER_PARAMETER_LANE(Type) const Type
+#define GEN_INNER_PARAMETER_NLANES(Type) const Type
+
+#define GEN_INNER_PARAMETER_SHARED(Type) threadgroup Type *
+
 #define GEN_INNER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_INNER_PARAMETER_, Access, Type) Name
 
 #define PASS_INNER_ARG_RWBUFFER(Type, Name) Name
@@ -187,6 +199,16 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 #define PASS_INNER_ARG_LSZ1(Type, Name) __localsz.y
 #define PASS_INNER_ARG_LSZ2(Type, Name) __localsz.z
 
+#define PASS_INNER_ARG_ARGS(Type, Name) Name
+#define PASS_INNER_ARG_CONSTBUFFER(Type, Name) Name
+#define PASS_INNER_ARG_TGID0(Type, Name) __groupid.x
+#define PASS_INNER_ARG_TGID1(Type, Name) __groupid.y
+#define PASS_INNER_ARG_TGID2(Type, Name) __groupid.z
+#define PASS_INNER_ARG_LANE(Type, Name) __laneid
+#define PASS_INNER_ARG_NLANES(Type, Name) __lanesz
+
+#define PASS_INNER_ARG_SHARED(Type, Name) Name
+
 #define PASS_INNER_ARG2(Access, Type, Name, Bounds) CALL2_A(PASS_INNER_ARG_, Access, Type, Name)
 
 #define GEN_OUTER_PARAMETER_RWBUFFER(Type, Name) device Type * Name
@@ -206,6 +228,19 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 #define GEN_OUTER_PARAMETER_LSZ0(Type, Name)
 #define GEN_OUTER_PARAMETER_LSZ1(Type, Name)
 #define GEN_OUTER_PARAMETER_LSZ2(Type, Name)
+
+#define GEN_OUTER_PARAMETER_ARGS(Type, Name) constant const Type & Name
+#define GEN_OUTER_PARAMETER_CONSTBUFFER(Type, Name) constant const Type * Name
+#define GEN_OUTER_PARAMETER_TGID0(Type, Name)
+#define GEN_OUTER_PARAMETER_TGID1(Type, Name)
+#define GEN_OUTER_PARAMETER_TGID2(Type, Name)
+#define GEN_OUTER_PARAMETER_LANE(Type, Name)
+#define GEN_OUTER_PARAMETER_NLANES(Type, Name)
+
+#define GEN_OUTER_PARAMETER_SHARED(Type, Name)
+// Metal reflects a structure's fields itself (UKL_REFLECT_STRUCT is for backends without reflection).
+#define UKL_REFLECT_STRUCT(Type, ...)
+#define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) threadgroup Type Name[Bounds];
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
 
@@ -235,6 +270,7 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
     uint3 __globalsz [[threads_per_grid]], \
     uint3 __localid [[thread_position_in_threadgroup]], \
     uint3 __localsz [[threads_per_threadgroup]], \
+    uint3 __groupid [[threadgroup_position_in_grid]], \
     uint16_t __laneid [[thread_index_in_simdgroup]], \
     uint16_t __lanesz [[threads_per_simdgroup]]
 
@@ -242,6 +278,7 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
     inline void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ); \
     kernel void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__), __UKL_METAL_LAUNCH_ARGS ) \
     { \
+            __UKL_FOREACH_QUAD_NOSEP(GEN_SHARED_DECL2, __VA_ARGS__) \
             Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__)); \
     } \
     inline void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ) \

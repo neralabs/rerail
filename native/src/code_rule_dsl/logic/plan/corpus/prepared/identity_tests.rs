@@ -52,7 +52,7 @@ fn prepared_identity_child() {
     let phase = std::env::var("RERAIL_PREPARED_IDENTITY_PHASE").unwrap();
     let out = root.join("out");
     let program = crate::code_rule_dsl::logic::settings::program_text(
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/calls_p3.rr")
+        &std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/calls_p3.rerail")
     ).unwrap();
     let text = format!("{program}\n.decl hit(c:node,f:node)\nhit(c,f) :- call_target(c,f).\n.output hit\n");
     let report = super::super::run_with_options(&[text.as_str()], &root, None, &out, "program", Binding::Cpu,
@@ -69,7 +69,7 @@ fn prepared_identity_child() {
             let identities: BTreeMap<_, _> = plan::identities(placed.fields().unwrap(), &plan::body::Versions::of_placed(placed.clone()), &sccs, &by).into_iter().collect();
             let label = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
             assert!(!programs.contains_key(&label), "one store must have one prepared variant per key");
-            programs.insert(label, serde_json::json!({"outputs":p.head.outputs,"front":p.source.show(),
+            programs.insert(label, serde_json::json!({"outputs":p.source.output_names(),"front":p.source.show(),
                 "local":p.split.versions.local.show(), "cross":p.split.versions.cross.show(),
                 "identities":identities}));
         }

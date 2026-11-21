@@ -70,7 +70,7 @@ impl Corpus {
         interrupted: &impl Fn() -> bool,
     ) -> Result<i64> {
         use crate::code_rule_dsl::phase_clock;
-        phase_clock::timed(&phase_clock::INDEX_PUBLISH, || {
+        phase_clock::timed(|c| &c.index_publish, || {
             self.publish(path, doc, interrupted)
         })
     }
@@ -168,7 +168,7 @@ impl Corpus {
         plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
         use crate::code_rule_dsl::phase_clock;
-        phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select(plans))
+        phase_clock::timed(|c| &c.anchor_select, || self.select(plans))
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -191,7 +191,7 @@ impl Corpus {
         demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
         use crate::code_rule_dsl::phase_clock;
-        phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select_files(demands))
+        phase_clock::timed(|c| &c.anchor_select, || self.select_files(demands))
     }
 
     fn select_files(&self, demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>) -> Result<()> {
@@ -303,7 +303,7 @@ impl Corpus {
             return Arc::clone(template);
         }
         use crate::code_rule_dsl::phase_clock;
-        let _compile = phase_clock::Span::start(&phase_clock::ANCHOR_COMPILE);
+        let _compile = phase_clock::Span::start(|c| &c.anchor_compile);
         #[cfg(feature = "code-rule-profile")]
         let mut lower =
             crate::code_rule_dsl::profile::trace::Span::start("anchor-lower", "template");

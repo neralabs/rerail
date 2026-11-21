@@ -7,16 +7,14 @@ pub struct Work { pub requests: usize, pub reads: usize, pub output: usize, pub 
 thread_local! { static WORK: std::cell::RefCell<Work> = std::cell::RefCell::new(Work::default()); }
 pub fn take_work() -> Work { WORK.with(|w| std::mem::take(&mut *w.borrow_mut())) }
 fn mode() -> Option<Mode> {
-    static MODE: OnceLock<Option<Mode>> = OnceLock::new();
-    *MODE.get_or_init(|| std::env::var("RERAIL_LOOKUP_SPIKE").ok().map(|s| match s.as_str() {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LOOKUP_SPIKE").ok().map(|s| match s.as_str() {
         "point" => Mode::Point, "merge" => Mode::Merge, "gallop" => Mode::Gallop, "adaptive" => Mode::Adaptive, _ => panic!("invalid lookup mode")
     }))
 }
 pub(super) fn selected(r: &Relation, column: usize, keys: &[i64]) -> Option<Vec<usize>> {
     let mode = mode()?;
     if keys.len() < 2 { return None; }
-    static TRACE: OnceLock<bool> = OnceLock::new();
-    let trace = *TRACE.get_or_init(|| std::env::var_os("RERAIL_LOOKUP_TRACE").is_some());
+    let trace = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_LOOKUP_TRACE").is_some());
     let (rows, w) = if trace { run::<true>(r,column,keys,mode) } else { run::<false>(r,column,keys,mode) };
     if trace { WORK.with(|total| { let mut t=total.borrow_mut(); t.requests+=w.requests; t.reads+=w.reads; t.output+=w.output; t.point+=w.point; t.merge+=w.merge; t.gallop+=w.gallop; }); }
     Some(rows)
@@ -48,7 +46,6 @@ fn run<const TRACE: bool>(r: &Relation, column: usize, keys: &[i64], mut mode: M
     match mode {
         Mode::Point => {
             work.point=1;
-            drop(value);
             for &key in keys {
                 let lo=index.partition_point(|&row| {if TRACE {reads+=1;} r.value(row as usize,column)<key});
                 let hi=index.partition_point(|&row| {if TRACE {reads+=1;} r.value(row as usize,column)<=key});

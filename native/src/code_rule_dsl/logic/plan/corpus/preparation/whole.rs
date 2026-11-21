@@ -1,5 +1,5 @@
 //! The passes on the whole combined program, once its parts are linked (decision 0281's path, step 7a-1), on its
-//! version: `combine_read`'s tail. Each is the tree's pass of the same name, which a debug build runs beside it.
+//! version: the combine's tail (`corpus::tail_version`).
 
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, Reads, edit_as_is};
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version};
@@ -17,7 +17,7 @@ fn edit_misses(cx: &Cx<'_>, last: &Last<'_>, heads: impl Fn(&str) -> bool) -> bo
         && last.delta.added.iter().all(|&id| v.rule(id).is_some_and(|r| !of(v, r)))
 }
 
-/// core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
+/// core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
 /// `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
 /// program. Both would give `kind` two domains.
 #[derive(Default)]
@@ -49,14 +49,19 @@ impl ProgramPass for Projected {
         let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         if inputs.iter().any(|i| projected.contains(&i.as_str())) {
             let kept: Vec<String> = inputs.into_iter().filter(|i| !projected.contains(&i.as_str())).collect();
-            w.on()?.set_inputs(&kept);
+            w.on()?.fields().set_inputs(&kept);
         }
         Ok(())
     }
 }
 
-/// The helpers' columns typed by the library's declarations, which each program was lowered without
-/// (`rr::retype_helpers`): a helper's symbol column every rule fills from one typed column takes that type.
+/// The helpers' columns typed again once the library's declarations are known (the combined program).
+///
+/// A program is lowered without the library: a helper column bound only by a library relation (`kind(n, …)`,
+/// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
+/// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
+/// the node the rule's own atoms make it, which no native plan compares. A helper's symbol column every rule fills
+/// from one typed column takes that type; a column a symbol column binds stays one.
 #[derive(Default)]
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct RetypeHelpers;
 
@@ -130,7 +135,7 @@ impl ProgramPass for RetypeHelpers {
             let b = w.on()?;
             for rel in &retyped {
                 let cols: Vec<(&str, &str)> = decls[rel].iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-                b.declare(rel, &cols);
+                b.fields().declare(rel, &cols);
             }
         }
         Ok(())

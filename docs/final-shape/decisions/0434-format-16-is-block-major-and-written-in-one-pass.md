@@ -2,7 +2,8 @@
 
 Status: accepted (2026-11-18)
 
-Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token").
+Numbered 0399 where it was written (the hub's 0399 is "a `\u` escape's checks run at its token"). Numbered 0426 on
+django-bugs (until roll-up 7) and on CUDA-support (until roll-up 8).
 
 ## Intro
 
@@ -302,6 +303,15 @@ its parts in one shared buffer). Each fails when the tail's padding write is tak
 the region does not grow: the test gives each part the room the host's run of the same calls reserved; sizing the
 region from bounds before a parse is tier 2's (R17), with a part found full the device's failure (fail::FULL).
 
+**Since roll-up 8 (2026-11-19): the device's ops are UKL (decision 0440).** `rerail_clif::writer::ukl_source` writes
+them through the UKL translator the reads use, into the library's `<ukl/writer.h>` (checked by
+`the_tape_crates_writer_kernels_are_these`); `writer.metal` and the MSL translator are gone. R15's test runs the
+replay kernel on the process's device (`rerail_gpu`), whatever its backend.
+
+**Since 2026-11-20: the device's ops are written by hand (decision 0524).** `<ukl/writer.h>` is the same ops as
+functions written by hand, not the translator's output; `writer::ukl_source` and its check are gone. R15's test holds
+them to the reference, and `the_writer_headers_constants_are_the_ops` holds their layout constants to `writer.rs`'s.
+
 **Done (2026-11-18): the host's writer is the ops (R16).** `f16::Writer` is the ops in CLIF through their Rust
 (`f16/ops.rs`); the hand-written writer is `f16::reference::Writer`, compiled only for the tests and for the lab,
 which turns on the tape crate's `reference` feature (no build of the engine does), and so is liblz4's compressor:
@@ -383,7 +393,7 @@ The plan, in three parts:
    matches nothing there: no roots are looked for, and no anchor index or posting is built for it. A walk for a
    clause's roots (`nodes_of_kinds`, the postings) passes over the blocks that hold none of them. On the device,
    the label kernels' scans start only in the blocks that hold an anchor's kinds.
-3. **The store keeps it**, as a derived fact in a block, written once where it is computed (0353): on 0402's kept
+3. **The store keeps it**, as a derived fact in a block, written once where it is computed (0353): on 0456's kept
    facts (packed columns in a chain of mapped files, SQLite holding pointers only), which are on
    `final-rerail-shape-rr-align` and not yet here. Then the warm path reads it in place of the FTS index's kinds
    for format 16 tapes, and fields too.
@@ -409,7 +419,7 @@ the device's sweeps, which would read each block's presence words before its 1,0
 what lies in the residency slabs, so the block presence must be laid there beside the tape, not uploaded from the
 image's `Vec` (0353); that is part 3's layout, so the device's block skip comes with it.
 
-**Done (2026-11-18): part 3, the store keeps it.** 0402's branch is merged here (75078a7e7). The presence is an entry
+**Done (2026-11-18): part 3, the store keeps it.** 0456's branch is merged here (75078a7e7). The presence is an entry
 of a kept-facts space of its own (`content_store::kept_facts::presence`), keyed by the tape's write-back key
 (`core::tape_key`: its source's digest, language, grammar and format versions), its rows the words in their order
 (the document's, then each block's), one column kept as given. A wave's presences are gathered and written as one
@@ -473,7 +483,7 @@ the host both leave that block's roots out).
 | R12 | No format 15 column, image or tape is made for a format 16 run (lean, tier 2, tree-sitter) | `no_intermediate_tape` (step 3) |
 | R13 | The CLIF ops write the reference's tape, in 16 and 16z, for any sequence of ops the reference takes (escapes, late closes, `retag`, `set_start`, repeats), on the Rust backend and the JIT | `the_clif_ops_write_the_references_tape` (step 4) |
 | R14 | An op fails as the reference does; a full part fails as full, and nothing is written past its capacity | `the_clif_ops_fail_as_the_reference`, `a_full_writer_writes_nothing_past_its_parts` (step 4) |
-| R15 | The ops in MSL write the same tape on the device | `the_device_writes_the_references_tape` (step 4) |
+| R15 | The ops on the device (MSL, UKL since roll-up 8) write the same tape | `the_device_writes_the_references_tape` (step 4) |
 | R16 | The host's `Writer` is the generated ops; the hand-written one is the tests' oracle only | `the_writer_is_the_clif_ops` (step 4) |
 | R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops`, `edits_of_nodes_passed_reach_the_ops` (CPU, done); the device waits on tier 2 on Metal |
 

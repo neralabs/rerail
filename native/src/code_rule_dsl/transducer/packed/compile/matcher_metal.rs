@@ -8,7 +8,12 @@ use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, Roo
 /// (`metal_program_backend::label_passes`), pattern leaves included (`MatcherDevice::matcher_roots`).
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
-    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&this.domain, tape, sets).collect()).collect();
+    // A label domain is not known before the passes run: its kinds' nodes.
+    let listed = match &this.domain {
+        Domain::Label(_) | Domain::Within(..) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
+        other => other.clone(),
+    };
+    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
     let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
@@ -95,35 +100,36 @@ fn metal<'a>(
         .collect::<Vec<_>>();
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
-    // Metal, where the label is not known before the command buffer runs, it starts at the nodes
-    // of the kinds the label can have (`Labels::bound`). They are a rule over each document's
+    // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
+    // the label is not known before the command buffer runs, so the rule names the kinds the label
+    // can have (`Labels::bound`); the walk's anchor, which reads the label (its first test), keeps
+    // the walks to the label's members (decision 0365, 0459). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
+    // A demand's set (`Domain::Within`, decision 0460) is not a rule over codes: the rule names its kinds, and the
+    // pass's anchor holds the set (`demands`, by the roots it keys, read below).
     let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
+    let mut demands = HashMap::<usize, compile_sets::Set>::new();
+    let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
-        let bound = match starts {
-            Domain::Label(_) => {
-                Some(clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())))
-            }
-            _ => None,
-        };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
-        let starts = bound.unwrap_or_else(|| starts.clone());
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
-        Arc::clone(shared.entry(key).or_insert_with(|| {
+        let roots = Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
                 Domain::All => None,
-                Domain::Kinds(kinds) => Some(kinds),
-                Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
+                Domain::Kinds(kinds) => Some(kinds.clone()),
+                Domain::Label(_) | Domain::Within(..) => clause.labels.bound(starts, &mut Vec::new()).map(|kinds| kinds.into_iter().collect()),
             };
             Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
-        }))
+        }));
+        if let Some(set) = starts.demand() {
+            demands.insert(Arc::as_ptr(&roots) as usize, set.clone());
+        }
+        roots
     };
-    let index = |label: u16| u32::from(label - LABEL_BASE);
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
@@ -133,17 +139,17 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                let mut rows = Vec::new();
-                for (file, (tape, base)) in tapes.iter().zip(&bases).enumerate() {
-                    if !active.is_none_or(|active| active[at][file]) {
-                        continue;
-                    }
-                    let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
-                        rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
-                    }
-                }
-                Pass::Fact { target, rows }
+                // Where each active file's findings are in the fact block, which the device reads in place (Q289).
+                let found = tapes
+                    .iter()
+                    .enumerate()
+                    .filter(|&(file, _)| active.is_none_or(|active| active[at][file]))
+                    .filter_map(|(file, tape)| {
+                        let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
+                        facts.get(&key).map(|found| (file as u32, *found))
+                    })
+                    .collect();
+                Pass::Fact { target, block: Arc::clone(&facts.block), found, labels: labels.iter().map(|label| index(*label)).collect() }
             }
             Label::Pattern(pattern, starts) | Label::Constrained(pattern, starts, _) => {
                 let constraints = match clause.labels.def(id) {
@@ -204,8 +210,8 @@ fn metal<'a>(
             ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone(), None),
             ClauseRoots::Rule(active) => Roots::Codes {
                 kinds: match &clause.domain {
-                    Domain::Kinds(kinds) => Some(kinds.clone()),
-                    Domain::All | Domain::Label(_) => None,
+                    Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds.clone()),
+                    Domain::All | Domain::Label(_) | Domain::Within(None, _) => None,
                 },
                 entry: Vec::new(),
                 active: active[at].clone(),
@@ -218,7 +224,11 @@ fn metal<'a>(
                 clauses
                     .iter()
                     .enumerate()
-                    .map(|(at, clause)| Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false })
+                    .map(|(at, clause)| match (clause.label_copy(), clause_roots) {
+                        // Its roots are a label's members in its domain: read from the label's row below, not walked.
+                        (Some(_), ClauseRoots::Rule(_)) => Pass::Empty { target: (labels + at) as u32 },
+                        _ => Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false },
+                    })
                     .collect(),
             ],
         ));
@@ -237,7 +247,7 @@ fn metal<'a>(
             }
         }
     }
-    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_formula`). A recursive group's
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_phase`). A recursive group's
     // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
     // the group's rounds (`Runner::anchors`).
     if anchors_on() {
@@ -263,7 +273,8 @@ fn metal<'a>(
             };
             for pass in levels.iter_mut().flatten() {
                 let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
-                let Some(formula) = device_anchor(program, &|label| own.contains(&u32::from(label))) else { continue };
+                let demand = demands.get(&(Arc::as_ptr(roots) as usize));
+                let Some(formula) = device_anchor(program, demand, &|label| own.contains(&u32::from(label))) else { continue };
                 let key = (Arc::as_ptr(roots) as usize, formula);
                 let with = anchored.entry(key.clone()).or_insert_with(|| {
                     let anchor = Some(key.1.clone());
@@ -287,20 +298,38 @@ fn metal<'a>(
     // Each clause's roots: its label's set bits, a word at a time, as each tape's local nodes.
     let found = (0..clauses.len())
         .map(|at| {
-            let row = &outcome.labels[(labels + at) * words..(labels + at + 1) * words];
+            let clause = clauses[at];
+            let row_of = |label: usize| &outcome.labels[label * words..(label + 1) * words];
+            // A clause that copies a label (`label_copy`): that label's row, where the clause is active, in its domain.
+            let copied = match clause_roots {
+                Some(ClauseRoots::Rule(active)) => clause.label_copy().map(|label| (index(label) as usize, active)),
+                _ => None,
+            };
+            let row = row_of(copied.map_or(labels + at, |(label, _)| label));
+            let within = match &clause.domain {
+                Domain::Label(label) if copied.is_some() => Some(row_of(index(*label) as usize)),
+                _ => None,
+            };
             tapes
                 .iter()
                 .zip(&bases)
-                .map(|(tape, &base)| {
-                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
+                .enumerate()
+                .map(|(file, (tape, &base))| {
                     let mut set = BTreeSet::new();
+                    if copied.is_some_and(|(_, active)| !active[at][file]) {
+                        return set;
+                    }
+                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
                     for w in from / 32..to.div_ceil(32) {
-                        let mut bits = row[w];
+                        let mut bits = row[w] & within.map_or(u32::MAX, |within| within[w]);
                         while bits != 0 {
                             let global = 32 * w + bits.trailing_zeros() as usize;
                             bits &= bits - 1;
                             if (from..to).contains(&global) {
-                                set.insert((global - from) as u32);
+                                let local = (global - from) as u32;
+                                if copied.is_none() || clause.domain.admits_kind(tape.transducer_kind(local)) {
+                                    set.insert(local);
+                                }
                             }
                         }
                     }
@@ -396,51 +425,70 @@ fn apart<'a>(
         if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
-        let plan = Plan {
-            labels,
-            counts,
-            patterns: patterns.clone(),
-            steps: std::mem::take(&mut segment.0),
-            chains: std::mem::take(&mut segment.1),
-            // The labels so far, none before the first run (`Plan::initial`).
-            initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
-            rows: Some(&rows),
-            buffers: Some(&kept),
-            roots: if last { roots } else { None },
-            w_cost,
-        };
-        crate::code_rule_dsl::prof::release();
-        let before = crate::code_rule_dsl::prof::footprint_mb();
-        mark("plan");
-        let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
-        if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-            let _ = tikv_jemalloc_ctl::epoch::advance();
-            eprintln!(
-                "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
-                crate::code_rule_dsl::prof::footprint_mb(),
-                crate::code_rule_dsl::prof::max_footprint_mb(),
-                tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
-                tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
-                crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-            );
-            if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
-                eprintln!("RUN holding, pid {}", std::process::id());
-                while !std::path::Path::new(&path).exists() {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+        // The segment's steps as runs, in order (a stack, the next on top). A run past its evaluation's launches
+        // (`label_passes`: its plan's bound, or its submission's where a group did not fuse) with more than one step
+        // is two runs, of its halves: the first's labels start the second, as a host sweep's do. A step's launches
+        // do not shrink with the files, so splitting the wave's tapes alone could not make it fit.
+        let mut pieces = vec![(std::mem::take(&mut segment.0), std::mem::take(&mut segment.1))];
+        while let Some((steps, chains)) = pieces.pop() {
+            let plan = Plan {
+                labels,
+                counts,
+                patterns: patterns.clone(),
+                steps,
+                chains,
+                // The labels so far, none before the first run (`Plan::initial`).
+                initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
+                rows: Some(&rows),
+                buffers: Some(&kept),
+                roots: if last && pieces.is_empty() { roots } else { None },
+                w_cost,
+            };
+            crate::code_rule_dsl::prof::release();
+            let before = crate::code_rule_dsl::prof::footprint_mb();
+            mark("plan");
+            let ran = match crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes)) {
+                Err(Error::BackendLaunchLimit) if plan.steps.len() > 1 => {
+                    crate::code_rule_dsl::prof::count("labels.launch_split", 1);
+                    // A refused run leaves its starting labels in the plan (`Plan::initial`).
+                    outcome.labels = plan.initial.take().unwrap_or_default();
+                    let (mut steps, mut chains) = (plan.steps, plan.chains);
+                    let half = steps.len() / 2;
+                    pieces.push((steps.split_off(half), chains.split_off(half)));
+                    pieces.push((steps, chains));
+                    continue;
+                }
+                ran => ran?,
+            };
+            if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+                let _ = tikv_jemalloc_ctl::epoch::advance();
+                eprintln!(
+                    "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
+                    crate::code_rule_dsl::prof::footprint_mb(),
+                    crate::code_rule_dsl::prof::max_footprint_mb(),
+                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                    tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
+                    crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+                );
+                if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
+                    eprintln!("RUN holding, pid {}", std::process::id());
+                    while !std::path::Path::new(&path).exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
                 }
             }
+            crate::code_rule_dsl::prof::peak("3b.gpu");
+            outcome.labels = ran.labels;
+            if !ran.records.is_empty() {
+                outcome.records = ran.records;
+            }
+            outcome.command_buffers += ran.command_buffers;
+            outcome.dispatches += ran.dispatches;
+            outcome.unfinished.extend(ran.unfinished);
+            outcome.replanned += ran.replanned;
+            outcome.rounds = outcome.rounds.max(ran.rounds);
+            (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         }
-        crate::code_rule_dsl::prof::peak("3b.gpu");
-        outcome.labels = ran.labels;
-        if !ran.records.is_empty() {
-            outcome.records = ran.records;
-        }
-        outcome.command_buffers += ran.command_buffers;
-        outcome.dispatches += ran.dispatches;
-        outcome.unfinished.extend(ran.unfinished);
-        outcome.replanned += ran.replanned;
-        outcome.rounds = outcome.rounds.max(ran.rounds);
-        (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
     };
     for ((step, chain), (recursive, levels)) in steps.into_iter().zip(chains).zip(&host) {
@@ -476,37 +524,39 @@ fn apart<'a>(
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
         let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
-        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
-            let levels = levels
-                .iter()
-                .map(|level| {
-                    level
-                        .iter()
-                        .copied()
-                        .filter(|&(clause, _)| {
-                            clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            if levels.iter().any(|level| !level.is_empty()) {
-                // The text rows the GPU runs evaluated over every file, sliced to this one.
-                let base = bases[at];
-                let texts = |walk: &Micro, program: &Program| {
-                    (0..walk.texts.len())
-                        .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
-                        .collect::<Option<Vec<_>>>()
-                };
-                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
-                // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
-                let index = compile_sets::Index::default();
-                if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
-                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+        let given = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
+                let levels = levels
+                    .iter()
+                    .map(|level| {
+                        level
+                            .iter()
+                            .copied()
+                            .filter(|&(clause, _)| {
+                                clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                if levels.iter().any(|level| !level.is_empty()) {
+                    // The text rows the GPU runs evaluated over every file, sliced to this one.
+                    let base = bases[at];
+                    let texts = |walk: &Micro, program: &Program| {
+                        (0..walk.texts.len())
+                            .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
+                            .collect::<Option<Vec<_>>>()
+                    };
+                    // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                    // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                    let index = compile_sets::Index::default();
+                    if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
+                        return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                    }
                 }
-            }
-            Ok::<_, Error>(Vec::new())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, Error>(Vec::new())
+            })
+            .collect::<Result<Vec<_>, _>>()
+        })?;
         outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();

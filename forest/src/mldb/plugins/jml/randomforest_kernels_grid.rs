@@ -303,7 +303,7 @@ mod tests {
     /// Every registration specializes against its Metal function: each reflected argument finds its parameter,
     /// its `args` structure's fields, or its threadgroup length.
     #[test]
-    fn grid_kernels_specialize_on_metal() {
+    fn grid_kernels_specialize_on_the_device() {
         if crate::gpu::shared::get().is_none() {
             eprintln!("no Metal device: skipped");
             return;
@@ -316,27 +316,27 @@ mod tests {
 
     use crate::bucket::WritableBucketList;
     use crate::compute_kernel_grid::ComputeKernelArgument::{self, Buffer as B, Float, Int};
-    use crate::compute_kernel_metal::MetalComputeQueue;
+    use crate::device::ComputeQueue;
     use crate::memory_region::{MemorySerializer, Pod};
     use crate::randomforest_kernels as host;
     use crate::randomforest_types::*;
 
-    fn buf<T: Pod>(v: &[T]) -> metal::Buffer {
+    fn buf<T: Pod>(v: &[T]) -> crate::device::Buffer {
         let shared = crate::gpu::shared::get().unwrap();
         let n = std::mem::size_of_val(v).max(16);
-        let b = shared.device.new_buffer(n as u64, metal::MTLResourceOptions::StorageModeShared);
+        let b = crate::device::alloc_uninitialized_array_sync::<u8>(&shared.device, n);
         unsafe { std::ptr::copy_nonoverlapping(v.as_ptr().cast::<u8>(), b.contents().cast::<u8>(), std::mem::size_of_val(v)) };
         b
     }
 
-    fn read<T: Pod + Clone>(b: &metal::Buffer, n: usize) -> Vec<T> {
+    fn read<T: Pod + Clone>(b: &crate::device::Buffer, n: usize) -> Vec<T> {
         unsafe { std::slice::from_raw_parts(b.contents().cast::<T>(), n).to_vec() }
     }
 
     fn run(name: &str, args: &[(&str, ComputeKernelArgument)], grid: &[u32]) {
         let shared = crate::gpu::shared::get().unwrap();
         let k = kernel(name).unwrap_or_else(|e| panic!("{e}"));
-        let q = MetalComputeQueue::new(&shared.queue);
+        let q = ComputeQueue::new(&shared.queue);
         {
             let mut ctx = q.new_bind_context(k.function);
             k.enqueue(args, grid, &mut ctx).unwrap_or_else(|e| panic!("{e}"));
@@ -349,18 +349,18 @@ mod tests {
     /// the partition numbering, the rows' new partitions (the tree evaluated on the rows) with the work list of
     /// the rows that moved, and the children's buckets after the transfer and the fixup.
     #[test]
-    fn one_level_on_metal_matches_the_host_kernels() {
-        one_level_on_metal(false);
+    fn one_level_on_the_device_matches_the_host_kernels() {
+        one_level_on_the_device(false);
     }
 
     /// The same for a regression: soft labels (each row's weights to false and true from its target) and the
     /// variance criterion.
     #[test]
-    fn one_regression_level_on_metal_matches_the_host_kernels() {
-        one_level_on_metal(true);
+    fn one_regression_level_on_the_device_matches_the_host_kernels() {
+        one_level_on_the_device(true);
     }
 
-    fn one_level_on_metal(regression: bool) {
+    fn one_level_on_the_device(regression: bool) {
         if crate::gpu::shared::get().is_none() {
             eprintln!("no Metal device: skipped");
             return;
@@ -369,7 +369,7 @@ mod tests {
         let target = |r: u32| ((r % 8) * 12 + (r * 37) % 13) as f32 / 100.0;
         let mut s = MemorySerializer;
         let nr = 1000u32;
-        let label = |r: u32| r % 8 >= 3 || r % 13 == 0;
+        let label = |r: u32| r % 8 >= 3 || r.is_multiple_of(13);
         let feature_nb = [8u32, 3, 50];
         let bucket_of = |f: usize, r: u32| match f {
             0 => r % 8,

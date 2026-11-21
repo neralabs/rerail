@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regenerate docs/rule-syntax/packs/python-main/ (main's 537 Python JSON rules as engine .rr rules) and
+# Regenerate docs/rule-syntax/packs/python-main/ (main's 537 Python JSON rules as engine .rerail rules) and
 # reader-check it.
 #
 #   ENGINE=<rerail-engine binary> [PACK_RULES=<main's pack rules dir>] [RERAIL_RR_LIB=<engine lib dir>] \
@@ -21,7 +21,7 @@ ids=${1:--}
 
 # Old generated files move to a trash dir, so a rule dropped from the id list does not linger; the README stays. (Nothing is deleted: the trash dir is under /tmp.)
 trash=$(mktemp -d /tmp/ai-trash.rerail-main-pack.XXXXXX)
-find "$out" -maxdepth 1 -name '*.rr' -exec mv {} "$trash"/ \;
+find "$out" -maxdepth 1 -name '*.rerail' -exec mv {} "$trash"/ \;
 if [ "$ids" = - ]; then
     set -- "$PACK_RULES"/*.json
 else
@@ -31,13 +31,13 @@ fi
 nice -n 19 "$ENGINE" translate-json "$@" --out "$out"
 
 check="$trash/check.json"
-ls "$out"/*.rr | xargs nice -n 19 "$ENGINE" check-rr > "$check" 2>/dev/null || true
+ls "$out"/*.rerail | xargs nice -n 19 "$ENGINE" check-rr > "$check" 2>/dev/null || true
 python3 - "$check" "$out/reader-check.txt" <<'EOF'
 import json, os, sys
 rows = json.load(open(sys.argv[1]))
 lines = []
 for r in rows:
-    rid = os.path.basename(r["path"])[:-3]
+    rid = os.path.basename(r["path"]).removesuffix(".rerail")
     err = (r.get("error") or "").strip().splitlines()
     msg = ""
     if err:

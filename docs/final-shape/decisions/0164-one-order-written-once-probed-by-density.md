@@ -92,7 +92,7 @@ to zero, and so does its CPU.
 ### 3. A probe is made by density
 
 A join step knows, before it probes, how many bindings it has (`d`) and how many ids the order's run holds
-(`n`). From the bulk lookup measurements (`../../comparisons/candidate-and-index-spikes.md`: point probes 2,905 µs
+(`n`). From the bulk lookup measurements (`../../comparisons/candidate-and-index-spikes.md` (removed; at 7efcac9c67): point probes 2,905 µs
 against a merge's 141 µs for 50,000 dense keys, and 1.95 µs against 38.3 µs for 32 sparse ones):
 
 | Keys | Way | Cost |

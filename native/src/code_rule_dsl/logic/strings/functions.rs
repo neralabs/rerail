@@ -1,8 +1,8 @@
-//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
+//! The `core.rerail` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
 //! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function of the same name
 //! (`lower`, `max`, `min` and `mod` in place of SQLite's own). A rule's call `@f(a, b)` is lowered to `f(a, b)` in
 //! SQL, its symbol arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`).
-//! Each function's meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
+//! Each function's meaning is `core.rerail`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
 //! compile, or a value Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no
 //! row for it.
 
@@ -52,10 +52,11 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
-    // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
+    ("ascii_lower", &[Text], Text),
+    // `.rerail`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
     // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
-    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    // (`simplify::ConcatInverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
     ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
@@ -71,21 +72,22 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_mul", &[Number, Number], Number),
     ("float_div", &[Number, Number], Number),
     ("float_str", &[Number], Text),
-    // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
+    // `.rerail`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
     ("rx_group", &[Text, Text, Text], Text),
-    // `.rr`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
+    // `.rerail`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
     // lowers the calls to its own operators, and these names give it the same functions. No value on overflow or
     // for a zero divisor; division truncates, as SQLite's does.
     ("rr_add", &[Number, Number], Number),
     ("rr_sub", &[Number, Number], Number),
     ("rr_mul", &[Number, Number], Number),
     ("rr_div", &[Number, Number], Number),
+    ("rr_admit_pairs", &[Number, Number, Number, Number], Number),
     ("rr_max", &[Number, Number], Number),
     ("rr_min", &[Number, Number], Number),
     // A flat lattice's `@flat_bin(op, a, b)` (`select::term`'s SQL form): `top` (1 << 62) when either side is, or the
     // op is not `+`, `-` or `*`, or a product's sides are 2^40 or more; an overflow is `top` too.
     ("flat_bin", &[Text, Number, Number], Number),
-    // `.rr`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
+    // `.rerail`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
     // atom, so the path is a number here. `-2 - (path << 32 | line)`, `unset` (-1) for a line outside `0 .. 2^32`.
     ("rr_place", &[Number, Number], Number),
     ("rr_place_path", &[Number], Number),
@@ -121,7 +123,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // lowering, `rr::lower::printf_pieces`).
     ("zero_pad", &[Number, Number], Text),
     // A node's text past `text`'s inline bound (`facts::vtab::syntax::LongTexts::long_text`): none for a shorter one, which
-    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
+    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`preparation::text`'s `Twins`).
     ("rr_node_text", &[Number], Text),
     // A node's exact text at any length (`facts::vtab::syntax::LongTexts::text_any`): `node_text`'s answer (decision 0174).
     ("rr_node_text_any", &[Number], Text),
@@ -130,10 +132,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (`facts::vtab::syntax::LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
-    // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
+    // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
-    // `core.rr`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
+    // `core.rerail`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
     // `semver_subset` none unless both are ranges (an evaluation error in W, which gives no row).
     ("semver_valid", &[Text], Number),
     ("semver_subset", &[Text, Text], Number),
@@ -142,7 +144,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
-/// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
+/// The function the native engine computes `.rerail`'s call `f` with: `f` itself when it is one of these, or its
 /// `rr_` name (`@add`, `@strlen`, …).
 pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
@@ -153,7 +155,7 @@ pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
 
 /// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
 /// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
-/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
+/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rerail` has its own of those names.
 pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
     Some(match (f, n) {
         ("instr", 2) => ("sql_instr", false),
@@ -191,10 +193,12 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     // A node's text or value, from the batch this connection's run binds (`node_read`).
-    let at = crate::code_rule_dsl::facts::vtab::Scoped::at(db);
+    // The connection's data (decision 0442), held by its functions, which close with it.
+    let data = crate::code_rule_dsl::facts::vtab::connection_data(db);
     for name in NODE_READS {
+        let data = std::sync::Arc::clone(&data);
         db.create_scalar_function(name, 1, FunctionFlags::SQLITE_UTF8, move |ctx| {
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_at(at, LONG_TEXT_NODES).as_deref(), n));
+            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n));
             Ok(text.map_or(Value::Null, Value::Text))
         })?;
     }
@@ -268,6 +272,40 @@ pub fn install_py_repr(repr: fn(&str) -> String) {
     let _ = PY_REPR.set(repr);
 }
 
+/// Current exact factor sizes, their positive readers, and the candidate's share of the row allowance.
+#[derive(Clone, Copy, Debug)]
+pub struct PairCacheInput {
+    pub left: u64,
+    pub right: u64,
+    pub readers: u64,
+    pub allowance: u64,
+}
+
+type PairClassifier = fn(PairCacheInput) -> bool;
+
+/// A machine's pair cache admission (decision 0442: the machine's, not the process's): its pricer's choice, set with
+/// the pricer (`plan::joins::set_pricer`), which this crate cannot name.
+#[derive(Default)]
+pub struct PairAdmission(pub parking_lot::RwLock<Option<std::sync::Arc<dyn Fn(PairCacheInput) -> Option<bool> + Send + Sync>>>);
+
+/// The caller's machine's choice for a pair cache that fits, else kept.
+fn machine_admits(input: PairCacheInput) -> bool {
+    let admission = rerail_prof::code_rule_dsl::logic::profile::machine::<PairAdmission>();
+    let choose = admission.0.read().clone();
+    choose.and_then(|f| f(input)).unwrap_or(true)
+}
+
+/// Whether a pair cache that fits is kept: a cache that cannot fit never reaches `classify` (the caller's machine's
+/// pricer, `machine_admits`). SQL and native evaluation use the same guard.
+fn admit_pairs(values: &[i64], classify: Option<PairClassifier>) -> bool {
+    let [left, right, readers, allowance] = *values else { return false };
+    if left <= 0 || right <= 0 || readers < 2 || allowance < 0 || left > allowance / right {
+        return false;
+    }
+    let input = PairCacheInput { left: left as u64, right: right as u64, readers: readers as u64, allowance: allowance as u64 };
+    classify.is_none_or(|f| f(input))
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -291,6 +329,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
         "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
+        "rr_admit_pairs" => return Value::Integer(i64::from(admit_pairs(numbers, Some(machine_admits)))),
         "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
         "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
         "flat_bin" => {
@@ -369,6 +408,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "min" => return Value::Integer(numbers[0].min(numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "lower" => Some(t(0).to_lowercase()),
+        "ascii_lower" => Some(t(0).to_ascii_lowercase()),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
@@ -634,7 +674,7 @@ pub fn glob_sub(pat: &str, to: &str, s: &str) -> String {
 }
 
 /// `@slice("_name", 1, 5)` = `"name"`: characters `start` to `end - 1`, a negative position counting from the end.
-/// `.rr`'s `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` computes it (its `substrFunc`), over characters: a
+/// `.rerail`'s `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` computes it (its `substrFunc`), over characters: a
 /// start before the text counts from its end, a negative length takes the characters before the start.
 pub(in crate::code_rule_dsl) fn substr(s: &str, i: i64, n: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
@@ -766,6 +806,18 @@ pub fn json_str(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pair_cache_pricer_cannot_admit_an_oversize_product() {
+        use super::admit_pairs;
+        assert!(admit_pairs(&[1, 4096, 2, 4096], None));
+        assert!(!admit_pairs(&[1, 4096, 2, 4096], Some(|_| false)));
+        for counts in [[65, 64, 2, 4096], [i64::MAX, i64::MAX, 4, i64::MAX], [1, 1, 4, 0]] {
+            assert!(!admit_pairs(&counts, Some(|_| panic!("classifier ran before admission"))));
+        }
+        assert!(admit_pairs(&[2, 4, 3, 8], Some(|input| input.readers == 3 && input.left == 2
+            && input.right == 4 && input.allowance == 8)));
+    }
+
     use super::*;
 
     /// `@shell_unquote` undoes a POSIX shell word's quoting, as a compile command's words are read (decision 0327).

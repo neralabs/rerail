@@ -30,6 +30,9 @@ nm($n, $x) :- field($n, "name", $i), text($i, $x).
 
 // ---- modules ------------------------------------------------------------------------------------------------------
 .decl modn(m: node, q: sym)
+// A qualified name is one module of the crate (a few, with `cfg` variants): `modn(r, "crate")` is its root, so a rule
+// pairing it with every `crate` path is no node product (Q249).
+.layout modn fanout(q -> m, few)
 modn($r, $q) :- node($d, $r, "source_file", _, _), doc($d, _, $q).
 modn($m, @cat($q, $x)) :- kind($m, "mod_item"), field($m, "body", _), nm($m, $x), nearest($m, $p, modk), modn($p, $q).
 // `mod x;` names the file module `<parent>.x`; an inline `mod x { }` is its own node.
@@ -128,7 +131,8 @@ lglob($p, $x, $m) :- lwalk($p, $x, $m), modn($m, _), !bound_here($m, $x).
 res($p, $k, $v) :- lfound($p, $x, $s), item($s, $x, $k, $v).
 res($p, $k, $v) :- lfound($p, $x, $s), ures($s, $x, $k, $v).
 res($p, $k, $v) :- lglob($p, $x, $m), globx($m, $x, $k, $v).
-res($p, "mod", $r) :- kind($p, "crate"), modn($r, "crate").
+// `crate` names the module named `crate`: a join on the name, not a product of two node ranges.
+res($p, "mod", $r) :- kind($p, "crate"), text($p, $x), modn($r, $x).
 res($p, "mod", $m) :- kind($p, "self"), field(_, "path", $p), nearest($p, $m, modk).
 res($p, "mod", $m) :- kind($p, "self"), kind($w, "use_wildcard"), child($w, $p, 0), nearest($p, $m, modk).
 res($p, "mod", $par) :- kind($p, "super"), nearest($p, $m, modk), modpar($m, $par).

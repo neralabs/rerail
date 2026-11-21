@@ -26,13 +26,15 @@ use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 use ::bitlex::syntax::{Stmt, parse};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_corpus");
+// The corpus directory, found as the test runs: not written into its build (decision 0224).
+static DIR: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}/bitlex_corpus", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
 
 // The seeded xorshift and the ids by name are the compiler crate's (`rerail_compiler::ladder`).
 pub use rerail_compiler::ladder::{Ids, Rng};
@@ -400,8 +402,8 @@ fn expr(rng: &mut Rng, names: &[String], depth: u64) -> String {
 
 /// The corpus as it is on disk, in name order.
 fn on_disk() -> Vec<(String, String)> {
-    let mut files: Vec<(String, String)> = std::fs::read_dir(DIR)
-        .unwrap_or_else(|e| panic!("{DIR}: {e}"))
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&*DIR)
+        .unwrap_or_else(|e| panic!("{}: {e}", *DIR))
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
         .map(|p| (p.file_name().expect("a name").to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
@@ -414,12 +416,12 @@ fn on_disk() -> Vec<(String, String)> {
 #[ignore = "writes the corpus; run by name with RERAIL_WRITE_CORPUS=1"]
 fn write_the_corpus() {
     assert!(std::env::var_os("RERAIL_WRITE_CORPUS").is_some(), "set RERAIL_WRITE_CORPUS=1");
-    std::fs::create_dir_all(DIR).expect("makes the directory");
+    std::fs::create_dir_all(&*DIR).expect("makes the directory");
     for (name, _) in on_disk() {
-        std::fs::remove_file(format!("{DIR}/{name}")).expect("removes an old file");
+        std::fs::remove_file(format!("{}/{name}", *DIR)).expect("removes an old file");
     }
     for (name, source) in generated() {
-        std::fs::write(format!("{DIR}/{name}"), source).expect("writes");
+        std::fs::write(format!("{}/{name}", *DIR), source).expect("writes");
     }
 }
 
@@ -487,7 +489,7 @@ fn compile_case(name: &str, source: &str) -> Result<Case, String> {
 
 fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
     words.truncate(n.div_ceil(64));
-    if n % 64 != 0
+    if !n.is_multiple_of(64)
         && let Some(last) = words.last_mut()
     {
         *last &= (1u64 << (n % 64)) - 1;
@@ -586,7 +588,6 @@ fn corpus_equals_the_evaluator() {
 
 /// Check 1 on Cranelift.
 #[test]
-#[ignore = "Q197: 0383's edge path differs from the interpreter on 14 one-block corpus programs"]
 fn corpus_cranelift_equals_the_interpreter() {
     executors_equal_the_interpreter(false);
 }
@@ -612,53 +613,80 @@ fn executors_equal_the_interpreter(metal: bool) {
         natives.iter().zip(&cases).map(|(n, c)| native_cpu_block::compile(n).unwrap_or_else(|e| panic!("{}: cranelift: {e:?}", c.name))).collect();
     let refs: Vec<&native_cpu_block::CompiledBlock> = compiled.iter().collect();
     eprintln!("interpreted and compiled in {:.1} s", seconds(t));
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
     let mut runs: Vec<(String, Vec<Vec<Vec<u64>>>)> =
         vec![("cranelift".to_owned(), native_cpu_block::run_batch(&refs, &files).into_iter().map(|r| r.outputs).collect())];
-    #[cfg(target_os = "macos")]
     if metal {
-        use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-        let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
-        for width in LaneWidth::ALL {
-            let mut executors = vec![(format!("metal interpreter, {}-byte lanes", width.bytes()), Executor::Interpreter)];
-            for s in ClassStrategy::ALL {
-                executors.push((format!("generated msl, {}-byte lanes, {s:?}", width.bytes()), Executor::Generated(s)));
-            }
-            // `RERAIL_CORPUS_EXECUTORS`: only the executors whose names hold it.
-            let only = std::env::var("RERAIL_CORPUS_EXECUTORS").ok();
-            executors.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
-            for (name, executor) in executors {
-                // Generated MSL in chunks of programs: one source of every program takes Metal's
-                // compiler minutes; its time grows faster than the source.
-                let chunk = std::env::var("RERAIL_CORPUS_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(32usize);
-                let mut got: Vec<Vec<Vec<u64>>> = Vec::with_capacity(files.len());
-                for (c, programs) in forms.chunks(chunk).enumerate() {
-                    let base = c * chunk;
-                    let mine: Vec<block::BatchFile<'_>> = files
-                        .iter()
-                        .filter(|f| (base..base + programs.len()).contains(&f.program))
-                        .map(|f| block::BatchFile { bytes: f.bytes, program: f.program - base })
-                        .collect();
-                    let run = run_split(programs, &mine, width, executor, 64).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-                    got.extend(run.files.into_iter().map(|r| r.outputs));
-                }
-                eprintln!("{name}: {:.1} s", seconds(t));
-                runs.push((name, got));
-            }
-        }
+        runs.extend(metal_corpus_runs(&natives, &files, t));
     }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = metal;
     let mut differ: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     for (executor, got) in &runs {
         assert_eq!(got.len(), files.len(), "{executor}");
         for ((f, got), want) in files.iter().zip(got).zip(&want) {
             let case = &cases[f.program];
             if let Some(k) = (0..want.len()).find(|&k| got[k] != want[k]) {
-                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes)));
+                differ.entry(format!("{}, {executor}", case.name)).or_insert_with(|| {
+                    // `RERAIL_CORPUS_CLIF`: a directory for each differing program's native values and Cranelift's
+                    // function, to read where they part.
+                    if let Some(dir) = std::env::var_os("RERAIL_CORPUS_CLIF") {
+                        let dir = std::path::Path::new(&dir);
+                        let values: String = natives[f.program].insts.iter().enumerate().map(|(x, i)| format!("%{x} = {i:?}\n")).collect();
+                        std::fs::write(dir.join(format!("{}.values", case.name)), values).expect("writes the values");
+                        std::fs::write(dir.join(format!("{}.clif", case.name)), &compiled[f.program].clif).expect("writes the CLIF");
+                    }
+                    format!("output {k}: {:x?} against {:x?}, {} bytes: {:?}", got[k], want[k], f.bytes.len(), String::from_utf8_lossy(f.bytes))
+                });
             }
         }
     }
     eprintln!("{} files, {} inputs, {} executors, {:.1} s", cases.len(), inputs.len(), runs.len() + 1, seconds(t));
     let list: Vec<String> = differ.iter().map(|(n, e)| format!("{n}: {e}")).collect();
     assert!(list.is_empty(), "{} runs differ from the interpreter:\n{}", list.len(), list.join("\n"));
+}
+
+/// The Metal executors' runs of the corpus' batch (`executors_equal_the_interpreter`): each lane width's interpreter
+/// and generated MSL, in chunks of programs.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::BatchFile<'_>], t: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
+    use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    let mut runs = Vec::new();
+    let forms: Vec<&block_native::BlockNative> = natives.iter().collect();
+    for width in LaneWidth::ALL {
+        let mut executors = vec![(format!("metal interpreter, {}-byte lanes", width.bytes()), Executor::Interpreter)];
+        for s in ClassStrategy::ALL {
+            executors.push((format!("generated msl, {}-byte lanes, {s:?}", width.bytes()), Executor::Generated(s)));
+        }
+        // `RERAIL_CORPUS_EXECUTORS`: only the executors whose names hold it.
+        let only = std::env::var("RERAIL_CORPUS_EXECUTORS").ok();
+        executors.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
+        for (name, executor) in executors {
+            // Generated MSL in chunks of programs: one source of every program takes Metal's
+            // compiler minutes; its time grows faster than the source.
+            let chunk = std::env::var("RERAIL_CORPUS_CHUNK").ok().and_then(|c| c.parse().ok()).unwrap_or(32usize);
+            let mut got: Vec<Vec<Vec<u64>>> = Vec::with_capacity(files.len());
+            for (c, programs) in forms.chunks(chunk).enumerate() {
+                let base = c * chunk;
+                let mine: Vec<block::BatchFile<'_>> = files
+                    .iter()
+                    .filter(|f| (base..base + programs.len()).contains(&f.program))
+                    .map(|f| block::BatchFile { bytes: f.bytes, program: f.program - base })
+                    .collect();
+                let run = run_split(programs, &mine, width, executor, 64).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+                got.extend(run.files.into_iter().map(|r| r.outputs));
+            }
+            eprintln!("{name}: {:.1} s", seconds(t));
+            runs.push((name, got));
+        }
+    }
+    runs
+}
+
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn metal_corpus_runs(_: &[block_native::BlockNative], _: &[block::BatchFile<'_>], _: std::time::Instant) -> Vec<(String, Vec<Vec<Vec<u64>>>)> {
+    Vec::new()
 }
 
 /// The tree grammars the compiler refuses today, by reason (docs/parser-generators/20-the-ir.md §7).
@@ -714,7 +742,7 @@ fn tree_inputs(p: &TreeParams, seed: u64) -> Vec<Vec<u8>> {
             Atoms::Keywords => &["true", "null", "truex", "nul", "q"],
             Atoms::Numbers => &["0", "-12", "3.5", "7.", "-", "1a", "00", "4.2.1"],
         };
-        out.push_str(*rng.pick(words));
+        out.push_str(rng.pick::<&str>(words));
     }
     let mut out: Vec<Vec<u8>> = vec![Vec::new(), b" ".to_vec()];
     for _ in 0..40 {
@@ -892,23 +920,32 @@ fn a_file_on_every_executor() {
         compile_case(&path, &source).unwrap_or_else(|e| panic!("{e}"))
     };
     let want = case.program.block_programs[0].interpret(&bytes);
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_variables))]
     let native = native_ir::lower(&case.program, 0, 0).expect("lowers").block_programs.remove(0);
     for (name, k) in &case.checked {
         eprintln!("{name:>8} interpreter {:x?}", want[*k]);
     }
-    #[cfg(target_os = "macos")]
-    {
-        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
-        if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
-            std::fs::write(&dump, generate_with(&native.planes_form(), LaneWidth::W16, ClassStrategy::Planes)).expect("writes");
-        }
-        for width in LaneWidth::ALL {
-            let (got, _) = run_generated_with(&native, &bytes, width, ClassStrategy::Planes).expect("runs");
-            for (name, k) in &case.checked {
-                if got[*k] != want[*k] {
-                    eprintln!("{name:>8} msl {:>2} bytes {:x?}", width.bytes(), got[*k]);
-                }
+    metal_differences(&native, &bytes, &case.checked, &want);
+}
+
+/// Generated MSL's outputs over `bytes` where they differ from the interpreter's (`want`), each lane width's, for
+/// the outputs `checked` names; `RERAIL_DUMP_MSL=<file>` writes the 16-byte lanes' source.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn metal_differences(native: &block_native::BlockNative, bytes: &[u8], checked: &[(String, usize)], want: &[Vec<u64>]) {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with, run_generated_with};
+    if let Some(dump) = std::env::var_os("RERAIL_DUMP_MSL") {
+        std::fs::write(&dump, generate_with(&native.planes_form(), LaneWidth::W16, ClassStrategy::Planes)).expect("writes");
+    }
+    for width in LaneWidth::ALL {
+        let (got, _) = run_generated_with(native, bytes, width, ClassStrategy::Planes).expect("runs");
+        for (name, k) in checked {
+            if got[*k] != want[*k] {
+                eprintln!("{name:>8} msl {:>2} bytes {:x?}", width.bytes(), got[*k]);
             }
         }
     }
 }
+
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn metal_differences(_: &block_native::BlockNative, _: &[u8], _: &[(String, usize)], _: &[Vec<u64>]) {}

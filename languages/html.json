@@ -23,5 +23,20 @@
     "calls": "not-supported-yet",
     "formatArgs": "not-supported-yet"
   },
-  "suppressions": []
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "javascript",
+      "via": "raw-text"
+    },
+    {
+      "language": "json",
+      "via": "raw-text"
+    },
+    {
+      "language": "css",
+      "via": "raw-text"
+    }
+  ],
+  "fragments": [{ "name": "html-element", "dialect": "html", "start": "element", "tapeTag": 32 }]
 }

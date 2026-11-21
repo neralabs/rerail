@@ -1,4 +1,4 @@
-"""Checks ruff-ruf013-implicit-optional.stdlib.rr: it round-trips against Ruff's known_stdlib.rs, and its modules at
+"""Checks ruff-ruf013-implicit-optional.stdlib.rerail: it round-trips against Ruff's known_stdlib.rs, and its modules at
 Python 3.10 are the JSON's `known-name` list.
     python3 docs/rule-syntax/packs/python/check-ruff-ruf013-implicit-optional.py
 """

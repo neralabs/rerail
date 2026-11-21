@@ -6,7 +6,7 @@
  * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
  * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
-import { get, send } from "./api.js";
+import { ACCESS_KEY, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -193,9 +193,11 @@ async function loadPacks() {
   return true;
 }
 
+/** The daemon's health. A daemon that restarted may run Merge Assist now, so one that said it did not is asked again. */
 async function loadHealth() {
   const { body } = await get("/healthz");
   const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
+  if (changed && data.health !== null && data.mergeAssistExperiment === false) data.mergeAssistExperiment = null;
   data.health = body;
   return changed;
 }
@@ -265,6 +267,142 @@ async function loadRecentSessions(since) {
   if (body === undefined) return false;
   data.recentSessions = { rows: body.sessions, total: body.total };
   return true;
+}
+
+/** How long the sidebar's Merge Assist count may be before it is read again, on a page other than Merge Assist's. */
+const MERGE_ASSIST_COUNT_EVERY = 30_000;
+/**
+ * The last Merge Assist read: when it last answered, an error included (so the sidebar's count backs off to every
+ * 30 s while the read fails), and the one in flight with the scope generation it was sent for.
+ */
+let mergeAssistRead = { at: 0, loading: null, generation: -1 };
+/**
+ * Merge Assist writes sent and answered. A read in flight while either count moves may hold the checkout's state from
+ * before a write, so it lands nowhere; and only the latest write sent replaces the status, so an earlier write that
+ * answers last cannot put back what a later one changed.
+ */
+const mergeAssistWrites = { sent: 0, answered: 0 };
+/**
+ * Merge Assist requests sent, reads and writes alike, numbered in order (`asked`), and the number of the one whose
+ * answer `data.mergeAssist` holds (`held`): a conflict link is looked up only in a status asked for after it.
+ */
+const mergeAssistRequests = { asked: 0, held: 0 };
+
+/** The number of the last Merge Assist request sent, for `mergeAssistReadAfter`. */
+export const mergeAssistMark = () => mergeAssistRequests.asked;
+
+/**
+ * Whether `data.mergeAssist` answers a request sent after `mark` (`mergeAssistMark()`): not one read before it, which
+ * the sidebar's count may have read half a minute ago, nor one already out then.
+ */
+export const mergeAssistReadAfter = mark => data.mergeAssist !== null && mergeAssistRequests.held > mark;
+
+/**
+ * Merge Assist read `request` answered: `body`, or nothing new on `undefined` (304), which confirms the status held.
+ * Whether anything shown changed.
+ */
+function takeMergeAssist(body, request) {
+  mergeAssistRead.at = Date.now();
+  mergeAssistRequests.held = request;
+  const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
+  Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
+  if (body === undefined) return changed;
+  data.mergeAssist = body;
+  return true;
+}
+
+/**
+ * A Merge Assist read failed with `error`, kept for the page. It says nothing of whether the daemon runs Merge Assist:
+ * only a read that answers shows its sidebar item. Whether anything shown changed.
+ */
+function takeMergeAssistFailure(error) {
+  mergeAssistRead.at = Date.now();
+  // The API's own reason when it answered one ("Rerail does not know the checkout …"), else the status line.
+  const why = error.apiMessage ?? error.message;
+  const changed = data.mergeAssistError !== why;
+  data.mergeAssistError = why;
+  return changed;
+}
+
+/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again until it restarts. */
+function experimentOff(error) {
+  if (error.status !== 404 || error.code !== "experimental-off") return false;
+  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: false });
+  return true;
+}
+
+/** Whether a Merge Assist read is skipped: the daemon runs without it, or the last answer is younger than `maxAge`. */
+function skipMergeAssist(maxAge) {
+  if (data.mergeAssistExperiment === false) return true;
+  const held = data.mergeAssist !== null || data.mergeAssistError !== null;
+  return maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge;
+}
+
+/** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
+async function readMergeAssist(current) {
+  const request = ++mergeAssistRequests.asked;
+  try {
+    const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
+    return current() && takeMergeAssist(body, request);
+  } catch (error) {
+    if (error.name === "AccessRequired") throw error;
+    return experimentOff(error) || (current() && takeMergeAssistFailure(error));
+  }
+}
+
+/**
+ * Merge Assist for the scoped checkout (`data.mergeAssist`), at most once at a time; `maxAge` skips the read while the
+ * last answer is younger. A failure is kept in `data.mergeAssistError` for the page and the sidebar, never failing
+ * the poll: the rest of the dashboard does not depend on Merge Assist. A `404 experimental-off` is no failure: the
+ * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again until it restarts.
+ */
+function loadMergeAssist(maxAge = 0) {
+  if (mergeAssistRead.loading !== null && mergeAssistRead.generation === generation) return mergeAssistRead.loading;
+  if (skipMergeAssist(maxAge)) return false;
+  const started = generation;
+  const { sent, answered } = mergeAssistWrites;
+  const current = () => started === generation && sent === mergeAssistWrites.sent && answered === mergeAssistWrites.answered;
+  const loading = readMergeAssist(current).finally(() => {
+    if (mergeAssistRead.loading === loading) mergeAssistRead.loading = null;
+  });
+  mergeAssistRead = { at: mergeAssistRead.at, loading, generation: started };
+  return loading;
+}
+
+/**
+ * A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count;
+ * `request` its number among all Merge Assist requests).
+ */
+function keepWriteStatus(write, request, status) {
+  if (status === undefined || write !== mergeAssistWrites.sent) return;
+  mergeAssistRequests.held = request;
+  data.mergeAssist = status;
+  data.mergeAssistError = null;
+  mergeAssistRead.at = Date.now();
+}
+
+/**
+ * One Merge Assist write to a captured scope's target. Every Merge Assist write answers the checkout's status: it
+ * replaces `data.mergeAssist` unless a later write was sent meanwhile, and a read sent before it answered lands nowhere.
+ * Resolves that status, or `null` when there is none or the page shows another repository by then. Rejects with the
+ * write's error only while the page still shows the scope.
+ */
+export async function writeMergeAssist(scope, method, path, body) {
+  const write = ++mergeAssistWrites.sent, request = ++mergeAssistRequests.asked;
+  try {
+    const { body: status } = await send(method, path, { ...scope.target, ...body });
+    if (!inScope(scope)) return null;
+    keepWriteStatus(write, request, status);
+    return status ?? null;
+  } catch (error) {
+    if (inScope(scope)) throw error;
+    return null;
+  } finally {
+    // A write to a scope no longer shown has nothing to say about the reads of the one shown now.
+    if (inScope(scope)) mergeAssistWrites.answered += 1;
+    // The slot's ETag describes the last read, not what the write put in its place.
+    refetch("mergeAssist");
+  }
 }
 
 /** How a row of each paged resource is told apart from the others. */
@@ -375,32 +513,52 @@ function dropSession(id) {
 export async function loadSession(id) {
   let detail = data.sessionDetail.get(id);
   if (detail === undefined) {
-    detail = { head: null, gaps: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
+    detail = { head: null, gaps: null, declined: null, events: [], nextAfter: 0, loaded: false, earlier: false, loading: null };
     data.sessionDetail.set(id, detail);
   }
-  return sessionLoad(detail, async () => {
-    let body;
-    try {
-      ({ body } = await get(`/api/sessions/${encodeURIComponent(id)}`));
-    } catch (error) {
-      if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
-      dropSession(id);
-      return true;
-    }
-    const was = detail.head, wasGaps = detail.gaps;
-    detail.head = body.session;
-    detail.gaps = body.gaps;
-    patchSessionRow(body.session);
-    const changed = was?.eventCount !== body.session.eventCount || was?.endedAt !== body.session.endedAt
-      || JSON.stringify(wasGaps) !== JSON.stringify(body.gaps);
-    const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
-    if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
-    detail.loaded = true;
-    detail.nextAfter = page.nextAfter;
-    if (page.events.length === 0) return changed;
-    detail.events = detail.events.concat(page.events);
-    return true;
-  });
+  return sessionLoad(detail, () => refreshSession(id, detail));
+}
+
+/** One load of a session: its head, then its newer events. Whether anything shown changed. */
+async function refreshSession(id, detail) {
+  const body = await sessionHead(id, detail);
+  // A session the daemon no longer has is dropped, which changes what the page shows.
+  if (body === null) return true;
+  const changed = applySessionHead(detail, body);
+  const added = await loadNewerEvents(id, detail);
+  return added || changed;
+}
+
+/** The session's head from the daemon; null when a session already loaded is gone (it is dropped). */
+async function sessionHead(id, detail) {
+  try {
+    return (await get(`/api/sessions/${encodeURIComponent(id)}`)).body;
+  } catch (error) {
+    if (!detail.loaded || !/answered 404$/u.test(error.message)) throw error;
+    dropSession(id);
+    return null;
+  }
+}
+
+/** Stores the head, its gaps and its declined steers, patches its list row, and says whether any of them changed. */
+function applySessionHead(detail, body) {
+  const before = [detail.head?.eventCount, detail.head?.endedAt, detail.gaps, detail.declined];
+  detail.head = body.session;
+  detail.gaps = body.gaps;
+  detail.declined = body.declined;
+  patchSessionRow({ ...body.session, declinedViolations: body.declined.violations });
+  return JSON.stringify(before) !== JSON.stringify([body.session.eventCount, body.session.endedAt, body.gaps, body.declined]);
+}
+
+/** The newest transcript page on a first load, else the events after the last loaded one; whether any arrived. */
+async function loadNewerEvents(id, detail) {
+  const page = await eventsPage(id, detail.loaded ? `after=${detail.nextAfter}` : `before=${Number.MAX_SAFE_INTEGER}`);
+  if (!detail.loaded) detail.earlier = page.events.length === EVENTS_PAGE;
+  detail.loaded = true;
+  detail.nextAfter = page.nextAfter;
+  if (page.events.length === 0) return false;
+  detail.events = detail.events.concat(page.events);
+  return true;
 }
 
 /**
@@ -494,6 +652,9 @@ function pumpTitles() {
  * - `ruleFindings`: the open rule sheet's violations in the range (`data.ruleFindings`); nothing without one.
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
+ * - `mergeAssist`: Merge Assist for the scoped checkout (`data.mergeAssist`), every poll.
+ * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts. Not in a scope's
+ *   first poll, which the page waits on to draw, so the count never holds the page up.
  */
 const NEEDS = {
   rules: () => loadRules(),
@@ -512,6 +673,8 @@ const NEEDS = {
   },
   sessions: () => loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repositoryFilter()}`),
   selectedSession: () => (ui.selectedSession ? [loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession)] : []),
+  mergeAssist: () => loadMergeAssist(),
+  mergeAssistCount: () => (data.loaded ? loadMergeAssist(MERGE_ASSIST_COUNT_EVERY) : false),
 };
 
 /** The names of what the page needs now, beyond the shared reads; set once by the page (`setNeeds`). */
@@ -542,8 +705,10 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
-    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
+    // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
+    // still out must not leave their failures unhandled.
+    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
@@ -562,8 +727,11 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
-    if (!data.missing) console.warn("poll failed", error);
+    // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+    // so the page that asks to connect it continues soon after `rerail manage` does.
+    backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
+    // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+    if (data.disconnected) console.warn("poll failed", error);
     onChange(data.missing);
   }
 }
@@ -592,6 +760,8 @@ export function startPolling(listener) {
   onChange = listener;
   refresh().then(schedule);
   document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
+  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */
@@ -614,11 +784,19 @@ export function changeScope(scope) {
   ui.removedPacks.clear();
   ui.selectedSession = null;
   ui.sessRule = null;
+  ui.mergeDismissing.clear();
+  ui.mergeOpen.clear();
+  ui.mergeSettings = null;
+  ui.mergeSaving = false;
+  ui.mergeSwitching = false;
+  ui.mergeScanning = false;
   Object.assign(data, {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
+    mergeAssist: null, mergeAssistError: null,
   });
+  mergeAssistRead = { at: 0, loading: null, generation: -1 };
   data.sessionDetail.clear();
   refreshNow();
 }

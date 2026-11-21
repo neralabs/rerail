@@ -144,7 +144,7 @@ fn check(sources: Vec<String>) -> Run {
     );
     let compiled = native_policy();
     let native = native_run(&compiled, &sources);
-    // Optional export lets the production .rr compiler consume the same edge
+    // Optional export lets the production .rerail compiler consume the same edge
     // fixtures and expected raw keys, rather than just a negative corpus.
     if let Ok(directory) = std::env::var("RERAIL_ASYNC_EXPORT_FIXTURES") {
         let digest = crate::code_rule_dsl::json::hex_digest(&serde_json::to_vec(&sources).unwrap());

@@ -1,0 +1,508 @@
+#!/usr/bin/python3
+"""The farm's dashboard: a live page of every host's state and this Mac's, served here only.
+
+    scripts/build/farm/dashboard [--port 8740] [--open]
+
+then http://127.0.0.1:8740/. Per machine: its CPU split between the farm's work (test commands,
+Relax sessions, this Mac's compiles, and on this Mac Rerail's builds), the fleet's jobs, the
+machine's own (external) load and idle; its GPU; memory used, the farm's share, and available; disk
+used and free (and what macOS gives an important write); the farm's jobs running there; whether
+someone is at it; the round trip through its connection now, its link and the farm's last measured
+throughput, and its network traffic. Five minutes of history each.
+
+How it costs little: one `sampler` per machine (scripts/build/farm/sampler), started over one ssh
+connection and kept, reads the counters the system keeps every 3 seconds and sends one line; it
+says what it used (`probe_cpu`: about 0.3% of one core). The reachability and throughput are the
+farm's own probes' (its health records, read; the dashboard adds no probe). The ping is one line
+each way every 2 seconds over the open connection. Nothing runs when the dashboard is not running:
+the samplers end with their connection.
+
+A card is one machine or one VM, with its own system: a Windows PC's card is Windows' (sampled by
+`sampler.ps1` over its Windows ssh, `windows_ssh`, so it is live while its WSL is stopped), and
+its WSL is a VM on it, as a Mac's Lima or OrbStack machine is. A guest's card comes after its
+machine's. An entry that takes no jobs (a Windows VM's WSL 1) has none.
+
+The page and its data stay on this machine (127.0.0.1): the hosts' names are the configuration's,
+read at run time.
+"""
+import collections
+import json
+import os
+import shlex
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+import guest  # noqa: E402
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+HISTORY = 100          # samples kept: 5 minutes at 3 s
+PING_SECONDS = 2
+REFRESH_SECONDS = 20   # the configuration read again: hosts added, removed, enabled or not
+STALE_SECONDS = 12     # no sample for this long: the machine's connection is shown as lost
+SILENT_SECONDS = 30    # no line at all for this long (a Windows sampler's setup takes about 10 s): a new session
+SAMPLER = os.path.join(HERE, "sampler")
+WINDOWS_SAMPLER = os.path.join(HERE, "sampler.ps1")
+LOCAL = "this Mac"
+
+
+class Machine:
+    def __init__(self, name, host=None):
+        self.name, self.host = name, host
+        self.lock = threading.Lock()
+        self.last, self.history = None, collections.deque(maxlen=HISTORY)
+        self.rtt_ms, self.rtts = None, collections.deque(maxlen=HISTORY)
+        self.connected, self.error, self.since = False, "connecting", time.time()
+        self.proc = None
+
+    def command(self):
+        if self.host is None:
+            return ["/usr/bin/python3", "-u", SAMPLER, "--local"]
+        if farm.host_os(self.host) == "windows":
+            # Run in sshd's own PowerShell (sampler.ps1 says why), decoded there.
+            import base64
+            text = base64.b64encode(open(WINDOWS_SAMPLER, encoding="utf-8").read().encode("utf-16-le")).decode()
+            return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+                    self.host["windows_ssh"], f"iex ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{text}')))"]
+        return farm.ssh(self.name, "exec /usr/bin/python3 -u -c " + shlex.quote(open(SAMPLER).read()), "dash")
+
+    def guest(self):
+        """This machine's guest record and settings (guest.py), when it is a guest: its entry read
+        afresh, so a host made a guest or no longer one shows as such without a restart."""
+        if self.host is not None:
+            self.host = farm.entry(self.name) or self.host
+        base, g = guest.spec(self.host)
+        # A Windows PC is no guest: its WSL is (a Windows VM is one whole, its WSL inside it).
+        if g is None or (g["kind"] == "wsl" and farm.host_os(self.host) == "windows"):
+            return None
+        r = guest.record(base["name"])
+        return {"kind": g["kind"], "on": g["on"], "placement": guest.placement(g), "vm": g["vm"],
+                "state": r.get("state", "unknown"), "cpus": r.get("cpus"), "memory_gb": r.get("memory_gb"),
+                "since": r.get("since"), "last_busy": r.get("last_busy"), "busy": r.get("busy"),
+                "stop_at": r.get("stop_at"), "why": r.get("why"), "boot_s": r.get("boot_s"),
+                "idle_minutes": g.get("idle_minutes", guest.IDLE_MINUTES),
+                "cost_per_hour": g.get("cost_per_hour") if guest.is_cloud(g) else None,
+                "max_hours": guest.cloud_limits()["max_hours"] if guest.is_cloud(g) else None}
+
+    def parent(self, g):
+        """The machine this one runs on (a guest's placement; WSL's, its Windows host), or None."""
+        if self.host is None:
+            return None
+        if g:
+            return g["placement"]
+        return next((h["name"] for h in farm.hosts() if h.get("shares") == self.name and h.get("enabled", True)
+                     and farm.host_os(h) == "windows" and farm.host_os(self.host) == "linux"), None)
+
+    def run(self):
+        backoff = 5
+        while not getattr(self, "gone", False):
+            if self.host is not None and not self.host.get("enabled", True):
+                with self.lock:
+                    self.connected, self.error = False, "disabled in the configuration"
+                time.sleep(3)
+                continue
+            # A guest that is not running is not asked (an ssh to it would fail, or start it).
+            g = self.host is not None and self.guest()
+            if g and g["state"] != "running":
+                with self.lock:
+                    self.connected, self.error = False, f"a guest, {g['state']}"
+                time.sleep(3)
+                continue
+            started = time.time()
+            self.renew = False
+            try:
+                self.session()
+            except Exception as e:  # noqa: BLE001 (a dashboard keeps going)
+                self.error = f"{type(e).__name__}: {e}"
+            if self.renew:  # the sampler's planned end (sampler.ps1): the next at once
+                continue
+            with self.lock:
+                self.connected = False
+            backoff = 5 if time.time() - started > 60 else min(backoff * 2, 120)
+            with self.lock:
+                self.retry_at = time.time() + backoff
+            time.sleep(backoff)
+
+    def session(self):
+        p = self.proc = subprocess.Popen(self.command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, text=True, bufsize=1)
+        sent = {}
+        alive = threading.Event()
+        heard = [time.monotonic()]
+
+        def pinger():
+            # It also ends a session that has gone silent: a sampler stuck on its host (a Windows one never
+            # sees the end of its input) would otherwise keep the card lost until the dashboard restarts.
+            n = 0
+            while not alive.is_set():
+                if time.monotonic() - heard[0] > SILENT_SECONDS:
+                    self.error = f"no word from the sampler for {SILENT_SECONDS} s; starting another"
+                    p.kill()
+                    return
+                n += 1
+                with self.lock:  # the reader pops pongs from `sent` under it
+                    sent[str(n)] = time.monotonic()
+                    for k in [k for k in sent if int(k) < n - 10]:
+                        del sent[k]
+                try:
+                    p.stdin.write(f"ping {n}\n")
+                    p.stdin.flush()
+                except OSError:
+                    return
+                alive.wait(PING_SECONDS)
+        threading.Thread(target=pinger, daemon=True).start()
+        err = collections.deque(maxlen=5)
+        threading.Thread(target=lambda: [err.append(line.strip()) for line in p.stderr], daemon=True).start()
+        try:
+            for line in p.stdout:
+                heard[0] = time.monotonic()
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if d.get("bye"):
+                    self.renew = True
+                    break
+                with self.lock:
+                    if "pong" in d:
+                        t = sent.pop(d["pong"], None)
+                        if t is not None:
+                            self.rtt_ms = round((time.monotonic() - t) * 1000, 1)
+                            self.rtts.append((time.time(), self.rtt_ms))
+                        continue
+                    d["rtt_ms"] = self.rtt_ms
+                    self.last = d
+                    self.history.append(d)
+                    if not self.connected:
+                        self.connected, self.since, self.error = True, time.time(), None
+        finally:
+            alive.set()
+            p.kill()
+            p.wait()
+            if time.monotonic() - heard[0] <= SILENT_SECONDS:  # else the pinger said why it ended it
+                self.error = " / ".join(e for e in err if e) or f"the sampler ended (exit {p.returncode})"
+
+    def state(self):
+        with self.lock:
+            fresh = self.last is not None and time.time() - self.last["t"] < STALE_SECONDS
+            h = {} if self.host is None else farm.read_json(farm.state("health", self.name), {})
+            out = {"name": self.name, "local": self.host is None, "connected": self.connected and fresh,
+                   "error": None if (self.connected and fresh) else (self.error or "no sample lately"),
+                   "since": self.since, "retry_at": getattr(self, "retry_at", None),
+                   "last": self.last, "rtt_ms": self.rtt_ms,
+                   "history": [compact(d) for d in self.history]}
+        if self.host is not None:
+            out["farm"] = {"ok": h.get("ok"), "why": h.get("why"), "checked": h.get("checked"),
+                           "probe_rtt_ms": h.get("rtt_ms"), "mbps": h.get("mbps"), "mbps_at": h.get("mbps_at"),
+                           "link": farm.link_of(self.host), "enabled": self.host.get("enabled", True),
+                           "tests": self.host.get("tests", True), "mirror": self.host.get("mirror", True),
+                           "slots": farm.test_slots(self.host), "down_until": h.get("down_until")}
+            g = out["guest"] = self.guest()
+            out["os"] = farm.host_os(self.host)
+            out["parent"] = self.parent(g)
+            if out["os"] == "windows":
+                # Its jobs run through its WSL (farm-agent's windows_job): stopped, it starts for one.
+                base, bg = guest.spec(self.host)
+                if bg and bg["kind"] == "wsl":
+                    out["via"] = {"name": base["name"], "state": guest.record(base["name"]).get("state", "unknown")}
+                if out["rtt_ms"] is None:
+                    out["rtt_ms"] = h.get("rtt_ms")  # no pings through sshd's PowerShell: the probe's
+        else:
+            out["os"], out["parent"] = "macos", None
+        return out
+
+
+def compact(d):
+    c = d.get("cpu", {})
+    return [round(d["t"], 1), c.get("farm", 0), c.get("fleet", 0), c.get("other", 0), (d.get("gpu") or {}).get("util"),
+            d.get("mem", {}).get("used"), round(d.get("net", {}).get("rx", 0)), round(d.get("net", {}).get("tx", 0)), d.get("rtt_ms")]
+
+
+MACHINES = []
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def send(self, body, kind):
+        data = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path.startswith("/api/state"):
+            self.send(json.dumps({"now": time.time(), "machines": [m.state() for m in MACHINES], "cloud": guest.budget()}), "application/json")
+        elif self.path in ("/", "/index.html"):
+            self.send(PAGE, "text/html; charset=utf-8")
+        else:
+            self.send_error(404)
+
+
+def layout():
+    """The cards' order from the configuration as it is now: one a machine or VM, a guest's after its
+    machine's; disabled hosts too (marked, not sampled); none for an entry that takes no jobs (a
+    Windows VM's WSL 1, there for its Windows side)."""
+    hosts = [h for h in farm.hosts() if h.get("tests", True) or h.get("mirror", True)]
+    parents = {}
+    for h in hosts:
+        m = Machine(h["name"], h)
+        parents[h["name"]] = m.parent(m.guest())
+    order = [LOCAL] + [h["name"] for h in hosts if not parents[h["name"]]]
+    for h in hosts:
+        if parents[h["name"]]:
+            at = order.index(parents[h["name"]]) if parents[h["name"]] in order else len(order) - 1
+            while at + 1 < len(order) and parents.get(order[at + 1]) == parents[h["name"]]:
+                at += 1
+            order.insert(at + 1, h["name"])
+    by_name = {h["name"]: h for h in hosts}
+    return [(n, by_name[n]) for n in order[1:]]
+
+
+def refresh():
+    """MACHINES as the configuration says now: a host added gets its card and sampler, one removed
+    loses them, a host's entry is read afresh (enabled or not). Every REFRESH_SECONDS."""
+    while True:
+        try:
+            have = {m.name: m for m in MACHINES[1:]}
+            new = []
+            for name, h in layout():
+                m = have.pop(name, None)
+                if m is None:
+                    m = Machine(name, h)
+                    threading.Thread(target=m.run, daemon=True).start()
+                m.host = h
+                new.append(m)
+            for m in have.values():
+                m.gone = True
+                if m.proc and m.proc.poll() is None:
+                    m.proc.kill()
+            MACHINES[1:] = new
+        except Exception as e:  # noqa: BLE001 (a dashboard keeps going)
+            print(f"dashboard: the configuration could not be read: {e}", file=sys.stderr, flush=True)
+        time.sleep(REFRESH_SECONDS)
+
+
+def main(argv):
+    port = int(argv[argv.index("--port") + 1]) if "--port" in argv else 8740
+    MACHINES.append(Machine(LOCAL))
+    threading.Thread(target=MACHINES[0].run, daemon=True).start()
+    threading.Thread(target=refresh, daemon=True).start()
+    time.sleep(0.5)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    url = f"http://127.0.0.1:{port}/"
+    print(f"dashboard: {url} ({len(MACHINES)} machines; ^C ends it, and the samplers with it)", flush=True)
+    if "--open" in argv:
+        subprocess.run(["open", url])
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for m in MACHINES:
+            if m.proc and m.proc.poll() is None:
+                m.proc.kill()
+
+
+PAGE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Farm Dashboard</title>
+<style>
+:root{color-scheme:light;--bg:#f4f4f2;--surface:#fcfcfb;--line:#e3e2dd;--text:#0b0b0b;--text2:#52514e;--muted:#8a8984;
+--farm:#2a78d6;--fleet:#eb6834;--other:#1baf7a;--track:#ecebe7;--os-mac:#eceaf6;--os-linux:#fbf1dc;--os-win:#e3eefa;--good:#0ca30c;--warn:#fab219;--bad:#d03b3b}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#111110;--surface:#1a1a19;--line:#2e2e2c;
+--text:#f0efec;--text2:#c3c2b7;--muted:#8a8984;--farm:#3987e5;--fleet:#d95926;--other:#199e70;--track:#262624;--os-mac:#2d2b3a;--os-linux:#3a3222;--os-win:#1f2e40}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#111110;--surface:#1a1a19;--line:#2e2e2c;--text:#f0efec;--text2:#c3c2b7;--muted:#8a8984;
+--farm:#3987e5;--fleet:#d95926;--other:#199e70;--track:#262624;--os-mac:#2d2b3a;--os-linux:#3a3222;--os-win:#1f2e40}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 -apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif;
+font-variant-numeric:tabular-nums}
+header{padding:14px 16px 6px;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline}
+h1{font-size:17px;margin:0 8px 0 0}
+.sum{color:var(--text2)} .sum b{color:var(--text)}
+.legend{display:flex;gap:12px;color:var(--text2);padding:0 16px 8px;flex-wrap:wrap}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+main{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px;padding:0 16px 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.os{font-size:11px;font-weight:600;border-radius:4px;padding:1px 6px;margin-left:4px;vertical-align:1px;border:1px solid var(--line);color:var(--text2)}
+.os-macos{background:var(--os-mac)} .os-linux{background:var(--os-linux)} .os-windows{background:var(--os-win)}
+.name{font-weight:600;font-size:15px} .model{color:var(--muted);font-size:12px}
+.badge{font-size:12px;white-space:nowrap;color:var(--text2)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}
+.row{display:grid;grid-template-columns:62px 1fr;gap:8px;align-items:start;margin-top:10px}
+.lab{color:var(--text2);font-size:12px}
+.bar{display:flex;height:10px;border-radius:3px;background:var(--track);overflow:hidden;gap:2px}
+.bar>span{height:100%} .bar>span:first-child{border-radius:3px 0 0 3px}
+.val{font-size:12px;color:var(--text2);margin-top:2px}
+.val b{color:var(--text);font-weight:600}
+svg.spark{width:100%;height:34px;display:block;margin-top:3px}
+.jobs{margin:8px 0 0;padding:0;list-style:none;font-size:12px}
+.jobs li{color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jobs li b{color:var(--text);font-weight:600}
+.why{color:var(--text2);font-size:12px;margin-top:6px}
+.foot{color:var(--muted);font-size:11px;margin-top:8px}
+.off{opacity:.55}
+.guestcard{border-left:3px solid var(--farm)}
+.place{color:var(--text2);font-size:12px;margin-top:2px}
+.gl{margin:4px 0 0;padding:0;list-style:none;font-size:12px;color:var(--text2)} .gl b{color:var(--text);font-weight:600}
+</style></head><body>
+<header><h1>Farm</h1><span class="sum" id="sum">connecting…</span></header>
+<div class="legend"><span><i class="sw" style="background:var(--farm)"></i>farm (tests, Relax, compiles; here: Rerail's builds)</span>
+<span><i class="sw" style="background:var(--fleet)"></i>fleet jobs</span>
+<span><i class="sw" style="background:var(--other)"></i>the machine's own load</span>
+<span><i class="sw" style="background:var(--track)"></i>idle / free</span></div>
+<main id="grid"></main>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Memory in GiB, as the systems' own settings count it (a "16GB" WSL, a 24 GB machine); disks in GB.
+const MEM = b => b == null ? "?" : (b / 2 ** 30).toFixed(1).replace(/\.0$/, "") + " GB";
+const GB = b => b == null ? "?" : (b / 1e9 >= 100 ? (b / 1e9).toFixed(0) : (b / 1e9).toFixed(1)) + " GB";
+const pct = f => f == null ? "?" : Math.round(f * 100) + "%";
+const rate = b => b == null ? "?" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB/s" : b >= 1e3 ? (b / 1e3).toFixed(0) + " KB/s" : Math.round(b) + " B/s";
+const ago = t => { if (!t) return "never"; const s = Date.now() / 1000 - t; return s < 90 ? Math.round(s) + " s ago" : s < 5400 ? Math.round(s / 60) + " min ago" : (s / 3600).toFixed(1) + " h ago"; };
+function bar(parts, total) {
+  return '<div class="bar">' + parts.filter(p => p[0] > 0).map(p =>
+    `<span style="width:${Math.min(100, 100 * p[0] / total)}%;background:${p[1]}" title="${esc(p[2])}"></span>`).join("") + "</div>";
+}
+// A stacked area of the CPU shares over the history (0..1), and an optional line.
+function cpuSpark(h) {
+  if (h.length < 2) return '<svg class="spark"></svg>';
+  const W = 300, H = 34, t0 = h[0][0], t1 = h[h.length - 1][0], x = t => (W * (t - t0) / Math.max(t1 - t0, 1)).toFixed(1);
+  const layer = (lo, hi, color) => {
+    const top = h.map(r => `${x(r[0])},${(H - H * Math.min(hi(r), 1)).toFixed(1)}`);
+    const bot = h.slice().reverse().map(r => `${x(r[0])},${(H - H * Math.min(lo(r), 1)).toFixed(1)}`);
+    return `<polygon points="${top.concat(bot).join(" ")}" fill="${color}"/>`;
+  };
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><title>CPU, last ${Math.round((t1 - t0) / 60)} min</title>` +
+    layer(r => 0, r => r[1], "var(--farm)") + layer(r => r[1], r => r[1] + r[2], "var(--fleet)") +
+    layer(r => r[1] + r[2], r => r[1] + r[2] + r[3], "var(--other)") + "</svg>";
+}
+function lineSpark(h, i, color, label, max) {
+  const pts = h.filter(r => r[i] != null);
+  if (pts.length < 2) return "";
+  const W = 300, H = 24, t0 = h[0][0], t1 = h[h.length - 1][0], m = max || Math.max(...pts.map(r => r[i]), 1e-9);
+  const p = pts.map(r => `${(W * (r[0] - t0) / Math.max(t1 - t0, 1)).toFixed(1)},${(H - 2 - (H - 4) * Math.min(r[i] / m, 1)).toFixed(1)}`).join(" ");
+  return `<svg class="spark" style="height:24px" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><title>${esc(label)}</title>` +
+    `<polyline points="${p}" fill="none" stroke="${color}" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>`;
+}
+const KIND = {lima: "Lima VM", orb: "OrbStack machine", parallels: "Parallels VM", wsl: "WSL"};
+const STATE_COLOR = {running: "var(--good)", starting: "var(--warn)", stopping: "var(--warn)", stopped: "var(--muted)"};
+function guestLine(g) {
+  const now = Date.now() / 1000, size = g.cpus ? `${g.cpus} CPUs, ${g.memory_gb} GB` : "not sized yet";
+  let when = "";
+  if (g.state === "running") when = g.busy ? "in use" : g.stop_at ? "idle, stops in " + Math.max(0, Math.round((g.stop_at - now) / 60)) + " min" : "";
+  else if (g.state === "stopped") when = "since " + ago(g.since) + " · starts when a command needs it";
+  else if (g.state === "starting") when = "for " + ago(g.since).replace(" ago", "");
+  // A cloud guest: its price, and while it runs what it has cost and its hard stop.
+  if (g.cost_per_hour != null) {
+    const ran = g.state === "running" ? (now - g.since) / 3600 : 0;
+    when += ` · US$${g.cost_per_hour}/h` + (g.state === "running" ? `, US$${(ran * g.cost_per_hour).toFixed(2)} so far, stops by ${g.max_hours} h` : "");
+  }
+  return `<i class="dot" style="background:${STATE_COLOR[g.state] || "var(--bad)"}"></i><b>${esc(g.state)}</b> · ${esc(size)}` +
+    `${when ? " · " + esc(when) : ""}${g.why && g.state !== "running" ? " · " + esc(g.why) : ""}`;
+}
+// The machine's one system as a chip (in words, never its colour alone), and its name and version.
+function osChip(m) {
+  const f = m.os;
+  return f ? `<span class="os os-${f}">${{macos: "macOS", linux: "Linux", windows: "Windows"}[f] || esc(f)}</span>` : "";
+}
+function osLine(m) {
+  const s = (m.last || {}).system;
+  return s ? `<div class="place"><b>${esc(s.name)}</b> · ${esc(s.arch)}</div>` : "";
+}
+function card(m, all) {
+  const d = m.last, f = m.farm || {}, gs = m.guest;
+  let status, color;
+  if (f.enabled === false) { status = "disabled"; color = "var(--muted)"; }
+  else if (m.connected) { status = "connected"; color = "var(--good)"; }
+  else if (gs && gs.state !== "running") { status = gs.state; color = STATE_COLOR[gs.state] || "var(--muted)"; }
+  else { status = "not connected"; color = "var(--bad)"; }
+  let html = `<div class="top"><div><span class="name">${esc(m.name)}</span> ${osChip(m)} <span class="model">${esc(d ? d.model || "" : "")}</span></div>` +
+    `<span class="badge"><i class="dot" style="background:${color}"></i>${status}${m.rtt_ms != null && m.connected ? " · " + m.rtt_ms + " ms" : ""}</span></div>`;
+  html += osLine(m);
+  // A VM: where it runs, and (a guest) its state. A WSL that is no guest runs as long as its PC.
+  if (gs) html += `<div class="place">${esc(KIND[gs.kind] || gs.kind)} “${esc(gs.vm)}” on <b>${esc(gs.placement || "?")}</b></div>` +
+    `<div class="why">guest: ${guestLine(gs)}</div>`;
+  else if (m.parent) html += `<div class="place">WSL on <b>${esc(m.parent)}</b> · runs while it does</div>`;
+  const mine = all.filter(o => o.parent === m.name);
+  if (mine.length) html += `<div class="row"><span class="lab">Guests</span><ul class="gl" style="margin:0">` +
+    mine.map(o => `<li><b>${esc(o.name)}</b> ${osChip(o)} ` + (o.guest ? `(${esc(KIND[o.guest.kind] || o.guest.kind)}): ${guestLine(o.guest)}`
+      : `(WSL): <i class="dot" style="background:${o.connected ? "var(--good)" : "var(--bad)"}"></i>${o.connected ? "running" : "not connected"} · always on`) + `</li>`).join("") + "</ul></div>";
+  if (f.enabled === false) return html + `<div class="why">disabled in the configuration: the farm sends it nothing</div>`;
+  if (gs && gs.state !== "running") return html;
+  if (!m.local) {
+    const ok = f.ok;
+    // A Windows host whose jobs go through its WSL guest, stopped: it takes them, and the guest starts for one.
+    const later = !ok && m.via && m.via.state !== "running";
+    html += `<div class="why">farm: <b style="color:${ok || later ? "var(--good)" : "var(--bad)"}">${ok ? "✓ usable" : later ? "✓ takes jobs" : "✕ not usable"}</b>` +
+      `${ok ? "" : later ? ": they start " + esc(m.via.name) + " (its WSL, " + esc(m.via.state) + ") first" : ": " + esc(f.why)} · probed ${ago(f.checked)}${f.probe_rtt_ms != null ? ", " + f.probe_rtt_ms + " ms" : ""}` +
+      `${f.mbps != null ? ", " + f.mbps + " MB/s (" + ago(f.mbps_at) + ")" : ""}${f.link ? " · link " + esc(f.link) : ""}</div>`;
+  }
+  if (!d) return html + `<div class="why">${esc(m.error || "")}</div>`;
+  if (!m.connected) html += `<div class="why">${esc(m.error || "")}</div>`;
+  const c = d.cpu, cores = d.cores, idle = Math.max(0, 1 - c.farm - c.fleet - c.other);
+  html += `<div class="row"><span class="lab">CPU</span><div>` +
+    bar([[c.farm, "var(--farm)", "farm " + pct(c.farm)], [c.fleet, "var(--fleet)", "fleet " + pct(c.fleet)], [c.other, "var(--other)", "own " + pct(c.other)]], 1) +
+    `<div class="val"><b>${pct(c.busy)}</b> of ${cores} cores · farm ${pct(c.farm)} · fleet ${pct(c.fleet)} · own ${pct(c.other)} · idle ${pct(idle)}${d.load != null ? " · load " + d.load : ""}</div>` +
+    cpuSpark(m.history) + `</div></div>`;
+  const g = d.gpu;
+  if (g) html += `<div class="row"><span class="lab">GPU</span><div>` + bar([[(g.util || 0) / 100, "var(--farm)", "busy " + g.util + "%"]], 1) +
+    `<div class="val"><b>${g.util ?? "?"}%</b> busy${g.mem_used != null ? " · " + GB(g.mem_used) + " in use" : ""}` +
+    `${g.mem_total ? " of " + GB(g.mem_total) : ""}${g.power_w != null ? " · " + g.power_w + " W" : ""}${g.temp_c != null ? " · " + g.temp_c + " °C" : ""}</div>` +
+    lineSpark(m.history, 4, "var(--farm)", "GPU busy %", 100) + `</div></div>`;
+  const mem = d.mem, own = Math.max(0, mem.used - mem.farm_rss);
+  // A VM's memory is what it may take (WSL's limit, a guest's size), not its machine's; a machine's
+  // that the firmware keeps (an integrated GPU's) is named.
+  const kept = mem.installed && mem.installed - mem.total > 2 ** 30 ? mem.installed - mem.total : 0;
+  html += `<div class="row"><span class="lab">Memory</span><div>` +
+    bar([[mem.farm_rss, "var(--farm)", "farm " + MEM(mem.farm_rss)], [own, "var(--other)", "rest " + MEM(own)]], mem.total) +
+    `<div class="val"><b>${MEM(mem.available)}</b> available of ${MEM(mem.total)}${m.parent ? " (the VM's limit)" : ""}${kept ? " (" + MEM(mem.installed) + " installed, " + MEM(kept) + " kept for the GPU)" : ""} · farm ${MEM(mem.farm_rss)}` +
+    `${mem.swap_used ? " · swap " + MEM(mem.swap_used) : ""}${mem.compressed ? " · compressed " + MEM(mem.compressed) : ""}</div></div></div>`;
+  // Low: under 50 GB a plain write can have (an important one may get more, from what macOS purges).
+  const dk = d.disk, used = dk.total - dk.free, low = dk.free < 50e9;
+  html += `<div class="row"><span class="lab">Disk</span><div>` + bar([[used, low ? "var(--bad)" : "var(--other)", "used " + GB(used)]], dk.total) +
+    `<div class="val"><b ${low ? 'style="color:var(--bad)"' : ""}>${low ? "⚠ " : ""}${GB(dk.free)}</b> free of ${GB(dk.total)}` +
+    `${dk.important != null ? " · " + GB(dk.important) + " for an important write" : ""}</div></div></div>`;
+  html += `<div class="row"><span class="lab">Network</span><div><div class="val">↓ <b>${rate(d.net.rx)}</b> · ↑ <b>${rate(d.net.tx)}</b>` +
+    `${m.rtt_ms != null ? " · round trip " + m.rtt_ms + " ms" : ""}</div>` + lineSpark(m.history, 6, "var(--farm)", "received") + `<div class="val">received, 5 min</div>` +
+    (m.local ? "" : lineSpark(m.history, 8, "var(--text2)", "round trip ms") + `<div class="val">round trip, 5 min</div>`) + `</div></div>`;
+  const jobs = d.jobs || [];
+  html += `<div class="row"><span class="lab">Jobs</span><div class="val"><b>${jobs.length}</b>` +
+    `${m.local ? "" : " of " + f.slots + " test slots"} · ${d.compiles} compiles · ${d.fleet_jobs} fleet jobs` +
+    `${d.idle_s != null ? " · " + (d.idle_s < 600 ? "<b>someone at it</b> (" + Math.round(d.idle_s) + " s)" : "no one at it") : ""}</div></div>`;
+  if (jobs.length) html += '<ul class="jobs">' + jobs.map(j => `<li title="${esc(j.cmd)}"><b>${esc(j.kind)}</b> ${esc(j.checkout)} · ${(j.cpu).toFixed(1)} cores · ${GB(j.rss)} — ${esc(j.cmd)}</li>`).join("") + "</ul>";
+  html += `<div class="foot">sampler: ${(d.probe_cpu * 100).toFixed(2)}% of a core · sample ${ago(d.t)}</div>`;
+  return html;
+}
+async function tick() {
+  try {
+    const s = await (await fetch("/api/state", {cache: "no-store"})).json();
+    // (a VM's cores and memory are its machine's, counted on that machine's card)
+    const on = s.machines.filter(m => m.connected && m.last && !m.parent);
+    let cores = 0, farm = 0, fleet = 0, own = 0, jobs = 0, memAv = 0, memT = 0;
+    for (const m of on) { const d = m.last, n = d.cores; cores += n; farm += d.cpu.farm * n; fleet += d.cpu.fleet * n; own += d.cpu.other * n;
+      jobs += (d.jobs || []).length; memAv += d.mem.available; memT += d.mem.total; }
+    $("#sum").innerHTML = `<b>${s.machines.filter(m => m.connected && m.last).length}</b> of ${s.machines.length} machines connected · <b>${cores}</b> cores: farm <b>${farm.toFixed(1)}</b>, ` +
+      `fleet <b>${fleet.toFixed(1)}</b>, own <b>${own.toFixed(1)}</b>, idle <b>${Math.max(0, cores - farm - fleet - own).toFixed(1)}</b> · ` +
+      `<b>${jobs}</b> farm jobs · memory ${MEM(memAv)} available of ${MEM(memT)}` +
+      (s.cloud ? ` · cloud <b ${s.cloud.over ? 'style="color:var(--bad)"' : ""}>US$${s.cloud.day.toFixed(2)}</b> today of US$${s.cloud.day_limit},` +
+        ` US$${s.cloud.month.toFixed(2)} this month of US$${s.cloud.month_limit}` + (s.cloud.over ? " · ⚠ over budget: no cloud start" : "") : "");
+    $("#grid").innerHTML = s.machines.map(m => `<section class="card ${m.connected ? "" : "off"} ${m.parent ? "guestcard" : ""}">${card(m, s.machines)}</section>`).join("");
+  } catch (e) { $("#sum").textContent = "the dashboard's server is not answering: " + e; }
+}
+tick(); setInterval(tick, 2000);
+</script></body></html>
+"""
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

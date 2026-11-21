@@ -94,7 +94,7 @@ fn call_sites(px: &Patterns, text: &str, h: &str, ctx: &[String]) -> Vec<Site> {
     let parts = split_top_text(text, ',');
     let plain = |p: &str| -> bool { (matches(&px.demand_positive, p) && balanced(&p[p.find('(').expect("a call")..]) && calls(px, p, h).is_empty()) || matches(&px.demand_eq, p) };
     let plain_alts = |p: &str| -> bool {
-        if !(p.starts_with('(') && p.ends_with(')') && balanced(p)) || !calls(px, p, h).is_empty() {
+        if !(p.starts_with('(') && p.ends_with(')') && balanced(p) && calls(px, p, h).is_empty()) {
             return false;
         }
         let bs = split_alts(&p[1..p.len() - 1]);
@@ -398,7 +398,7 @@ pub fn node_demand(px: &Patterns, prog: &mut Program, entries: &[usize], helpers
     });
     let starts_demand = |prog: &Program, e: usize| prog.arena[e].lits.first().is_some_and(|l| l.starts_with("demand_"));
     for scc in sccs {
-        if scc.iter().any(|gname| !helpers.contains(gname)) || !(!scc.is_disjoint(&lone) || scc.iter().any(|gname| search(&px.demand_fan, &body_of[gname]))) {
+        if scc.iter().any(|gname| !helpers.contains(gname)) || (scc.is_disjoint(&lone) && !scc.iter().any(|gname| search(&px.demand_fan, &body_of[gname]))) {
             continue;
         }
         if scc.iter().any(|gname| by[gname].iter().any(|&e| starts_demand(prog, e))) {

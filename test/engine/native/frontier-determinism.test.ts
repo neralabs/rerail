@@ -1,12 +1,18 @@
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
+import { requirePackFixture } from "../../../scripts/s3/pack-fixtures.mjs";
+import { repositoryPath } from "../../support/oracles.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
 const caps = new URL("../../../native/src/code_rule_dsl/capabilities.json", import.meta.url).href;
-const policy = new URL("../../../gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json", import.meta.url).href;
+// Pack test data, not in git: `npm run fixtures:pull` fetches it.
+const policyPath = repositoryPath("packs", "data-layer", "upstream", "lint", "authored", "packs", "data-layer", "candidates", "rules", "data-layer-serverplan-state-tripwires.json");
+const policy = pathToFileURL(policyPath).href;
 
 it.skipIf(!required)("keeps admission and physical producers identical for permutations of the same data-layer plans", () => {
+  requirePackFixture(policyPath);
   const program = `
     import {readFileSync} from 'node:fs';
     import {loadNativeBinding} from ${JSON.stringify(engine)};

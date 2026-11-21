@@ -64,9 +64,10 @@ pub fn peak(stage: &str) {
                 // `RERAIL_DIAG_PAUSE_AT=<stage>:<n>` (with `RERAIL_DIAG_PAUSE=<seconds>`): the n-th time
                 // the stage is reached, wait that long (bounded), for `footprint` on the process.
                 if let (Ok(at), Some(seconds)) = (std::env::var("RERAIL_DIAG_PAUSE_AT"), std::env::var("RERAIL_DIAG_PAUSE").ok().and_then(|s| s.parse::<u64>().ok())) {
-                    static SEEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    #[derive(Default)]
+                    struct PauseSeen(std::sync::atomic::AtomicUsize);
                     let (name, nth) = at.split_once(':').map_or((at.as_str(), 1), |(name, nth)| (name, nth.parse().unwrap_or(1)));
-                    if name == stage && SEEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 == nth {
+                    if name == stage && rerail_prof::code_rule_dsl::logic::profile::local::<PauseSeen>().0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 == nth {
                         eprintln!("DIAG pause at {stage}, pid {}", std::process::id());
                         std::thread::sleep(std::time::Duration::from_secs(seconds.min(30)));
                     }
@@ -181,6 +182,28 @@ pub fn register_device_memory(read: fn() -> (usize, usize)) {
 /// The device's buffers in MB (reserved, driver); none without a device.
 pub fn device_memory() -> (usize, usize) {
     DEVICE_MEMORY.get().map_or((0, 0), |read| read())
+}
+
+/// The process's CPU (user, system) seconds, every thread's.
+pub fn process_usage() -> (f64, f64) {
+    #[cfg(unix)]
+    {
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        // SAFETY: getrusage writes the struct it is given.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
+        (s(u.ru_utime), s(u.ru_stime))
+    }
+    #[cfg(windows)]
+    {
+        let (user, kernel) = windows_cpu(false);
+        (user.as_secs_f64(), kernel.as_secs_f64())
+    }
+    // The browser build's one thread.
+    #[cfg(target_family = "wasm")]
+    {
+        (single_thread_cpu().as_secs_f64(), 0.0)
+    }
 }
 
 /// The calling thread's CPU (user, system) seconds.

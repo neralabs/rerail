@@ -53,7 +53,7 @@ fn files() -> Vec<Vec<u8>> {
                     x ^= x << 13;
                     x ^= x >> 7;
                     x ^= x << 17;
-                    [b'1', b'`', b'"', b' ', b'`', b'7'][(x % 6) as usize]
+                    b"1`\" `7"[(x % 6) as usize]
                 })
                 .collect();
             out.push(f);
@@ -107,8 +107,8 @@ fn remade_positions_payoff() {
 #[test]
 fn a_word_made_value_reads_made_operands() {
     use crate::block::BlockOp;
-    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::DIR)).expect("the ladder's JSON");
-    let c = crate::ladder::compile_step("14-json", &source);
+    let source = std::fs::read_to_string(format!("{}/json-rfc.bitlex", crate::ladder::dir())).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("json-rfc", &source);
     let mut p = c.program.block_programs[0].clone();
     let prefix = p.ops.iter().position(|op| matches!(op, BlockOp::Prefix(..))).expect("a prefix");
     p.ops[prefix] = BlockOp::Const(0);
@@ -117,7 +117,7 @@ fn a_word_made_value_reads_made_operands() {
     }
     let native = crate::block_native::BlockNative::lower(&p);
     let compiled = native_cpu_block::compile(&native).expect("compiles");
-    // The outputs the record pass makes instead (the lasts, decision 0452) are not tier 1's.
+    // The outputs the record pass makes instead (the lasts, decision 0411) are not tier 1's.
     let made = native.cpu_unstored();
     let unit = br#"{"a": [1, -2.5e3, "x\u00e9y", true, null], "b": {"c": "\\\"d"}} "#;
     for len in [64usize, 65, 128, 181, 200, 300] {

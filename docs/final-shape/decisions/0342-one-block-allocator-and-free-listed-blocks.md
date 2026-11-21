@@ -129,3 +129,30 @@ The crate cannot see the engine's binding (`placement`), so a chunk carries what
 **Still outside the policy:** a device run's own relation (`Life::Device`, 0325 step 5) is leased as a device
 join's buffers are (`lease_block_for_join`: bounded inside the join's budget, a refusal running it on the CPU).
 The policy has no need for that yet.
+
+## Amended (2026-11-20, user; 0494 step 6): the lists in the ledger, buddies merged
+
+Measured against 0458 (0494 step 5), a cold run of the data layer's 50 files held about 120 MB more footprint, and
+it was the free lists: at the end of the run they held 316 MB, about 200 MB of it resident. A free chunk's first
+word was its link, so its first page stayed; and free chunks never merged, so a chunk under a page never freed one.
+Three ways were tried (0494 step 6): the lists outside the chunks, the small structures out of the free-listed
+blocks, and buddies merged. The user chose the third, which is built on the first:
+
+- **The lists are the ledger's** (decision 0487's, `ledger::State::lists`): a class's free chunks are a set of
+  offsets there, and a free chunk holds nothing. With a bit a page for the pages given to the OS, a free gives back
+  every page it leaves with no live byte (the ledger's live bits say which, R6), and a chunk handed out marks the
+  given pages it reaches in use again (`MADV_FREE_REUSE` on macOS). A freeze gives back what its free chunks leave.
+- **Buddies.** A class's chunk lies aligned to its size, up to 1 MB (`free::ALIGN_MAX`: a block made for a chunk
+  has room for it and 1 MB more; a larger chunk lies at a multiple of 1 MB, has no buddy, and its pieces go back by
+  their own sizes, as every piece did before). From the front, the bytes skipped to align it go onto the lists as
+  pieces, each aligned to its own size. A chunk freed merges with its buddy (`at ^ size`) while the buddy
+  is free, and a class with none free splits the smallest larger chunk, each upper half onto its list. The lowest
+  free chunk is taken first. A fitted chunk's pieces, and its rest when it is made, are each aligned to their size,
+  so they merge too.
+- Given up: the lists' heads in the block's memory and the in-chunk links, the form a kernel could have bound ("Not
+  now" above). Only the host takes and gives chunks; a kernel's form, when one is wanted, is the ledger's to give.
+
+Tests: `free_buddies_merge_and_a_larger_chunk_splits`, `a_page_goes_back_once_no_live_chunk_shares_it`,
+`a_large_chunk_fits_a_block_made_for_it`, and
+`a_page_with_a_live_byte_is_never_given_back` (R6, now through the frees themselves); Q337's freeze test with a
+chunk under a page, which is the case that shares a page now.

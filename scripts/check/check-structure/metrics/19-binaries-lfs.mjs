@@ -9,6 +9,10 @@
 // directory and override the root's.
 // A checkout without LFS content holds small text pointers in place of the binaries; those pass, and the
 // rule still catches any binary committed outside LFS.
+// Exemption `pack-data-waiting`: a binary in a tool-pack's publish request (`packs/<id>/upstream/<tool>/publish/`)
+// is pack test data on its way to S3; #3 fails while any publish/ is tracked, so it cannot merge in git.
+// Exemption `engine-layout`: the engine line's binaries ENGINE_LAYOUT lists by exact path, with their reasons, until
+// their storage is settled with their owner in a follow-up.
 
 import { basename, compare, dirname, finding, globToRegExp, isBinaryFile, sortFindings } from "../lib.mjs";
 
@@ -17,6 +21,21 @@ export const title = "Large binaries committed without LFS";
 export const target = "0 (>100 KB)";
 
 export const LIMIT_BYTES = 100 * 1024;
+
+const PUBLISH_REQUEST = /^packs\/[^/]+\/upstream\/[^/]+\/publish\//;
+
+/** Exemption `engine-layout`: a binary and why it is committed as it is. */
+const ENGINE_LAYOUT = new Map([
+  ["native/dictionaries/javascript-source.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/javascript-tape.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/python-source.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/python-tape.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/rust-source.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/rust-tape.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/typescript-source.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/dictionaries/typescript-tape.zdict", "a 110 KB zstd dictionary the tape16 lab reads (native/lab/tape16/src/v15.rs)"],
+  ["native/src/code_rule_dsl/logic/plan/golden/facts.sql.zst", "the planner tests' recorded facts (logic/plan/golden/generate.sh), zstd-compressed"],
+]);
 
 /** The `.gitattributes` rules in precedence order (root first; deeper files later, so they win). */
 export function parseGitattributes(repo) {
@@ -60,7 +79,7 @@ export function check(repo) {
   const findings = [];
   for (const path of repo.files) {
     const size = repo.size(path);
-    if (size <= LIMIT_BYTES) continue;
+    if (size <= LIMIT_BYTES || PUBLISH_REQUEST.test(path) || ENGINE_LAYOUT.has(path)) continue;
     if (!isBinaryFile(repo, path)) continue;
     if (isLfs(rules, path)) continue;
     findings.push(finding(path, `${(size / 1024).toFixed(0)} KB binary not tracked by LFS in .gitattributes`));

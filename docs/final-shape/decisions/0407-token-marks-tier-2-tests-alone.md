@@ -1,6 +1,6 @@
 # 0407: Token marks that tier 2 tests alone hold no bit of the code
 
-Status: decided (2026-11-18, while moving Kotlin off `back_fill`, 0490). Changes 0129 (token
+Status: decided (2026-11-18, while moving Kotlin off `back_fill`, 0416). Changes 0129 (token
 marks tested from the records).
 
 ## Intro
@@ -10,7 +10,7 @@ mark in the high 16 (`records::MARKS`). Kotlin's step 35 uses all 16: 14 marks a
 bits. Five of the 14 are token marks (`mark K = tokens …`, 0129). Their bit was the grammar's
 token starts, set at every token, and tier 2 tested their run of tokens anyway. The bit carried
 nothing, but tier 1 made it and the code held it. With no bits left, the grammar merged unrelated
-cases into one mark (`dotted`, `named`, `generic`), and 0490 cannot turn the back fills into
+cases into one mark (`dotted`, `named`, `generic`), and 0416 cannot turn the back fills into
 more token marks.
 
 The lean parser keeps nothing per token for its peeks: it reads the tokens ahead where a rule asks.

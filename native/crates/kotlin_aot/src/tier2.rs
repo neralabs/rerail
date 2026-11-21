@@ -9258,10 +9258,10 @@ impl P<'_> {
                         (c + 1, 17)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
-                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
+                        (c + 0, 10)
                     } else {
                         // `rtail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 10)
                     };
                     self.piece(c, l, kind);
                     return Ok(());

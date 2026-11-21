@@ -1,7 +1,7 @@
 # 0405: UTF-8 at simdjson's structure
 
 Status: decided (the user, 2026-11-18: "please do all of these", the three gaps 0404 left).
-Follows 0455 and 0404.
+Follows 0403 and 0404.
 
 ## Intro
 
@@ -102,5 +102,5 @@ The steady chunk is now simdjson's 17 instructions:
 - `orr`, `and`, `eor`, and one `cmtst`.
 
 What is left of the stretch is the mask (`and`s and `addp`s to a word, about 9). simdjson ORs
-its error bytes into one vector and tests it once a file. The error is a row here (0454: a flag
+its error bytes into one vector and tests it once a file. The error is a row here (0402: a flag
 needs totals no one reads by rows).

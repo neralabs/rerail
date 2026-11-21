@@ -7,7 +7,7 @@
     {
       "label": "rr",
       "variant": "Rr",
-      "suffixes": [".rr"],
+      "suffixes": [".rerail"],
       "parser": "rr",
       "grammar": "native:rr",
       "tapeTag": 13
@@ -20,5 +20,19 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": []
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "json",
+      "via": "json-object"
+    },
+    {
+      "language": "regex",
+      "via": "match-regex"
+    },
+    {
+      "language": "python",
+      "via": "pattern"
+    }
+  ]
 }

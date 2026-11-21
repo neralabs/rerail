@@ -579,26 +579,26 @@ impl<'s> Lexer<'s> {
         match c {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let end = self.name_end(s)?;
-                return Ok((Name, end, word(self.src, s, end)));
+                Ok((Name, end, word(self.src, s, end)))
             }
-            b'0'..=b'9' => return self.number(s),
+            b'0'..=b'9' => self.number(s),
             b'.' => self.number(s),
             b'"' => {
-                return match self.string_end(s) {
+                match self.string_end(s) {
                     Some(end) => Ok((Quote, end, 0)),
                     None => refuse,
-                };
+                }
             }
             b'`' => {
                 let end = rerail_simd8::micro::find(self.src, s + 1, b'`').unwrap_or(self.src.len());
                 if end >= self.src.len() {
                     return refuse;
                 }
-                return Ok((Raw, end + 1, 0));
+                Ok((Raw, end + 1, 0))
             }
             b'\'' => match self.rune_end(s) {
-                Some(end) => return Ok((Rune, end, 0)),
-                None => return refuse,
+                Some(end) => Ok((Rune, end, 0)),
+                None => refuse,
             },
             c if c >= 0x80 => {
                 let end = self.name_end(s)?;
@@ -690,11 +690,10 @@ impl<'s> Lexer<'s> {
                 if self.at(e) == b'.' {
                     mant.push(self.digits(e + 1, hexd).unwrap_or(e + 1));
                 }
-            } else if self.at(s + 2) == b'.' {
-                if let Some(f) = self.digits(s + 3, hexd) {
+            } else if self.at(s + 2) == b'.'
+                && let Some(f) = self.digits(s + 3, hexd) {
                     mant.push(f);
                 }
-            }
             for m in mant {
                 if let Some(x) = self.exponent(m, true) {
                     take(T::Float, x);
@@ -716,11 +715,10 @@ impl<'s> Lexer<'s> {
                 if let Some(e) = self.prefixed_digits(s + 1, |c| (b'0'..=b'7').contains(&c)) {
                     take(T::Int, e);
                 }
-            } else if c0 != b'.' {
-                if let Some(e) = self.digits(s, dec) {
+            } else if c0 != b'.'
+                && let Some(e) = self.digits(s, dec) {
                     take(T::Int, e);
                 }
-            }
             let int = if c0 == b'.' { Some(s) } else { self.digits(s, dec) };
             if let Some(e) = int {
                 if c0 != b'.' {
@@ -761,7 +759,7 @@ impl<'s> Lexer<'s> {
         let mut i = s + 1;
         loop {
             // The next `"`, `\` or `\n` (stage 1's mask): the text between is passed a block at a time.
-            i = rerail_simd8::micro::first_of(self.src, i, [b'"', b'\\', b'\n']);
+            i = rerail_simd8::micro::first_of(self.src, i, *b"\"\\\n");
             match self.src.get(i)? {
                 b'"' => return Some(i + 1),
                 b'\n' => return None,

@@ -1,0 +1,127 @@
+// A flat lattice's fixpoint (`logic::native::lattice_fixpoint`'s graph, list step 17) on the
+// device work queue (`<ukl/workqueue.h>`): an item is a cell to evaluate. A
+// worker takes a cell, evaluates it from its inputs' current values, and where its value rose,
+// pushes its dependents, which any idle worker takes up. The system is monotone over a finite
+// lattice, so this chaotic order reaches the one least fixpoint.
+//
+// A cell's state only rises: 0 BOT, 1 writing, 2 a constant (in `values`), 3 TOP. A constant is
+// published as 0 -> 1, the value written and fenced, 1 -> 2; a reader that sees 1 reads BOT
+// (the writer pushes the cell's dependents once it is published), and a raise that finds 1
+// pushes its cell again rather than wait. So no value falls and none is read half written.
+
+// A cell's value is read and written through the coherent loads and stores (`<ukl/memory.h>`): another worker's
+// write is seen once its state says so, on a backend whose plain loads may be answered by a stale cache too.
+
+#include <ukl/workqueue.h>
+#include <ukl/memory.h>
+
+#define TOP ((int64_t)4611686018427387904L)
+#define BOT ((int64_t)(-9223372036854775807L - 1L))
+#define BIG ((int64_t)1099511627776L)
+
+typedef struct LatticeArgs { uint32_t cells, capacity, polls, pad; } LatticeArgs;
+UKL_REFLECT_STRUCT(LatticeArgs, cells, capacity, polls, pad)
+
+UKL_INLINE int64_t lub(int64_t a,int64_t b){ if(a==BOT)return b; if(b==BOT)return a; return a==b?a:TOP; }
+UKL_INLINE int64_t magnitude(int64_t a){ return a<0?-a:a; }
+UKL_INLINE int64_t transfer(uint32_t op,int64_t a,int64_t b){
+  if(a==TOP||b==TOP)return TOP;
+  if(op==43u)return a+b;
+  if(op==45u)return a-b;
+  if(op==42u&&magnitude(a)<BIG&&magnitude(b)<BIG)return a*b;
+  return TOP;
+}
+
+UKL_INLINE int64_t value_of(UKL_COHERENT uint8_t* values,uint32_t cell){ return (int64_t)ukl_ldc_u64(values,cell*8u); }
+
+UKL_INLINE int64_t read_cell(UKL_GLOBAL uint32_t* state,UKL_COHERENT uint8_t* values,uint32_t cell){
+  uint32_t s=ukl_atomic_load(&state[cell]);
+  if(s==3u)return TOP;
+  if(s!=2u)return BOT;
+  ukl_fence_device();
+  return value_of(values,cell);
+}
+
+// 0: unchanged; 1: risen; 2: another worker is publishing it, evaluate again later.
+UKL_INLINE uint32_t raise(UKL_GLOBAL uint32_t* state,UKL_COHERENT uint8_t* values,uint32_t cell,int64_t value){
+  if(value==BOT)return 0u;
+  if(value==TOP)return ukl_atomic_max(&state[cell],3u)==3u?0u:1u;
+  uint32_t seen=ukl_atomic_cas(&state[cell],0u,1u);
+  bool claimed=seen==0u;
+  if(claimed){
+    ukl_stc_u64(values,cell*8u,(uint64_t)value);
+    ukl_fence_device();
+    // Fails only where TOP was raised meanwhile, which stands; a swap that failed spuriously (a value no state
+    // takes, `ukl_atomic_cas`) is tried again.
+    for(uint32_t attempt=0u;attempt<UKL_WQ_TURNS;attempt++){
+      uint32_t was=ukl_atomic_cas(&state[cell],1u,2u);
+      if(was==1u||was==3u)break;
+    }
+    return 1u;
+  }
+  if(seen==3u)return 0u;
+  // Being published by another worker, or a claim that failed spuriously: evaluated again later.
+  if(seen!=2u)return 2u;
+  ukl_fence_device();
+  if(value_of(values,cell)==value)return 0u;
+  return ukl_atomic_max(&state[cell],3u)==3u?0u:1u;
+}
+
+// Queues `cell` unless it is queued already.
+UKL_INLINE void enqueue(UklWorkQueue q,UKL_GLOBAL uint32_t* queued,uint32_t cell){
+  uint32_t bit=1u<<(cell%32u);
+  if((ukl_atomic_or(&queued[cell/32u],bit)&bit)==0u)ukl_wq_push(q,cell);
+}
+
+// `bins`: four words a binary transfer (op, left, right, unused).
+DEFINE_KERNEL2(lattice, lattice_queue,
+               RWBUFFER, uint32_t,    state,     "[args.cells]",
+               RWBUFFER, uint8_t,     values,    "[args.cells * 8]",
+               ROBUFFER, int64_t,     seeds,     "[args.cells]",
+               ROBUFFER, uint32_t,    copyStart, "[args.cells + 1]",
+               ROBUFFER, uint32_t,    copies,    "[copyStart[args.cells]]",
+               ROBUFFER, uint32_t,    binStart,  "[args.cells + 1]",
+               ROBUFFER, uint32_t,    binIndex,  "[binStart[args.cells]]",
+               ROBUFFER, uint32_t,    bins,      "[4 * bins]",
+               ROBUFFER, uint32_t,    outStart,  "[args.cells + 1]",
+               ROBUFFER, uint32_t,    outs,      "[outStart[args.cells]]",
+               RWBUFFER, uint32_t,    queued,    "[(args.cells + 31) / 32]",
+               RWBUFFER, uint32_t,    slots,     "[args.capacity]",
+               RWBUFFER, uint32_t,    control,   "[4]",
+               RWBUFFER, uint32_t,    stats,     "[4]",
+               ARGS,     LatticeArgs, args,      ,
+               GID0,     uint32_t,    worker,    )
+{
+  (void)worker;
+  UKL_COHERENT uint8_t* cells=(UKL_COHERENT uint8_t*)values;
+  UklWorkQueue q={slots,control,args.capacity,0u};
+  uint32_t polls=0u,visits=0u,retries=0u,cell=0u;
+  for(uint32_t turn=0u;turn<UKL_WQ_TURNS;turn++){
+    if(!ukl_wq_take(q,&cell)){
+      if(ukl_wq_idle(q,&polls,args.polls))break;
+      continue;
+    }
+    polls=0u;
+    ukl_atomic_and(&queued[cell/32u],~(1u<<(cell%32u)));
+    ukl_fence_device();
+    visits++;
+    int64_t value=seeds[cell];
+    for(uint32_t e=copyStart[cell];e<copyStart[cell+1u];e++)value=lub(value,read_cell(state,cells,copies[e]));
+    for(uint32_t e=binStart[cell];e<binStart[cell+1u];e++){
+      UKL_GLOBAL const uint32_t* bin=bins+4u*binIndex[e];
+      int64_t a=read_cell(state,cells,bin[1]),b=read_cell(state,cells,bin[2]);
+      if(a!=BOT&&b!=BOT)value=lub(value,transfer(bin[0],a,b));
+    }
+    uint32_t risen=raise(state,cells,cell,value);
+    if(risen==1u){
+      ukl_fence_device();
+      for(uint32_t e=outStart[cell];e<outStart[cell+1u];e++)enqueue(q,queued,outs[e]);
+    }else if(risen==2u){
+      retries++;
+      enqueue(q,queued,cell);
+    }
+    ukl_wq_done(q);
+  }
+  ukl_atomic_add(&stats[0],visits);
+  ukl_atomic_add(&stats[1],retries);
+}

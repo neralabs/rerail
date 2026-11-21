@@ -1,4 +1,4 @@
-# prov.py <policy.rr> <out.rr> <meta.json> (run from this directory): adds drv_i rules (a derivation's whole binding) for every rule of a
+# prov.py <policy.rerail> <out.rerail> <meta.json> (run from this directory): adds drv_i rules (a derivation's whole binding) for every rule of a
 # recursive component, and writes what each drv column means.
 import sys,re,json,os
 from rr import parse,rel,split_top
@@ -31,11 +31,11 @@ types0={}
 for m in re.finditer(r'\.decl\s+([a-z_0-9]+)\s*\(([^)]*)\)',re.sub(r'//[^\n]*','',src)):
     types0[m.group(1)]=[a.split(':')[1].strip() for a in m.group(2).split(',') if a.strip()]
 # A lattice relation's rows are a join of its derivations' values, not its derivations' heads: left out (and
-# file-local where measured: workload.rr's `cv`).
+# file-local where measured: workload.rerail's `cv`).
 rec=[c for c in rec if not any('<' in t for r in c for t in types0.get(r,[]))]
 types={}
-# The engine's own declarations (core.rr) first: a .rr program reads `kind`, `field`, ... undeclared.
-core=os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../../../docs/rule-syntax/lib/core.rr')
+# The engine's own declarations (core.rerail) first: a .rerail program reads `kind`, `field`, ... undeclared.
+core=os.path.join(os.path.dirname(os.path.abspath(__file__)),'../../../../docs/rule-syntax/lib/core.rerail')
 for m in re.finditer(r'\.decl\s+([a-z_0-9]+)\s*\(([^)]*)\)',re.sub(r'//[^\n]*','',open(core).read())):
     types[m.group(1)]=[a.split(':')[1].strip() for a in m.group(2).split(',') if a.strip()]
 for m in re.finditer(r'\.decl\s+([a-z_0-9]+)\s*\(([^)]*)\)',re.sub(r'//[^\n]*','',src)):

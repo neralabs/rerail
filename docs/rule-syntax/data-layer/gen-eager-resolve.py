@@ -1,4 +1,4 @@
-"""Writes eager-resolve.tables.rr, the name sets, text patterns and signatures of the eager-resolve linter.
+"""Writes eager-resolve.tables.rerail, the name sets, text patterns and signatures of the eager-resolve linter.
     python3 docs/rule-syntax/data-layer/gen-eager-resolve.py [--check]
 The source is scripts/lint_eager_resolve.py at the pinned commit of the data-layer repository. Each table is read
 from the module-level literal of the same name. --check regenerates the text and fails if the committed file
@@ -6,10 +6,10 @@ differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_eager_resolve.py"
-OUT = os.path.join(HERE, "eager-resolve.tables.rr")
+OUT = os.path.join(HERE, "eager-resolve.tables.rerail")
 # linter literal -> relation
 SETS = [
     ("BOUND_RESOLVE_ATTRS", "er_bound_attr"),
@@ -76,7 +76,7 @@ def text():
     for elt in lit["EAGER_PATTERNS"].elts:
         rx, name = elt.elts[0].args[0].value, elt.elts[1].value
         rows.append(f"er_text_pattern({json.dumps('.*' + rx + '.*')}, {json.dumps(name)}).")
-    rows.append("// The signed lists: the grandfathered directory, the burn-down ceiling (lib/data-layer/signing.rr).")
+    rows.append("// The signed lists: the grandfathered directory, the burn-down ceiling (lib/data-layer/signing.rerail).")
     rows.append(f"allow_sig(\"eager_resolve\", \"lint_eager_resolve\", {json.dumps(lit['ALLOWLIST_SIGNATURE'])}).")
     rows.append(f"allow_sig(\"eager_ceiling\", \"lint_eager_resolve:burn_down_ceiling\", "
                 f"{json.dumps(lit['BURN_DOWN_CEILING_SIGNATURE'])}).")

@@ -1,11 +1,5 @@
 # Kotlin.
 #
-# The grammar asks what comes next where the lean parser does: at the token. A mark that the
-# token after its gap decides says so (`before`, `unless before`), as the scanner's semicolon
-# asks of the next token (`Lexer::asi`); the next tokens are a token mark's run, as the parser
-# peeks. No mask reads the bytes after it (decision 0490). A number's suffix is the name
-# touching it, which the number's rule takes (`sfx`), as the lean parser's `integer` peeks.
-#
 # Reads headers, comments, declarations, types, statements, expressions, strings with
 # templates, raw strings with templates, characters, backtick names, callable references,
 # trailing commas, lambdas with destructured parameters, annotations, numbers, a class's
@@ -17,6 +11,11 @@
 # types with a receiver or `suspend`, annotated `if` and `when`, a `when` entry's trailing comma,
 # swallowed block comments, soft keywords after a template's `$`, `constructor` after modifiers
 # at a line's start, modifier words after a `.`, and `constructor` and `by` as names.
+#
+# The grammar asks what comes next where the lean parser does: at the token. A mark that the
+# token after its gap decides says so (`before`, `unless before`), as the scanner's semicolon
+# asks of the next token (`Lexer::asi`); the next tokens are a token mark's run, as the parser
+# peeks. No mask reads the bytes after it (no back fills, decision 0416).
 #
 # A raw string closes at its `"""` or at a template's `$` (`or t_dollar`: its closer is three
 # bytes, the `$` one). After the template's `}`, the string goes on as the kind of string the
@@ -409,7 +408,7 @@ mark lam_params = tokens "{" (simple_identifier | backtick_name | "in" | "," | "
 # bit of the code, no mask; each its tokens, read at the token as the lean parser peeks.
 # A modifier word where a declaration follows it, not a name.
 # An `@` that starts an annotated expression, as the lean parser's `declaration_ahead` finds no
-# declaration (Q225): from it, past annotations (their arguments counted, never a declaration's
+# declaration (Q342): from it, past annotations (their arguments counted, never a declaration's
 # hard keyword, a `{`, a `}`, a `;` or a use-site target's `:`), where the run's last token ends an annotation (a name, a
 # `)` or a `>`), a token that goes on no annotation and is no modifier and no declaration's word.
 # Where it does not hold, the `@` starts a declaration's modifiers. (`get` and `set` are an

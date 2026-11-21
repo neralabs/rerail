@@ -107,7 +107,7 @@ pub const CHECK: u8 = 0x66;
 /// line break are the statement's.
 /// `m=1` (`mark … , drops …`): where gap pattern `operand` holds at the token
 /// (`Words::gap_patterns`, its first entry), the extra pending last is dropped: no node of the
-/// tape (decision 0490, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
+/// tape (decision 0416, the lean lexer's swallowed comment). `m=2`, and `m=3+F` where flag `F`
 /// is set (`mark … , loses …`): where gap pattern `operand` holds, the extra pending last is
 /// lost: of no width, after the token (decision 0451, the lean lexer's `asi`). `m=19`, and
 /// `m=20+F` where flag `F` is set (`mark … , refuses …`): where gap pattern `operand` holds, the
@@ -492,7 +492,7 @@ pub struct TokenMark {
     /// A mark the grammar takes nowhere: where it holds, the file is refused. `TOKEN` tests it
     /// at each token its record's bit names, once (no state tests it).
     pub refuses: bool,
-    /// An `unless before` (decision 0490): the mark holds where it does not. A mark's entries
+    /// An `unless before` (decision 0416): the mark holds where it does not. A mark's entries
     /// share its order (`patterns_hold`).
     pub unless: bool,
 }
@@ -534,14 +534,14 @@ pub struct TokenElem {
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
-    /// A run (decision 0490): any number of records the element takes, then the elements after
+    /// A run (decision 0416): any number of records the element takes, then the elements after
     /// it from any of them on (one run at most, after offset 0, never last).
     pub run: bool,
-    /// A run's depths (Q222, Bitlex's `nest`): each side of one, the run's records it takes go
+    /// A run's depths (Q339, Bitlex's `nest`): each side of one, the run's records it takes go
     /// one deeper (`open`) or one out. The elements after the run are tried only where every
     /// depth is 0; a closer where its depth is 0 ends the run.
     pub nests: Vec<Nest>,
-    /// A run's `ending` (Q225): the elements after it are tried only where its last record (the
+    /// A run's `ending` (Q342): the elements after it are tried only where its last record (the
     /// one before it, where it took none) is one this test takes.
     pub ending: Option<Box<TokenElem>>,
     /// The marks (bits of the records' marks) whose bit the record must not hold (`without M`),
@@ -559,6 +559,11 @@ pub struct TokenElem {
     /// The first comment after a line break, however many follow it, where the lean lexer's
     /// `asi` decides.
     pub since: bool,
+    /// The marks (bits of the records' marks) that take a record as one of the kinds: a kind
+    /// whose first byte another token's starts too has its rows' starts as a mark bit of the
+    /// code, read as tier 2's `ROW` reads a row's start, and `kinds` holds only the classes of
+    /// the bytes no other token starts.
+    pub rows: u32,
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
@@ -574,7 +579,7 @@ pub struct Nest {
 pub const NESTS: usize = 4;
 
 /// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
-/// ends the run (Q222).
+/// ends the run (Q339).
 pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
     let mut d = depth;
     for n in nests.iter().filter(|n| n.test.takes(code)) {
@@ -596,7 +601,8 @@ impl TokenElem {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
         let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
-        (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+        let row = code >> crate::records::MARK_SHIFT & self.rows != 0;
+        ((kind < 64 && self.kinds >> kind & 1 == 1 || row) && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
     }
 
     /// Whether the record's first byte is one the element takes (`TokenElem::first`).

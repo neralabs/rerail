@@ -70,6 +70,16 @@ impl StoreTapes {
             let path = db.path().ok_or_else(|| invalid("a tape store without a file"))?;
             self.maps = Some(crate::content_store::ObjectMaps::new(std::path::Path::new(path)));
         }
+        // An archived tape (decision 0450 step 4) is placed back in a segment first, from a connection of its own:
+        // this one is inside its statement. Read again, it is read in place there.
+        let [seg, seg_at, seg_len] = if seg == crate::content_store::ARCHIVED {
+            let path = db.path().ok_or_else(|| invalid("a tape store without a file"))?;
+            crate::content_store::place_archived_tape_at(std::path::Path::new(path), fid)
+                .map_err(|e| invalid(format!("an archived tape placed back: {e}")))?
+                .ok_or_else(|| invalid("an archived tape with no archive row"))?
+        } else {
+            [seg, seg_at, seg_len]
+        };
         let frame = self.maps.as_mut().expect("the maps").frame(seg, seg_at, seg_len);
         let frame = frame.ok_or_else(|| invalid("a tape whose segment is not there"))?;
         let bytes = frame.bytes(usize::try_from(raw_length).unwrap_or(usize::MAX)).map_err(|error| invalid(format!("a tape's bytes: {error}")))?;

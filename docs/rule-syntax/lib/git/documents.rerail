@@ -1,0 +1,25 @@
+#include "git.rerail"
+#include "git/selected-tree.rerail"
+
+// The engine supplies the prefix and effective path selection of this revision.
+.decl git_selected_directory(repo: symbol, tree: symbol, prefix: symbol, config: symbol, selection: symbol)
+.input git_selected_directory
+
+.decl git_source_view(view: symbol, repo: symbol, tree: symbol, prefix: symbol, config: symbol)
+.decl git_selected_view(view: symbol, repo: symbol, tree: symbol, prefix: symbol, config: symbol, selection: symbol)
+git_selected_view(v, r, t, prefix, config, s) :-
+    git_selected_directory(r, t, prefix, key, s), config = @sha256(key),
+    v = @sha256(cat(@sha256(r), t, @sha256(prefix), config)).
+git_source_view(v, r, t, prefix, config) :- git_selected_view(v, r, t, prefix, config, _).
+
+.decl git_source_file(view: symbol, path: symbol, mode: number, blob: symbol)
+git_source_file(v, p, m, b) :-
+    git_selected_view(v, r, _, "", _, s), git_inventory_file(r, s, p, m, b).
+git_source_file(v, p, m, b) :-
+    git_selected_view(v, r, _, base, _, s), base != "", git_inventory_file(r, s, full, m, b),
+    prefix(cat(base, "/"), full), p = substr(full, strlen(base) + 1, strlen(full)).
+
+.decl source_document(view: symbol, path: symbol, module: symbol, grammar: symbol, profile: symbol, parsed: tape, document: number)
+source_document(v, p, m, g, profile, t, d) :-
+    git_source_file(v, p, _, _), doc(d, p, m), doc_grammar(d, g), tape_of(d, t),
+    source_tape_version(build, format), profile = cat(build, "/", to_string(format)).

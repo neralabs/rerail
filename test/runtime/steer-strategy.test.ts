@@ -15,6 +15,9 @@ import {
 import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runtime.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
+import { steerLatitude } from "../support/steers.js";
+import { linkFolder } from "../support/platform/links.js";
+import { literal } from "../support/platform/text-patterns.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-steer-strategy-");
 
@@ -75,8 +78,8 @@ async function strategySession(options: {
     kind: "call", eventId: `call-${++event}`, sessionId, toolCallId, toolName: "write",
     input: typeof path === "string" ? { path, content: "" } : { paths: path },
   });
-  const result = (toolCallId: string) => runtime.ingest({
-    kind: "result", eventId: `result-${++event}`, sessionId, toolCallId, toolName: "write", output: "written",
+  const result = (toolCallId: string, output: unknown = "written") => runtime.ingest({
+    kind: "result", eventId: `result-${++event}`, sessionId, toolCallId, toolName: "write", output,
   });
   return {
     root,
@@ -111,7 +114,13 @@ describe("The rewind steer strategy", () => {
           toolCallId: "w1",
           rewound: ["created.py"],
           ruleIds: ["test:needle"],
-          content: expect.stringMatching(/^Rerail rolled back these files because the edit breaks the rule below: `created\.py`, which the edit created, is deleted\. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why\.\n\nRerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
+          content: [
+            "Rerail rolled back these files because the edit breaks the rule below: `created.py`, which the edit created, is deleted. Redo it so it follows the rule; if you decide the rule does not apply, redo it as it was and tell the user in one line why.",
+            "",
+            "Rerail found 1 problem in your last edit:",
+            "- created.py:1:1 — No needle [test:needle]",
+            steerLatitude(host, "test:needle"),
+          ].join("\n"),
         })]);
         await expect(readFile(join(session.root, "created.py"))).rejects.toThrow(/ENOENT/u);
         expect(await session.turnEnd()).toEqual([]);
@@ -143,7 +152,8 @@ describe("The rewind steer strategy", () => {
     }
   });
 
-  it("leaves every file with the edit's text, and steers as a message, when one of them cannot be put back", async () => {
+  it("leaves every file with the edit's text, and steers as a message, when one of them cannot be put back", async ({ skip }) => {
+    skip(process.platform === "win32", "Windows ignores a folder's read-only mode, so no folder here refuses a new file");
     const session = await strategySession({ strategy: "rewind", host: "omp", files: { "a/x.py": "X = 0\n", "b/y.py": "Y = 0\n" } });
     const locked = join(session.root, "b");
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
@@ -200,6 +210,36 @@ describe("The rewind steer strategy", () => {
     }
   });
 
+  // `conf/config.py`, with `conf` a link (a junction on Windows) to `.aws`, is `.aws/config.py`: a file in a folder
+  // named like one holding secrets, whose text the session ledger never holds however the edit spells it. An ordinary
+  // file with the same text is edited first, and the ledger keeps that one's text: no secret pattern withholds it, so
+  // only the judgment by where `conf/config.py` really is keeps it out. The session keeps the text, so the edit is put
+  // back, as one of a file whose text holds a secret is.
+  it("puts back a file a link to a secret-like folder leads to, while its session ledger keeps only the file's digest", async () => {
+    const before = "REGION = 'eu-west-1'\n";
+    const session = await strategySession({ strategy: "rewind", host: "omp", files: { ".aws/config.py": before, "region.py": before } });
+    linkFolder(".aws", join(session.root, "conf"));
+    try {
+      await session.edit("w0", "region.py", "REGION = 'eu-north-1'\n");
+      const deliveries = await session.edit("w1", "conf/config.py", "NEEDLE = 1\n");
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      const ledger = (await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).split("\n").filter(Boolean);
+      const holding = ledger.filter(line => line.includes("eu-west-1")).map(line => JSON.parse(line) as unknown);
+      expect(holding).toEqual([expect.objectContaining({ type: "policy-call", toolCallId: "w0", preimages: { "region.py": { text: before } } })]);
+      const calls = ledger.map(line => JSON.parse(line) as { type: string; toolCallId?: string; preimages?: unknown })
+        .filter(entry => entry.type === "policy-call" && entry.toolCallId === "w1");
+      expect(calls.map(call => call.preimages)).toEqual([
+        { "conf/config.py": { withheld: { sha256: createHash("sha256").update(before).digest("hex"), bytes: Buffer.byteLength(before) } } },
+      ]);
+      expect(deliveries).toEqual(expect.arrayContaining([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["conf/config.py"] })]));
+      // The file is secret-like where it really is, so every steer withholds the finding's message and fix.
+      for (const delivery of deliveries) expect(delivery.content).toContain("A finding here; its message and fix are withheld");
+      expect(await readFile(join(session.root, ".aws", "config.py"), "utf8")).toBe(before);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
   it("puts back a file whose text holds a secret, while its session ledger keeps only the file's digest", async () => {
     // Assembled from parts so no key-shaped literal sits in the file for secret scanners to refuse.
     const key = ["sk-", "proj-", "Q7f2LmZ9xV4pR8tK1wN6bH3cJ5dS0gYa"].join("");
@@ -213,6 +253,133 @@ describe("The rewind steer strategy", () => {
       const ledger = await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8");
       expect(ledger).not.toContain(key);
       expect(ledger).toContain(createHash("sha256").update(before).digest("hex"));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // A daemon too busy to answer the hook in time takes the call up after the tool wrote the file, so the edit is read
+  // against what Claude Code's result says the file held. Rewind writes a preimage back as the whole file, and that
+  // text was never read from the file, so the edit stays as the tool left it.
+  it.each([
+    { file: "existing.py", files: { "existing.py": "X = 0\n" }, written: "X = 0\nNEEDLE = 1\n", output: (path: string) => ({ type: "update", filePath: path, content: "", structuredPatch: [], originalFile: "X = 0\n" }) },
+    { file: "created.py", files: {}, written: "NEEDLE = 1\n", output: (path: string) => ({ type: "create", filePath: path, content: "", structuredPatch: [], originalFile: null }) },
+  ])("leaves $file as the tool wrote it, and steers as a message, when the call came only after the tool ran", async ({ file, files, written, output }) => {
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files });
+    try {
+      await writeFile(join(session.root, file), written);
+      await session.call("w1", file);
+      const deliveries = await session.result("w1", output(join(session.root, file)));
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, file), "utf8")).toBe(written);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // The call's own capture holds what the tool wrote; written back, it would undo only what changed the file since, and
+  // the steer would say the edit was rolled back.
+  it("leaves a late call's file as it is, and steers as a message, when the file changed again before the result", async () => {
+    const before = "X = 0\n";
+    const written = "X = 0\nNEEDLE = 1\n";
+    const formatted = "X = 0\nNEEDLE = 1  # fmt\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": before } });
+    try {
+      const path = join(session.root, "existing.py");
+      await writeFile(path, written);
+      await session.call("w1", "existing.py");
+      // A formatter rewrites the tool's line before the result reaches Rerail.
+      await writeFile(path, formatted);
+      const output = { type: "update", filePath: path, content: written, structuredPatch: [], originalFile: before };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(path, "utf8")).toBe(formatted);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // The same, in a file with a byte order mark, where the line diff covers line 1 and the result gives no text the tool
+  // replaced: the capture holds the tool's write, so it is not written back.
+  it("leaves a late call's file with a byte order mark as it is, and steers as a message, when the file changed again before the result", async () => {
+    const written = "﻿X = 0\nNEEDLE = 1\n";
+    const formatted = "﻿X = 0\nNEEDLE = 1  # fmt\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": "﻿X = 0\n" } });
+    try {
+      const path = join(session.root, "existing.py");
+      await writeFile(path, written);
+      await session.call("w1", "existing.py");
+      await writeFile(path, formatted);
+      const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" X = 0", "+NEEDLE = 1"] }];
+      const output = { filePath: path, oldString: "", newString: "", originalFile: null, structuredPatch: patch, userModified: false, replaceAll: false };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(path, "utf8")).toBe(formatted);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("keeps no copy of what a late call's result says a secret-like file held, and steers as a message", async () => {
+    const before = "TOKEN = 'sk-live-0123456789'\n";
+    const written = `${before}NEEDLE = 1\n`;
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "secrets.py": before } });
+    try {
+      await writeFile(join(session.root, "secrets.py"), written);
+      await session.call("w1", "secrets.py");
+      const output = { type: "update", filePath: join(session.root, "secrets.py"), content: written, structuredPatch: [], originalFile: before };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, "secrets.py"), "utf8")).toBe(written);
+      const directory = createHash("sha256").update("strategy").digest("hex");
+      expect(await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8")).not.toContain("sk-live-0123456789");
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // An Edit whose call came on time, its result giving the text it replaced (`originalFile`) with a line diff that shows
+  // a line otherwise than the file holds it: Claude Code shows each tab of the run a line starts with as two spaces, and
+  // a result may leave the file's byte order mark out. What the result says the file held is then the call's own
+  // capture, so the edit is rolled back as one whose result says nothing is.
+  const shown = (line: string) => line.replace(/^\t+/u, tabs => "  ".repeat(tabs.length));
+  it.each([
+    { beside: "a line indented tab, space, tab", file: "def f():\n\t \t# note\n\treturn 0\n", shownFile: "def f():\n\t \t# note\n\treturn 0\n" },
+    { beside: "a byte order mark the result leaves out", file: "\uFEFFX = 0\n", shownFile: "X = 0\n" },
+  ])("rolls back an on-time Claude Code Edit beside $beside, and steers in its result", async ({ file, shownFile }) => {
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": file } });
+    try {
+      const path = join(session.root, "existing.py");
+      await session.call("w1", "existing.py");
+      await writeFile(path, `${file}NEEDLE = 1\n`);
+      const held = shownFile.split("\n").slice(0, -1);
+      const lines = [...held.map(line => ` ${shown(line)}`), "+NEEDLE = 1"];
+      const patch = [{ oldStart: 1, oldLines: held.length, newStart: 1, newLines: held.length + 1, lines }];
+      const output = { filePath: path, oldString: "", newString: "", originalFile: shownFile, structuredPatch: patch, userModified: false, replaceAll: false };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["existing.py"] })]);
+      expect(await readFile(path, "utf8")).toBe(file);
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("rolls back an on-time Claude Code Edit of line 1 of a file with a byte order mark, its result giving no text it replaced", async () => {
+    const file = "﻿X = 0\n";
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files: { "existing.py": file } });
+    try {
+      const path = join(session.root, "existing.py");
+      await session.call("w1", "existing.py");
+      await writeFile(path, "﻿NEEDLE = 1\n");
+      const patch = [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-X = 0", "+NEEDLE = 1"] }];
+      const output = { filePath: path, oldString: "", newString: "", originalFile: null, structuredPatch: patch, userModified: false, replaceAll: false };
+      const deliveries = await session.result("w1", output);
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["existing.py"] })]);
+      expect(await readFile(path, "utf8")).toBe(file);
     } finally {
       await session.runtime.dispose();
     }
@@ -368,7 +535,7 @@ describe("The message steer strategy", () => {
       expect(deliveries).toEqual([{
         sessionId: "strategy", requested: "steer", mechanism: "native-queue", ruleIds: ["test:needle"], strategy: "message", toolCallId: "w1",
         rules: [{ id: "test:needle", state: "steered", origin: "From your rule library." }],
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.$/u),
+        content: ["Rerail found 1 problem in your last edit:", "- created.py:1:1 — No needle [test:needle]", steerLatitude("omp", "test:needle")].join("\n"),
       }]);
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");
     } finally {
@@ -397,7 +564,13 @@ describe("The subagent steer strategy", () => {
       expect(deliveries).toEqual([expect.objectContaining({
         strategy: "subagent",
         toolCallId: "w1",
-        content: expect.stringMatching(/^Rerail found 1 problem in your last edit:\n- created\.py:1:1 — No needle \[test:needle\]\nFix it, or tell the user in one line why you won't and run `rerail feedback test:needle '<that line>'`\.\n\nThis note comes from Rerail, not the user, and your task is unchanged\. Hand the fix to a subagent with the `rerail_fix` tool/u),
+        content: expect.stringMatching(new RegExp(`^${literal([
+          "Rerail found 1 problem in your last edit:",
+          "- created.py:1:1 — No needle [test:needle]",
+          steerLatitude("pi", "test:needle"),
+          "",
+          "This note comes from Rerail, not the user, and your task is unchanged. Hand the fix to a subagent with the `rerail_fix` tool",
+        ].join("\n"))}`, "u")),
       })]);
       expect(deliveries[0]).not.toHaveProperty("rewound");
       expect(await readFile(join(session.root, "created.py"), "utf8")).toBe("NEEDLE = 1\n");

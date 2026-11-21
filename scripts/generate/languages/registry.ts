@@ -17,7 +17,7 @@ export const LANGUAGE_REGISTRY_MODULE_PATH = resolve(ROOT, "src", "engine", "cod
 export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages");
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
-/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rr` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
+/** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rerail` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
 export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr", "bitlex", "literal"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
@@ -46,9 +46,24 @@ export const languageEntrySchema = z
     builtWith: name.optional(),
     capabilities: z.record(z.string(), support),
     suppressions: z.array(name),
-    embeds: z.array(z.object({ language: name, via: name }).strict()).optional(),
+    /** `dialects`: the embedded language's dialects the embedding gives, every one where absent; a language embeds itself only through dialects it names (Markdown's inline grammar). */
+    /** `places` (decision 0470): a `call-argument` embed's calls whose positional argument holds the language, by the callee's qualified name. */
+    embeds: z
+      .array(
+        z
+          .object({
+            language: name,
+            via: name,
+            dialects: z.array(name).min(1).optional(),
+            places: z.array(z.object({ callee: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/), argument: z.number().int().min(0) }).strict()).min(1).optional(),
+          })
+          .strict(),
+      )
+      .optional(),
     /** Grammars of a part of a dialect (decision 0082): `name` is `dialect` parsed from `start`. The engine reads them; the host does not. */
-    fragments: z.array(z.object({ name, dialect: name, start: z.enum(["expression"]) }).strict()).optional(),
+    // A grammar of a part of a dialect: parsed from the node kind `start` by its hand-written parser (decision 0466),
+    // its tapes under a tag of its own.
+    fragments: z.array(z.object({ name, dialect: name, start: z.string().regex(/^[a-z][a-z0-9_]*$/), tapeTag: z.number().int().min(1).max(255) }).strict()).optional(),
   })
   .strict()
   .superRefine((entry, context) => {
@@ -65,7 +80,8 @@ export const languageEntrySchema = z
       if (Object.values(entry.capabilities).includes("supported")) issue(["capabilities"], "A planned language supports no capability yet.");
     }
     if (new Set(entry.suppressions).size !== entry.suppressions.length) issue(["suppressions"], "Suppressions repeat.");
-    for (const embed of entry.embeds ?? []) if (embed.language === entry.id) issue(["embeds"], "A language does not embed itself.");
+    for (const embed of entry.embeds ?? []) if (embed.language === entry.id && embed.dialects === undefined) issue(["embeds"], "A language embeds itself only through dialects it names.");
+    for (const embed of entry.embeds ?? []) if ((embed.via === "call-argument") !== (embed.places !== undefined)) issue(["embeds"], "Places belong to `call-argument`, which has at least one.");
   });
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;
@@ -82,6 +98,7 @@ function claimDialects({ file, entry }: RegistryEntry, claim: ClaimKey): void {
     for (const suffix of dialect.suffixes) claim("suffix", suffix, file);
     if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
   }
+  for (const fragment of entry.fragments ?? []) claim("tape tag", String(fragment.tapeTag), file);
 }
 
 function embedProblems({ file, entry }: RegistryEntry, entries: readonly RegistryEntry[], ids: ReadonlySet<string>): string[] {
@@ -90,6 +107,9 @@ function embedProblems({ file, entry }: RegistryEntry, entries: readonly Registr
   if (entry.status !== "supported") return problems;
   for (const embed of embeds) {
     const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
+    for (const label of embed.dialects ?? []) {
+      if (embedded && !embedded.dialects.some((dialect) => dialect.label === label)) problems.push(`${file}: embeds ${embed.language}'s dialect ${label}, which it has not`);
+    }
     if (embedded && embedded.status !== "supported") {
       problems.push(
         `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,

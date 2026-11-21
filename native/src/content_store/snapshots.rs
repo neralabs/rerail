@@ -14,6 +14,8 @@ use super::{
     STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
     StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -360,7 +362,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute_cached(
             "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) VALUES (?1,?2,?3,?4)\
@@ -368,6 +371,40 @@ impl ContentStore {
             params![snapshot_id.0, path_id, source_id.0, tape_id.map(|id| id.0)],
         )?;
         self.commit(transaction)?;
+        Ok(())
+    }
+
+    /// Keep cached sources and compatible tapes in the snapshot that restores their results.
+    pub fn retain_snapshot_files(
+        &self,
+        snapshot: SnapshotId,
+        files: &[(&str, HashKey, Option<i64>)],
+        grammar_version: i64,
+        tape_format: i64,
+    ) -> StoreResult<()> {
+        for batch in files.chunks(MAX_PUBLICATION_BATCH) {
+            self.immediate_transaction(|transaction| {
+                for &(path, hash, grammar) in batch {
+                    validate_relative_path(path)?;
+                    let path = intern_path(transaction, path)?;
+                    transaction.execute_cached(
+                        "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
+                         SELECT ?1,?2,s.source_id,t.tape_id FROM hashes h \
+                         JOIN source_objects s ON s.canonical_hash_id=h.hash_id \
+                         LEFT JOIN tape_objects t ON t.source_id=s.source_id AND t.grammar_id=?3 \
+                           AND t.grammar_version=?4 AND t.tape_format_version=?5 \
+                         WHERE h.algorithm_id=?6 AND h.lane0=?7 AND h.lane1=?8 AND h.lane2=?9 AND h.lane3=?10 \
+                         ON CONFLICT(snapshot_id,path_id) DO UPDATE SET \
+                         source_id=excluded.source_id,tape_id=excluded.tape_id \
+                         WHERE snapshot_files.source_id IS NOT excluded.source_id \
+                           OR snapshot_files.tape_id IS NOT excluded.tape_id",
+                        params![snapshot.0, path, grammar, grammar_version, tape_format,
+                            hash.algorithm, hash.lanes[0], hash.lanes[1], hash.lanes[2], hash.lanes[3]],
+                    )?;
+                }
+                Ok(())
+            })?;
+        }
         Ok(())
     }
 
@@ -410,7 +447,7 @@ impl ContentStore {
                 }
             }
         }
-        let mut placing = Placing::write(&self.database_path, &bytes)?;
+        let mut placing = Placing::write(&self.database_path, &bytes, self.connection.flush())?;
         let mut connection = self
             .connection
             .lock()

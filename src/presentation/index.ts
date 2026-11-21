@@ -4,3 +4,4 @@
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
 export { dashboardOrigin, presentedSessionNoteRules, steerDashboard } from "./session-presentation.js";
+export { keepClaudeStatusFiles, removeUnrecordedStatusFiles, statusFileText, type ClaudeStatusFiles } from "./claude-status-files.js";

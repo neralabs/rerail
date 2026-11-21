@@ -3,9 +3,9 @@
 //! the comments (`fixtures/python/suppress/generate_ruff.py`).
 
 use super::noqa::{NoqaIndex, parent_statement};
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use ast_grep_language::LanguageExt;
 use serde_json::{Value, json};

@@ -1,4 +1,4 @@
-"""Round-trips ruff-ruf001-ambiguous-unicode-character-string.confusables.rr against the JSON's character classes
+"""Round-trips ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail against the JSON's character classes
 (the three RUF001-003 JSONs share them), and compares both with Ruff's own table (confusables.rs) when it is
 present: Ruff reports a look-alike only when its representant is ASCII.
     python3 docs/rule-syntax/packs/python/check-ruff-ruf001-ambiguous-unicode-character-string.py
@@ -27,7 +27,7 @@ for n in ["001-ambiguous-unicode-character-string", "002-ambiguous-unicode-chara
     for name, a, b in [("symbols", rr[0], js[0]), ("letters", rr[1], js[1])]:
         if a != b:
             bad += 1
-            print(f"RUF{n[:3]} {name}: {len(a - b)} only in .rr, {len(b - a)} only in JSON")
+            print(f"RUF{n[:3]} {name}: {len(a - b)} only in .rerail, {len(b - a)} only in JSON")
 print(f"round trip: {len(rr[0])} symbols, {len(rr[1])} letters, {bad} differences")
 if os.path.exists(RS):
     pairs = re.findall(r"^\s*(0x[0-9A-Fa-f]+|[0-9_]+)u?(?:32)?(?:_u32)? => '(.+)',$", open(RS, encoding="utf-8").read(), re.M)
