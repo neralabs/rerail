@@ -328,9 +328,10 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 
 /// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
 /// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
-/// the edit's nodes are none of (the delta's own rows); `pair` joins `docof`'s new rows to `wh`, which holds none of
-/// their nodes (a derived witness, read through its index). A second edit adds a `while` loop, which both see. Each
-/// run's findings are a full run's.
+/// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
+/// their nodes (a derived witness, read through its index), and so does `exists_0`, which joins `node` to the
+/// findings `W`. A second edit adds a `while` loop, which both see; a third moves a.py's loop a line down, which
+/// `exists_0` does not read (`Net`). Each run's findings are a full run's.
 #[test]
 fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
@@ -347,7 +348,7 @@ fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
 .decl wh(n: number)
 wh(n) :- kind(n, "while_statement").
 .decl pair(n: number, m: number)
-pair(n, m) :- wh(n), docof(n, a), wh(m), docof(m, b), a != b.
+pair(n, m) :- wh(n), node(a, n, _, _, _), wh(m), node(b, m, _, _, _), a != b.
 .violation W(at: node) code "W" "A while loop in a file, where another file has one too."
 W(n) :- pair(n, _).
 "#,
@@ -374,12 +375,23 @@ W(n) :- pair(n, _).
     let report = run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
-    assert!(report.cross_unseen > 0, "`pair` sees none of the edit's nodes: {} unseen, {:?} maintained", report.cross_unseen, report.cross_maintained);
+    assert!(report.cross_unseen.iter().any(|k| k == "exists_0"), "`W` holds none of the edit's nodes: {:?} unseen", report.cross_unseen);
     std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
     run();
     let got = findings();
     assert_eq!(got, full(), "the session's findings are a full run's");
     assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
+    // A line put at a.py's top moves its loop down and keeps its id (`granules`): `node`'s rows past it change only
+    // in their places. `exists_0(d) :- W(v), node(d, v, _, _, _)` reads none of them, so it sees no change, though
+    // `W` holds the loop; `violation` reads its line, which moved, so it is reached. The finding moves with the loop.
+    let was = findings();
+    std::fs::write(src.join("a.py"), "import os\nwhile a:\n    pass\n").unwrap();
+    let report = run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert_ne!(got, was, "a.py's finding is a line lower");
+    assert!(report.cross_unseen.iter().any(|k| k == "exists_0"), "`exists_0` reads no place of a.py's moved nodes: {:?} unseen", report.cross_unseen);
+    assert!(!report.cross_unseen.iter().any(|k| k == "violation"), "`violation` reads the moved loop's line: {:?} unseen", report.cross_unseen);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }

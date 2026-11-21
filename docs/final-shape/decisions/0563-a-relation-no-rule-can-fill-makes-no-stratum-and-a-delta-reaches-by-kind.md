@@ -347,10 +347,11 @@ Traced at the driver's input deltas (`driven_part`'s `answer`):
 | `append` (a function at a file's end) | +14 −1 | 11 | 13 rows of 10 kinds each (`ast_depth`, `node_order`, `visit_index`, `unparen`, …) |
 | An import at a file's top | +4,341 −4,336 | 71 | `line` +4,678, `node_order` and `visit_index` +4,340 |
 
-- A row names its node by preorder (`input_delta`), so an insert renumbers every node after it, and the delta is the
-  rest of the file.
-- The kind cut still pays there (below), but stable node identity would shrink the delta itself. That is its own
-  item: 0117 step 2's input deltas, after B.
+- ~~A row names its node by preorder, so an insert renumbers every node after it.~~ Corrected in the build: node
+  ids are by definition already (`granules`, 0083 §3 and 0094 §2, the default), and the insert moves no other
+  granule's ids. What changes past an insert are the columns that are places: `node`'s start and end, `line`,
+  `end_line`, `node_order` and `visit_index`. The rows gone and added have the same ids, and differ only there.
+- So the cut is per atom, by the columns it reads ("Built", B, `Net`): `node(d, v, _, _, _)` saw no change.
 
 ### B1–B2: the reach by kind, and by key
 
@@ -436,7 +437,20 @@ Per atom over a changed read:
    - It is read through its own index: `lookup_read`, `sorted_rows`, else `lookup`.
    - These are its rows now. Where it changed too, they are its rows gone as well.
    - A stored relation not read yet is bound where it lies (`Maintain::need`, 0401 F3) and then probed.
-3. **Read first, the delta**, for as many rows as the witness has. A reached stratum finds its match in the first
+3. **Only the rows that count, by the columns read (`Net`).** A row gone counts only where no row added holds the
+   same values in the columns the atom reads, and the other way round. A column is read when it holds a constant, or
+   a variable used elsewhere in the rule (`var_uses`; with an aggregate, a function term or a nearest-ancestor or
+   AST literal, every column but a `_`). An insert's rows past it differ only in places, so to `exists_N(d) :-
+   pN_X(v), node(d, v, _, _, _)` nothing changed.
+   - Each row's read columns are looked up in the other side through its own index. The column looked up first is
+     the one that index finds fewest rows for (`estimated_matches`). Keyed on the document, every lookup returned the
+     edited file's 4,341 rows, 18.8 M comparisons and 290 ms.
+   - The rows that count are named as an input's delta is, by their places (`InRel::picked`, 0364 R2). They are made
+     once a run for each relation and set of columns read (`NetDeltas`), because a check per row in each stratum's
+     walks cost more than the cut saved.
+   - The test's third edit moves a.py's loop a line down. `exists_0`, which joins `node` to the findings, is cut, and
+     `violation`, which reads the loop's line, is not. With `Net` off, the test fails there.
+4. **Read first, the delta**, for as many rows as the witness has. A reached stratum finds its match in the first
    rows. Then, where the witness is the smaller, its rows are walked and each is looked up in the delta's own index.
    So a probe reads at most twice the smaller side. That took the insert's probes from 364 ms to 47 ms.
 
@@ -459,20 +473,21 @@ key summary. The delta's rows are read in place per atom, and a stored witness i
 costs 29–47 ms over a whole edit, so neither was needed.
 
 **Test:** `session::tests::a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach`. An assignment added to a
-file cuts the strata reached through `kind` and `docof`, and a `while` loop added after is seen. Each run's findings
-are a full run's.
+file cuts the strata reached through `kind` and `node` (`exists_0` among them), and a `while` loop added after is
+seen. A line put at a file's top cuts `exists_0` but not `violation` (above). Each run's findings are a full run's.
+`Report::cross_unseen` names the strata cut.
 
 **Measured on ep2, M3, unprofiled.** Two stores, B off (a) and on (b), sides alternating on each edit. The outputs
 (`outputs.rro`) are identical on every run.
 
 | Edit | Instructions | CPU | Wall | Peak memory |
 |---|---|---|---|---|
-| `append` (a function at a file's end) | 59.8 → 37.6 G | 4.61 → 2.97 s | 3.20 → 2.08 s | 883 → 671 MB |
-| An import at a file's top | 66.0 → 66.6 G | 4.66 → 4.65 s | 3.46 → 3.46 s | 894 → 876 MB |
-| A comprehension added at another file's end | 61.5 → 58.4 G | 4.66 → 4.49 s | 3.32 → 3.15 s | 909 → 895 MB |
+| `append` (a function at a file's end) | 60.1 → 37.8 G | 4.79 → 3.29 s | 3.40 → 2.22 s | 855 → 675 MB |
+| An import at a file's top | 66.1 → 61.4 G | 4.98 → 4.49 s | 3.70 → 3.43 s | 878 → 783 MB |
+| A comprehension added at another file's end | 61.8 → 58.5 G | 4.85 → 4.69 s | 3.54 → 3.34 s | 921 → 903 MB |
 
-- The insert's delta is the rest of the file, renumbered: nearly every stratum it reaches sees a row. Stable node
-  identity (step 3) is what makes it small.
+- Before `Net`, the insert was even (66.0 → 66.6 G): 363 strata were cut. With `Net`, 444 are, at 124 ms of
+  probes.
 - The profiled edit runs overstate the edits by 20–40%, so the numbers above are unprofiled.
 
 ### The order of work, amended
@@ -487,7 +502,8 @@ are a full run's.
    - the delta's kinds and keys made with the delta;
    - the kind and key tests at the driver, probing indexes and key summaries;
    - the outputs compared on the `append` and insert edits, and B4's test.
-3. **Stable node identity** across an edit, so an insert's delta is the nodes changed.
+3. ~~**Stable node identity** across an edit.~~ It was already built: ids are by definition (`granules`). An
+   insert's delta is the places that moved, and B's `Net` reads past them.
 4. **A3**, on a corpus that answers requests, and as A1–A2's run-time form: the guest inputs counted empty once a
    batch's documents are loaded and none holds a guest. That is what serves a Python batch like ep2.
 

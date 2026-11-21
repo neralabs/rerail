@@ -5677,8 +5677,8 @@ pub struct Outcome {
     /// (`QuietTally`).
     pub quiet: (usize, usize),
     /// A maintained run's strata a changed read reached that no rule of saw a row of its delta, by kind or key
-    /// (decision 0563 B): passed on as kept, and counted with the skipped (`walked`).
-    pub unseen: usize,
+    /// (decision 0563 B), by their keys (`stratum_key`): passed on as kept, and counted with the skipped (`walked`).
+    pub unseen: Vec<String>,
 }
 
 impl Outcome {
@@ -11267,7 +11267,13 @@ struct Reach<'r, 'f> {
     run_vs: &'r body::Versions,
     moved: &'r BTreeSet<String>,
     scc: &'r BTreeSet<String>,
+    /// A changed read's delta as the atoms that read the same columns of it see it (`Net`): its rows gone and added
+    /// that count, the same for every stratum that reads it so, so made once a run.
+    live: &'r std::cell::RefCell<NetDeltas>,
 }
+
+/// The net deltas a run's reach has made (`Reach::live`), by relation and the columns read.
+type NetDeltas = HashMap<(String, Vec<usize>), [Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>;
 
 /// A column's test in an atom: the values it may hold (none: the atom holds a constant no row has).
 type Allowed = Option<Vec<i64>>;
@@ -11288,6 +11294,49 @@ fn passes(d: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, tests: &[(usiz
     any
 }
 
+/// One side of a changed read's delta as an atom sees it (decision 0563 B): a row gone (or added) counts only where
+/// no row added (or gone) holds the same values in the columns the atom reads (`read`). An insert's rows past it
+/// keep their ids (`granules`) and change only in their places (`node`'s start and end, `line`, `node_order`): to
+/// `node(d, v, _, _, _)` they did not change. Read in place: each row's read columns, looked up in the other side
+/// through its own index. With no columns read, or no index to look up, every row counts.
+struct Net<'s> {
+    this: &'s Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+    other: &'s Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+    /// The columns read, the one looked up first: the one the other side's index finds fewest rows for (a node's id,
+    /// not its document, whose rows are every row of the edited file).
+    read: &'s [usize],
+}
+
+impl Net<'_> {
+    /// Whether row `row` of this side counts.
+    fn live(&self, row: usize, mine: &mut [i64], theirs: &mut [i64]) -> bool {
+        let Some(&key) = self.read.first() else { return true };
+        self.this.row_at(row, self.read, mine);
+        let mut same = |r: usize| {
+            self.other.row_at(r, self.read, theirs);
+            theirs == mine
+        };
+        if let Some(rows) = self.other.sorted_rows(key, mine[0]) {
+            return !rows.iter().any(|&r| same(r as usize));
+        }
+        match self.other.lookup(key, &[mine[0]]) {
+            Some(rows) => !rows.into_iter().any(same),
+            None => true,
+        }
+    }
+
+    /// This side's rows that count, as a source read where they lie (`InRel::picked`, as an input's delta is named,
+    /// 0364 R2): this side itself where every row counts.
+    fn rows(&self) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+        let (mut mine, mut theirs) = (vec![0i64; self.read.len()], vec![0i64; self.read.len()]);
+        let ids: Vec<u32> = (0..self.this.len()).filter(|&r| self.live(r, &mut mine, &mut theirs)).map(|r| r as u32).collect();
+        if ids.len() == self.this.len() {
+            return Arc::clone(self.this);
+        }
+        super::native::component::InRel::picked(Arc::clone(self.this), ids, self.this.columns())
+    }
+}
+
 impl Reach<'_, '_> {
     /// Whether no rule of `rules` sees a row of any changed read's delta (decision 0563 B). Each atom over a changed
     /// read shares a variable with a positive atom of another relation, earlier in the order of strata, and no row
@@ -11300,6 +11349,7 @@ impl Reach<'_, '_> {
         let mut named: BTreeSet<&str> = BTreeSet::new();
         for &k in rules {
             let (v, rule) = self.run_vs.rule_at(k);
+            let uses = var_uses(rule);
             let mut sets: HashMap<VarSlot, Vec<i64>> = HashMap::new();
             for l in rule.body() {
                 match l.view() {
@@ -11343,7 +11393,7 @@ impl Reach<'_, '_> {
                 let name = v.rel_name(a.rel());
                 let Some(moved) = self.moved.get(name) else { continue };
                 named.insert(moved.as_str());
-                if !self.atom_cut(m, model, v, rule, a, &sets) {
+                if !self.atom_cut(m, model, v, rule, a, (&sets, uses.as_ref())) {
                     return false;
                 }
             }
@@ -11363,10 +11413,40 @@ impl Reach<'_, '_> {
 
     /// Whether atom `a` (over a changed read) sees no row of the read's delta: some positive atom of another
     /// relation shares a variable with it and holds none of the delta's values there.
-    fn atom_cut(&self, m: &mut dyn Maintain, model: &mut Model, v: &Version, rule: super::program_image::RuleRef<'_>, a: AtomRef<'_>, sets: &HashMap<VarSlot, Vec<i64>>) -> bool {
+    fn atom_cut(&self, m: &mut dyn Maintain, model: &mut Model, v: &Version, rule: super::program_image::RuleRef<'_>, a: AtomRef<'_>, (sets, uses): (&HashMap<VarSlot, Vec<i64>>, Option<&HashMap<VarSlot, usize>>)) -> bool {
         let r = v.rel_name(a.rel());
         let Some(([_, minus, plus, _], cols)) = moved_versions(r, self.diffs, m, self.db, self.f0, self.rules_by, self.run_vs) else { return false };
         let at = |c: usize, cols: &Option<Vec<usize>>| cols.as_ref().map_or(Some(c), |m| m.get(c).copied());
+        // The columns the atom reads: a constant's, or a variable's used elsewhere in the rule (all but `_`'s where
+        // the rule's variables are not all counted, `var_uses`); through the columns of the input it is a view of.
+        let read: Vec<usize> = a.args().enumerate().filter(|(_, u)| match u {
+            TermRef::Wild => false,
+            TermRef::Var(x) => uses.is_none_or(|n| n.get(x).copied().unwrap_or(0) > 1),
+            _ => true,
+        }).map(|(i, _)| at(i, &cols)).collect::<Option<Vec<usize>>>().unwrap_or_default();
+        let [minus, plus] = if read.is_empty() {
+            [minus, plus]
+        } else {
+            let key = (r.to_owned(), read.clone());
+            let made = self.live.borrow().get(&key).cloned();
+            made.unwrap_or_else(|| {
+                let by = |other: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| {
+                    let mut by = read.clone();
+                    if let Some(i) = (0..by.len()).min_by_key(|&i| other.estimated_matches(by[i], false)) {
+                        by.swap(0, i);
+                    }
+                    by
+                };
+                let (to_plus, to_minus) = (by(&plus), by(&minus));
+                let net = [Net { this: &minus, other: &plus, read: &to_plus }.rows(), Net { this: &plus, other: &minus, read: &to_minus }.rows()];
+                self.live.borrow_mut().insert(key, net.clone());
+                net
+            })
+        };
+        // No row of the delta counts: the atom sees no change (an insert's rows past it, moved in place alone).
+        if minus.len() == 0 && plus.len() == 0 {
+            return true;
+        }
         // The atom's own tests (a kind's constant, a kind set's facts): a row of the delta none of them passes is no
         // row the rule sees.
         let own: Vec<(usize, Allowed)> = a.args().enumerate().filter_map(|(i, u)| {
@@ -11521,14 +11601,14 @@ impl Reach<'_, '_> {
                     return true;
                 }
                 for d in deltas {
-                    let hit = |r: usize, got: &mut [i64]| {
-                        d.row_at(r, &own_cols, got);
-                        allowed(got, own)
+                    let mut hit = |r: usize| {
+                        d.row_at(r, &own_cols, &mut own_got);
+                        allowed(&own_got, own)
                     };
                     let found = if let Some(rows) = d.sorted_rows(ri, row[0]) {
-                        rows.iter().any(|&r| own.is_empty() || hit(r as usize, &mut own_got))
+                        rows.iter().any(|&r| hit(r as usize))
                     } else if let Some(rows) = d.lookup(ri, &[row[0]]) {
-                        rows.into_iter().any(|r| own.is_empty() || hit(r, &mut own_got))
+                        rows.into_iter().any(hit)
                     } else {
                         none = None;
                         return false;
@@ -11549,6 +11629,44 @@ impl Reach<'_, '_> {
         }
         none
     }
+}
+
+/// How many times each variable of `rule` occurs, in its head and its body's atoms and comparisons (decision 0563 B:
+/// a variable used once is read as `_`). `None` where a literal holds variables not counted here (an aggregate, a
+/// nearest ancestor, an AST match, a function term): then every column but a `_` is read.
+fn var_uses(rule: super::program_image::RuleRef<'_>) -> Option<HashMap<VarSlot, usize>> {
+    let mut uses: HashMap<VarSlot, usize> = HashMap::new();
+    let mut count = |t: TermRef<'_>, uses: &mut HashMap<VarSlot, usize>| match t {
+        TermRef::Var(x) => {
+            *uses.entry(x).or_default() += 1;
+            true
+        }
+        TermRef::Call(..) => false,
+        _ => true,
+    };
+    for t in rule.head().args() {
+        if !count(t, &mut uses) {
+            return None;
+        }
+    }
+    for l in rule.body() {
+        match l.view() {
+            Lit::Atom(a) => {
+                for t in a.args() {
+                    if !count(t, &mut uses) {
+                        return None;
+                    }
+                }
+            }
+            Lit::Cmp { l, r, .. } => {
+                if !count(l, &mut uses) || !count(r, &mut uses) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(uses)
 }
 
 fn stratum_reads(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]) -> BTreeSet<String> {
@@ -12477,6 +12595,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
     // The reach by kind and key (decision 0563 B); `RERAIL_REACH_BY_KEY=off` reaches by relation alone, to compare.
     let by_key = std::env::var("RERAIL_REACH_BY_KEY").map_or(true, |x| x != "off");
+    let live = std::cell::RefCell::new(NetDeltas::new());
     // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`kept_delta`).
     let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
     // A relation derived again whose delta is its rows gone and added (`Moved::Rows`): its minus and plus versions,
@@ -12947,10 +13066,10 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         && !moved.is_empty()
                         && !scc.iter().any(|r| f0.native(r).is_some())
                         && run.view_shaped(scc, &rules).is_none()
-                        && Reach { diffs: &diffs, db, f0, rules_by: &rules_by, run_vs: &run_vs, moved: &moved, scc }.cuts(&mut *m, &mut run.model, &rules);
+                        && Reach { diffs: &diffs, db, f0, rules_by: &rules_by, run_vs: &run_vs, moved: &moved, scc, live: &live }.cuts(&mut *m, &mut run.model, &rules);
                     let moved = if unseen { BTreeSet::new() } else { moved };
                     if unseen {
-                        outcome.unseen += 1;
+                        outcome.unseen.push(stratum_key(scc));
                     }
                     waved[j] = true;
                     if moved.is_empty() {

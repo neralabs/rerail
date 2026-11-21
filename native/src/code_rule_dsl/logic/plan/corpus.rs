@@ -352,8 +352,8 @@ pub struct Report {
     /// A session's maintained run: the strata it skipped, no read of them changed (0364 R9; `Outcome::walked`).
     pub cross_skipped: usize,
     /// Of those, the strata a changed read reached that no rule of saw a row of its delta, by kind or key (decision
-    /// 0563 B; `Outcome::unseen`).
-    pub cross_unseen: usize,
+    /// 0563 B; `Outcome::unseen`), by their keys.
+    pub cross_unseen: Vec<String>,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
@@ -9540,7 +9540,7 @@ fn run_observed_within(
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let mut cross_skipped = 0;
-    let mut cross_unseen = 0;
+    let mut cross_unseen = Vec::new();
     // What the cross part binds as rows it holds (`Stats::held`): the exports. Its base relations are the corpus
     // batch's (decision 0458), views and made relations of the tapes, no held rows (`setfix::held_rel`).
     cross_stats.held = Arc::new(split.exports.iter().cloned().collect());
@@ -10085,7 +10085,7 @@ fn run_observed_within(
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    let (run_quiet, run_skipped, run_unseen) = (got.quiet, got.walked.1, got.unseen);
+                    let (run_quiet, run_skipped, run_unseen) = (got.quiet, got.walked.1, std::mem::take(&mut got.unseen));
                     step("ran");
                     step("collected");
                     if spike {
