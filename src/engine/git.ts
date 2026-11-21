@@ -993,9 +993,11 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 /**
  * The most bytes the guard's own questions (a repository's config, its index's submodules) take: past it, the call it
  * guards is not made. It is the longest string Node makes (`MAX_STRING_LENGTH`, some 512 Mi on 64-bit Node), past which
- * joining the output would throw: UTF-8 decodes to no more UTF-16 units than it has bytes, so output within it joins.
+ * making the output a string would throw, less 64 KiB: a blocking Git's run, through `spawnSync` or the engine, stops
+ * only after the 64 KiB read that passed its `maxBuffer`, and keeps that read. UTF-8 decodes to no more UTF-16 units
+ * than it has bytes, so output within it becomes a string.
  */
-const MAX_LISTING_BYTES = bufferConstants.MAX_STRING_LENGTH;
+const MAX_LISTING_BYTES = bufferConstants.MAX_STRING_LENGTH - 64 * 1024;
 
 /**
  * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's with
