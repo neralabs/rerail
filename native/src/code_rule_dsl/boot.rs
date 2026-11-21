@@ -27,6 +27,16 @@ pub fn install_for_tests() {
     install_with(None);
 }
 
+/// The literal grammars only tests parse with: none outside a test build.
+fn test_grammars(tests: bool) -> Vec<literal::Grammar> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if tests {
+        return vec![literal::CHARS];
+    }
+    let _ = tests;
+    Vec::new()
+}
+
 fn install_with(ids: Option<BuildIds>) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
@@ -34,7 +44,7 @@ fn install_with(ids: Option<BuildIds>) {
             build_ids::set(ids.engine, ids.grammar);
         }
         install_devices();
-        install_languages();
+        install_languages(ids.is_none());
         logic::plan::corpus::install_git_inventory();
         crate::content_store::set_connection_functions(|db| {
             text::install(db)?;
@@ -60,7 +70,7 @@ mod test_load {
 
 /// The engine's language packs, into the core's registry (`language::adapter::pack`). Called as the library
 /// loads, before any run: the core asks a family's questions of the pack registered here.
-pub fn install_languages() {
+pub fn install_languages(tests: bool) {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
     use language::adapter::{blade::Blade, c::C, css::Css, csharp::Csharp, go::Go, ecma::Ecma, format::Format, html::Html, java::Java, json::Json, markdown::Markdown, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue, kotlin::Kotlin, scala::Scala, swift::Swift};
@@ -251,9 +261,11 @@ pub fn install_languages() {
         literal::phpdoc::GRAMMAR,
         literal::rust_format::GRAMMAR,
         literal::regex::GRAMMAR,
-        #[cfg(test)]
-        literal::CHARS,
-    ]);
+    ]
+    .into_iter()
+    // The test grammar (`testChars`), in a test binary's boot (`install_for_tests`) alone.
+    .chain(test_grammars(tests))
+    .collect());
     // What a `package` file condition reads of a file without a manifest (ECMA's default Node range).
     language::set_no_manifest(&package_manifest::NoManifest);
     language::set_manifest_reader(package_manifest::read_wire);

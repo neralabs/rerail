@@ -128,12 +128,15 @@ run from a crate that depends on boot alone.
 
   | test crate | hosts | lines |
   |---|---|---:|
-  | `rerail-tests-transducer` | `transducer::*` | ~25k |
-  | `rerail-tests-logic` | `logic::*`, `typing::*` | ~28k |
-  | `rerail-tests-demand` | `demand::*` | ~24k |
-  | `rerail-tests-w` | `compile`, `matcher`, `workspace`, `scope`, `value`, `calls`, `suppress`, `findings` | ~62k |
-  | `rerail-tests-sessions` | `sql_executor::*` | ~9k |
-  | `rerail-tests-lang` | `tape`, `language`, `facts`, `tree`, `blade`, `vue` | ~21k |
+  | `rerail-tests-demand` | `demand` | 23.7k |
+  | `rerail-tests-transducer` | `transducer` | 24.6k |
+  | `rerail-tests-logic` | `logic`, `typing`, `sql_executor`, `stats`, `sql_admission`, `residency` | 35.5k |
+  | `rerail-tests-compile` | `compile`, `scope`, `value`, `calls`, `literal`, `identifier`, `eval`, `query`, `php_view`, `module_graph`, `soundness`, `embed`, `lines`, `regexes`, `matcher::arguments`, `blade` | 37.1k |
+  | `rerail-tests-matcher` | `matcher`, `workspace`, `findings`, `suppress`, `violations` | 24.8k |
+  | `rerail-tests-lang` | `tape`, `language`, `facts`, `tree`, `vue` | 15.6k |
+
+  (As built: `tools/cratify/test_crates.py` writes them from the engine's `code_rule_dsl/mod.rs`. A module goes with
+  the crate of the tests it reads: `matcher::arguments` and `blade` read the value tests' PHP oracle.)
 
 - Each test crate depends on boot and on the crates its tests read. It does not depend on the engine. The ones that
   read the engine's own modules (prefilter, waves glue) wait for step 3, or depend on the engine until then.
@@ -335,3 +338,33 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - The wasm check was not run: no machine here has `wasi-libc`.
   - Mounts in the engine's prefix that only boot's files read carry `#[allow(unused_imports)] // boot's mount`.
     They go when step 3 makes the engine's `code_rule_dsl` boot's, plus the engine's own items.
+- **Step 2** (2026-11-21): the engine's tests are six test crates above boot (`native/crates/tests_*`, the table in
+  step 2), written by `tools/cratify/test_crates.py` from the engine's `code_rule_dsl/mod.rs`. Each is
+  `#![cfg(test)]`. It mounts its test files in place under the engine's facades, globs boot's module at every
+  facade's path, and is booted as it loads (`boot::install_for_tests`). The engine's `code_rule_dsl` is now
+  boot's glob plus napi: its `mod.rs` items, `slice::napi`, and the CLI's entry points (`tools::napi`, which installs
+  the store's functions before `boot::cli`). It keeps the four test modules that read napi or its build script:
+  `slice::napi_tests`, `module_graph::tests`, `workspace::context_tests` and `language::adapter::kit`.
+  - `tools`, `logic::convert` and `logic::rr::testing` moved to boot. Rule compiling in the tests goes through
+    `rule_api::compile` (120 calls), not the napi object.
+  - Boot's lib.rs is source now, not boot_mounts.py's output. Its re-exports are `pub`, and its tests' helpers are
+    behind `cfg(any(test, feature = "test-hooks"))`: the test crates build boot as a library. The test crates'
+    features turn on boot's (`check_dev_features`).
+  - Helpers that several crates' tests read moved into fixtures modules behind `test-hooks`:
+    `facts::vtab::syntax::fixtures` (the planner corpus) and `workspace::fixtures` (the slot, a Git fixture
+    repository, a result page).
+  - `testChars`, the literal grammar only tests parse with, is registered by a test binary's boot
+    (`install_for_tests`), not by `#[cfg(test)]`, which a library build of boot never sets.
+  - Relax ran no load hook (`unsafe(link_section = ...)`, edition 2024's spelling, wasn't read as a constructor),
+    so no test binary was booted under it. Fixed in `scripts/dev/relax/rerail.patch`, with a case in Relax's
+    constructor test.
+  - Found red at HEAD and fixed: the tab-split guard's stale allowance (`logic/strings/git.rs`); the coverage
+    ledger (`packs.tsv`) left behind `docs/rule-syntax/lib`; the parse tests' grammar list lacked `regex`; Roll-up
+    25 dropped two TypeScript rules' `stored` annotations (the merge's other side predates them), so the token-test
+    check refused them; and `Batch::ensure` worked out what to make and claimed it under two locks, so two
+    threads could make one document (`reads_side_by_side_make_each_document_once`, seen under load).
+  - `transducer::packed::tests::all_backends_execute_every_verified_instruction_and_mode` takes 90 s on an M3 and
+    over 240 s on a Linux host (there its Metal leg runs on one CPU thread, the GPU idle): it joins the slow tier.
+  - Results: the quick tier across boot, the engine and the six test crates, 3,001 tests, before the fixes above:
+    every failure but those reads pack test data that isn't pulled (`npm run fixtures:pull`), or `node`, which the
+    Linux host lacks (`sql_executor::tests::profiling`).

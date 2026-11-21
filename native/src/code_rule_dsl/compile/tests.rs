@@ -1,4 +1,3 @@
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 
@@ -54,21 +53,13 @@
             "forbid": {"ast": {"language": "python", "rule":
                 {"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}}},
             "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            json_source.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
+        let reason = rejection(crate::code_rule_dsl::rule_api::compile(&json_source.to_owned(), "json", CAPABILITIES));
         assert!(
             reason.starts_with("duplicate key `not` at /clauses/0/forbid/ast/rule at line 4"),
             "{reason}"
         );
         let yaml_source = "format: rerail.policy/v1\nid: p\nrevision: 1\nid: q\nclauses: []\n";
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            yaml_source.to_owned(),
-            "yaml".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
+        let reason = rejection(crate::code_rule_dsl::rule_api::compile(&yaml_source.to_owned(), "yaml", CAPABILITIES));
         assert!(
             reason.starts_with("invalid YAML: duplicate key `id` at /"),
             "{reason}"
@@ -79,11 +70,7 @@
             "forbid": {"ast": {"language": "python", "rule":
                 {"kind": "identifier", "not": {"regex": "^a$", "not": {"regex": "^b$"}}}}},
             "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        CodeRuleDslRuntime::compile(
-            distinct.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        )
+        crate::code_rule_dsl::rule_api::compile(&distinct.to_owned(), "json", CAPABILITIES)
         .unwrap_or_else(|error| panic!("{}", error.reason));
     }
 

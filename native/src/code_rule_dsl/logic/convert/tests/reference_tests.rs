@@ -8,7 +8,7 @@ use super::{Adjust, Failure, convert, events, rule_file, write_files};
 use crate::code_rule_dsl::calls::{self, contracts};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use crate::code_rule_dsl::typing::file_local::Binding;
-use crate::code_rule_dsl::{CodeRuleDslRuntime, eval, model::Metrics};
+use crate::code_rule_dsl::{eval, model::Metrics};
 use serde_json::{Value as Json, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,7 +39,7 @@ fn edge(e: &calls::closure::ReferenceEdge) -> Edge {
 /// W's graph for the policy `document` over the Python `files`: its key, its `reference_rows` edges, and the graph
 /// itself read as the corpus runner reads it (`labelled_reference_rows`, `reference_open`).
 fn w(document: &Json, files: &[(String, String)]) -> (contracts::Key, BTreeSet<Edge>, Graph) {
-    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{}", e.reason));
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES).unwrap_or_else(|e| panic!("{}", e.reason));
     let rule = &compiled.inner;
     let keys: BTreeSet<contracts::Key> = rule.clauses.iter().filter_map(|c| c.kind.calls_query()).flat_map(|q| q.calls()).filter(|t| t.through.references).map(|t| t.through.links).collect();
     assert_eq!(keys.len(), 1, "{}: one reference graph", document["id"]);

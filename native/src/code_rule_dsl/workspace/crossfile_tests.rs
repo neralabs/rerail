@@ -1,13 +1,12 @@
 //! Cross-file clauses over `evidence` relations (plan §7, E1–E3): incremental results equal a fresh
 //! workspace's, eviction and restart change nothing, and incomplete evidence never proves absence.
 
-use super::super::CodeRuleDslRuntime;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::storage::StorageContext;
 use super::storage_tests::{
     BusyDeadline, BusyWindowClock, HeldWriter, UnpublishedBudget, spend_deadline_on_busy_attempts,
 };
-use super::tests::WORKSPACE_TEST_SLOT;
+use super::fixtures::WORKSPACE_TEST_SLOT;
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -32,17 +31,13 @@ fn compile(id: &str, clauses: Value) -> CompiledCodeRuleDsl {
 }
 
 fn compile_scoped(id: &str, include: &[&str], clauses: Value) -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1,
             "mode": "steer",
             "scope": { "include": include, "exclude": [] },
             "clauses": clauses,
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap()
 }
 
@@ -907,7 +902,7 @@ fn e4_results_of_consumers_gone_quiet_are_readable_after_eviction() {
             ));
             assert_eq!(applied, found(expected, &[]), "{case}: apply");
             assert!(workspace.evict_inactive().unwrap(), "{case}");
-            let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+            let page = super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
                 .map(|page| outcome(&serde_json::from_str(&page).unwrap()));
             assert_eq!(
                 page.map_err(|error| error.reason),
@@ -987,7 +982,7 @@ fn an_evicted_file_kept_for_a_consumer_that_ran_out_keeps_its_other_results() {
                 .contains(&("budget-exceeded".to_owned(), "app/api.py".to_owned())),
             "the consumer ran out on api.py: {applied:?}"
         );
-        let page = super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+        let page = super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
             .map(|page| outcome(&serde_json::from_str(&page).unwrap()))
             .unwrap();
         for (seen, case) in [(&applied, "apply"), (&page, "page")] {
@@ -1063,7 +1058,7 @@ fn e4_a_consumer_restamped_while_the_store_is_busy_keeps_its_results_through_evi
     let workspace = stored_workspace(&store, "/e4-busy-restamp", &code_rule);
     // Each violation's path and code, as a result page reads them.
     let paged = || {
-        super::tests::result_page(&workspace, 0, 64 * 1024 * 1024)
+        super::fixtures::result_page(&workspace, 0, 64 * 1024 * 1024)
             .map(|page| {
                 serde_json::from_str::<Value>(&page).unwrap()["violations"]
                     .as_array()

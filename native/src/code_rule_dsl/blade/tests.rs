@@ -585,11 +585,7 @@ fn a_paren_on_the_next_line_is_not_arguments() {
 /// Lines (1-based) a shipped Blade pack rule reports on `source`, which must evaluate without a
 /// failure.
 fn pack_rule_lines(document: &str, source: &str) -> Vec<u64> {
-    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-        document.to_owned(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_owned(), "json", CAPABILITIES)
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let result = evaluate_file(&compiled, "blade", "resources/views/view.blade.php", source);
     assert_eq!(result["failures"], json!([]), "{result}");

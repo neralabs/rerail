@@ -175,20 +175,22 @@ language::adapter::sql	rerail-lang-sql
 language::adapter::json	rerail-lang-json
 transducer::packed::json_parser	rerail-lang-json
 
-# The engine: napi and the CLI, and the tests it still hosts (incremental-plan.md, step 2)
+# The engine: napi (its code_rule_dsl/mod.rs items, the slice's object, the CLI's entry points) and the tests that
+# read them. Every other test is a test crate's (native/crates/tests_*, tools/cratify/test_crates.py).
 crate	rerail-engine
 dsl_root	rerail-engine
 slice::napi	rerail-engine
 slice::napi_tests	rerail-engine
-tools	rerail-engine
+tools::napi	rerail-engine
 waves	rerail-engine
-logic::convert	rerail-engine
-logic::plan::corpus::references	rerail-engine
 transducer::packed::compile_matcher	rerail-transducer
 
 # Boot: the composition root (incremental-plan.md, step 1b) and what only it and the engine read. Boot's mounts are
 # generated from the engine's code_rule_dsl/mod.rs (tools/cratify/boot_mounts.py, boot_manifest.py).
 boot	rerail-boot
+tools	rerail-boot
+logic::convert	rerail-boot
+logic::rr::testing	rerail-boot
 slice	rerail-boot
 prefilter	rerail-boot
 functors	rerail-boot

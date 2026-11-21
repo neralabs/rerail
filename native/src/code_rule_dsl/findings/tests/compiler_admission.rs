@@ -1,7 +1,7 @@
 //! Admission of the actual catalog JSON through the generic compiler. No executor is substituted.
 use super::POLICIES;
 use crate::code_rule_dsl::{
-    CodeRuleDslRuntime, language::GrammarDialect, matcher::gated_match_tree,
+    language::GrammarDialect, matcher::gated_match_tree,
     model::{ClauseKind, Query}, slice::Rules, test_support::CAPABILITIES,
     transducer::packed::{ExecutionBackend, LoweredMatcher},
 };
@@ -16,9 +16,7 @@ pub(super) fn probe() -> Value {
         let document: Value = serde_json::from_str(text).expect("catalog policy JSON");
         let policy = document["id"].as_str().expect("policy id").to_owned();
         let authored = document["clauses"].as_array().expect("catalog clauses");
-        let compiled = CodeRuleDslRuntime::compile(
-            text.to_owned(), "json".to_owned(), CAPABILITIES.to_owned(),
-        );
+        let compiled = crate::code_rule_dsl::rule_api::compile(&text.to_owned(), "json", CAPABILITIES);
         match compiled {
             Err(error) => {
                 for clause in authored {

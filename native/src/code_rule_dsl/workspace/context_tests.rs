@@ -2,14 +2,13 @@
 //! carries the same file context, persisted reuse never crosses file context, transient failures
 //! are retried, and paged results agree with complete results.
 
-use super::super::CodeRuleDslRuntime;
 use super::super::matcher::UtilLimit;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::index::{WorkspaceIndexTask, repository_module, repository_package};
 use super::ingest::{BINARY_REQUEST_MAGIC, PACKAGE_CONTEXT_PATH_VISITS};
 use super::persisted::{decode_local_result, encode_local_result};
 use super::storage::{StorageContext, storage_context_in};
-use super::tests::{WORKSPACE_TEST_SLOT, git, result_page};
+use super::fixtures::{WORKSPACE_TEST_SLOT, git, result_page};
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -39,17 +38,13 @@ const MAXIMUM_PAGE_BYTES: u32 = 64 * 1024 * 1024;
 const PACKAGE_SOURCE: &str = "from . import helper\nhelper()\n";
 
 fn compile(id: &str, clauses: Value) -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": clauses,
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap()
 }
 
@@ -948,8 +943,7 @@ fn a_derived_server_graph_follows_a_late_next_dependency_and_nested_packages() {
 #[test]
 fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
-    let scoped = CodeRuleDslRuntime::compile(
-        json!({
+    let scoped = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "server-graph-scoped", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["app/shared/**", "src/**"], "exclude": [] },
@@ -958,10 +952,7 @@ fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
                 "forbid": { "ast": { "language": "typescript",
                     "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }],
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&scoped, None).unwrap();
@@ -1115,18 +1106,14 @@ fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
         if let Some(file) = file {
             ast["file"] = file;
         }
-        CodeRuleDslRuntime::compile(
-            json!({
+        crate::code_rule_dsl::rule_api::compile(&json!({
                 "format": "rerail.policy/v1", "id": "gated", "revision": 1, "mode": "steer",
                 "scope": { "include": ["**/*"], "exclude": [] },
                 "clauses": [{ "id": "gated",
                     "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
                     "forbid": { "ast": ast } }],
             })
-            .to_string(),
-            "json".into(),
-            CAPABILITIES.into(),
-        )
+            .to_string(), "json", CAPABILITIES)
         .unwrap()
     };
     let failures = |compiled: &CompiledCodeRuleDsl, files: Value| {
@@ -3323,8 +3310,7 @@ fn selector_index_misses_keep_input_budget_failures() {
         &mut None,
     );
     // `plain.py` has no lambda, but it is over this code rule's source-byte cap.
-    let capped = CodeRuleDslRuntime::compile(
-        json!({
+    let capped = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "capped-lambdas", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
@@ -3334,10 +3320,7 @@ fn selector_index_misses_keep_input_budget_failures() {
                 "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
             }],
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.replace("\"maxSourceBytes\": 1000000", "\"maxSourceBytes\": 4"),
-    )
+        .to_string(), "json", &CAPABILITIES.replace("\"maxSourceBytes\": 1000000", "\"maxSourceBytes\": 4"))
     .unwrap();
     let narrowed = stored_workspace(&store, "/selector-limits-second", &capped);
     let applied = apply_json(&narrowed, 1, files.clone());
@@ -4594,8 +4577,7 @@ fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
             "forbid": { "ast": ast }
         })
     };
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": [
@@ -4606,10 +4588,7 @@ fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
                 clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
             ],
         })
-        .to_string(),
-        "json".into(),
-        include_str!("../capabilities.json").into(),
-    )
+        .to_string(), "json", include_str!("../capabilities.json"))
     .unwrap()
 }
 

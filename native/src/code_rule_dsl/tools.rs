@@ -1,19 +1,14 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
-//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
+//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these. Boot's: the engine
+//! adds the napi wrapper and boots the program before a command (`code_rule_dsl/tools/napi.rs`).
 
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
-/// The package CLI's SQL tool, sharing the standalone command's request and execution path.
-#[napi_derive::napi(catch_unwind)]
-pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Result<String> {
-    sql(std::path::Path::new(&store_path), &request_json).map_err(napi::Error::from_reason)
-}
 
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
@@ -890,7 +885,7 @@ pub fn dump(
     let compiled = policies
         .iter()
         .map(|(name, source, format)| {
-            CodeRuleDslRuntime::compile(source.clone(), format.clone(), capabilities.to_string())
+            crate::code_rule_dsl::rule_api::compile(&source, &format, &capabilities.to_string())
                 .map(|rule| (name.clone(), rule))
                 .map_err(|error| format!("{name}: {}", error.reason))
         })
@@ -1204,8 +1199,8 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
 
 /// A command of `cli_in`, within its limits.
 fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
-    // Done as the library loaded, except where nothing runs then (the browser's build).
-    crate::install_store_functions();
+    // The program is booted before its first command: as the library loads, or by the engine's `cli`/`cli_in`
+    // (`code_rule_dsl/tools/napi.rs`) where nothing runs then (the browser's build, the CLI binary).
     let mut budgets = budget_options(args)?;
     for flag in ["--revision", "--analysis-scope"] {
         if budgets.iter().filter(|a| *a == flag).count() > 1 {
