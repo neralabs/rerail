@@ -549,7 +549,9 @@ export interface NativeBinding {
    * free lock is taken at once: the promise is already settled when the call returns, with no thread started. A held one
    * resolves with the lock the moment the OS hands it over at its holder's release or exit, or with null when it is
    * still held at the bound; that wait runs on a thread of its own, and one given up never ends up holding the lock.
-   * Throws at once when the file does not open or the first try fails.
+   * On Unix, where `flock` takes no bound, a wait given up keeps its thread and the file open until the holder lets go
+   * or ends: a process waits only where it, or the holder, ends soon after (a command, a daemon's start), never in a
+   * loop of a process that lives on. Throws at once when the file does not open or the first try fails.
    */
   lockExclusive(path: string, waitMs: number): Promise<NativeExclusiveFileLock | null>;
   /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */
