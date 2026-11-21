@@ -253,7 +253,7 @@ fn r7_a_run_after_an_edit_makes_no_document() {
         let (report, rows) = c.run_over("kept.sqlite");
         let made = profile::take_decisions();
         profile::set(false);
-        let whole: BTreeSet<String> = made.keys().filter(|(t, _)| t.contains("row space") || t.contains("every document") || t == "documents").map(|(t, x)| format!("{t}: {}", x.chars().take(160).collect::<String>())).collect();
+        let whole: BTreeSet<String> = made.keys().filter(|(t, _)| t.contains("row space") || t.contains("every document") || t == "documents" || t.contains("statistics") || t.contains("semi-join") || t.contains("measured")).map(|(t, x)| format!("{t}: {}", x.chars().take(160).collect::<String>())).collect();
         let said: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "the corpus batch's row space (decision 0494)").map(|(_, x)| x).collect();
         (report, rows, said, whole)
     };

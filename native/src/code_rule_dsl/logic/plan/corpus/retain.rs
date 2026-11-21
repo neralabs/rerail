@@ -1680,10 +1680,6 @@ impl InKept {
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
     }
-    /// Whether a statistics entry (`kept_stats::PART`) of the rows of digest `digest` is kept under `name`.
-    fn holds_stats(&self, name: &KeptRel, digest: u64) -> bool {
-        self.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, kept_stats::PART)).is_some_and(|e| e.digest() == digest)
-    }
     /// The digest of `rel`'s stored frame, when it is stored and current.
     pub(in crate::code_rule_dsl) fn derived_digest(&self, rel: &str) -> Option<u64> {
         self.derived.get(rel).map(|s| s.digest)
@@ -1882,9 +1878,6 @@ pub(in crate::code_rule_dsl) struct KeptInput {
     /// Its documents and each owner's range, laid out where first asked (Q91).
     pub(in crate::code_rule_dsl) layout: Arc<InputLayout>,
     pub(in crate::code_rule_dsl) digest: u64,
-    /// Its statistics as a run measured them at these rows (`digest`), kept beside its frame (decision 0120 §3's
-    /// part): asked only for an input `kept_inputs` is told to (`stats_of`), whose statistics no keeper counts.
-    pub(in crate::code_rule_dsl) stats: Option<Vec<(String, i64, i64, i64, i64)>>,
 }
 
 /// Each owner's rows in a kept input: (first row, rows).
@@ -1897,7 +1890,7 @@ impl KeptInput {
         let laid = LaidOut { docs: Arc::new(docs), ranges: Arc::new(ranges), owners: Vec::new() };
         let digest = digest_of_docs(&laid.docs);
         let layout = InputLayout { rel: String::new(), frame: None, digest, atoms: None, granules: Vec::new(), laid: std::sync::OnceLock::from(Ok(laid)) };
-        KeptInput { source, layout: Arc::new(layout), digest, stats: None }
+        KeptInput { source, layout: Arc::new(layout), digest }
     }
     /// Its rows' digests by owner (its documents' frame, decoded and checked where first asked).
     pub(in crate::code_rule_dsl) fn docs(&self) -> std::result::Result<&Arc<DocDigests>, String> {
@@ -2238,7 +2231,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
 /// The inputs `rels` of the cross part `prog` (key `key`) as the store's frames in `space` keep them: read as
 /// `Retained::load` reads a changed input, each owner's rows a range. `Err` (why) when one is not kept, or its frames
 /// do not match their document table.
-pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String], stats_of: &BTreeSet<String>) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
+pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String]) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs, bound where they lie".into());
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else {
         return Ok(Err("the space keeps no blocks".into()));
@@ -2290,13 +2283,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             Some(_) => Arc::new(Traced::new(rel.clone(), source, starts)),
             None => source,
         };
-        // Its statistics at these rows: the entry under the documents' digest (an older entry is never matched).
-        let stats = bound
-            .entry(rel, &ident, kept_stats::PART)
-            .filter(|p| kept_stats::on() && stats_of.contains(rel) && p.digest() == digest)
-            .and_then(|p| kept_stats::from_words(&entry_words(&p)))
-            .and_then(|all| all.get(&(rel.clone(), digest)).map(|(columns, _, _)| columns.clone()));
-        out.insert(rel.clone(), KeptInput { source, layout, digest, stats });
+        out.insert(rel.clone(), KeptInput { source, layout, digest });
     }
     Ok(Ok(out))
 }
@@ -2968,7 +2955,7 @@ impl Retained {
     /// changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, put".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2986,7 +2973,7 @@ impl Retained {
             Some(done) => done,
             None => {
                 let held = &self.input_docs;
-                write_input_kept(store, was, prog, domains, locations, inputs, digests, &|rel: &str| held.get(rel).and_then(|d| d.get()).cloned(), input_stats, digest_only)
+                write_input_kept(store, was, prog, domains, locations, inputs, digests, &|rel: &str| held.get(rel).and_then(|d| d.get()).cloned(), digest_only)
             }
         };
         // Every input the run bound, kept or not (an option's `env`, an earlier phase's export): its digest is what a
@@ -3142,7 +3129,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_kept`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<DocDigests>> + Sync), digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -3177,14 +3164,6 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         let types = types_of(prog, domains, rel);
         let cells = if types.len() == width { Cells::new(atoms, &types) } else { Cells::plain(width) };
         let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
-        // Its statistics this run measured (an input no keeper counts, a semi-join's: `kept_inputs`' `stats_of`),
-        // kept beside its frame at these rows (decision 0120 §3's part), unchanged rows or not, unless an entry of
-        // these rows is kept already: the statistics of the same rows are the same, and a warm run writes nothing.
-        if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on() && !was.holds_stats(name, digest)) {
-            let all: kept_stats::ByDigest = [((rel.clone(), digest), (columns.clone(), Vec::new(), BTreeSet::new()))].into_iter().collect();
-            let words = kept_stats::to_words(&kept_stats::encode(&all));
-            kept.push(kept_flat(name, kept_stats::PART, digest, Vec::new(), vec![b'i'], words.clone(), words.len()));
-        }
         if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
             queue(kept);
             return Some((digest, written));
