@@ -1603,6 +1603,38 @@ fn interpret_only() -> bool {
     false
 }
 
+/// The run's distinct leaf tests (decision 0365), in the order its formulas name them: every anchor's and formula pass's.
+fn run_leaf_tests(plan: &Plan<'_>) -> Vec<u32> {
+    let mut leaves = Vec::new();
+    for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
+        let formula = match pass {
+            Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor(),
+            Pass::Formula { formula, .. } => Some(formula),
+            _ => None,
+        };
+        if let Some(formula) = formula {
+            for &word in formula.words.iter().filter(|&&word| formula_leaf(word)) {
+                if !leaves.contains(&word) {
+                    leaves.push(word);
+                }
+            }
+        }
+    }
+    leaves
+}
+
+/// A leaf's row, and a formula's scratch a slot, of a batch of `words` words over `files` files: each file's words at
+/// its region (`FORMULA_REGION`), two spare a file, two at the end.
+fn formula_region(words: usize, files: usize) -> usize {
+    words + 2 * files + 2
+}
+
+/// Whether `tests` leaves' rows of `region` words fit the formulas' scratch: then the run reads them in one launch
+/// (`Runner::formulas`), else each group of a level's formulas reads its own.
+fn leaves_fit(tests: usize, region: usize) -> bool {
+    tests * region * 4 <= FORMULA_SCRATCH_BYTES
+}
+
 /// `Error::BackendCapacity`, counted by where it was raised (`capacity.<file>:<line>` in the profile's stages): which
 /// bound split the wave. Called, not passed (`ok_or_else(|| capacity())`): passed as a function, its caller is
 /// `FnOnce::call_once`'s line in core.
@@ -1628,6 +1660,10 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and one launch of all their
     // phases (0475, 0540 step 6). An anchor is evaluated once a run (`Runner::anchors`): `seen` holds those counted, in
     // the order `encode` runs them; a formula pass runs at each of its level's runs.
+    // The run's leaves, read in one launch where their rows fit (`Runner::formulas`), else a level's with its phases.
+    let leaf_tests = run_leaf_tests(plan);
+    let region = formula_region(files.iter().map(TapeDoc::transducer_len).sum::<usize>().div_ceil(32).max(1), files.len());
+    let run_leaves = leaves_fit(leaf_tests.len(), region);
     let formulas = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
         let phases = level
             .iter()
@@ -1640,8 +1676,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             })
             .map(formula_phase_count)
             .max();
-        // Their leaves, and every phase in one launch (decision 0540 step 6).
-        phases.map_or(0, |_| 2)
+        // Every phase in one launch (decision 0540 step 6), after the level's leaves where the run's are not read once.
+        phases.map_or(0, |_| if run_leaves { 1 } else { 2 })
     };
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle, its formulas.
     let launches = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
@@ -1665,7 +1701,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             levels.iter().map(|level| if *recursive { formulas(level, &mut seen) } else { launches(level, &mut seen) }).sum::<usize>()
         })
         .sum::<usize>()
-        + usize::from(parents);
+        + usize::from(parents)
+        + usize::from(run_leaves && !leaf_tests.is_empty());
     // A group of micro walks runs to its fixpoint in one dispatch (`Runner::group`), which needs
     // no pattern pass; whether its walks fuse is known only once sized, so a plan counts it as
     // fused, and the evaluation's ledger refuses the submission of one that did not.
@@ -2420,22 +2457,8 @@ impl Runner<'_> {
         }
         self.root_table.prefix(self.files);
         // The anchors' leaves for the run (decision 0365), where their rows fit: no leaf reads a label.
-        let mut leaves = Vec::new();
-        for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
-            let formula = match pass {
-                Pass::Program { roots, .. } | Pass::Count { roots, .. } => roots.anchor(),
-                Pass::Formula { formula, .. } => Some(formula),
-                _ => None,
-            };
-            if let Some(formula) = formula {
-                for &word in formula.words.iter().filter(|&&word| formula_leaf(word)) {
-                    if !leaves.contains(&word) {
-                        leaves.push(word);
-                    }
-                }
-            }
-        }
-        if leaves.len() * self.region() * 4 <= FORMULA_SCRATCH_BYTES {
+        let leaves = run_leaf_tests(plan);
+        if leaves_fit(leaves.len(), self.region()) {
             self.run_leaves = leaves;
         }
         drop(_roots);
@@ -2893,7 +2916,7 @@ impl Runner<'_> {
 
     /// A leaf's row, and a formula's scratch a slot: each file's words at its region (`FORMULA_REGION`).
     fn region(&self) -> usize {
-        self.words + 2 * self.files.len() + 2
+        formula_region(self.words, self.files.len())
     }
 
     /// `label_leaves`: `tests`' rows into `leaves`.

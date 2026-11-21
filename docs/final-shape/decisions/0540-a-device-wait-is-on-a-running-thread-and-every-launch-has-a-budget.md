@@ -283,3 +283,18 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      The gate on the M3 Max: Metal 17.6 s without the polls, 18.4 s with them, run after run on one host (a first
      run at 49.8 s was the host's load: the same code ran at 17.6 s next). The queue's tests pass on the Mac mini's
      Metal and spark1; the device fix waves (the lattice) and the spilled walks on the M3 Max.
+   - **Done: a lane's lazy arena block has no pending state.** `ensure_lazy_block` (`batch_runtime.uglykl`) claimed a
+     block by CAS (state 1) and spun on state 1 for another thread's reservation. A lane is one thread's own (a lane a
+     thread: `lane_arenas_full` in `run_batch` and the label sweep), so no thread ever saw another's claim: the wait
+     was a spin in form only. It reads the state, and at the lane's first need reserves and stores it, with no CAS
+     and no loop. The host's model of it (`LazyArenaBlock` in `packed_arena.rs`, which `std::hint::spin_loop`ed on
+     the same state) is the same: `ensure(&mut self)`, the block one lane's.
+   - **Kept: the 16z cache's wait for a pending entry** (`clif_tc_get` in `<ukl/reads/tape_body.h>`). It is not a
+     barrier: the thread waited for has claimed the entry and is decoding it, so it is running and owes no other
+     thread anything; the wait is bounded (`CLIF_T_C_SPIN` turns, then the block decoded into an entry of its own),
+     and ends at once once any lookup has failed. A read inside an evaluation has no continuation to push, and
+     decoding instead of waiting was measured worse (21.8 s and 121,577 failed lookups against 7.2 s and none).
+   - **Not a launch: the leaves.** The run reads every anchor's and formula pass's leaves in one `label_leaves`
+     launch where their rows fit the formulas' scratch (`run_leaf_tests`, `leaves_fit`), and did before; the plan
+     counted a leaf launch at each level with formulas. It now counts the run's one (the wave's plan: 49 leaves
+     were 48 launches that never ran).
