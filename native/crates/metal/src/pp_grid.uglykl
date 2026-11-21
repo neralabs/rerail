@@ -152,7 +152,9 @@
         UklPool gv_p; gv_p.heads = AT(uint32_t, TOKENS) + 5u * gv_tc; gv_p.next = AT(uint32_t, TOKENS); \
         EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), i);                                               \
         BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, gv_nl, i);                                    \
+        EACH(i, gv_nl) px_forward(AT(PxList, LISTS), gv_nl, i);                                        \
+        BARRIER();                                                                                     \
+        EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, AT(uint32_t, TOKENS), gv_tc, gv_nl, i); \
         BARRIER();                                                                                     \
         /* The lists' ids and the arguments' entries no item reads again. */                           \
         UklPool gv_lp; gv_lp.next = (UKL_GLOBAL uint32_t*)(AT(PxList, LISTS) + W(LIST_CAP)); gv_lp.heads = gv_lp.next + W(LIST_CAP); \
@@ -174,6 +176,7 @@
             ukl_atomic_store(&gv_c[15], front_ + AT(const uint32_t, WORDS)[11]);                       \
             ukl_atomic_store(&gv_c[18], ukl_min(ukl_atomic_load(&gv_c[1]), W(LIST_CAP)) + AT(const uint32_t, WORDS)[12]); \
             ukl_atomic_store(&gv_c[19], ukl_min(ukl_atomic_load(&gv_c[3]), AT(const uint32_t, WORDS)[3]) + AT(const uint32_t, WORDS)[13]); \
+            gv_c[20] = 0u; gv_c[21] = 0u; gv_c[22] = 0u;                                               \
             gv_c[16] += 1u;                                                                            \
         }                                                                                              \
         BARRIER();                                                                                     \

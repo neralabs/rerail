@@ -1007,8 +1007,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 36 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 36;
+/// A list (`PxList` in the UKL): 37 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 37;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1155,22 +1155,33 @@ impl Exp {
         // queue items), the output's (14), the mark where the blocks no item reads again are given
         // back (15: a 32nd of the tokens' room past the front, decision 0478 §10), the times they were (16) and the
         // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
-        // marks (18, 19: a 32nd of each room past its front).
+        // marks (18, 19: a 32nd of each room past its front), the units each store took from its
+        // pool since the last giving (20 the tokens', 21 the lists', 22 the arguments' entries':
+        // counted toward the marks), and the givings those takes may bring on (23).
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
         // front's growth); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
-        let mut ctl = [0u32; 20];
+        let mut ctl = [0u32; 24];
         ctl[4] = lit_bytes as u32;
         ctl[15] = gap as u32;
-        ctl[18] = (lists / 32).max(1) as u32;
-        ctl[19] = (args / 32).max(1) as u32;
+
         ctl[5] = nf as u32;
         // The lists' and the arguments' entries' fronts between two givings: a 32nd of each room.
         // The work bound, and the givings' bound: each store's room over its gap (its mark passed
         // once a gap of growth), and the ring's pauses (half its room of items each) within the work.
         let work = std::env::var("RERAIL_PP_WORK").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(WORK);
-        let (lgap, agap) = ((lists / 32).max(1), (args / 32).max(1));
-        let gives = tok.div_ceil(gap) + lists.div_ceil(lgap) + args.div_ceil(agap) + 2 * work as usize / (q / 2).max(1) + 8;
+        // A test's gap (`RERAIL_PP_GIVE_GAP`) is each store's.
+        let test_gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok());
+        let (lgap, agap) = (test_gap.map_or(lists / 32, |g| g.min(lists)).max(1), test_gap.map_or(args / 32, |g| g.min(args)).max(1));
+        // A take from a pool counts toward its store's mark as the front's growth does (decision 0520
+        // step 4): the givings a run's churn brings on, twice those of the fronts' growth; past them
+        // the marks count the fronts alone (as before: the room may run out, and the unit runs a
+        // rung up), so no unit is refused for its pauses.
+        let grows = tok.div_ceil(gap) + lists.div_ceil(lgap) + args.div_ceil(agap);
+        let gives = 3 * grows + 2 * work as usize / (q / 2).max(1) + 8;
+        ctl[23] = (2 * grows) as u32;
+        ctl[18] = lgap as u32;
+        ctl[19] = agap as u32;
         let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32, lgap as u32, agap as u32, work, gives as u32];
         Ok(Exp {
             list_cap: lists as u32,

@@ -105,7 +105,40 @@ The directives' evaluation (`pp_if`) reads the output's tokens through the piece
 them, and makes tokens only where its caller asks for tokens: the tests' comparison with the
 serial pass.
 
-### 4. What stays
+### 4. What a pending level keeps
+
+A level of a chain is pending until the call it holds is done, and keeps, in that time, its list's
+record and nothing more. Four things made it keep more (step 4, measured below):
+
+1. **A done call's span stayed in its parent's pieces.** The pieces wholly inside a done call's
+   span (and its exits' claim) leave the parent's array in a pause: the pieces after them move
+   down, and the block's end past its pieces goes back to the pool (`pgave` counts what is given
+   from the end). They are not given back in place: a read finds a token by a binary search of the
+   places (`pat`), which may land on any piece of the array, and a piece given back is written by
+   its next taker. No item runs in a pause, no record names a piece of a list (its readers search
+   the places, which stay in order), and no reader reads a done span's tokens.
+2. **A call's tokens from its exit's name on stayed.** Its exit's join copied them, and its walk
+   stops at the name, so once the exit is made they leave the array too (where no call of the list
+   has a claim: one would hold the name, and the exit would not be its own).
+3. **A pause came only once a store's front moved.** A run that took blocks from the pool alone
+   spent all it held before the front moved, so each pause came a gap above the last one's peak,
+   and the peak grew with the chain's length. A take from a pool now counts toward the store's
+   mark as the front's growth does (`CTL` 20–22), within an allowance of givings (`CTL` 23: twice
+   the fronts'). Past the allowance the fronts alone count, as before: the room may run out, and the
+   unit runs a rung up, but no unit is refused for its pauses.
+4. **A call whose expansion is empty but for its exit kept its record.** Its record was only the
+   link from its parent to its exit's call, which is in the same parent. In a pause the exit's call
+   takes its place among the parent's children (from its `lo`), and it is dead. This happens only
+   where the call is certainly live: every call before it final, none with an exit that could claim
+   it, and not past the parent's own exit's name. Then no rollback drops it, and it is as placed (its
+   arguments' `__COUNTER__` uses are counted). `__COUNTER__`'s order ranks siblings by their spans'
+   ends, which never tie. An exit's join and its call take their ids one at a time, as ids come
+   back (the join's once its call is done), and the join keeps its call's id (`call`).
+
+The serial pass keeps a frame a nested call: a level's `(` … `)` is read while its frame is still on
+the stack. So the lists' count is one a level, and every other store is flat.
+
+### 5. What stays
 
 - The lists, the queue, the claims and the exits (0448, 0467).
 - The pools (0478 §10): the pieces' store takes and gives blocks as the tokens' did.
@@ -114,21 +147,30 @@ serial pass.
 ## Steps
 
 0. The work bound and the givings' bound (above), and `a_chains_use_is_flat_in_its_length`.
-   The test is ignored until step 2 makes it pass.
+   The test is ignored until step 4 makes it pass.
 1. Every read of a list's tokens goes through one accessor (`px_tok`). The scan's, the exit's
    and the close search's depths are carried, not stored. Behaviour unchanged, and every eval test
    passes.
 2. Lists, argument expansions and joins as pieces (§1, §2). `tok`, `tflag`, `tchild`, `tdepth`
    and `texp` go. The flat test passes on tokens (now pieces) and arguments.
 3. The output as pieces (§3), `pp_if` and the host's read through them.
-4. A pending level's record is all that stays of it. The lists' count is then one a pending
-   level, the serial pass's frame a nested call. A tail call taking its parent's place is the
-   step after, for the lists' count to be flat too.
+4. A pending level's record is all that stays of it (§4). Done.
+
+   | Chain (25, 50, 100 levels) | Tokens (pieces) | Lists | Arguments' entries |
+   |---|---|---|---|
+   | plain, after step 2 | 104, 204, 404 | 26, 51, 101 | 26, 51, 59 |
+   | plain | 24, 24, 24 | 26, 51, 101 | 5, 5, 5 |
+   | through a scanned argument, after step 2 | 238, 464, 890 | 53, 112, 186 | 35, 61, 87 |
+   | through a scanned argument | 28, 28, 28 | 30, 55, 105 | 4, 4, 4 |
+   | through an exit, after step 2 | 552, 1064, 2088 | 65, 121, 228 | 42, 57, 77 |
+   | through an exit | 44, 44, 44 | 29, 54, 104 | 3, 3, 3 |
+
+   Each store's most use in the run (`Exp::room`), its blocks given back every 16 of its growth.
 
 ## Requirements
 
 | # | Requirement | Test |
 |---|---|---|
-| R1 | Every store but the output's and the scratch's is flat in a chain's length, at 25, 50 and 100 levels: plain, through a scanned argument, through an exit. | `a_chains_use_is_flat_in_its_length` |
+| R1 | Every store but the output's, the scratch's and the lists' is flat in a chain's length, at 25, 50 and 100 levels: plain, through a scanned argument, through an exit. The lists grow by at most one a level (the serial pass's frames). | `a_chains_use_is_flat_in_its_length` |
 | R2 | Every eval test equals the serial pass after each step. | the eval tests |
 | R3 | A unit refused for work is refused as `X_WORK`, and grows no rung. | `a_unit_past_its_room_runs_again_larger` (unchanged), the work bound's reason in `against_serial` |

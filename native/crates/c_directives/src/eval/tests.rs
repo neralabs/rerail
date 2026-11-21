@@ -1542,11 +1542,16 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
 
 /// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
 /// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
-/// (`Exp::room`, as the serial pass's): a store whose use grows with the chain's length holds what
-/// no item reads again, which is what made Boost's units climb the rungs.
+/// (`Exp::room`, as the serial pass's), the blocks no item reads again given back every 16 of a
+/// store's growth (`RERAIL_PP_GIVE_GAP`): a store whose use grows with the chain's length holds what
+/// no item reads again, which is what made Boost's units climb the rungs. A pending level keeps its
+/// list, as the serial pass keeps its frame (its macro is disabled until its result is read): the
+/// lists grow by at most one a level.
 #[test]
-#[ignore = "decision 0520: passes once a list is its pieces (step 2)"]
 fn a_chains_use_is_flat_in_its_length() {
+    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
+    // more often, which changes no result.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     use rerail_metal::pp_expand::ROOM_STORES;
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
@@ -1582,7 +1587,8 @@ fn a_chains_use_is_flat_in_its_length() {
             let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
             eprintln!("{what}: {name}: {a} {b} {c}");
             let grows = ["output", "scratch bytes", "scratch tokens", "queue items"].contains(name);
-            if !grows && c > a + a / 16 + 64 {
+            let bound = if *name == "lists" { a + 75 + 16 } else { a + a / 16 + 64 };
+            if !grows && c > bound {
                 flat = false;
             }
         }
