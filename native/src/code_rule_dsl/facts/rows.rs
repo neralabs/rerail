@@ -101,25 +101,6 @@ impl Facts {
     }
 }
 
-impl Drop for Facts {
-    /// A shared block's census (`HEADROOM`): how far past its fill line its used extent went, by bucket of used over
-    /// fill, and the bytes past the line.
-    fn drop(&mut self) {
-        if !self.is_shared() || !crate::code_rule_dsl::prof::on() {
-            return;
-        }
-        let (used, fill) = (self.block.used(), self.fill().max(1));
-        let bucket = match used * 4 / fill {
-            0..=4 => "at most 1",
-            5 => "1 to 1.5",
-            6 | 7 => "1.5 to 2",
-            8..=11 => "2 to 3",
-            _ => "3 to 4",
-        };
-        crate::code_rule_dsl::prof::count_named(format!("facts.shared block used over its fill line: {bucket}"), 1);
-        crate::code_rule_dsl::prof::count("facts.shared block bytes past its fill line", used.saturating_sub(fill));
-    }
-}
 
 /// Values a relation holds beside its rows (its dead bits, its rows' levels). Read as a slice; never written in
 /// place.
@@ -1149,10 +1130,16 @@ impl Part {
         *self = moved;
     }
 
-    /// Room for `n` rows in all in its block, leaving the room its indexes take there (`ix_room`).
+    /// Room for `n` rows in all in its block, leaving the room its indexes take there (`ix_room`). In a shared block,
+    /// below its fill line (`HEADROOM`): the room past it is its relations' indexes', and rows that grew into it took
+    /// it from them (ab120: three Kept relations of 4 to 20 MB grew in place to a 64 MB block's end, and the device
+    /// copied each for its index, 43.8 MB). A relation's growth past the line moves it once to a block of its own,
+    /// with room for its indexes (`moved_whole`).
     fn reserve_keeping(&self, n: u64) -> bool {
         let ix = self.ix_room as usize;
-        self.rel().rows.try_reserve_keeping(&self.facts.block, n, |rows| if ix == 0 { 0 } else { index_room(ix, rows) })
+        let f = &self.facts;
+        let past = if f.is_shared() { f.block.reserved().saturating_sub(f.fill()) } else { 0 };
+        self.rel().rows.try_reserve_keeping(&f.block, n, |rows| past + if ix == 0 { 0 } else { index_room(ix, rows) })
     }
 
     /// Its first `rows` rows moved into a new relation of its life with room for `room` rows of its own more: a
@@ -1162,8 +1149,13 @@ impl Part {
         let k = self.rel().rows.ncols as usize;
         let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
         let all = room.max(rows as usize) + pre as usize;
-        // One given room for its indexes keeps it where it goes.
-        let mut moved = match self.ix_room {
+        // One given room for its indexes keeps it where it goes. One that grew past a shared block's fill line is a
+        // large relation among small ones: alone in its block, with room for the indexes of an axis's keys.
+        let ix_room = match self.ix_room {
+            0 if self.facts.is_shared() && self.life != Life::Device => AXIS_KEYS as u8,
+            ix => ix,
+        };
+        let mut moved = match ix_room {
             0 => Part::new(self.life, k, all),
             ix => Part::alone_indexed(self.life, k, all, ix as usize).unwrap_or_else(|e| panic!("a relation of {k} columns and {all} rows: {e}")),
         };
@@ -2566,6 +2558,38 @@ mod tests {
                     assert!(room.is_some(), "an index on {key:?} of {n} rows in its block ({} of {} used)", facts.block.used(), facts.block.reserved());
                 }
             }
+        });
+    }
+
+    #[test]
+    fn a_relation_growing_past_its_shared_blocks_fill_line_moves_with_room_for_its_indexes() {
+        in_chunk(|| {
+            let (mut a, mut b) = (Rows::living(2, Life::Kept), Rows::living(2, Life::Kept));
+            // copy: not block data (a test's literal rows)
+            let rows: Vec<i64> = (0..2 * 4096).collect();
+            a.extend_from_slice(&rows);
+            b.extend_from_slice(&rows);
+            let facts = block_of(&a);
+            assert!(facts.is_shared() && Arc::ptr_eq(&facts, &block_of(&b)), "both in one shared block");
+            // Each grows, in turns, to twice the block's fill line together.
+            let mut grown = 0;
+            while grown < 2 * facts.fill() {
+                a.extend_from_slice(&rows);
+                b.extend_from_slice(&rows);
+                grown += 2 * 8 * rows.len();
+            }
+            assert!(facts.block.used() <= facts.fill() + MARGIN, "rows past the fill line: {} of {} used", facts.block.used(), facts.fill());
+            for r in [&a, &b] {
+                let at = block_of(r);
+                let part = r.parts().next().expect("one part");
+                let n = part.len();
+                for key in [&[0u16][..], &[1]] {
+                    // SAFETY: no other thread adds an index; its rows are written.
+                    let room = unsafe { part.rel().try_reserve_index(&at.block, key, n) };
+                    assert!(room.is_some(), "an index on {key:?} of {n} rows in its block ({} of {} used)", at.block.used(), at.block.reserved());
+                }
+            }
+            assert!(!Arc::ptr_eq(&block_of(&a), &facts) || !Arc::ptr_eq(&block_of(&b), &facts), "one moved out of the shared block");
         });
     }
 
