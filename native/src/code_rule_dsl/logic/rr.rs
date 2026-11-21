@@ -764,7 +764,21 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
 
 /// The store rule images are read from and kept in (`images::store`), unless `RERAIL_MODULE_IMAGES=off`.
 pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images::store() } else { None }
+    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images::store) } else { None }
+}
+
+/// The image store a run opened, held for the run (one of its own values, decision 0442): opened at each ask, it was
+/// opened and closed once a program text (phase 0's graphs, a text's header, its guests' asks), and each close of its
+/// last connection made SQLite delete and make again its write-ahead log (1.9 s of a 90 s run). Outside a run, opened
+/// at each ask.
+#[derive(Default)]
+struct HeldImageStore(std::sync::OnceLock<Option<std::sync::Arc<crate::content_store::ContentStore>>>);
+
+pub fn held_image_store(open: impl FnOnce() -> Option<std::sync::Arc<crate::content_store::ContentStore>>) -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+        return open();
+    }
+    crate::code_rule_dsl::logic::profile::local::<HeldImageStore>().0.get_or_init(open).clone()
 }
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
