@@ -246,6 +246,20 @@ SIMD-group operation switches each thread of the group.
      its own barriers, then one grid barrier. A round of a chain's climb then crosses a grid
      barrier only between the phases' sets, not within them. All 31 eval tests under the
      `second` profile, the longest 0.55 s.
+   - **A list's children are slots, a thread a child.** A scanned list's calls were a chain
+     (`kid`, `sib`) one thread walked (`px_wk_seq`). They are now `nkid` slots, each a call's id
+     (one child held in `kid` itself, so a chain's levels take no block; more in a block of the
+     tokens' pool, given back with the list); forwarding rewrites a slot. The walk takes token
+     `j` of a list for its slot `j` (and slot `nkid` for its own exit's name).
+   - **Live claims by pointer doubling.** A claim is live unless a live one before it covers it.
+     Claims need not nest: in `f(0)( y ) z ) )` with `#define y k((`, `y`'s claim is covered by
+     `g`'s but reaches past it, so the cover is not the max over every claim (tried: shape 5 of
+     `calls_past_an_end_are_the_serial_passes` failed). Once a claim is live the cover is its
+     end, so the next live one is the first at or past it (a binary search), and the live ones
+     are the path from the first, marked by pointer doubling (`px_live_jump`, log₂ of the claims
+     rounds). A list's walk does it only when it has claims (no added barrier otherwise), and the
+     top level's (`px_top_cover`, a SIMD group, is gone) the same way. The test holds a list
+     whose claims do not nest (with every claim taken as live it fails).
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

@@ -1445,6 +1445,13 @@ fn calls_past_an_end_are_the_serial_passes() {
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define W(z) f(1)(z) w\nW(2)\n")],
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define h(z) <z>\n#define W(z) f(1)(h(z)) w\nW(2) W(h(3))\n")],
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define t(a) a\nt(f(1))(2) t(f(1)(3))\n")],
+        // A list of many claims (the walk's doubling over them, decision 0523 §2): covered ones with
+        // claims of their own, its own exit's name last; then a claim past the list's end after two
+        // live ones; then claims that do not nest (`y`'s, covered, reaches past `g`'s), in a list
+        // and through to the top level.
+        &[("main.c", "#define f(a) g\n#define g(a) #a\n#define y k((\n#define k(a) {a}\n#define W(z) f(0)( y ) z ) ) f(2)( y ) z ) )\nW(1) end\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define W(z) f(1)(f(2)(3)) f(4)(5) z f(6)(f(7)(8) f(9)) f(1)(2) f(3)(4) f(5)(6) f(7)(8) f\nW(0)(9) end\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define V(z) f(1)(2) z f(3)(4) f(5)\nV(0)(6) end V(f(7))(8)\n")],
         &[("main.c", "#define EMPTY()\n#define DEFER(id) id EMPTY()\n#define OBSTRUCT(...) __VA_ARGS__ DEFER(EMPTY)()\n#define EXPAND(...) __VA_ARGS__\n#define A() 123\nDEFER(A)() EXPAND(DEFER(A)()) OBSTRUCT(A)() EXPAND(OBSTRUCT(A)()) EXPAND(EXPAND(OBSTRUCT(A)()))\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);

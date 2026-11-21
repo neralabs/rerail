@@ -723,15 +723,17 @@ typedef struct PxList {
     // token this list's substitution wrote (`NO_LREF`: a top call's, read from the top level at
     // its `)`); its marks (`F_*`); its blocks' classes in the tokens' pool (decision 0478 §10:
     // its own tokens' at `first`, bits 0 to 7, and its flatten's at `base`, bits 8 to 15;
-    // `NO_CLS` none); the first `)` of an exit's call made in it (`NO_POS`: none), past which its
-    // descendants' exits may read on. Its scan's calls in order of their names (`kid`: the
-    // first, + 1; `sib`: the call after this one in its parent, + 1; 0 none): the walk reads a
-    // call's place from them, not from its tokens, so a done call's whole span (its name and its
-    // `)` too) can be given back (decision 0478 §10). A call's span in its parent given back so
+    // `NO_CLS` none; its children's slots' at `kid`, bits 16 to 23); the first `)` of an exit's
+    // call made in it (`NO_POS`: none), past which its descendants' exits may read on. Its scan's
+    // calls in order of their names: `nkid` slots from `kid` in the pieces' first column
+    // (`px_kid`), each a call's id (a forwarded call's slot its exit's, `px_forward`), so a phase
+    // takes a thread a child (decision 0523 §2). The walk reads a call's place from them, not
+    // from its tokens, so a done call's whole span (its name and its `)` too) can be given back
+    // (decision 0478 §10). A call's span in its parent given back so
     // far, from its `lo` (`gend`: its end). A call's depth at its `)` in its parent (`hdepth`, from
     // the scan that made it): an exit climbing out of it reads it here, as its `)` may be given.
     // A call's arguments' entries' block (`abl` entries from `args`, given back once it is done).
-    uint32_t owner, lref, flags, blk, xhi, kid, sib, abl;
+    uint32_t owner, lref, flags, blk, xhi, kid, nkid, abl;
     // Its pieces (decision 0520: from `first`, `len` tokens; an argument's list none, a view of
     // `src` from `first`), its expansion's (`psize`, written from `base`, its tokens' place there
     // `tat`), and the names its scan painted (found again where it is written out).
@@ -796,8 +798,8 @@ UKL_INLINE void px_init(UKL_GLOBAL PxList* l, uint32_t parent, uint32_t def, uin
     ukl_atomic_store(&l->apending, 1u);
     ukl_atomic_store(&l->fpending, 0u);
     l->order = 0xffffffffu;
-    l->owner = NO_OWNER; l->lref = NO_LREF; l->flags = 0u; l->blk = 0xffffu; l->xhi = NO_POS;
-    l->kid = 0u; l->sib = 0u; l->np = 0u; l->psize = 0u; l->tat = 0u; l->npaint = 0u; l->pgave = 0u; l->abl = 0u;
+    l->owner = NO_OWNER; l->lref = NO_LREF; l->flags = 0u; l->blk = 0xffffffu; l->xhi = NO_POS;
+    l->kid = 0u; l->nkid = 0u; l->np = 0u; l->psize = 0u; l->tat = 0u; l->npaint = 0u; l->pgave = 0u; l->abl = 0u;
 }
 
 // Reading a node of the unit: its file's tape and the node in it.
@@ -1395,6 +1397,10 @@ UKL_INLINE uint32_t px_list_ids(Ar a, uint32_t n) {
 // A list's own block's class, and its flatten's.
 UKL_INLINE void px_own_cls(UKL_GLOBAL PxList* L, uint32_t c) { L->blk = (L->blk & ~0xffu) | c; }
 UKL_INLINE void px_flat_cls(UKL_GLOBAL PxList* L, uint32_t c) { L->blk = (L->blk & ~0xff00u) | (c << 8); }
+UKL_INLINE void px_kid_cls(UKL_GLOBAL PxList* L, uint32_t c) { L->blk = (L->blk & ~0xff0000u) | (c << 16); }
+// Child slot `r` of list `L`: its call's id (`cols`: the pieces' first column). A list of one
+// child holds it in `kid` (a chain's levels: no block a level).
+UKL_INLINE UKL_GLOBAL uint32_t* px_kid(UKL_GLOBAL uint32_t* cols, UKL_GLOBAL PxList* L, uint32_t r) { return L->nkid == 1u ? &L->kid : cols + L->kid + r; }
 
 // List `l`'s tokens one token `t` (a built-in's, a test's, a wrong call's name): a `P_REF` piece.
 UKL_INLINE void px_one(Ar a, uint32_t l, Tk t) {
@@ -3008,8 +3014,21 @@ UKL_INLINE void px_sc_live(Sc c, uint32_t t) {
 // The live calls before the round's token `x` (the total at the end).
 UKL_INLINE uint32_t px_sc_rank(Sc c, uint32_t x) { return x < c.total ? c.rank[x] : c.ltotal; }
 
-// Each outermost call's list (its id the round's block's, in order: each list's calls are
-// consecutive, so its next is the id after it), counted in its parent, its item made.
+// Scanned list `i`'s children's slots: one a live call (`px_sc_child` writes them).
+UKL_INLINE void px_sc_kids(Ar a, Sc c, uint32_t i) {
+    if (i >= c.ns) return;
+    UKL_GLOBAL PxList* L = &a.lists[c.scans[i]];
+    uint32_t r0 = px_sc_rank(c, c.base[i]), nk = px_sc_rank(c, c.base[i] + L->len) - r0;
+    L->nkid = nk;
+    if (nk <= 1u) return;
+    uint32_t cls = NO_CLS, base = px_toks(a, nk, &cls);
+    if (base == NO_POS) { px_refuse(a.ctl, X_ROOM); return; }
+    L->kid = base;
+    px_kid_cls(L, cls);
+}
+
+// Each outermost call's list (its id the round's block's, in order), counted in its parent, its
+// item made, its id in its parent's slot.
 UKL_INLINE void px_sc_child(Ux u, Ar a, Sc c, uint32_t t) {
     if (t >= c.total || c.live[t] == 0u || c.first == NO_POS) return;
     uint32_t i = px_sc_list(c, t), j = t - c.base[i], l = c.scans[i];
@@ -3021,8 +3040,7 @@ UKL_INLINE void px_sc_child(Ux u, Ar a, Sc c, uint32_t t) {
     C->at = j; C->end = e;
     C->owner = px_owner(a, l);
     C->lref = px_lref_at(u, a, l, e);
-    C->sib = r + 1u < px_sc_rank(c, c.base[i] + L->len) ? child + 2u : 0u;
-    if (r == px_sc_rank(c, c.base[i])) L->kid = child + 1u;
+    if (L->nkid != 0u) *px_kid(a.psrc, L, r - px_sc_rank(c, c.base[i])) = child;
     ukl_atomic_add(&L->pending, 1u);
     px_fence();
     px_push(a, child | (px_fnlike(u.defs, m) ? IT_CALL : IT_SUBST));
@@ -3058,6 +3076,8 @@ typedef struct Wk {
     UKL_GLOBAL uint32_t* child; UKL_GLOBAL uint32_t* xlive; UKL_GLOBAL uint32_t* ends; UKL_GLOBAL uint32_t* heads;
     UKL_GLOBAL uint32_t* cb; UKL_GLOBAL uint32_t* incl; UKL_GLOBAL uint32_t* pi; UKL_GLOBAL uint32_t* fl;
     UKL_GLOBAL uint32_t* v; UKL_GLOBAL uint32_t* pv; UKL_GLOBAL uint32_t* off; UKL_GLOBAL uint32_t* poff;
+    // The claims' count.
+    UKL_GLOBAL uint32_t* claims;
     uint32_t total;
 } Wk;
 #define WK_OWN (0xffffffffu)
@@ -3073,6 +3093,7 @@ UKL_INLINE void px_wk_count(Ar a, Wk w, uint32_t i) {
     if (i >= w.ns) return;
     UKL_GLOBAL PxList* K = &a.lists[w.set[i]];
     w.n[i] = K->len;
+    w.stop[i] = NO_POS;
     if (w.place && K->kind != LK_ARG) K->order = ORDER_PLACED;
 }
 
@@ -3080,47 +3101,98 @@ UKL_INLINE void px_wk_count(Ar a, Wk w, uint32_t i) {
 UKL_INLINE void px_wk_clear(Wk w, uint32_t t) {
     if (t >= w.total) return;
     uint32_t i = px_wk_list(w, t);
-    w.child[t] = 0u; w.xlive[t] = 0u; w.ends[t] = 0u;
+    w.child[t] = 0u; w.xlive[t] = 0u; w.ends[t] = 0u; w.pi[t] = 0u;
     w.heads[t] = t == w.base[i] ? 1u : 0u;
+    if (t == 0u) ukl_atomic_store(&w.claims[0], 0u);
 }
 
-// List `i`'s children in order (`kid`, `sib`: a done call's span is read from its list, never its
-// tokens, decision 0478 §10), and its own exit's name, by one thread: each child's place and end,
-// and the exit-bearing ones decided one after another (their claims cover what follows them).
-UKL_INLINE void px_wk_seq(Ar a, Wk w, uint32_t i) {
-    if (i >= w.ns) return;
-    uint32_t k = w.set[i], b = w.base[i];
+// Claims decided live (a list's, `px_wk_*`, and the top level's, `px_top_*`): in order, each is
+// live unless a live one before it covers it. They need not nest (an expansion's unbalanced
+// parentheses: `y` of `#define y k((` in `f(0)( y ) z ) )` is covered by `g`'s claim but reaches
+// past it). Once one is live the cover is its end, so the next live one is the first at or past
+// it: the live ones are the path from the first along `next`, marked by pointer doubling. A step:
+// what `jump` reaches from a marked claim marked, `jump2` twice as far (`WK_NONE`: none).
+#define WK_NONE (0xffffffffu)
+UKL_INLINE void px_live_jump(uint32_t nc, UKL_GLOBAL const uint32_t* jump, UKL_GLOBAL uint32_t* jump2, UKL_GLOBAL uint32_t* on, uint32_t x) {
+    if (x >= nc) return;
+    uint32_t y = jump[x];
+    if (y != WK_NONE && ukl_atomic_load(&on[x]) != 0u) ukl_atomic_store(&on[y], 1u);
+    jump2[x] = y == WK_NONE ? WK_NONE : jump[y];
+}
+// The first of the sorted words `v[lo..hi)` at or past `q` (`hi`: none).
+UKL_INLINE uint32_t px_first_at(UKL_GLOBAL const uint32_t* v, uint32_t lo, uint32_t hi, uint32_t q) {
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (v[mid] < q) lo = mid + 1u; else hi = mid;
+    }
+    return lo;
+}
+
+// The walk's children and claims (decision 0523 §2), a thread a child: token `j` of list `i`
+// takes its child slot `j`, and slot `nkid` its own exit's name (a list's children's names and
+// its own are distinct tokens of it, so they fit). Each child's place and end at its first
+// token; an exit-bearing one's claim, or the list's own exit's name's, flagged there (`pi`), its
+// cover's end (`fl`, from the list's first) and the exit it goes on past the list's end by
+// (`off`; 0 none). Then the claims in order (`poff` their ranks, `v` their tokens), each's next
+// (`px_wk_next`), the live ones (`px_live_jump`), and theirs (`px_wk_live`): a live claim with an
+// exit past the end stops the list there (no claim after it is live).
+#define WK_CLAIM (1u)
+UKL_INLINE void px_wk_kid(Ar a, Wk w, uint32_t t) {
+    if (t >= w.total) return;
+    uint32_t i = px_wk_list(w, t), b = w.base[i], j = t - b, k = w.set[i];
     UKL_GLOBAL PxList* K = &a.lists[k];
     uint32_t n = K->len, xj = K->xname == 0u ? NO_POS : K->xname - 1u;
-    uint32_t cover = 0u, stop = NO_POS, exit = 0u;
-    bool own_left = xj < n;
-    uint32_t nx = K->kid;
-    for (uint32_t guard = 0u; guard <= n && nx != 0u && nx - 1u < a.list_cap; guard++) {
-        uint32_t c = nx - 1u, lo = a.lists[c].lo;
-        if (lo >= n) break;
-        if (own_left && xj < lo) {
-            bool lv = xj >= cover && xj < stop;
-            if (lv) { cover = ukl_max(cover, xj + 1u); if (K->xcall != 0u) { stop = xj; exit = K->xcall; } }
-            w.child[b + xj] = WK_OWN; w.xlive[b + xj] = lv ? xj + 1u : 0u;
-            own_left = false;
-        }
-        w.child[b + lo] = nx;
+    if (j == 0u) w.n[i] = 0u;
+    if (j < K->nkid) {
+        uint32_t c = *px_kid(a.psrc, K, j), lo = a.lists[c].lo;
+        if (lo >= n) return;
+        w.child[b + lo] = c + 1u;
         w.ends[b + lo] = a.lists[c].hi + 1u;
         if (a.lists[c].exit != 0u) {
             Claim r = px_claim(a, k, c);
-            bool lv = lo >= cover && lo < stop;
-            if (lv) { cover = ukl_max(cover, r.end + 1u); if (r.through != 0u) { stop = r.end + 1u; exit = r.through; } }
-            w.xlive[b + lo] = lv ? r.end + 1u : 0u;
+            w.pi[b + lo] = WK_CLAIM; w.fl[b + lo] = r.end + 1u; w.off[b + lo] = r.through;
+            ukl_atomic_add(&w.claims[0], 1u);
         }
-        nx = a.lists[c].sib;
+    } else if (j == K->nkid && xj < n) {
+        w.child[b + xj] = WK_OWN;
+        w.pi[b + xj] = WK_CLAIM; w.fl[b + xj] = xj + 1u; w.off[b + xj] = K->xcall;
+        ukl_atomic_add(&w.claims[0], 1u);
     }
-    if (own_left) {
-        bool lv = xj >= cover && xj < stop;
-        if (lv) { cover = ukl_max(cover, xj + 1u); if (K->xcall != 0u) { stop = xj; exit = K->xcall; } }
-        w.child[b + xj] = WK_OWN; w.xlive[b + xj] = lv ? xj + 1u : 0u;
+}
+
+UKL_INLINE void px_wk_claim(Wk w, uint32_t t) {
+    if (t >= w.total || w.pi[t] != WK_CLAIM) return;
+    w.v[w.poff[t]] = t;
+}
+// The rank of the claims at token `t` (`nc` past the last).
+UKL_INLINE uint32_t px_wk_crank(Wk w, uint32_t t, uint32_t nc) { return t < w.total ? w.poff[t] : nc; }
+
+// Claim `x` (of `nc`): the next live one if it is (none with an exit past the end), and whether it
+// is its list's first (marked).
+UKL_INLINE void px_wk_next(Ar a, Wk w, uint32_t nc, UKL_GLOBAL uint32_t* jump, UKL_GLOBAL uint32_t* on, uint32_t x) {
+    if (x >= nc) return;
+    uint32_t t = w.v[x], i = px_wk_list(w, t), b = w.base[i];
+    uint32_t end = px_wk_crank(w, b + a.lists[w.set[i]].len, nc), y = WK_NONE;
+    if (w.off[t] == 0u) {
+        y = px_first_at(w.v, x + 1u, end, b + w.fl[t]);
+        if (y >= end) y = WK_NONE;
     }
-    w.stop[i] = stop;
-    w.n[i] = exit;
+    jump[x] = y;
+    on[x] = x == px_wk_crank(w, b, nc) ? 1u : 0u;
+}
+
+// Claim `x` live: its cover; with an exit past the end, its list's stop (its own exit's at its
+// name, a child's past its claim) and exit.
+UKL_INLINE void px_wk_live(Wk w, uint32_t nc, UKL_GLOBAL const uint32_t* on, uint32_t x) {
+    if (x >= nc) return;
+    uint32_t t = w.v[x];
+    bool lv = on[x] != 0u;
+    w.xlive[t] = lv ? w.fl[t] : 0u;
+    if (lv && w.off[t] != 0u) {
+        uint32_t i = px_wk_list(w, t);
+        w.stop[i] = w.child[t] == WK_OWN ? w.fl[t] - 1u : w.fl[t];
+        w.n[i] = w.off[t];
+    }
 }
 
 // Token `t`: whether it is live (past every earlier claim and child, before the list's stop),
@@ -3292,30 +3364,29 @@ UKL_INLINE void px_gc_dead(UKL_GLOBAL PxList* lists, uint32_t i) {
 // with an exit that could claim it, and not past the list's own exit's name): the rollback that
 // would drop it then never comes, so it is as placed (its arguments' `__COUNTER__` uses counted).
 // Each list's children are its own thread's: no two threads link one chain.
-UKL_INLINE void px_forward(UKL_GLOBAL PxList* lists, uint32_t n, uint32_t i) {
+UKL_INLINE void px_forward(UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* cols, uint32_t n, uint32_t i) {
     UKL_GLOBAL PxList* L = &lists[i];
     if ((L->flags & F_DEAD) != 0u || L->kind != LK_MACRO) return;
     uint32_t xj = L->xname == 0u ? NO_POS : L->xname - 1u;
-    uint32_t prev = 0u, c = L->kid;
-    for (uint32_t step = 0u; step < L->len && c != 0u && c - 1u < n; step++) {
-        UKL_GLOBAL PxList* C = &lists[c - 1u];
+    for (uint32_t r = 0u, step = 0u; r < L->nkid && step < L->len + L->nkid; step++) {
+        UKL_GLOBAL uint32_t* slot = px_kid(cols, L, r);
+        uint32_t c = *slot;
+        if (c >= n) return;
+        UKL_GLOBAL PxList* C = &lists[c];
         if (ukl_atomic_load(&C->pending) != 0u || C->lo >= xj) return;
         uint32_t x = C->exit;
         if (x != 0u) {
             UKL_GLOBAL PxList* N = &lists[x - 1u];
-            bool empty = C->kind == LK_MACRO && (C->flags & F_DONE) != 0u && C->kid == 0u && C->size == 0u && C->psize == 0u;
+            bool empty = C->kind == LK_MACRO && (C->flags & F_DONE) != 0u && C->nkid == 0u && C->size == 0u && C->psize == 0u;
             if (!empty || N->parent != i || N->kind != LK_MACRO) return;
             N->lo = C->lo;
-            N->sib = C->sib;
-            if (prev == 0u) L->kid = x; else lists[prev - 1u].sib = x;
+            *slot = x - 1u;
             C->order = ORDER_PLACED;
             C->flags |= F_DEAD;
             // The call in its place may be one too: it is looked at next.
-            c = x;
             continue;
         }
-        prev = c;
-        c = C->sib;
+        r++;
     }
 }
 
@@ -3336,10 +3407,11 @@ UKL_INLINE uint32_t px_claim_last(UKL_GLOBAL const PxList* lists, uint32_t n, ui
 // call before is final, and its tokens from its exit's name on (decision 0520 §4).
 UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UklPool pool, UKL_GLOBAL uint32_t* cols, uint32_t tc, uint32_t n, uint32_t i) {
     UKL_GLOBAL PxList* L = &lists[i];
-    uint32_t own = L->blk & 0xffu, flat = (L->blk >> 8) & 0xffu;
+    uint32_t own = L->blk & 0xffu, flat = (L->blk >> 8) & 0xffu, kids = (L->blk >> 16) & 0xffu;
     if ((L->flags & F_DEAD) != 0u) {
         if ((L->flags & F_GIVEN) != 0u) return;
         L->flags |= F_GIVEN;
+        if (kids != NO_CLS && L->nkid > 1u) ukl_pool_give(pool, L->kid, kids);
         if (flat != NO_CLS && L->kind == LK_ARG && L->dest == i + 1u) ukl_pool_give(pool, L->base, flat);
         // Its block but its end given already (`pgave` units).
         if (own != NO_CLS && ukl_pool_size(own) > L->pgave) ukl_pool_give_range(pool, L->first, ukl_pool_size(own) - L->pgave);
@@ -3356,17 +3428,15 @@ UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UklPool pool, UKL_GLOBAL uint3
     // record names a piece of a list: its readers search the places, which stay in order, and no
     // reader reads a done span's tokens), and the block's end past its pieces is given back.
     UKL_GLOBAL uint32_t* pat = cols + 3u * tc;
-    uint32_t c = L->kid, cov = 0u, np = L->np;
-    for (uint32_t step = 0u; step < L->len && c != 0u && c - 1u < n; step++) {
-        UKL_GLOBAL PxList* C = &lists[c - 1u];
+    uint32_t cov = 0u, np = L->np;
+    for (uint32_t r = 0u; r < L->nkid; r++) {
+        uint32_t c = *px_kid(cols, L, r);
+        if (c >= n) break;
+        UKL_GLOBAL PxList* C = &lists[c];
         // Past an exit's call: its descendants' exits may read on there.
         if (C->lo > L->xhi) break;
         bool final = ukl_atomic_load(&C->pending) == 0u;
-        if (C->lo < cov) {
-            // Inside a claim, which is given whole (below).
-            c = C->sib;
-            continue;
-        }
+        if (C->lo < cov) continue; // Inside a claim, which is given whole (below).
         uint32_t e = 0u;
         if ((C->flags & F_DONE) != 0u) e = C->hi + 1u;
         if (final && (C->flags & F_DONE) != 0u && C->exit != 0u) {
@@ -3378,10 +3448,10 @@ UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UklPool pool, UKL_GLOBAL uint3
                 cov = last + 1u;
                 // The calls inside the claim final?
                 bool inside_done = true;
-                uint32_t d = C->sib;
-                for (uint32_t k = 0u; k < L->len && d != 0u && d - 1u < n && lists[d - 1u].lo <= last; k++) {
-                    inside_done = inside_done && ukl_atomic_load(&lists[d - 1u].pending) == 0u;
-                    d = lists[d - 1u].sib;
+                for (uint32_t r2 = r + 1u; r2 < L->nkid; r2++) {
+                    uint32_t d = *px_kid(cols, L, r2);
+                    if (d >= n || lists[d].lo > last) break;
+                    inside_done = inside_done && ukl_atomic_load(&lists[d].pending) == 0u;
                 }
                 if (inside_done) e = last + 1u;
                 else final = false;
@@ -3401,17 +3471,15 @@ UKL_INLINE void px_give(UKL_GLOBAL PxList* lists, UklPool pool, UKL_GLOBAL uint3
             }
         }
         if (!final) break;
-        c = C->sib;
     }
     // Its exit's made (`xcall`): its tokens from its exit's name on were copied to the exit's join,
     // and its walk stops at the name (`px_wk_seq`), where no call of its claims past it (a claim
     // would hold the exit's name: then the exit is not its own).
     if (L->xcall != 0u && L->xname != 0u && np != 0u) {
         bool claims = false;
-        uint32_t d = L->kid;
-        for (uint32_t k = 0u; k < L->len && d != 0u && d - 1u < n; k++) {
-            claims = claims || lists[d - 1u].exit != 0u;
-            d = lists[d - 1u].sib;
+        for (uint32_t r = 0u; r < L->nkid; r++) {
+            uint32_t d = *px_kid(cols, L, r);
+            claims = claims || (d < n && lists[d].exit != 0u);
         }
         if (!claims) {
             uint32_t pa = pc_find_in(pat, L->first, np, L->xname - 1u) - L->first;
@@ -3467,29 +3535,27 @@ UKL_INLINE void px_top_xlist(UKL_GLOBAL const uint32_t* xflag, UKL_GLOBAL const 
     xpos[xat[s]] = s;
 }
 
-// The exit-bearing top calls, in order, by one SIMD group (they are few): each live unless an
-// earlier live one's claim covers it (decided one after another, a ballot of 32); `xcover[i]` the
-// end of the live claims through call `i` (a running max).
-UKL_INLINE void px_top_cover(UKL_GLOBAL const uint32_t* xpos, UKL_GLOBAL const uint32_t* n_x, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* xcover, UKL_GLOBAL uint32_t* ctl, uint32_t t, uint32_t lane __UKL_PARAMS) {
-    if (t >= 32u) return;
+// The exit-bearing top calls, in order, a thread each (decided live as a list's claims,
+// `px_live_jump`): call `i`'s claim's end (+ 1, `ends`), its next if it is live (`jump`), the
+// first marked (`on`) and a head (`heads`). Then the live ones' ends (`px_top_live`), whose max
+// scan is `xcover`, the cover through call `i`.
+UKL_INLINE void px_top_claim(UKL_GLOBAL const uint32_t* xpos, UKL_GLOBAL const uint32_t* n_x, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* ends, UKL_GLOBAL uint32_t* heads, uint32_t i) {
+    if (i >= n_x[0]) return;
     Ar a;
-    a.lists = lists; a.ctl = ctl;
-    uint32_t n = n_x[0], cover = 0u;
-    for (uint32_t c0 = 0u; c0 < n; c0 += 32u) {
-        uint32_t i = c0 + lane, s = 0u, e = 0u;
-        if (i < n) {
-            s = xpos[i];
-            e = px_claim(a, TOP, oid[s]).end;
-        }
-        uint32_t mine = 0u;
-        uint32_t m = ukl_min(32u, n - c0);
-        for (uint32_t who = 0u; who < m; who++) {
-            uint32_t sw = ukl_sg_shuffle(s, ((uint16_t)(who)) __UKL_ARGS), ew = ukl_sg_shuffle(e, ((uint16_t)(who)) __UKL_ARGS);
-            if (sw >= cover) cover = ukl_max(cover, ew + 1u);
-            if (lane == who) mine = cover;
-        }
-        if (i < n) xcover[i] = mine;
-    }
+    a.lists = lists;
+    ends[i] = px_claim(a, TOP, oid[xpos[i]]).end + 1u;
+    heads[i] = i == 0u ? 1u : 0u;
+}
+UKL_INLINE void px_top_next(UKL_GLOBAL const uint32_t* xpos, UKL_GLOBAL const uint32_t* n_x, UKL_GLOBAL const uint32_t* ends, UKL_GLOBAL uint32_t* jump, UKL_GLOBAL uint32_t* on, uint32_t i) {
+    uint32_t n = n_x[0];
+    if (i >= n) return;
+    uint32_t y = px_first_at(xpos, i + 1u, n, ends[i]);
+    jump[i] = y < n ? y : WK_NONE;
+    on[i] = i == 0u ? 1u : 0u;
+}
+UKL_INLINE void px_top_live(UKL_GLOBAL const uint32_t* n_x, UKL_GLOBAL const uint32_t* on, UKL_GLOBAL uint32_t* ends, uint32_t i) {
+    if (i >= n_x[0]) return;
+    if (on[i] == 0u) ends[i] = 0u;
 }
 
 // The first of `n` sorted words at or after `q`.

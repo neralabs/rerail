@@ -1296,7 +1296,8 @@ impl Exp {
             sc_lscan: Scan::new(arena)?,
             sc_ckeys: arena.zeroed::<u64>(x.sc.max(1))?,
             sc_sort: Sort::new(arena, x.sc.max(1))?,
-            sc_first: zeroed(1)?,
+            // The scan's block of ids (0), and the walks' claims' count (1).
+            sc_first: zeroed(2)?,
             sc_cap: x.sc as u32,
         })
     }

@@ -114,11 +114,13 @@
                 EACH(t, sc_.total) px_sc_live(sc_, t);                                                 \
                 BARRIER();                                                                             \
                 SCAN(sc_.total, SC_LIVE, SC_RANK, SC_LTOTAL);                                          \
+                sc_.ltotal = N(SC_LTOTAL);                                                             \
                 ONE(x) {                                                                               \
                     uint32_t nl_ = N(SC_LTOTAL), f_ = nl_ == 0u ? 0u : px_list_ids(xa, nl_);           \
                     if (f_ == NO_POS) px_refuse(AT(uint32_t, CTL), X_ROOM);                            \
                     AT(uint32_t, SC_FIRST)[0] = f_;                                                    \
                 }                                                                                      \
+                EACH(i, sc_.ns) px_sc_kids(xa, sc_, i);                                                \
                 BARRIER();                                                                             \
                 sc_.ltotal = N(SC_LTOTAL); sc_.first = N(SC_FIRST);                                    \
                 EACH(t, sc_.total) px_sc_child(xu, xa, sc_, t);                                        \
@@ -294,8 +296,26 @@
     if (w_.total > W(SC_CAP)) { ROOMOUT; }                                                           \
     EACHM(t, w_.total) px_wk_clear(w_, t);                                                           \
     BARM();                                                                                            \
-    EACHM(i, w_.ns) px_wk_seq(xa, w_, i);                                                            \
+    EACHM(t, w_.total) px_wk_kid(xa, w_, t);                                                         \
     BARM();                                                                                            \
+    if (ukl_atomic_load(&w_.claims[0]) != 0u) {                                                        \
+        SCANM(w_.total, SC_CAT, SC_RANK, SC_LTOTAL);                                                   \
+        uint32_t nc_ = N(SC_LTOTAL);                                                                   \
+        EACHM(t, w_.total) px_wk_claim(w_, t);                                                         \
+        BARM();                                                                                        \
+        UKL_GLOBAL uint32_t* j0_ = AT(uint32_t, SC_REACH);                                             \
+        UKL_GLOBAL uint32_t* j1_ = AT(uint32_t, SC_DEPTH);                                             \
+        UKL_GLOBAL uint32_t* on_ = AT(uint32_t, SC_CLOSE);                                             \
+        EACHM(x, nc_) px_wk_next(xa, w_, nc_, j0_, on_, x);                                            \
+        BARM();                                                                                        \
+        for (uint32_t d_ = 1u; d_ < nc_; d_ *= 2u) {                                                   \
+            EACHM(x, nc_) px_live_jump(nc_, j0_, j1_, on_, x);                                         \
+            BARM();                                                                                    \
+            UKL_GLOBAL uint32_t* js_ = j0_; j0_ = j1_; j1_ = js_;                                      \
+        }                                                                                              \
+        EACHM(x, nc_) px_wk_live(w_, nc_, on_, x);                                                     \
+        BARM();                                                                                        \
+    }                                                                                                  \
     SEGM(UKL_SEG_MAX, w_.total, SC_K, SC_HEADS, SC_DEPTH);                                           \
     SEGM(UKL_SEG_MAX, w_.total, SC_E, SC_HEADS, SC_CLOSE);                                           \
     EACHM(t, w_.total) px_wk_tok(xu, xa, w_, t);                                                     \
@@ -332,7 +352,8 @@
     w_.child = AT(uint32_t, SC_M); w_.xlive = AT(uint32_t, SC_K); w_.ends = AT(uint32_t, SC_E);       \
     w_.heads = AT(uint32_t, SC_HEADS); w_.cb = AT(uint32_t, SC_DEPTH); w_.incl = AT(uint32_t, SC_CLOSE); \
     w_.pi = AT(uint32_t, SC_CAT); w_.fl = AT(uint32_t, SC_CEND); w_.v = AT(uint32_t, SC_DELTA);        \
-    w_.pv = AT(uint32_t, SC_REACH); w_.off = AT(uint32_t, SC_LIVE); w_.poff = AT(uint32_t, SC_RANK)
+    w_.pv = AT(uint32_t, SC_REACH); w_.off = AT(uint32_t, SC_LIVE); w_.poff = AT(uint32_t, SC_RANK); \
+    w_.claims = AT(uint32_t, SC_FIRST) + 1u
 
 // A round's walks (decision 0523 §2) of the set `which_`: an iteration a set, each one's lists'
 // tokens a thread each, until an iteration makes none (a chain's finals climb it, a list's places
@@ -383,6 +404,28 @@
         }                                                                                              \
     }
 
+// The top level's exit-bearing calls decided live (`px_top_claim`), and `XCOVER` the max scan of
+// the live ones' ends. `V`, `OPV` and `OBASE` (made after it) hold the jumps and the marks.
+#define PX_TOP_COVER()                                                                                 \
+    {                                                                                                  \
+        uint32_t nx_ = N(XTOTAL);                                                                      \
+        EACH(i, nx_) px_top_claim(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, OID), AT(PxList, LISTS), AT(uint32_t, XAT), AT(uint32_t, XFLAG), i); \
+        BARRIER();                                                                                     \
+        UKL_GLOBAL uint32_t* j0_ = AT(uint32_t, V);                                                    \
+        UKL_GLOBAL uint32_t* j1_ = AT(uint32_t, OPV);                                                  \
+        UKL_GLOBAL uint32_t* on_ = AT(uint32_t, OBASE);                                                \
+        EACH(i, nx_) px_top_next(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, XAT), j0_, on_, i); \
+        BARRIER();                                                                                     \
+        for (uint32_t d_ = 1u; d_ < nx_; d_ *= 2u) {                                                   \
+            EACH(i, nx_) px_live_jump(nx_, j0_, j1_, on_, i);                                          \
+            BARRIER();                                                                                 \
+            UKL_GLOBAL uint32_t* js_ = j0_; j0_ = j1_; j1_ = js_;                                      \
+        }                                                                                              \
+        EACH(i, nx_) px_top_live(AT(const uint32_t, XTOTAL), on_, AT(uint32_t, XAT), i);              \
+        BARRIER();                                                                                     \
+        SEG(UKL_SEG_MAX, nx_, XAT, XFLAG, XCOVER);                                                     \
+    }
+
 // The top level's rollback, its sizes and places, over a top of `nt_` tokens (after the queue's
 // first phase).
 #define PX_PLACES(T, TOKS, nt_)                                                                      \
@@ -391,8 +434,7 @@
     SCAN(nt_, XFLAG, XAT, XTOTAL);                                                                     \
     EACH(s, nt_) px_top_xlist(AT(const uint32_t, XFLAG), AT(const uint32_t, XAT), TOKS, AT(uint32_t, XPOS), s); \
     BARRIER();                                                                                         \
-    if (g.group == 0u) px_top_cover(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, OID), AT(PxList, LISTS), AT(uint32_t, XCOVER), AT(uint32_t, CTL), g.lid, lane __UKL_ARGS); \
-    BARRIER();                                                                                         \
+    PX_TOP_COVER();                                                                                    \
     EACH(s, nt_) px_top_sizes(AT(uint32_t, STATE), AT(const uint32_t, OID), AT(PxList, LISTS), TOKS, AT(uint32_t, V), AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, XCOVER), s); \
     BARRIER();                                                                                         \
     EACH(s, nt_) px_top_pieces(AT(const uint32_t, STATE), AT(const uint32_t, OID), AT(PxList, LISTS), TOKS, AT(uint32_t, OPV), s); \
@@ -494,7 +536,7 @@
         UklPool gv_p; gv_p.heads = AT(uint32_t, TOKENS) + 5u * gv_tc; gv_p.next = AT(uint32_t, TOKENS); \
         EACH(i, gv_nl) px_gc_dead(AT(PxList, LISTS), i);                                               \
         BARRIER();                                                                                     \
-        EACH(i, gv_nl) px_forward(AT(PxList, LISTS), gv_nl, i);                                        \
+        EACH(i, gv_nl) px_forward(AT(PxList, LISTS), AT(uint32_t, TOKENS), gv_nl, i);                                        \
         BARRIER();                                                                                     \
         EACH(i, gv_nl) px_give(AT(PxList, LISTS), gv_p, AT(uint32_t, TOKENS), gv_tc, gv_nl, i); \
         BARRIER();                                                                                     \
