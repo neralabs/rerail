@@ -208,13 +208,38 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const work = await repository(root, "work", { "top.txt": "top\n" });
     git(work, "submodule", "add", "--quiet", source, "sub");
     git(work, "commit", "--quiet", "-m", "submodule");
-    // About 90 KB of status entries, past the 64 KiB Rerail reads of a submodule's status.
-    for (let at = 0; at < 1500; at += 1) writeFileSync(join(work, "sub", `untracked-${String(at).padStart(4, "0")}-${"x".repeat(40)}.txt`), "");
+    // About 330 KB of status entries, past the 64 KiB Rerail reads of a submodule's status and the pipe's buffer.
+    for (let at = 0; at < 3000; at += 1) writeFileSync(join(work, "sub", `untracked-${String(at).padStart(4, "0")}-${"x".repeat(90)}.txt`), "");
+    await runGitWithoutBlocking(work, SCAN_DIFF);
+    const trace = join(root, "trace");
+    await mkdir(trace);
+    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+
+    vi.stubEnv("GIT_TRACE2_EVENT", undefined);
+    const scan = await runGitWithoutBlocking(work, SCAN_DIFF);
+    expect([audit, scan].map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
+    expect([audit, scan].map(answer => listed(answer.stdout))).toEqual([["sub"], []]);
+    // Rerail ended the submodule's status once it had read past that: no event of its Git says it exited with 0.
+    const statuses = readdirSync(trace).map(name => readFileSync(join(trace, name), "utf8")).filter(events => events.includes("\"status\",\"--porcelain=2\""));
+    expect([statuses.length, statuses.some(events => /"event":"exit".*"code":0[,}]/u.test(events))]).toEqual([1, false]);
+  }, 60_000);
+
+  it("and read the index the environment names, as a Git hook's environment names one, to tell whether it records a submodule", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const index = join(root, "other-index");
+    cpSync(join(work, ".git", "index"), index);
+    vi.stubEnv("GIT_INDEX_FILE", index);
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
 
     const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
 
-    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
-    expect(answers.map(answer => listed(answer.stdout))).toEqual([["sub"], []]);
+    expect(answers.map(answer => answer.stdout)).toEqual([git(work, ...AUDIT_DIFF), git(work, ...SCAN_DIFF)]);
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([["sub"], [".gitmodules", "sub"]]);
   }, 60_000);
 
   it("and ask a clean checked-out submodule whose index records no submodule only its config and its status", async () => {

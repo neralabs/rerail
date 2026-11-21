@@ -405,7 +405,7 @@ async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: 
   if (!("base" in rules)) return rules;
   const state: DiffState = { named: new Set(stdout.split("\0").filter(name => name !== "")), changed: false, rules, diff, top, open };
   const failures = await Promise.all(shownSubmodules(gitlinks.paths, top.places.prefix, diff.relative).map(async shown => await submoduleChange(shown, state)));
-  return failures.find(failure => failure !== undefined) ?? (state.changed ? namesText(state.named) : stdout);
+  return failures.find(failure => failure !== undefined) ?? (state.changed ? namesText(stdout, state.named) : stdout);
 }
 
 /** How the diff treats each submodule: as its option says, else as the config and `.gitmodules` of `top` say. */
@@ -413,9 +413,15 @@ async function topRules(top: GuardedRepository, gitlinks: Gitlinks, diff: NameDi
   return diff.ignore === undefined ? await ignoreRules(top, gitlinks, diffBase(top.entries)) : overriding(top, diff.ignore);
 }
 
-/** `names` as `git diff --name-only -z` prints them: in byte order, each ended by NUL. */
-function namesText(names: ReadonlySet<string>): string {
-  return [...names].sort(byteOrder).map(name => `${name}\0`).join("");
+/**
+ * `names` as `git diff --name-only -z` prints them: in byte order, each ended by NUL, and each name Git printed in
+ * `stdout` as often as it printed it, as it prints a path in conflict once for each side against the worktree.
+ */
+function namesText(stdout: string, names: ReadonlySet<string>): string {
+  const printed = stdout.split("\0").filter(name => name !== "");
+  const kept = new Set(printed);
+  const listed = [...printed.filter(name => names.has(name)), ...[...names].filter(name => !kept.has(name))];
+  return listed.sort(byteOrder).map(name => `${name}\0`).join("");
 }
 
 /** What deciding one submodule of a diff reads and changes. */
