@@ -241,19 +241,20 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     expect(walk).toEqual([]);
   }, 60_000);
 
-  it.skipIf(process.platform === "win32")("fails a diff whose submodules' rules Git cannot list, in a checkout whose config defines no driver", async () => {
-    const root = await folder();
-    const source = await repository(root, "source", { "inner.txt": "one\n" });
-    const work = await repository(root, "work", { "notes.txt": "one\n" });
-    git(work, "submodule", "add", "--quiet", source, "sub");
-    git(work, "commit", "--quiet", "-m", "submodule");
-    await writeFile(join(work, "sub", "inner.txt"), "two\n");
-    const fresh = await withFailingListing(root);
+  it.skipIf(process.platform === "win32").each([["rules", "--show-scope --list"], ["top folder", "--show-toplevel --show-prefix"]])(
+    "fails a diff whose submodules' %s Git cannot tell, in a checkout whose config defines no driver", async (_name, failing) => {
+      const root = await folder();
+      const source = await repository(root, "source", { "inner.txt": "one\n" });
+      const work = await repository(root, "work", { "notes.txt": "one\n" });
+      git(work, "submodule", "add", "--quiet", source, "sub");
+      git(work, "commit", "--quiet", "-m", "submodule");
+      await writeFile(join(work, "sub", "inner.txt"), "two\n");
+      const fresh = await withFailingListing(root, failing);
 
-    const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
+      const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
 
-    expect([audit.status, audit.stdout]).toEqual([128, ""]);
-  }, 60_000);
+      expect([audit.status, audit.stdout]).toEqual([128, ""]);
+    }, 60_000);
 
   it("lists the config where the environment names the Git folder, which Rerail does not find in process", async () => {
     const root = await folder();
@@ -272,13 +273,13 @@ describe("Rerail's Git calls start no filter program only a repository's own con
 
 /**
  * git.ts loaded with a Git whose config listing prints one entry and then fails, as a listing does that meets an
- * include being renamed.
+ * include being renamed; or whose question `failing` names fails so.
  */
-async function withFailingListing(root: string): Promise<typeof import("../../../src/engine/git.js")> {
+async function withFailingListing(root: string, failing = "--show-scope --list"): Promise<typeof import("../../../src/engine/git.js")> {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
   const bin = join(root, "bin");
   await mkdir(bin);
-  await writeFile(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --show-scope --list "*) printf 'local\\0core.bare\\nfalse\\0'; exit 128;; esac\nexec '${real}' "$@"\n`);
+  await writeFile(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" ${failing} "*) printf 'local\\0core.bare\\nfalse\\0'; exit 128;; esac\nexec '${real}' "$@"\n`);
   chmodSync(join(bin, "git"), 0o755);
   vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
   vi.resetModules();
@@ -303,7 +304,8 @@ const DRIVER_FORMS: ReadonlyArray<readonly [string, (work: string, command: stri
 describe("Rerail's Git calls read a repository's own config to tell that it defines no driver", () => {
   it.each(DRIVER_FORMS)("and list it, starting no program, where it defines one %s", async (_name, define) => {
     const root = await folder();
-    const marker = join(root, "filter-ran");
+    // A name without the words Rerail looks for, so only the form under test shows the driver.
+    const marker = join(root, "probe-ran");
     const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
     await define(work, recording(marker));
     await writeFile(join(work, "notes.txt"), "two\n");
