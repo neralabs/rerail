@@ -9655,6 +9655,33 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   observe, policies and demand-split tests 16; its plan tests 264 of 265, the one red the coverage gate's
   `replace/3` (Q445, open). Not run on Windows.
 
+### Q449. Roll-up 34 (Go-C-and-C-support onto Pulling-it-all-together): what the merge chose, and the CPU's thread key
+
+- **Merged** (2026-11-21): Go-C-and-C-support at ade589da86, twelve commits: 0527 (its 0523) steps 2 and 3, every
+  phase of the expansion a thread an element (the substitution, the call, a list's children, `#`, the exits, the
+  pause's loops as grid phases; no work queue in the evaluator), and §3, 32 threads a group on the CPU with the radix
+  tiles run 8 of their threads a thread. Its text's numbers are this tree's: 0421 0482, 0424 0459, 0425 0460, 0426
+  0434, 0427 0463, 0431 0479, 0445 0480, 0459 0473, 0460 0468, 0475 0485, 0478 0486, 0523 0527 (one pass).
+- **The kernels** `pp_expand.uglykl` and `pp_grid.uglykl` are theirs, with this tree's Q367 rules applied to them
+  (abbf70ac82): the passes' stores `PP_GLOBAL` (coherent on a GPU), but the host's inputs (`files`, `data`, `IN`) and
+  the pools' `UKL_GLOBAL` fields; every control word a loop or branch decides by polled (`ukl_atomic_poll`: `ctl`,
+  `qctl`, the lists' `pending`, the walks' and exits' counts), the values read once after a barrier left as loads;
+  the grid sort's words (`UKL_GRID_SORT_WORDS`) and rank-group digits (`sl.digits`).
+- **The radix sort** holds both: ours' rank groups (any SIMD width: 32 threads reading their digits where a SIMD
+  group is narrower, 255eebdc63) and theirs' virtual threads (`UKL_RADIX_VT_MAX`, 8 on the CPU), which match digits
+  in a SIMD group and so need matched groups (`#error` otherwise). The tile functions take `digits` and `lsz`.
+- **The CPU shim** has theirs' results made once a SIMD-group operation (`__ukl_cpu_once`) with ours' 64-bit ballot.
+- **Fixed on the way** (the 1 s rule, `--profile second`): five eval tests were past 1 s on an M1 Max on the CPU,
+  `reclaimed_tokens_keep_a_chain_at_rung_0` at 1.38 s alone. A sample put the host's thread-local behind the shim's
+  `__ukl_sched` and `__ukl_self` (ours: a call to Rust's `thread_local!`, unoptimized in a test build) at twice the
+  coroutine switches; theirs' `__ukl_cpu_once` asked it three times a lane. Now the running thread is the
+  scheduler's (`cur`), the hot paths pass the scheduler and thread they hold, and the slot is one pthread key of the
+  process (`tls_key`) the shim reads itself (`pthread_getspecific`): still no thread-local in a library. All 31 eval
+  tests pass under the 1 s stop, the slowest 0.76 s alone.
+- **Checked**, CPU only: the eval tests (31, macOS only) on an M1 Max; on a Linux DGX Spark, clippy has no finding in
+  `rerail-device`, `-c-directives`, `-metal`, `-gpu`, `-forest` or `-accel`; tests `rerail-ukl` 9, `-gpu` 25, `-metal`
+  24, `-device` 6, `-forest` 40, `-accel` 88, and the engine's lattice, work queue, label pass and 16z tests 22.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never

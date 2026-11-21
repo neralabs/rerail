@@ -17,8 +17,8 @@
 //!   event holds the root's later work, as on Metal.
 //! - **Each thread of a threadgroup has a stack of its own** (`STACK_BYTES`, a guard page below it), from a region the
 //!   root's thread keeps across launches.
-//! - **No thread-local in a kernel library**: the running scheduler and thread are in one thread-local of the host's
-//!   (`tls`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
+//! - **No thread-local in a kernel library**: the running scheduler is in one pthread key of the host's
+//!   (`tls_key`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
 //!   loaded image's thread-locals a pthread key, and a process ran out of them after a few hundred libraries.
 //! - **Arguments without reflection**, as on CUDA (`rows.rs`): the shim's rows and layouts, read from the library's
 //!   symbols, and each `ARGS` structure's layout function called on the host.
@@ -347,7 +347,7 @@ struct Launch {
     error_bytes: u64,
     sched: *mut u8,
     sched_bytes: u64,
-    tls: extern "C" fn() -> *mut c_void,
+    tls_key: u64,
     resident: u32,
     pad: u32,
 }
@@ -355,15 +355,20 @@ struct Launch {
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
 const SCHED_BYTES: usize = 256 << 10;
 
-std::thread_local! {
-    /// The running launch's scheduler and thread (`__ukl_cpu_tls`): the one thread-local every kernel library uses. A
-    /// library has none of its own: macOS gives each loaded image's thread-locals a pthread key, and a process runs
-    /// out of them after a few hundred libraries.
-    static TLS: std::cell::UnsafeCell<[*mut c_void; 2]> = const { std::cell::UnsafeCell::new([std::ptr::null_mut(); 2]) };
-}
-
-extern "C" fn tls() -> *mut c_void {
-    TLS.with(|t| t.get().cast())
+/// The pthread key whose value on a thread is its running launch's scheduler (`__ukl_cpu_sched`; its running thread is
+/// the scheduler's): the one thread-local every kernel library uses, read and written by the shim itself
+/// (`pthread_getspecific`). A library has none of its own: macOS gives each loaded image's thread-locals a pthread
+/// key, and a process runs out of them after a few hundred libraries.
+fn tls_key() -> u64 {
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        let mut key: libc::pthread_key_t = 0;
+        // SAFETY: a key made once for the process, with no destructor (its values are the launches', which outlive
+        // no launch).
+        let made = unsafe { libc::pthread_key_create(&mut key, None) };
+        assert_eq!(made, 0, "the CPU backend's thread key: {}", std::io::Error::from_raw_os_error(made));
+        key as u64
+    })
 }
 
 /// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
@@ -668,7 +673,7 @@ impl CpuBindContext<'_> {
                 error_bytes: error.len() as u64,
                 sched: w.sched.as_mut_ptr().cast(),
                 sched_bytes: SCHED_BYTES as u64,
-                tls,
+                tls_key: tls_key(),
                 resident: resident as u32,
                 pad: 0,
             };
