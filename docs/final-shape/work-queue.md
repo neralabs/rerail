@@ -3120,10 +3120,61 @@ submitted" now hold device memory at once.
   writes once into the chunk block (its "the residency cache's view entries go"); step 6 deletes `DevRel::upload`.
   A shared residency would be a home built for a copy 0353 removes: the fix of (c)'s largest holder is 0353 step 5.
   Done (the user chose 0353 step 5 over a shared residency, 2026-11-19): the solved axes are one relation of ids in a
-  block, read in place (cd091ab09, ec0835fc7). Refusals at 512 MB 21-68 a run against 44-88; the holders left at a
+  block, read in place (cd091ab09, ec0835fc7; in the merge of the sync branch, 0353 step 5's own build there, where
+  the solve writes the ids, took its place, and this branch's tests were kept on it). Refusals at 512 MB 21-68 a run against 44-88; the holders left at a
   refusal are the tape residency's slab, relations' rows in `Device::May` slabs (`hold_rows`, the vtab's `from_rows`),
   and a stratum's own leases while it encodes. Next for (c): `has` (0353 step 5's last part), then what admission
   counts (relations' rows in spare slabs are in no reservation).
+  `has` built (6fdbc1eb2): probed by one column it is walked on the tape on the device, uploaded only for a whole
+  read or a read by both columns; its measurement waited on strict runs, which every `logic` run failed at its start
+  after the merge: the CLI batch's analysis scope wrote its acquisition before the first wave. Decision 0547 moved
+  the scope onto a lease (a run's start only reads; a deletion that would revoke a running scan fails, retried
+  after it). Open from 0547: the workspace API's owner (`begin_analysis_scope_at`) still acquires as it begins.
+  Seen while testing 0547: `scope::sql::tests::reproduces_sqlfluff_rf01_and_al05` failed once in a group run on the
+  M3 and passed alone on the M1 Max; not looked into.
+  Measured (ab98, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB, load 5–9; working-data/bench-1120/ab98.txt).
+  The A/B first stalled in both arms, past 900 s: the merge's witness cut in the planner's search (c30a34fb2) priced a
+  cross product past a bound head as free (`p155_rr_demand_agg_rr_agg3`, a `node_text` plan), fixed in 960374749f; and a
+  cold kernel store spent minutes building the transducer's interpreter (decision 0548). With both fixed, t81 (no walk)
+  against t82 (the walk): 463 violations every run; 544 G against 554 G instructions, 24 s wall each (means of three);
+  refusals 64, 74, 67 against 65, 88, 34. `has` is walked 6 times a run; row 5's uploads rose from 312 MB (863 calls) to
+  454 MB (949), since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs. So the walk
+  removes no refusals: what remains of (c) is what admission counts. Its `fits` counts every live lease, held rows too,
+  so the refusals are leases a stratum makes past its own reservation (uploads, sorts' scratch, rows put in spare slabs)
+  that `expected()` does not estimate.
+  Measured (ab99-ab103, 2026-11-20, the M3, 300 files, strict, `--metal`, 1 GB so a 512 MB Metal budget, profiled with
+  the heap sampler, load 8-38; working-data/bench-1120/ab99*.txt..ab103.txt). Each refusal now names the span that asked
+  and the admission it came under. Who asks: every refused lease is a device join's (329 of 349 in ab99's three runs
+  `device joins`, 20 `to the wave`). Under what: 173 after the thread's admission was spent, 92 with none (rules with no
+  estimate reserve 0 MB), 84 larger than what was left. Who holds, at the first refusals (18 snapshots, ~500 MB each):
+  about ten strata at once, 8-113 MB each: the wave's joins ~146 MB a snapshot, the device fixpoint ~107 MB (never
+  admitted, its leases never bounded: live leases reached 576-588 MB of the 512), the tape residency's slab 64 MB, the
+  joins ~51 MB; 0 MB reserved in all. The measure that matters is in the profile, not the lease count: the runs placed
+  on the device and run on the CPU instead, 446-674 a run, 12.9-17 ms each, 7.5-10.2 s of CPU (t84).
+  Tried, by instructions against t84 in alternation, each kept out:
+  - A lease past its admission waiting for room until the admission's deadline: run inside the stratum's encoding, the
+    wait ran pool jobs that borrowed its thread's state again (`RefCell already borrowed`, 2 of 3 runs); waiting
+    without helping, no fewer refusals (103 vs 103) and 623 G vs 579 G.
+  - The fixpoint admitted, its leases bounded: 10-22 fixpoints a run refused in their rounds, which threw the rounds
+    away; with admission by held bytes (next), 182-377 runs to the CPU (from 663-674) but 37-58 ms each: 596-627 G vs
+    536-582 G.
+  - Admission for the most a stratum's rules held when they last ran in the run (by the rules' spec digests), the
+    fixpoint admitted unbounded: 428-523 runs to the CPU against 446-670, but 21-27 ms each (10.7-11.5 s against
+    7.5-8.6 s), 587-595 G against 548-563 G (two pairs; the M3's connection dropped in the third). Admitted for their
+    whole footprint, the large strata wait and, past what waiting is worth (114-190 ms), run on the CPU whole; they are
+    the dear ones. The patch is in the worktree's `tmp/parked/q203c-held-admission.patch`.
+  So what admission counts stays the planner's estimate of a stratum's tables: at a 512 MB budget the strata's working
+  set does not fit, and counting more of it moves larger strata to the CPU than the refusals it saves. The refusals
+  left are small strata, cheap on the CPU (~14 ms a run, ~9 s a run in all). What would remove them is room (the
+  budget is the user's: half the memory limit), or a stratum that splits its work when a lease is refused rather than
+  going to the CPU whole (0334's replanning, for the device joins). Kept from this: the refusal's span and admission in
+  its message (the profile's hook), and a lease's release through its own memory (a buffer dropped as its thread ends
+  read the run's context after it was gone: `cannot access a Thread Local Storage value during or after destruction`).
+  The interpreter's compile: done (decision 0548). `run_batch` builds in 7.1 s, not 44.7 s, with the six largest
+  tape reads written `UKL_COLD`. The resident interpreter's results are the same with and without it. Its four
+  `BackendFailure` clauses were the interpreted runs' chain levels (0463), never doubled; they are doubled now.
+  `every_operation_runs_on_every_executor`'s ledger had no row for `@ascii_lower/1` (`source-language.rerail`, from
+  #508): blessed on the M1 Max (native; no computed term on the device), the packs ledger's counts with it.
   (d) a derived relation's frame is still
   encoded into the segments while it is in the chain (`held_placed`, 0.05 s on 300 files), as item 4 was.
 - **Record**: —
@@ -9708,6 +9759,31 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   `rerail-logic` 568, `-facts` 109, `-accel` 88, and the engine's corpus, partial-hit, threads, `git_workspace`,
   `ast_rule`, syntax, packed and two-thread run tests (352 and 13); the executor-coverage table re-blessed for main's
   packs. TypeScript type-checks apart from packages not installed for the check.
+
+### Q451. Roll-up 36 (benchmarks-on-integration 87de426f02 onto Pulling-it-all-together): what the merge chose
+
+- **Decisions renumbered**: theirs' 0494, 0507 and 0518 are 0547, 0548 and 0549 here (files, links and README rows);
+  theirs' stale "0473 node product" row is dropped (ours has it as 0461).
+- **Ported by hand** onto ours' device code (ours' rewrite of `setfix/device.rs` and `metal_join.rs`, the join kernel
+  in UKL, built on macOS and Linux): a walked `has` relation read through its set (`DevRel::has`, `Batch::by_has`,
+  the kernel's `has_member`/`by_has`/`has_up`, Stage 2352 bytes); the join scratch given back as the outermost device
+  stratum ends (`in_device`, its `DEPTH` in STATE); deltas made with room for the keys their probes use
+  (`Own::keyed`, `DevRel::empty_indexed`); a recursive set head grown in its one block round after round and placed
+  as it lies (`SetHead`, `HEAD_ROOM`: no total copied at the end); a large head relation alone in a block with index
+  room (`ALONE_ROWS`); tape, depth and order views read in place (the kernel's `vread` cases 9-11); and the counts
+  of why a view was uploaded and why a block refused an index.
+- **Ours kept**: `plan.rs` (ours' witnessed pricing supersedes theirs' cut), coverage, the label passes, `launch.rs`
+  (`wait_checked` gone, 0440 step D), `corpus.rs`, `global-state.txt`, the hand-written `tape.h`/`tape_z.h` over
+  `tape_body.h` (0524). Ours has no residency cache, so `Kept` holds the join scratch alone (no "resident
+  relations" line in the memory report or a refusal). Theirs' 0548 (a large read is cold, not inlined) is marked
+  on `tape_body.h`'s large reads; `view.h` and `relation.h` written again from the CLIF.
+- **Fixed on the way**: `rerail-device-metal`'s tests did not build (no `rerail-clif` dependency, a `Document`
+  without `unpackaged`, `Relation::index` for `index_at`, the file-local test's undefined `equal_columns`), and a
+  `has` walk read `Batch::nodes` as a field.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-engine`, `-device-metal`, `-accel`,
+  `-clif`, `-facts` or `-logic`; tests: the device, join, within, syntax, vtab and rows tests (44), `rerail-clif`
+  17, `-accel` 88, the engine's plan, file-local and profile tests (112); the SQL profile report test (it runs
+  `node`) on an M1 Max; the executor-coverage table blessed again, unchanged.
 
 ---
 

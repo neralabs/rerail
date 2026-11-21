@@ -55,6 +55,37 @@ pub(crate) struct Memory {
     reserved: std::sync::atomic::AtomicUsize,
     /// Per thread: the bytes its bounded leases hold, and how many admissions on it wait now (`holder`).
     holders: Mutex<HashMap<u64, (usize, u32)>>,
+    /// What threads keep on the device between strata (`Kept`), now and at most, for the profile and a refusal.
+    kept: [std::sync::atomic::AtomicUsize; 1],
+    kept_peak: [std::sync::atomic::AtomicUsize; 1],
+}
+
+/// What a thread keeps on the device between its strata, past every admission (Q203): its device joins' sort scratch
+/// (`join::scratch`), given back as its outermost device stratum ends. Nothing else: no relation's copy outlives its
+/// stratum (decision 0478 steps 1 and 3).
+#[derive(Clone, Copy)]
+pub enum Kept {
+    Scratch = 0,
+}
+
+/// Notes that a thread's kept bytes of `kind` changed by `delta`.
+pub fn kept_change(kind: Kept, delta: isize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    let k = kind as usize;
+    let now = if delta >= 0 {
+        d.kept[k].fetch_add(delta as usize, Relaxed) + delta as usize
+    } else {
+        d.kept[k].fetch_sub(delta.unsigned_abs(), Relaxed).saturating_sub(delta.unsigned_abs())
+    };
+    d.kept_peak[k].fetch_max(now, Relaxed);
+}
+
+/// What threads keep on the device (`Kept`): per kind, the bytes now and the most at once.
+pub fn kept() -> [(usize, usize); 1] {
+    use std::sync::atomic::Ordering::Relaxed;
+    let d = dev();
+    [0].map(|k| (d.kept[k].load(Relaxed), d.kept_peak[k].load(Relaxed)))
 }
 
 fn dev() -> std::sync::Arc<Memory> {
@@ -753,11 +784,11 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     }
     if !make_room(need) {
         let (live, idle) = held_bytes();
-        // What this thread's admission left it (none: no admission, or one spent), and what others reserve.
-        let left = RESERVE_LEFT.with(|r| r.get());
+        // What this thread's admission reserved and left it (none: no admission, or one spent), and what others reserve.
+        let (left, admitted) = (RESERVE_LEFT.with(|r| r.get()), ADMITTED.with(|a| a.get()));
         let why = format!(
-            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's reservation {} MB left, {} MB reserved in all)",
-            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, left >> 20, reserved() >> 20
+            "device budget: a lease of {} MB past the Metal budget of {} MB ({} MB leased, {} MB idle, {} MB reserved by the buffer pool; this thread's admission {} MB, {} MB of it left, {} MB reserved in all; threads keep {} MB of join scratch)",
+            need >> 20, crate::budget::metal() >> 20, live >> 20, idle >> 20, other() >> 20, admitted >> 20, left >> 20, reserved() >> 20, kept()[0].0 >> 20
         );
         if let Some(hook) = REFUSAL_HOOK.get() {
             hook(&why);
@@ -803,6 +834,7 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
         if fits {
             dev().reserved.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
             RESERVE_LEFT.with(|r| r.set(r.get() + bytes));
+            ADMITTED.with(|a| a.set(a.get() + bytes));
         }
         fits
     };
@@ -868,6 +900,7 @@ pub struct Admitted {
 impl Drop for Admitted {
     fn drop(&mut self) {
         let left = RESERVE_LEFT.with(|r| r.replace(0));
+        ADMITTED.with(|a| a.set(0));
         dev().reserved.fetch_sub(left, std::sync::atomic::Ordering::Relaxed);
     }
 }
@@ -880,6 +913,8 @@ fn reserved() -> usize {
 thread_local! {
     /// This thread's reservation not yet leased.
     static RESERVE_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// What this thread's admissions under way reserved in all (a refusal's message: the room it came under).
+    static ADMITTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// This thread's number in the holders' count (`holder`).
     static HOLDER: u64 = {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -894,11 +929,13 @@ fn holder() -> u64 {
 /// `p`, counted as this thread's.
 fn held_here(mut p: Pooled) -> Pooled {
     let me = holder();
-    dev().holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
+    p.on.holders.lock().expect("the holders").entry(me).or_default().0 += p.length() as usize;
     p.owner = me;
     p
 }
 
+/// A lease of `owner`'s back, through the memory it was leased from: a buffer dropped as its thread ends (a cache in a
+/// thread-local) reads no run context, which may be gone by then.
 fn released(on: &Memory, owner: u64, bytes: usize) {
     if let Some(e) = on.holders.lock().expect("the holders").get_mut(&owner) {
         e.0 = e.0.saturating_sub(bytes);

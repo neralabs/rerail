@@ -82,6 +82,15 @@ pub struct ViewInPlace {
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
+/// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub struct HasWalk {
+    pub nodes: usize,
+    pub view: ViewInPlace,
+    pub kinds: Arc<[i64]>,
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
@@ -246,6 +255,12 @@ pub trait Source: Send + Sync {
     /// than a `value` call per row.
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         (0..self.len()).filter(|&r| eqs.iter().all(|&(c, v)| self.value(r, c) == v)).map(|r| r as u32).collect()
+    }
+    /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
+    /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn has_walk(&self) -> Option<HasWalk> {
+        None
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.

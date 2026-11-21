@@ -1950,6 +1950,44 @@ fn an_axis_counts_its_rows_without_its_solve() {
     }
 }
 
+/// Decision 0353 step 5: a solvable axis's answer is one relation of ids in a block, written once: each row's two
+/// ids, as `value` reads them, in its order, every column at its place, which the device reads where it lies
+/// (`Source::in_block`), with room for an index on each column. Asked again, it is the same relation. Span
+/// containment has no solve, and no such relation.
+#[test]
+fn a_solved_axis_is_one_relation_of_ids_in_a_block() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-ids")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes().last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, source) in [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ] {
+        let ib = source.in_block().unwrap_or_else(|| panic!("{name}: its answer in a block"));
+        assert_eq!(ib.rows as usize, source.len(), "{name}: every row");
+        assert!(ib.rows > 0, "{name}");
+        let rel = ib.relation();
+        for r in 0..ib.rows {
+            assert_eq!((rel.rows.get(r, 0), rel.rows.get(r, 1)), (source.value(r as usize, 0), source.value(r as usize, 1)), "{name}: row {r}");
+        }
+        let again = source.in_block().expect("again");
+        assert!(Arc::ptr_eq(&again.facts, &ib.facts) && again.at == ib.at, "{name}: written once");
+        // An index on each column is built in its block: a reader's probe does not copy it (`DevIndex::moved`).
+        assert!(ib.own_index(&[0]).is_some() && ib.own_index(&[1]).is_some(), "{name}: room for an index on each column");
+    }
+    assert!(within::Within::new(Arc::clone(&batch), within::Mode::Span).in_block().is_none(), "span containment has no solve");
+}
+
 /// The numbering reads' cases: a projection of each source, in each format, whole, as T and narrowed, with the tape
 /// nodes to read (every one, and 64 past the last).
 fn id_read_cases() -> Vec<(String, Projected, u32)> {

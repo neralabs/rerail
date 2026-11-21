@@ -1130,21 +1130,28 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Device, k, rows)
+        Part::for_device_indexed(k, rows, 1)
+    }
+
+    /// `for_device` with room for `indexes` indexes of its rows, one for each key its readers probe it by (a
+    /// recursive component's relation, decision 0353 step 6): no key of those copies it.
+    pub fn for_device_indexed(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        Part::claimed(Life::Device, k, rows, indexes)
     }
 
     /// The same shape in a run's own memory, for the CPU's work (a view's index home, `setfix`): a block of anonymous
     /// memory alone, as `lease_exact` gives a run, so a host with no device makes it too. `Err` when the join's
     /// budget refuses it.
     pub fn for_host(k: usize, rows: usize) -> Result<Part, String> {
-        Part::claimed(Life::Run, k, rows)
+        Part::claimed(Life::Run, k, rows, 1)
     }
 
-    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for one
-    /// index of its rows.
-    fn claimed(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+    /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
+    /// `indexes` indexes of its rows.
+    fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         let part = Part::try_new_with(life, k, rows, index, false)?;
         // SAFETY: rows `0..rows` are reserved; the caller writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };

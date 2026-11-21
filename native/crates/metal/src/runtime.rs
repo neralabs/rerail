@@ -14,8 +14,8 @@ use crate::launch;
 // and output pools, 32-64 MB), in place of a 2 GB guard (list step 13). A plan's buffers are
 // sized from it (counted, not worst-case: `label_passes`), and a batch that does not fit is
 // refused as `BackendCapacity` and split (`waves::matches::labelled_metal`). S7: peak 248 MB.
-// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; 512 MB by default, decision
-// 0126), on top of the overall budget.
+// The size is the process's Metal budget (`rerail_accel::budget::metal`, `--metal-mb`; the overall budget by default,
+// decisions 0126 and 0549), on top of the overall budget.
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }

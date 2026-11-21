@@ -18,8 +18,8 @@ UKL_INLINE uint64_t clif_rel_key_mix(UKL_GLOBAL const uint8_t* t,uint64_t a0,uin
 UKL_INLINE uint64_t clif_bloom_hash(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint64_t a1);
 UKL_INLINE uint64_t clif_bloom_mask(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint64_t a1);
 UKL_INLINE uint32_t clif_bloom_may(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint64_t a1);
-UKL_INLINE uint32_t clif_atoms_len(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
-UKL_INLINE uint64_t clif_atoms_at(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint32_t clif_atoms_len(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint64_t clif_atoms_at(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_COLD uint32_t clif_verdict_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint32_t clif_verdict_put(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2,uint32_t a3);
 UKL_COLD uint64_t clif_text_find(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
@@ -412,7 +412,7 @@ UKL_INLINE uint32_t clif_bloom_may(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint6
  }
  return v4;
 }
-UKL_INLINE uint32_t clif_atoms_len(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint32_t clif_atoms_len(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v3=0;
@@ -499,7 +499,7 @@ UKL_INLINE uint32_t clif_atoms_len(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
  }
  return v3;
 }
-UKL_INLINE uint64_t clif_atoms_at(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint64_t clif_atoms_at(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint64_t v3=0;
