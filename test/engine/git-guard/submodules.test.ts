@@ -439,6 +439,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const marker = join(root, "filter-ran");
     const { work, placed } = await submoduleWithPlacedCopy(root, marker);
     const gitfile = join(work, "sub", ".git");
+    // A driver in the submodule's own config, so the guard lists it, and the `.git` changes between that and the status.
+    git(work, "config", "--file", join(work, ".git", "modules", "sub", "config"), "filter.probe.clean", "cat");
 
     const audit = await afterSubmoduleListing(root, work, `printf 'gitdir: ../placed\\n' > '${gitfile}'`);
 
@@ -1131,19 +1133,20 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     const root = await folder();
     const work = await changedSubmodules(root, ["one", "two", "three"]);
 
-    const { gits, answer } = await startedBy(async fresh => await fresh.runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 20_000 }));
+    // Each Git as if it took 3 s of the 20 s.
+    const { gits, answer } = await startedBy(async fresh => await fresh.runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 20_000 }), undefined, 3_000);
     // A start that runs past its own time limit, for the error Node gives it on this system.
     const ranOut = actualChildProcess.spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { timeout: 50 }).error as NodeJS.ErrnoException | undefined;
 
-    // Git's version, the config listing, the diff, the index's submodules and the top folder, then the three submodules'
-    // config listings, asked at once, each with what was left; no status started.
-    expect(gits.map(leftAt)).toEqual(Array(8).fill(true));
-    expect(gits.slice(5).map(({ args }) => args.slice(-4))).toEqual(Array(3).fill(["config", "-z", "--show-scope", "--list"]));
+    // Git's version, the diff, the index's submodules, the top folder and the config listing, then the submodules'
+    // statuses, asked at once, each with what was left: two, and the third not started.
+    expect(gits.map(leftAt)).toEqual(Array(7).fill(true));
+    expect(gits.slice(5).map(({ args }) => args.slice(-5))).toEqual(Array(2).fill(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"]));
     expect([answer.status, answer.stdout, answer.stderr, answer.error?.message]).toEqual([null, "", "", `spawnSync ${gits[0]?.file} ETIMEDOUT`]);
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", errno: ranOut?.errno, syscall: `spawnSync ${gits[0]?.file}`, path: gits[0]?.file });
-    // The first submodule's status, in the index's order: the question Git's own diff would have failed at.
+    // The third submodule's status, which Git's own diff would have failed at too.
     const spawnargs = (answer.error as unknown as { spawnargs: string[] }).spawnargs;
-    expect([spawnargs.slice(0, 2), spawnargs.at(-7), spawnargs.at(-6)?.endsWith("one"), spawnargs.slice(-5)]).toEqual([
+    expect([spawnargs.slice(0, 2), spawnargs.at(-7), spawnargs.at(-6)?.endsWith("three"), spawnargs.slice(-5)]).toEqual([
       ["-c", "core.fsmonitor=false"], "-C", true, ["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"],
     ]);
   }, 60_000);
