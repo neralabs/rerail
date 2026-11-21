@@ -386,9 +386,9 @@ impl Within {
             chain(v, &mut |_| len += 1);
         }
         start.push(len);
-        // A derived fact like a rule's head, in a run's block alone, with room for an index by each column (strata
-        // probe an axis by `n` and by `a`), as the device's solve writes it.
-        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
+        // A derived fact like a rule's head, in a run's block alone, with room for an index by each key a stratum
+        // probes it by (`n`, `a`, and both in either order: `AXIS_KEYS`), as the device's solve writes it.
+        let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, crate::code_rule_dsl::facts::rows::AXIS_KEYS);
         let mut at = 0u32;
         for v in 0..n {
             let id = self.batch.id(v);

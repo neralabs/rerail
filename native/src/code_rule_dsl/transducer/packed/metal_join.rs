@@ -2111,8 +2111,8 @@ pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::devic
     }
     let total: usize = each.iter().map(|e| e.2).sum();
     let first_start = each.first().map_or(0, |e| e.1);
-    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
-    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2);
+    // Alone in its block, with room for an index by each key strata probe an axis by (`AXIS_KEYS`).
+    let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, crate::code_rule_dsl::facts::rows::AXIS_KEYS);
     if total > 0 {
         let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         let rows_at = rows.rows_at() as u64;
@@ -3026,7 +3026,10 @@ impl Batch {
                 let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
                 let free = home.block.reserved().saturating_sub(home.block.used());
                 let why = format!(
-                    "device.moved in a block: {}, {}, {} indexes there ({} of other rows), {} of {} MB left",
+                    "device.moved in a block: {} block, {} columns keyed by {:?}, {}, {}, {} indexes there ({} of other rows), {} of {} MB left",
+                    if home.is_shared() { "a shared" } else { "its own" },
+                    rel.cols,
+                    cols,
                     if full { "its directory full" } else { "no bytes for it" },
                     if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
                     r.nindex.load(std::sync::atomic::Ordering::Relaxed).min(9),

@@ -49,6 +49,11 @@ impl Life {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
+/// The indexes an axis's relation (`n`, `a`) has room for in its block: by `n`, by `a`, and by both in either order,
+/// the keys a stratum may probe a relation of two columns by (decision 0353 step 6). With room for two (by each
+/// column), a third key copied it (`DevIndex::moved`). The room is address space, memory as an index is written.
+pub const AXIS_KEYS: usize = 4;
+
 /// A shared block's reservation over the bytes its new relations fill (its fill line, `Facts::fill`): the room past
 /// the line is for the growth and the indexes of the relations already in it (decision 0353 step 6), so a probe's
 /// index finds bytes in its relation's block. Address space: a block's memory is what is written in it, and the
@@ -77,6 +82,11 @@ impl Facts {
     /// A block shared by relations made in it until it holds `fill` bytes (`HEADROOM`).
     fn shared(block: Block, fill: usize) -> Facts {
         Facts { fill, ..Facts::new(block) }
+    }
+
+    /// Whether relations are made in it until its fill line (`shared`), not one alone in it.
+    pub fn is_shared(&self) -> bool {
+        self.fill != usize::MAX
     }
 
     /// The bytes new relations fill it to.
