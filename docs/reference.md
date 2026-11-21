@@ -136,6 +136,8 @@ Weak:
 
 One SQLite file per Rerail home holds all rule configuration, your rules and the machine's execution history.
 
+Rerail commits to it without waiting for the disk: when only Rerail stops, however it stops, nothing is lost and the file is never damaged, but a power cut or an operating system crash can take the last seconds of records; the next start closes the checks they left running, and a session's next open records which of its events went.
+
 The file is `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Its main tables:
 
 - **Rule configuration**: `repositories`, `checkouts`, `rule_attachments`, `rule_settings`, `library_rules` and bookkeeping tables ([Rule scoping](rule-scoping.md)).

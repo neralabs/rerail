@@ -54,12 +54,22 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
  * does not linger in free space; it costs writes only on deletes.
+ *
+ * `synchronous = NORMAL`: a commit appends to the WAL and returns without waiting for the disk; the WAL is synced only
+ * when a checkpoint copies it into the file. What it keeps: the file is never damaged, each transaction is kept whole or
+ * not at all, and the commits kept are the earliest ones (WAL frames carry a running checksum, so recovery keeps a prefix
+ * of them, in order); when only Rerail's own process ends (killed, out of memory, crashed), nothing committed is lost.
+ * What it does not keep: after a power cut or an operating system crash, the last commits, those the operating system
+ * had not written back yet (seconds of records). `FULL` kept those too by waiting for the disk at every commit, up to a
+ * second at a time while another program kept the disk busy, inside the hook that wrote. What the next start repairs so
+ * that such a loss leaves nothing wrong: `endSessionsOfEndedOwners`, `keepEventNumbersPastRemotes` and the session's
+ * `lostEvents`. `docs/reference.md` (Rerail database) says the same, and a test holds the two together.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
   database.run(sql`PRAGMA foreign_keys = ON`);
-  database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql`PRAGMA synchronous = NORMAL`);
   database.run(sql`PRAGMA secure_delete = ON`);
 }
 

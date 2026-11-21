@@ -519,8 +519,9 @@ export class SqliteSessionStore {
   }
 
   /**
-   * `recordDiscoveryGap` for each of `gaps`, in one transaction: a write each would wait for the disk once per place, 4 ms
-   * a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All of them or none. A write
+   * `recordDiscoveryGap` for each of `gaps`, in one transaction: a write each would commit once per place, and a commit
+   * that runs a checkpoint waits for the disk (`database.ts`), so a turn end that first meets 1,000 places would pay up to
+   * 1,000 of them. All of them or none. A write
    * that finds the session's row gone puts it back inside the transaction, and `onRowPutBack` is told once it has
    * committed: its claim write goes through another connection, which would wait out the busy timeout (5 s) behind this
    * one's write lock and fail, holding the turn end that long.
