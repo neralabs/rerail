@@ -278,6 +278,7 @@ impl Text {
         if asked.is_empty() {
             return Ok(Some(own));
         }
+        let _cone = crate::code_rule_dsl::logic::profile::span(|| "the library's cone copied".to_owned());
         super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map(Some).map_err(Error::Syntax)
     }
 
@@ -357,7 +358,13 @@ impl Text {
             return Ok(Some(version));
         }
         let Some(version) = self.lowered_in_version(library, scoped)? else { return Ok(None) };
-        let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+        let version = if version.base_bytes().is_some() {
+            version
+        } else {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version folded".into());
+            version.fold().map_err(Error::Syntax)?
+        };
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image kept".into());
         if keep_image(store, "a program image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
@@ -572,6 +579,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "a linked library's image kept, its kind sets".into());
                 if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
@@ -1025,6 +1033,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
+    let _unseeding = crate::code_rule_dsl::logic::profile::span(|| "the scope's seeds taken out".to_owned());
     let mut b = Builder::on(&v);
     lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
@@ -1042,6 +1051,7 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;
     let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's version folded".into());
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
 
@@ -1086,6 +1096,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             break;
         }
     }
+    let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)
 }
