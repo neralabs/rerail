@@ -529,15 +529,11 @@ impl Graph {
     }
 }
 
-/// A path as `bootstrap.rerail` is handed it: its rules join and split paths at `/` (`cat(lib, "/", name)`), so on
-/// Windows its `\` are written `/` (which Windows reads as a separator too).
-fn rule_text(p: &std::path::Path) -> String {
-    let s = p.to_string_lossy();
-    if cfg!(windows) { s.replace('\\', "/") } else { s.into_owned() }
-}
-
-/// A path `bootstrap.rerail` wrote, named as the engine names it (`Canonical`, `rr`'s reader): on Windows its `/` are
-/// `\`, so the graph's files are the paths the engine's reads and comparisons name.
+/// A path `bootstrap.rerail` wrote, named as the engine names it (`Canonical`, `rr`'s reader). Its rules join a name
+/// onto a directory with `/` (`cat(lib, "/", name)`), so on Windows, where the directory is named with `\`, a path
+/// they write is both (`…\lib/python/env.rerail`): its `/` are made `\`, so the graph's files are the paths the
+/// engine's reads and comparisons name. (Handing the rules `/`-named directories instead made the run's world name
+/// them apart from the engine's: a tool-calls run found no columns for `tool_call`.)
 pub(in crate::code_rule_dsl) fn native(s: &str) -> String {
     if cfg!(windows) { s.replace('/', "\\") } else { s.to_owned() }
 }
@@ -551,15 +547,15 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;
     text.push_str("\n// The engine's builtin facts.\n");
-    text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&rule_text(&lib))));
+    text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&lib.to_string_lossy())));
     // The library's parent is a root too: packs include their tables beside the library (`#include
     // "../packs/python/….names.rerail"`), which the resolver before phase 0 read, and the loader confines reads to roots.
     if let Some(parent) = lib.parent() {
-        text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&rule_text(parent))));
+        text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&parent.to_string_lossy())));
     }
     // The phase programs' directory, where a declaration's phase is found (`p0_phase`).
     if let Some(dir) = phase_lib() {
-        text.push_str(&format!("env(\"rerail.phase_lib\", {}).\n", quote(&rule_text(&dir))));
+        text.push_str(&format!("env(\"rerail.phase_lib\", {}).\n", quote(&dir.to_string_lossy())));
     }
     let mut dirs = std::collections::BTreeSet::new();
     for (k, seed) in seeds.iter().enumerate() {
@@ -578,7 +574,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 }
             }
             Seed::File(path) => {
-                text.push_str(&format!("p0_file({}).\n", quote(&rule_text(path))));
+                text.push_str(&format!("p0_file({}).\n", quote(&path.to_string_lossy())));
                 // The file's own directory is a root the loader may read: its includes beside it are files there.
                 if let Some(dir) = path.parent() {
                     dirs.insert(dir.to_path_buf());
@@ -594,7 +590,7 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         .filter_map(|d| dunce::canonicalize(d).ok())
         .collect();
     for dir in dirs {
-        text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&rule_text(&dir))));
+        text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
     // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
