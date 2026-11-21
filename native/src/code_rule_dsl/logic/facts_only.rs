@@ -151,7 +151,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
     ("corpus_swept", "3"),
-    ("corpus_stats", "3"),
     ("slice_rules", "3"),
     ("slice_document", "3"),
     ("slice_match", "3"),
@@ -192,8 +191,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
-/// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2).
-const NOT_YET_TABLES_PIN: usize = 57;
+/// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2); 56 when
+/// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21).
+const NOT_YET_TABLES_PIN: usize = 56;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

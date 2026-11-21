@@ -597,20 +597,8 @@ CREATE TABLE IF NOT EXISTS corpus_decided (
     swept INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
--- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
--- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
--- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.
--- An entry whose source was collected is not trusted. Additive: an older binary ignores it.
-CREATE TABLE IF NOT EXISTS corpus_stats (
-    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
-    path TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    mtime_ns INTEGER NOT NULL,
-    inode INTEGER NOT NULL,
-    source_id INTEGER NOT NULL,
-    recorded_ns INTEGER NOT NULL,
-    PRIMARY KEY (root_id, path)
-) STRICT, WITHOUT ROWID;
+-- The corpus's stat index went (t33 K2): a corpus file's content is the observer's answer for its path.
+DROP TABLE IF EXISTS corpus_stats;
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 -- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
 -- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.

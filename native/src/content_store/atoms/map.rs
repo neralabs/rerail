@@ -531,7 +531,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("corpus_plans", &["plan_digest", "live"]),
     ("corpus_roots", &["root_id"]),
     ("corpus_state", &["singleton", "run", "history_bytes", "due", "archive_due"]),
-    ("corpus_stats", &["root_id", "size", "mtime_ns", "inode", "source_id", "recorded_ns"]),
     ("corpus_swept", &["singleton", "done"]),
     ("derivation_inputs", &["ordinal", "digest"]),
     ("derivations", &["producer", "status", "cost"]),

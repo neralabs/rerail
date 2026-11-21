@@ -4952,18 +4952,10 @@ fn run_observed_within(
     let (mut parse_cpu, mut batch_cpu) = ((0.0, 0.0), (0.0, 0.0));
     // A run over the persistent store records which sources it read, its manifest (decision 0053).
     let recording = matches!(memo, Some(memo::Memo::Stored(_)));
-    // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
-    let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
     let canonical_root = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
-    let stat_index = if recording && !crate::git_workspace::snapshot::contains(root) {
-        // An earlier run of this process may have queued the root's stats: read once they are written, before the
-        // first wave (decision 0104).
-        store.settle(&stats_key(&canonical_root));
-        store.corpus_stats(&canonical_root).map_err(|e| Error::Plan(e.to_string()))?
-    } else {
-        crate::content_store::StatIndex::default()
-    };
-    let stat_index = &stat_index;
+    // A corpus file's content is the observer's answer for its path (t33 K2): its digest, unread while the journal or
+    // its stat says it is as recorded, found in the memo by that digest. The corpus kept no stat index of its own.
+    let observing = recording && !crate::git_workspace::snapshot::contains(root);
     // The heap's part of the run's count (decision 0435 §3), which the profile reports and the chunks' room starts from.
     rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
@@ -5140,7 +5132,6 @@ fn run_observed_within(
         crate::code_rule_dsl::logic::profile::decision("exports counted by file (0096 step 3)", || "given up this run: the hits' exports held from the memo".to_owned());
         Ok(())
     };
-    let stats_read = parking_lot::Mutex::new(Vec::new());
     let looking = memoised || recording;
     /// A file as the run found it before reading it in a wave (decision 0104): its stat, its content as the memo
     /// knows it (`None`: the store holds no such source yet, and its tape's write stores it), its entry, not
@@ -5209,10 +5200,36 @@ fn run_observed_within(
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
             crate::git_workspace::snapshot::file_stat(root.join(path))
         };
-        // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
-        // source, and on a memo hit is neither read nor hashed.
+        // Each file's stat as the run finds it, which a wave compares with the file's when it reads it (`Before`).
         let stats: Vec<Option<crate::content_store::FileStat>> = crate::code_rule_dsl::logic::profile::on_cores(|| window.par_iter().map(|(_, path, _)| stat(path)).collect());
-        let mut known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+        let mut known: Vec<Option<crate::content_store::SourceId>> = vec![None; window.len()];
+        // The observer's answers (t33 K2): a file it knows as it was recorded has that digest, and on a memo hit is
+        // neither read nor hashed. One it must read is recorded with it once read below (`digest_read`).
+        let mut pending: HashMap<usize, crate::content_store::observe::DigestRead> = HashMap::new();
+        let mut observed: Vec<Option<[u8; 32]>> = vec![None; window.len()];
+        if let (true, true, Some(memo)) = (observing, reading, memo) {
+            let _observe = crate::code_rule_dsl::logic::profile::span(|| "observe".into());
+            let steps: Vec<crate::content_store::observe::DigestStep> = observe(|o| window.iter().map(|(_, path, _)| o.digest_step(&root.join(path))).collect());
+            let mut answered: Vec<(usize, [u8; 32])> = Vec::new();
+            for (i, step) in steps.into_iter().enumerate() {
+                match step {
+                    crate::content_store::observe::DigestStep::Answered(Some(d)) => {
+                        observed[i] = Some(d);
+                        answered.push((i, d));
+                    }
+                    crate::content_store::observe::DigestStep::Answered(None) => {}
+                    crate::content_store::observe::DigestStep::Read(r) => {
+                        pending.insert(i, r);
+                    }
+                }
+            }
+            if !answered.is_empty() {
+                let digests: Vec<_> = answered.iter().map(|(_, d)| *d).collect();
+                for ((i, _), content) in answered.into_iter().zip(memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?) {
+                    known[i] = content.and_then(|c| c.stored());
+                }
+            }
+        }
         // An immutable Git source is identified by its blob, without statting or reading a checkout file.
         // A previously seen blob's SHA-256 lets the existing content memo answer before its bytes are fetched.
         if let (true, true, Some(memo)) = (memoised, reading, memo) {
@@ -5229,7 +5246,8 @@ fn run_observed_within(
         }
         let mut content: Vec<Option<memo::Content>> = known.iter().map(|k| k.map(memo::Content::Stored)).collect();
         let mut found: Vec<Option<memo::Found>> = (0..window.len()).map(|_| None).collect();
-        let mut digest: Vec<Option<[u8; 32]>> = vec![None; window.len()];
+        // A known file's digest is the observer's: its entry's write needs it, and no read gives it.
+        let mut digest: Vec<Option<[u8; 32]>> = observed;
         let mut outputs = vec![false; window.len()];
         if let (true, true, Some(memo)) = (memoised, reading, memo) {
             let _lookup = crate::code_rule_dsl::logic::profile::span(|| "memo lookup".into());
@@ -5305,20 +5323,17 @@ fn run_observed_within(
             } else {
                 digests.iter().map(|d| Some(memo::Content::Unstored(*d))).collect()
             };
-            for ((i, c), d) in rest.iter().zip(&contents).zip(&digests) {
+            for (i, d) in rest.iter().zip(&digests) {
                 digest[*i] = Some(*d);
-                // A file the index knew by this stat, read in the waves where the store is not asked, has its content
-                // named by its digest (`Unstored`): recording it again wrote the same stat on every warm run
-                // (`RERAIL_WARM`). It is trusted as the index's source, as a known file the memo finds is, unread. A
-                // known file found to be another stored source (a stat that lied) is recorded.
-                let known_unstored = known[*i].is_some() && matches!(c, Some(memo::Content::Unstored(_)));
-                if let (Some(stat), Some(c)) = (stats[*i], c)
-                    && !matches!(c, memo::Content::Held(_))
-                    && !known_unstored
-                    && known[*i].map(memo::Content::Stored) != Some(*c)
-                {
-                    stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, *c));
-                }
+            }
+            // The files the observer had to have read: their digests recorded with the stats it took (t33 K2), so the
+            // next run knows them unread.
+            let read: Vec<(crate::content_store::observe::DigestRead, (u64, [u8; 32]))> =
+                rest.iter().zip(&texts).zip(&digests).filter_map(|((i, t), d)| Some((pending.remove(i)?, (t.len() as u64, *d)))).collect();
+            if !read.is_empty() {
+                observe(|o| read.into_iter().for_each(|(r, hashed)| {
+                    o.digest_read(r, Some(hashed));
+                }));
             }
             // A file the index knew, read again because its entry was missing, is not looked up a second time. In
             // the waves every content is looked up by its digest, in the frames held in memory (decision 0104).
@@ -7008,7 +7023,7 @@ fn run_observed_within(
     let worker_conns: parking_lot::Mutex<Vec<(Connection, Modules)>> = parking_lot::Mutex::new(Vec::new());
     // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
-    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<(String, crate::content_store::FileStat, memo::Content)>, Vec<[u8; 32]>)> {
+    let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<[u8; 32]>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);
     // A chunk's file-local part: its memo hits replayed, its documents evaluated, its exports written to `x`.
@@ -8418,7 +8433,7 @@ fn run_observed_within(
         "root":root,"buildJobs":builder.build_jobs.load(std::sync::atomic::Ordering::Relaxed),
         "cachedDocuments":builder.ready_hits.load(std::sync::atomic::Ordering::Relaxed)
     }).to_string());
-    Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock()), std::mem::take(&mut c.read_unstored)))
+    Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut c.read_unstored)))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The loaded documents are the run's documents from here on; their rows are not its findings.
@@ -8432,24 +8447,7 @@ fn run_observed_within(
     run_sources.extend(program_sources.iter().copied());
     // The contents named by their digests: their sources found behind the run's writes, before the manifest's.
     if recording {
-        memo::named_digests(store, worker_cpu.4.clone());
-    }
-    // A run that read no file anew (every one known by its stat) has no stat to record.
-    if recording && !worker_cpu.3.is_empty() {
-        let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
-        // Behind the run (decision 0104): a new content's source is written by then, by the tape's write queued before.
-        // In the run's record (decision 0306): a content is its source as the store holds it then.
-        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-            let (root, read, started_ns): (String, Vec<(String, crate::content_store::FileStat, memo::Content)>, i64) = crate::content_store::record::codec::from_body("the files' stats", body)?;
-            let mut ids = Vec::with_capacity(read.len());
-            for (path, stat, content) in read {
-                if let Some(id) = content.resolve(cx.store)? {
-                    ids.push((path, stat, id));
-                }
-            }
-            cx.store.record_corpus_stats(&root, &ids, started_ns)
-        }
-        store.record("the files' stats", vec![stats_key(&canonical_root)], &(&canonical_root, &worker_cpu.3, started_ns), None, apply);
+        memo::named_digests(store, worker_cpu.3.clone());
     }
     // Publish all source references before releasing the lease and starting collection (decision 0053).
     // The memo's relations, named and typed, so a SQL session can read the run's frames (docs/sql-access).
@@ -12742,11 +12740,6 @@ impl super::Asking for Posting<'_> {
         a.poll(wait)?;
         Ok(std::mem::take(&mut a.early).into_iter().collect())
     }
-}
-
-/// The queued write of a root's stats: the next run of this process reads them once they are written.
-fn stats_key(root: &str) -> crate::content_store::write_back::Key {
-    crate::content_store::write_back::Key::of(&[b"corpus stats", root.as_bytes()])
 }
 
 /// The cone of requests of the cross-file part `cross`, answered inside the fixpoint (decision 0065 §2a): a load's
