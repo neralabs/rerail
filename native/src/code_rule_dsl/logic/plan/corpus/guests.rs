@@ -102,12 +102,12 @@ pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
-pub(in crate::code_rule_dsl::logic::plan::corpus) const DEMAND: &str = "rr_embed_req";
+pub(in crate::code_rule_dsl::logic::plan::corpus) const DEMAND: &str = DEMANDS[0];
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
-pub(super) const PARSE: &str = "rr_parse_req";
-pub(super) const SPLICE: &str = "rr_splice_req";
-/// The demands rules make.
-pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
+pub(super) const PARSE: &str = DEMANDS[1];
+pub(super) const SPLICE: &str = DEMANDS[2];
+/// The demands rules make (`rr::lower`'s, in its order).
+pub(super) const DEMANDS: [&str; 3] = crate::code_rule_dsl::logic::rr::lower::DEMANDS;
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
 pub(in crate::code_rule_dsl) const READS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];

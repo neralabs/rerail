@@ -87,8 +87,4 @@ impl Fact {
     }
 }
 
-/// `"sql:select"` as its grammar's label and the name, when the label is a registry language's.
-pub fn qualified(s: &str) -> Option<(&str, &str)> {
-    let (label, name) = s.split_once(':')?;
-    (!label.is_empty() && !name.is_empty() && crate::code_rule_dsl::language::dialect_by_label(label).is_some()).then_some((label, name))
-}
+pub use crate::code_rule_dsl::logic::plan::lower::qualified;

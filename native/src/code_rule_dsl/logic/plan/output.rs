@@ -1037,7 +1037,7 @@ impl std::fmt::Display for Node<'_> {
         match *self {
             Node::Of { path: Some(p), local, own, by_definition, .. } if own || by_definition => write!(f, "{p}:{}", shown_local(local, by_definition)),
             Node::Guest { doc, local } => write!(f, "guest{doc}:{local}"),
-            Node::Place { path, line } => write!(f, "@place({}, {line})", crate::code_rule_dsl::logic::rr::quote(path)),
+            Node::Place { path, line } => write!(f, "@place({}, {line})", rerail_rr_syntax::syntax::quote(path)),
             n => write!(f, "{}", n.number().expect("a node shown as a number")),
         }
     }
@@ -1384,7 +1384,7 @@ pub fn base_of<'a>(dir: &Path, names: impl Iterator<Item = &'a str>) -> std::io:
 }
 
 /// A single output image containing the named relations from an in-memory or mapped stack.
-pub(super) fn selected_base<'a>(stack: &[Image], names: impl Iterator<Item = &'a str>) -> Vec<u8> {
+pub fn selected_base<'a>(stack: &[Image], names: impl Iterator<Item = &'a str>) -> Vec<u8> {
     let mut image = Builder::new(stack.last().map_or(0, Image::flags), false);
     for name in names {
         if let Some(view) = find(stack, name) {

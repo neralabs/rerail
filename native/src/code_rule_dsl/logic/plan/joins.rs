@@ -63,7 +63,7 @@ fn setting(name: &str, or: f64) -> f64 {
 
 macro_rules! cached {
     ($name:ident, $env:literal, $or:expr) => {
-        pub(super) fn $name() -> f64 {
+        pub fn $name() -> f64 {
             rerail_prof::code_rule_dsl::logic::profile::setting(|| setting($env, $or))
         }
     };
@@ -89,38 +89,38 @@ cached!(trial_share, "RERAIL_JOIN_TRIAL_SHARE", 0.1);
 cached!(trial_margin, "RERAIL_JOIN_TRIAL_MARGIN", 1.25);
 
 /// `RERAIL_JOIN_TRIALS=off`: a line's orders are never trialled (decision 0207).
-pub(super) fn trials_on() -> bool {
+pub fn trials_on() -> bool {
     on() && rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOIN_TRIALS").map_or(true, |v| v != "off"))
 }
 
 /// Decision 0274: whether line `key` was observed on a run's critical path: its note's share of the measured path
 /// (0208), a moving average over runs, is at least `critical_share`. A line that leaves the path halves its share
 /// each run, and drops below in a few: the next path's lines are found as each is made faster.
-pub(super) fn on_critical_path(key: &PlanKey) -> bool {
+pub fn on_critical_path(key: &PlanKey) -> bool {
     joins().noted.load(Relaxed) && read(|m| m.notes.get(key).is_some_and(|n| n.critical >= critical_share()))
 }
 
 /// Decision 0274: whether line `key`'s orders would be trialled at this check (`take_trial`), without taking it.
-pub(super) fn trial_due(key: &PlanKey) -> bool {
+pub fn trial_due(key: &PlanKey) -> bool {
     trials_on() && on_critical_path(key) && !read(|m| m.trialled.contains(key))
 }
 
 /// Whether line `key`'s orders are trialled at this check: decision 0274, only a line observed on a run's critical
 /// path, and as 0207, once in this process and once more after it was flagged slow. A slow line off the path is
 /// planned again instead, under the handoff's limit (decision 0271).
-pub(super) fn take_trial(key: PlanKey) -> bool {
+pub fn take_trial(key: PlanKey) -> bool {
     on_critical_path(&key) && write(Op::TakeTrial { key })
 }
 
 /// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
-pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
+pub fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
     run_counts().counts[TRIALS].fetch_add(1, Relaxed);
     write(Op::Tried { key, rule, order: steps(order), ratio: ratio.clamp(1e-6, 1e9), weight: TRIAL_WEIGHT });
 }
 
 /// Decision 0247: how far a trial's estimate moves an order's measured ratio (in logs), against a run's
 /// `RUN_WEIGHT`. A trial measures a sample, scaled by walks; a run measures the line.
-const TRIAL_WEIGHT: f64 = 0.25;
+pub const TRIAL_WEIGHT: f64 = 0.25;
 const RUN_WEIGHT: f64 = 0.5;
 
 /// A trial of `order` of line `key` (decision 0207): `work` rows of work against a price of `est` for the same
@@ -134,7 +134,7 @@ const RUN_WEIGHT: f64 = 0.5;
 /// price or what it measured, and one over 1 raises the order's kept ratio to it, never lowers it. A measure merged
 /// with the trial's weight would move a kept ratio toward the floor from either side. `pre_570`'s order on the
 /// data-layer candidates, priced 12.7 M and cut at 7,601 (0.0006), ran 22 s against 6 ms.
-pub(super) fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est: f64, cut: bool) {
+pub fn put_trial(key: PlanKey, rule: u64, order: &[Step], work: f64, est: f64, cut: bool) {
     let ratio = (work / est.max(1.0)).clamp(1e-6, 1e9);
     if !cut {
         return put_tried(key, rule, order, ratio);
@@ -185,7 +185,7 @@ pub(super) fn logging() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_JOINS_LOG").is_some())
 }
 
-pub(in crate::code_rule_dsl) fn log(what: impl FnOnce() -> String) {
+pub fn log(what: impl FnOnce() -> String) {
     if logging() {
         eprintln!("joins: {}", what());
     }
@@ -239,7 +239,7 @@ impl Note {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct Memo {
+pub struct Memo {
     notes: FxHashMap<PlanKey, Note>,
     /// Per rule, its exact statistics, as the search reads them.
     exact: FxHashMap<u64, Arc<HashMap<Sig, [i64; 2]>>>,
@@ -269,29 +269,29 @@ pub(super) struct Memo {
 
 /// What a chunk reads and writes of the memo (Q314): the run's as filed when it began, with its own writes, and
 /// those writes, to be filed into the run's in the chunks' order (`file_ops`).
-pub(super) struct ChunkMemo {
-    memo: RwLock<Memo>,
-    ops: Mutex<Vec<Op>>,
+pub struct ChunkMemo {
+    pub memo: RwLock<Memo>,
+    pub ops: Mutex<Vec<Op>>,
 }
 
 /// The run's memo now, for a chunk to begin from (`OrderedPlans`).
-pub(super) fn snapshot() -> Arc<Memo> {
+pub fn snapshot() -> Arc<Memo> {
     Arc::new(joins().memo.read().clone())
 }
 
 /// A chunk's memo, from the run's as filed when it began.
-pub(super) fn chunk_memo(at: &Memo) -> Arc<ChunkMemo> {
+pub fn chunk_memo(at: &Memo) -> Arc<ChunkMemo> {
     Arc::new(ChunkMemo { memo: RwLock::new(at.clone()), ops: Mutex::new(Vec::new()) })
 }
 
 /// What a chunk wrote, for its filing.
-pub(super) fn ops_of(c: &ChunkMemo) -> Vec<Op> {
+pub fn ops_of(c: &ChunkMemo) -> Vec<Op> {
     std::mem::take(&mut *c.ops.lock())
 }
 
 /// Files a chunk's writes into the run's memo: each line's in the order it wrote them, the lines by key (the order
 /// the chunk's jobs wrote different lines in is the threads').
-pub(super) fn file_ops(mut ops: Vec<Op>) {
+pub fn file_ops(mut ops: Vec<Op>) {
     if ops.is_empty() {
         return;
     }
@@ -347,7 +347,7 @@ fn write(op: Op) -> bool {
 
 /// A write to the memo (`write`), as data, so that a chunk's are filed into the run's in order (`file_ops`).
 #[derive(Clone, Debug)]
-pub(super) enum Op {
+pub enum Op {
     /// `put_tried`: an order's measured ratio, merged at `weight`.
     Tried { key: PlanKey, rule: u64, order: Vec<StoredStep>, ratio: f64, weight: f64 },
     /// `put_trial`, cut: a floor on the order's ratio.
@@ -370,7 +370,7 @@ pub(super) enum Op {
 }
 
 impl Op {
-    fn key(&self) -> PlanKey {
+    pub fn key(&self) -> PlanKey {
         match self {
             Op::Tried { key, .. } | Op::CutTrial { key, .. } | Op::Slow { key, .. } | Op::Exact { key, .. } | Op::Line { key, .. } | Op::Check { key, .. } | Op::TakeTrial { key } | Op::TakeForced { key } => *key,
             Op::Raise { key, .. } => key.unwrap_or(0),
@@ -387,7 +387,7 @@ impl Op {
         }
     }
 
-    fn apply(&self, m: &mut Memo) -> bool {
+    pub fn apply(&self, m: &mut Memo) -> bool {
         match self {
             Op::Tried { key, rule, order, ratio, weight } => {
                 let n = noted_mut(m, *key, *rule);
@@ -510,16 +510,16 @@ fn fingerprint(n: &Note) -> u64 {
 /// any line is noted, any rule has exact statistics, any column is raised: the planner's fast paths read these
 /// alone), the searches waiting, and the upkeep job that runs them.
 #[derive(Default)]
-struct Joins {
-    memo: RwLock<Memo>,
-    noted: AtomicBool,
-    exact: AtomicBool,
+pub struct Joins {
+    pub memo: RwLock<Memo>,
+    pub noted: AtomicBool,
+    pub exact: AtomicBool,
     raised: AtomicBool,
-    requests: Mutex<Vec<(PlanKey, f64, bool, Search)>>,
+    pub requests: Mutex<Vec<(PlanKey, f64, bool, Search)>>,
     job: std::sync::OnceLock<Mutex<Option<rerail_accel::upkeep::Registered>>>,
 }
 
-fn joins() -> Arc<Joins> {
+pub fn joins() -> Arc<Joins> {
     super::super::profile::shared::<Joins>()
 }
 pub(super) const FLAGS: usize = 0;
@@ -531,7 +531,7 @@ pub(super) const HANDOFFS: usize = 5;
 pub(super) const HANDBACKS: usize = 6;
 pub(super) const TRIALS: usize = 7;
 
-pub(super) fn steps(order: &[Step]) -> Vec<StoredStep> {
+pub fn steps(order: &[Step]) -> Vec<StoredStep> {
     order.iter().map(|s| (s.at as u16, s.mode)).collect()
 }
 
@@ -547,8 +547,8 @@ pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
 }
 
 /// Whether column `c` of `rel` keeps its heavy values.
-#[cfg(test)]
-pub(super) fn raised(rel: &str, c: usize) -> bool {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn raised(rel: &str, c: usize) -> bool {
     joins().raised.load(Relaxed) && read(|m| m.raised.contains(&(rel.to_owned(), c)))
 }
 
@@ -583,7 +583,7 @@ pub fn note(key: &PlanKey) -> Option<Note> {
 
 /// Whether the line has work queued for its next plan: a wider search wanted, or a proposal not tried yet. Such a
 /// line is searched, not taken at its kept price.
-pub(super) fn pending(key: &PlanKey) -> bool {
+pub fn pending(key: &PlanKey) -> bool {
     joins().noted.load(Relaxed) && read(|m| m.notes.get(key).is_some_and(|n| n.wants_search || n.proposals.iter().any(|(o, _)| n.tried(o).is_none())))
 }
 
@@ -607,7 +607,7 @@ pub(super) fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
     read(|m| m.exact.get(&rule).cloned())
 }
 
-fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
+pub fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
     joins().noted.store(true, Relaxed);
     memo.dirty = true;
     if memo.notes.len() >= NOTES_MAX && !memo.notes.contains_key(&key) {
@@ -626,7 +626,7 @@ fn noted_mut(memo: &mut Memo, key: PlanKey, rule: u64) -> &mut Note {
 /// Whether a line's work so far, `work`, is due to be checked against its price: the first time past `slow_rows`,
 /// then each time it doubles (a price per check, so checking costs a fraction of the work, decision 0122). Never
 /// once flagged in the order it runs (`order`): another order of the line is checked again.
-pub(super) fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
+pub fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
     if work < slow_rows() {
         return false;
     }
@@ -651,7 +651,7 @@ pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per
 /// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (`sampled`: its
 /// sample has `TRIAL_LEAST` rows, and decision 0274's trial is due) or by the handoff it is in. Where not, it is
 /// planned again at the check.
-pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
+pub fn measured_below(sampled: bool, in_handoff: bool) -> bool {
     trials_on() && (sampled || in_handoff)
 }
 
@@ -661,7 +661,7 @@ pub(super) fn measured_below(sampled: bool, in_handoff: bool) -> bool {
 /// it has done and the cut's `work`, before the next comparison: a replacement placed starts its counts again (`base`
 /// 0), and `base` plus the larger of the two gave it its cut's work again: the limit it was just cut at, so a row
 /// costing more than that was cut with none done at each limit for ever. Always finite: no order goes on unlimited.
-pub(super) fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
+pub fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
     if rate.is_finite() { base + slow_factor() * rate * left.max(1.0) } else { 2.0 * base.max(work).max(1.0) }
 }
 
@@ -756,7 +756,7 @@ pub fn step_miss(est: &[f64], ran: &[(u64, u64)], search_work: f64) -> Option<Mi
     None
 }
 
-pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: f64) {
+pub fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: f64) {
     run_counts().counts[FLAGS].fetch_add(1, Relaxed);
     write(Op::Slow { key, rule, order: steps(order), est, ran });
 }
@@ -767,7 +767,7 @@ pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: 
 /// that rate over the `left` rows left (an order that finished no row costs at least its work again). A replacement
 /// runs under the handoff's limit (decision 0206), and where it is cut too, the order with less work a row goes on:
 /// a runner-up priced as wrongly costs a limit's work. `None`: no runner-up is priced under the running order.
-pub(super) fn over_measured(others: &[(Vec<Step>, f64)], ran: f64, done: u64, left: u64) -> Option<Vec<Step>> {
+pub fn over_measured(others: &[(Vec<Step>, f64)], ran: f64, done: u64, left: u64) -> Option<Vec<Step>> {
     let measured = if done > 0 { ran / done as f64 * left.max(1) as f64 } else { ran.max(1.0) };
     others.iter().filter(|(_, est)| est.is_finite() && *est < measured).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(o, _)| o.clone())
 }
@@ -778,7 +778,7 @@ pub(super) fn take_forced(key: &PlanKey) -> bool {
 }
 
 /// `rule`'s exact pair statistics, measured for line `key`: the rule's plans are keyed again (`epoch`).
-pub(super) fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
+pub fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
     if stats.is_empty() {
         return;
     }
@@ -788,7 +788,7 @@ pub(super) fn put_exact(key: PlanKey, rule: u64, stats: Vec<(Sig, [i64; 2])>) {
 
 /// A wider search's orders for line `key`, best first: its proposals. `walked`: the walked work of the order the
 /// line ran, where the search walked them (decision 0243).
-pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, walked: Option<f64>) {
+pub fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, walked: Option<f64>) {
     orders.sort_by(|a, b| a.1.total_cmp(&b.1));
     orders.dedup_by(|a, b| a.0 == b.0);
     orders.truncate(PROPOSALS);
@@ -896,7 +896,7 @@ pub(super) fn pricing() -> bool {
 }
 
 /// A small generator for exploration and random orders: `RERAIL_JOIN_SEED` fixes it.
-pub(super) struct Rng(u64);
+pub struct Rng(pub u64);
 impl Rng {
     /// From `RERAIL_JOIN_SEED`, else a fixed seed, and `salt` (Q314: the clock and a count shared by every thread
     /// drew differently on every run).
@@ -1020,7 +1020,7 @@ fn choose_with(round: &mut [Choice], predicted: Option<&Vec<Vec<f64>>>, memo: Op
 
 /// A round of choices (decision 0203 §2): the lines planned while it was open recorded their choices (each kept
 /// the search's best, `Model::plan_rule_live_in`); chosen here all at once, after one batch prediction.
-pub(super) fn finish_round(mut round: Vec<Choice>) -> Vec<Choice> {
+pub fn finish_round(mut round: Vec<Choice>) -> Vec<Choice> {
     choose(&mut round);
     round
 }
@@ -1154,7 +1154,7 @@ pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineR
 
 /// Random connected orders of joins `vars` (each join's variables, as bits), from `start` where given, else from any
 /// join: each next join shares a variable with those placed while one can. Distinct, at most `n`.
-pub(super) fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: &mut Rng) -> Vec<Vec<usize>> {
+pub fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: &mut Rng) -> Vec<Vec<usize>> {
     let mut out: Vec<Vec<usize>> = Vec::new();
     let mut seen: FxHashSet<Vec<usize>> = FxHashSet::default();
     for _ in 0..n * 4 {
@@ -1184,7 +1184,7 @@ pub(super) const WALK_MARGIN: f64 = 0.625;
 
 /// A wider search's result: its orders with their prices, or their walked work over the line, and the walked work of
 /// the order the line ran where it walked them (decision 0243).
-pub(super) struct Searched {
+pub struct Searched {
     pub orders: Vec<(Vec<StoredStep>, f64)>,
     pub walked: Option<f64>,
 }
@@ -1205,7 +1205,7 @@ pub(super) fn may_hold() -> bool {
 }
 
 /// Asks for a wider search of line `key` (`search`), run by the `join-search` upkeep job at idle.
-pub(super) fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
+pub fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
     job();
     let st_ = joins();
     let mut q = st_.requests.lock();
@@ -1218,7 +1218,7 @@ pub(super) fn request(key: PlanKey, weight: f64, holds: bool, search: Search) {
 }
 
 /// Whether a wider search of line `key` is worth asking for: none waits for it, and it has no proposals yet.
-pub(super) fn wants_request(key: &PlanKey) -> bool {
+pub fn wants_request(key: &PlanKey) -> bool {
     if joins().requests.lock().iter().any(|r| &r.0 == key) {
         return false;
     }
@@ -1273,7 +1273,7 @@ pub fn drain_at_end(on: bool) {
 
 /// At a run's end, where `drain_at_end` is set: the waiting searches, most important first, until this thread has
 /// spent `DRAIN_SHARE` of the process's CPU so far on them. The searches the budget leaves wait, as before.
-pub(super) fn drain() {
+pub fn drain() {
     if !crate::code_rule_dsl::logic::profile::bound::<Drain>().0 {
         return;
     }
@@ -1519,8 +1519,7 @@ pub fn from_store((notes, exact, raised): Stored) {
 #[cfg(target_os = "macos")]
 pub mod model;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)
 
 /// Decision 0232: the bindings a key's walk carries through each step (`RERAIL_WALK_WIDTH`, 64).
 pub fn walk_width() -> usize {

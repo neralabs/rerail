@@ -381,7 +381,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   are the engine's `code_rule_dsl::napi_tests`. Their helpers moved to fixtures modules: `module_graph::fixtures`,
   and `workspace::fixtures` (`TempDir`, `package_repository`). The test crates' lib.rs files are source now
   (`test_crates.py` ran once).
-  - Tests: the 145 moved tests pass under cargo (spark1); one `cargo check --tests` over boot, the engine and the
+  - Tests: the 145 moved tests pass under cargo (a Linux host); one `cargo check --tests` over boot, the engine and the
     six test crates is clean.
 - **Step 4** (2026-11-21): the compiler is five crates. Their sources stay in `crates/compiler/src`; each crate above
   the front end mounts its modules by `#[path]` and reads the crates below through a private glob (`use
@@ -418,7 +418,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Both had kept `rerail-rr-parser` from the engine's dependency list, which none of their code reads. It is gone.
   - Tier 2's tests set `bitlex_masks::NO_GAP_ENDS`, which was `cfg(test)` and is now behind `test-hooks`, since those
     tests are another crate's. It was the only `cfg(test)` hook in a lower crate that a higher crate's tests read.
-  - Tests (cargo nextest, spark1; one `cargo check --tests --workspace` clean on Linux, and the Metal crates' check
+  - Tests (cargo nextest, a Linux host; one `cargo check --tests --workspace` clean on Linux, and the Metal crates' check
     on an M3):
     - The five crates' 146 tests pass, with 3 in the slow tier. That is every `#[test]` in their sources but the
       two macOS-only relocation tests.
@@ -459,7 +459,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     and the crates above it. `clif_rust`'s `rust_source` writes a compiled `Parser`'s own IR as Rust, so it stays
     with the JIT. The parsers read `native_cpu_clusters` from the front end. The tape constants `NO_CODE`,
     `WIDE_OFF` and `WIDE_TAIL` are `stream_analysis`'s, re-exported by `native_cpu_tape`.
-  - Tests (cargo nextest, spark1; `cargo check --tests --workspace` clean on Linux; the device, Metal, tier 2 and
+  - Tests (cargo nextest, a Linux host; `cargo check --tests --workspace` clean on Linux; the device, Metal, tier 2 and
     parser crates check on a Mac mini; the AOT crates check with `generated`):
     - The compiler's crates, rust-stream, parser_tests, rr-parser, lang-json, kotlin, c-directives and the AOT
       crates: 332 pass.
@@ -491,7 +491,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; the logic crates, boot and tests_logic
     check on a Mac):
     - The core's own tests, and the lattice, liveness, SQL kernel, widening, SQL session, native and run-state
-      tests of the crates above (spark1): 404 run, 402 pass. The closure test then passed alone after its fix. The
+      tests of the crates above (a Linux host): 404 run, 402 pass. The closure test then passed alone after its fix. The
       SQL profiling test needs `node`, which that host lacks, and passes on a Mac.
     - On a Mac: the core's 23 tests, the join planner's and join steps' tests, `analysis`'s, the closure test and
       the profiling test: 32 pass.
@@ -523,10 +523,46 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       into `setfix/retain_tests.rs`.
   - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; setfix, logic, boot, device-metal,
     tests_logic and sessions check on a Mac):
-    - spark1: setfix's 162, sessions' 20, `rerail-logic`'s mounted 23, and tests_logic's native, lanes, run,
+    - A Linux host: setfix's 162, sessions' 20, `rerail-logic`'s mounted 23, and tests_logic's native, lanes, run,
       run-state, Bloom, joins, statkeep and maintain tests: 254 pass. In the first run R1 failed until its
       exemption followed the list, and once `a_maintained_strata_pieces_run_as_one_component` aborted at exit
       after passing (glibc: "double free or corruption"). It did not recur alone (6 runs) or in the full set
       again.
-    - A Mac (m3): setfix's tests, the mounted ones, and tests_logic's run-state, joins and lanes tests: 173 pass.
-
+    - A Mac (an M3): setfix's tests, the mounted ones, and tests_logic's run-state, joins and lanes tests: 173 pass.
+- **Step 5c** (2026-11-21): `rerail-planner` (`native/crates/planner`): `plan.rs` and `plan/*` but the corpus, the
+  answers' gates (`answers`), the rank form, `program_text`, the pass manager with the program's passes, analyses and
+  layouts (`program_image::{manager, passes, analyses, layouts}`, added to `rerail-program-image`'s module as
+  `rerail-logic` added them), and the profile's report and watch, about 40k lines with the inline tests that stayed.
+  It is over setfix. Of the language it reads only `rerail-rr`'s lowering and printer, under the language's path
+  (`logic::rr::{lower, print_version}`), and the shipped images (`rr::images`, below). `rerail-logic` re-exports
+  each module, and its facade of `plan` mounts the corpus (`plan::corpus`) over the planner's `plan`.
+  - **What the planner read of the language's root or the corpus moved, or became a registration.**
+    - `waves::findings` emitted through `emit::emit_batch`, which parsed the program (`rr::parse_version`, the
+      corpus's lowering tail). The caller parses it and calls `emit::emit_program`; `emit_batch` is gone.
+    - The relations a rule's qualification names (`qualified`), the reasons and threshold a stratum is derived again
+      for (`FIRST_RUN`, `THRESHOLD`, `past_threshold`, …), the deferred products' prefixes and the guests' demand
+      relations were the corpus's and read by the planner. They are the planner's (`plan::lower::qualified`, the
+      new `plan::again`, `plan::body::{PRODUCT_DEMAND, DEFERRED_PAIRS}`, `rr::lower::DEMANDS`). The corpus
+      re-exports each under its old name.
+    - **The carriers' list** (`run_state::CARRIERS`) names the corpus's test store, so it is `logic::CARRIERS`,
+      the top's. Boot and `rerail-logic`'s test binary register it. The planner's test binary registers the run's,
+      the planner's and setfix's.
+    - **The core's relation names** (`rr::core_names`, which parse the core's `.rerail` text) are read by `keeps`
+      through `plan::keeps::CORE_NAMES`, a `rerail_registry::Slot` that boot and `rerail-logic`'s tests register.
+    - `program_text` keeps a program's images through `rr::images` (`export`, `shipped`, `shipped_image`). Of
+      `images`, only `store` read the corpus (its stores), so `store` is `rr::images_store`, in the language's
+      root, and `images` is the planner's.
+  - **Tests that parse `.rerail` or run the corpus** are mounted by `rerail-logic`'s facades: 14 modules
+    (`answers::tests`, `plan::{complete_answer_tests, search_tests}`, and the tests of `body`, `choices`, `compose`,
+    `demand`, `demand::over`, `joins`, `keeps`, `lower`, `native_demand`'s integration tests, `replanning` and
+    `wellfounded`). Nine of them were inline and are now files. Each facade repeats its module's imports for the
+    tests' `use super::*`. The planner's test-only helpers they call (`RunPlans::{find, with_stored}`,
+    `joins::raised`, `inline::{unfolded, unfolded_shown}`) are `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the planner
+    and `rerail-logic`):
+    - A Linux host: the planner's own 32; `rerail-logic`'s plan, answers, program-image, profile and native tests,
+      262; tests_logic's and boot's plan, answers, program-image and boot tests, 325 of 326; the waves and findings
+      tests of tests_logic, boot and classic, 98. The one that failed,
+      `programs_hidden_alone_keep_their_attribute_copies_declared`, stops on pack test data that neither the hosts
+      nor this checkout has (`packs/data-layer/…/datalog/authored`, `npm run fixtures:pull`), before it plans
+      anything, on a Mac too.

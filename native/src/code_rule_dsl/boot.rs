@@ -46,7 +46,8 @@ fn install_with(ids: Option<BuildIds>) {
         install_devices();
         install_languages(ids.is_none());
         logic::plan::corpus::install_git_inventory();
-        logic::run_state::CARRIERS.register("boot", logic::plan::CARRIERS);
+        logic::run_state::CARRIERS.register("boot", logic::CARRIERS);
+        logic::plan::keeps::CORE_NAMES.register("boot", logic::rr::core_names);
         #[cfg(target_os = "macos")]
         logic::costs::join_steps::register_install(logic::plan::joins::model::install);
         crate::content_store::set_connection_functions(|db| {

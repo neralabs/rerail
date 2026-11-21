@@ -269,18 +269,8 @@ pub fn emit_inputs(placed: super::body::Placed, db:&Connection, name:&str, count
     })
 }
 
-/// `source` (a program over batch inputs alone) as the wave program `name`: parsed, lowered (its
-/// names interned by `intern`) and emitted, with no statistics to read.
-pub fn emit_batch(
-    source: &str,
-    name: &str,
-    batch: &HashMap<String, (Source, f64)>,
-    intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
-) -> Result<Emitted> {
-    emit_program(crate::code_rule_dsl::logic::rr::parse_version(source)?, name, batch, intern)
-}
-
-/// `emit_batch` of a program already read (or built, as a wave's demand program is).
+/// A program over batch inputs alone (read by the caller, or built, as a wave's demand program is) as the wave program
+/// `name`: lowered (its names interned by `intern`) and emitted, with no statistics to read.
 pub fn emit_program(
     prog: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     name: &str,

@@ -227,7 +227,7 @@ impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
 
 /// The modules whose thread-locals are carried, each taking its own, in the order they are entered. The program's
 /// composition registers them (boot, or a crate's own test binary as it loads): they are the run's, the planner's
-/// and setfix's, and the planner is a crate above this one (`plan::CARRIERS`). The run comes first: entered first,
+/// and setfix's, and the planner is a crate above this one (`logic::CARRIERS`). The run comes first: entered first,
 /// it is put back last, so every other part's guard drops inside it (a plans guard's drop counts into the run).
 pub static CARRIERS: rerail_registry::Slot<&'static [fn(&mut Capture)]> = rerail_registry::Slot::new("the run's carried context (run_state::CARRIERS)");
 
@@ -280,5 +280,5 @@ impl Carry {
     }
 }
 
-// Its tests read every thread-local of the tree and what the whole program carries (`plan::CARRIERS`):
+// Its tests read every thread-local of the tree and what the whole program carries (`logic::CARRIERS`):
 // `rerail-logic`'s facade of this module mounts `tests.rs`.

@@ -33,8 +33,9 @@ pub(super) struct Fields {
     pub(super) layouts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>>,
 }
 
-/// The prefix of the pair relations a deferred join's reader reads (decision 0488).
-pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
+
+/// The demand relations' prefix, and the deferred pairs' (the planner reads them in a rule's body, `body::own_demand`).
+pub(in crate::code_rule_dsl::logic::plan) use crate::code_rule_dsl::logic::plan::body::{DEFERRED_PAIRS, PRODUCT_DEMAND as PREFIX};
 
 impl Fields {
     fn of(v: &Version) -> Fields {
@@ -165,7 +166,6 @@ impl<'i> Program<'i> {
     }
 }
 
-pub(in crate::code_rule_dsl::logic::plan) const PREFIX: &str = "rr_product_demand_";
 
 /// Check the image for a possible product before decoding rules for the demand analysis.
 fn may_have_products(version: &Version) -> bool {
