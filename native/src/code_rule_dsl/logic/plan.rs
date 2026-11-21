@@ -5944,6 +5944,32 @@ pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::p
 }
 
 
+/// A changed read's versions as a stratum reads them: a row gone and a row added that agree on every column it reads
+/// (`used`, its source's) are no change to it, and neither is in its delta. Each is a set of rows picked where they lie
+/// in the versions (0364 R2), found through a transient order of each version's row ids. `None` when no pair agrees.
+/// A line inserted moves the `start` and `end` of every node after it alone: ep2's one-line edit gave `node` 1,637 rows
+/// added and 1,633 gone, and a stratum that read nodes' kinds saw each as a change, past the threshold (0090 §4).
+pub(crate) fn unchanged_as_read(minus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, plus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, used: &[usize]) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]> {
+    use crate::code_rule_dsl::facts::vtab::Source;
+    fn row<'a>(s: &'a dyn Source, r: u32, used: &'a [usize]) -> impl Iterator<Item = i64> + 'a {
+        used.iter().map(move |&c| s.value(r as usize, c))
+    }
+    let order = |s: &dyn Source| {
+        let mut ids: Vec<u32> = (0..s.len() as u32).collect();
+        ids.sort_unstable_by(|&a, &b| row(s, a, used).cmp(row(s, b, used)));
+        ids
+    };
+    let (by_minus, by_plus) = (order(minus.as_ref()), order(plus.as_ref()));
+    // The rows of `s` whose columns read no row of `t` holds.
+    let alone = |s: &dyn Source, t: &dyn Source, by: &[u32]| -> Vec<u32> { (0..s.len() as u32).filter(|&r| by.binary_search_by(|&x| row(t, x, used).cmp(row(s, r, used))).is_err()).collect() };
+    let (m, p) = (alone(minus.as_ref(), plus.as_ref(), &by_plus), alone(plus.as_ref(), minus.as_ref(), &by_minus));
+    if m.len() == minus.len() {
+        return None;
+    }
+    let picked = |s: &Arc<dyn Source>, ids| super::native::component::InRel::picked(Arc::clone(s), ids, s.columns());
+    Some([picked(minus, m), picked(plus, p)])
+}
+
 /// How many strata the process held as views of an input's columns, for tests and profiles.
 pub fn input_views() -> u64 {
     run_counts().input_views.load(std::sync::atomic::Ordering::Relaxed)
@@ -8117,6 +8143,23 @@ impl<'a> Run<'a, '_> {
         };
         proofs.of(scc)
     }
+    /// The columns of changed read `rel` that stratum `rules` reads: of each atom over it, the arguments but `_`. `None`
+    /// when an aggregate reads it, whose groups count its rows.
+    fn read_columns(&self, rules: &[RuleKey], rel: &str) -> Option<BTreeSet<usize>> {
+        let mut used = BTreeSet::new();
+        for &r in rules {
+            let b = self.versions.at(r);
+            for i in 0..b.len() {
+                match b.view(i) {
+                    Lit::Atom(a) if b.rel(a) == rel => used.extend(a.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c)),
+                    Lit::Agg { atom: a, .. } if b.rel(a) == rel => return None,
+                    _ => {}
+                }
+            }
+        }
+        Some(used)
+    }
+
     fn maintain_mode_blocks(&self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, olds: &BTreeMap<String, Arc<super::native::component::InRel>>, ins: &ModeInputs) -> Option<String> {
         if std::env::var("RERAIL_MAINTAIN_MODE").is_ok_and(|v| v == "off") {
             return Some("RERAIL_MAINTAIN_MODE=off".into());
@@ -11902,6 +11945,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // A relation derived again whose delta is its rows gone and added (`Moved::Rows`): its minus and plus versions,
     // given to its readers (`ins`).
     let mut diffs: HashMap<String, [Arc<super::native::component::InRel>; 2]> = HashMap::new();
+    // A changed read's versions as strata read them (`unchanged_as_read`), by its minus version and the columns read:
+    // made once for all the strata that read the same columns. The minus version is held by its entry, so its address
+    // is no other's while the entry lives.
+    type AsRead = (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>);
+    let mut as_read: HashMap<(usize, Vec<usize>), AsRead> = HashMap::new();
     // The strata derived again in place of the maintain mode, by relation: its kept rows, which its delta is made
     // against once its level has run (at the next level's placement).
     let mut again_olds: BTreeMap<String, Arc<super::native::component::InRel>> = BTreeMap::new();
@@ -12484,6 +12532,23 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
                         Some((r.clone(), ([src(&o?), src(&mi?), src(&pl?), src(&h)], cols)))
                     }).collect();
+                    // Each as the stratum reads it: its rows gone and added that agree on the columns its rules read are
+                    // no change to it (`unchanged_as_read`). A view's columns are its source's through `cols`.
+                    let ins: ModeInputs = ins.into_iter().map(|(r, ([o, mi, pl, now], cols))| {
+                        let used: Option<Vec<usize>> = run.read_columns(&rules, &r).and_then(|u| u.into_iter().map(|c| cols.as_ref().map_or(Some(c), |m| m.get(c).copied())).collect());
+                        let Some(used) = used.filter(|u| u.len() < mi.columns().len()) else { return (r, ([o, mi, pl, now], cols)) };
+                        let (_, made) = as_read.entry((Arc::as_ptr(&mi) as *const u8 as usize, used.clone())).or_insert_with(|| {
+                            let made = unchanged_as_read(&mi, &pl, &used);
+                            if let Some([m2, p2]) = &made {
+                                super::profile::decision("a changed read's rows that agree on the columns its strata read (0090 §4)", || format!("{r} by columns {used:?}: {} of {} gone, {} of {} added", m2.len(), mi.len(), p2.len(), pl.len()));
+                            }
+                            (Arc::clone(&mi), made)
+                        });
+                        match made.as_ref() {
+                            Some([m2, p2]) => (r, ([o, Arc::clone(m2), Arc::clone(p2), now], cols)),
+                            None => (r, ([o, mi, pl, now], cols)),
+                        }
+                    }).collect();
                     // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas are past θ of those reads'
                     // stored rows is derived again, its levels fresh from that derive. A derive reads its inputs whole
                     // and the mode reads their deltas, so the share of the reads that changed is what the two cost
@@ -12517,7 +12582,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     };
                     if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
                         let costs = priced.map_or_else(String::new, |(m, d)| format!(", mode {m:.0} against derive {d:.0}"));
-                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows of {read_rows} read, {kept_rows} kept{costs})", blocks.as_deref().unwrap_or("the maintain mode"));
+                        let mut by: Vec<_> = sizes.iter().filter(|(_, (d, _))| *d > 0).map(|(r, (d, n))| format!("{r} {d}/{n}")).collect();
+                        by.truncate(4);
+                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows of {read_rows} read, {kept_rows} kept{costs}; {})", blocks.as_deref().unwrap_or("the maintain mode"), by.join(", "));
                     }
                     match blocks {
                         None => {

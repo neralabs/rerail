@@ -325,6 +325,27 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches most of a stratum derives it again: {:?}", big.report.cross_again);
 }
 
+/// R4: a line inserted moves every node after it (`node`'s `start` and `end`), and no node's kind: a stratum that
+/// reads nodes' kinds alone is maintained, its delta the rows the lines added (`plan::unchanged_as_read`). Its every
+/// moved node was a change to it: ep2's one-line edit derived 391 strata again past the threshold, 66 over `kind`.
+#[test]
+fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // One file holds most nodes, so its nodes moved are most of `node`'s rows.
+    let big: String = (0..60).map(|i| format!("def f{i}():\n    pass\n")).collect();
+    // `used_kind` reads `kind` in the cross part, past a join of two files' rows, as `width` reads `child`.
+    let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- uses(_, f), kind(f, k).\n.output used_kind\n");
+    let outputs: Vec<&'static str> = KIND_OUTPUTS.iter().copied().chain(["used_kind"]).collect();
+    let mut s = Session::new("r4-moved", &program, &outputs, &[("a.py", big.as_str()), ("b.py", "from a import f1\ndef g():\n    pass\n")]);
+    s.run();
+    // A line inserted in the first function's body, as ep2's: every node after it moves, and no child's index but
+    // the function's own.
+    s.write("a.py", &big.replacen("def f0():\n", "def f0():\n    x = 1\n", 1));
+    let moved = s.edit("a line inserted above every node but one function's");
+    assert!(!moved.report.cross_again.contains_key(maintain::THRESHOLD), "R4: a line inserted is maintained: {:?}", moved.report.cross_again);
+    assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
+}
+
 /// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. Each line is led by its
 /// driver's delta, a negated read's too: its delta read positively first, the body planned with its variables bound.
 /// Left where the plan tested it, a negated read's line walked its other reads whole (the data layer's 2-file edit
