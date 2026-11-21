@@ -597,7 +597,8 @@ impl ProgramPass for FoldOwn<'_> {
             .chain(f.answers().iter().filter(|&&(_, by)| f.is_input(v.rel_name(by))).map(|&(q, _)| v.rel_name(q).to_owned()))
             .collect();
         let diffed = Diffed::new(v, &folded, &read, &narrowing, &requests, narrow);
-        let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, diffed: &diffed, narrow, wide, plain: &plain };
+        let twins = twins(v, &folded);
+        let mut rules = Folding { twins: &twins, folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, diffed: &diffed, narrow, wide, plain: &plain };
         w.derive()?;
         w.apply(cx, &mut rules, &crate::code_rule_dsl::logic::program_image::manager::Select::All)?;
         // The fields edited in the same derivation.
@@ -696,6 +697,9 @@ impl ProgramPass for FoldOwn<'_> {
 
 /// `FoldOwn`'s edit of each rule.
 struct Folding<'a> {
+    /// A rule's wide twins (`twin_key`): rules of the same head that read an annotation's copy where it reads the
+    /// original, by their text with each copy named as its original; each with those literals so named.
+    twins: &'a HashMap<String, Vec<BTreeSet<String>>>,
     folded: &'a HashMap<String, String>,
     /// Each tree axis over a copied kind set, and the original set's axis.
     axes: &'a BTreeMap<String, String>,
@@ -747,6 +751,11 @@ impl RulePass for Folding<'_> {
             rw.plain.insert(a, n);
             rw.ids.insert(a, id);
         }
+        if !copy && sees && !rw.original
+            && let Some(step) = self.beside_twin(v, r, head, &rw, out)?
+        {
+            return Ok(step);
+        }
         let step = out.rewrite(&mut rw)?;
         if copy && self.diffed.of.contains(head) {
             self.diffed.write(v, r, head, &rw, out)?;
@@ -761,6 +770,113 @@ impl RulePass for Folding<'_> {
     fn finish(&mut self, _cx: &Cx<'_>, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>) -> Result<()> {
         self.diffed.finish(b, self.narrow, self.wide)
     }
+}
+
+impl<'a> Folding<'a> {
+    /// Rule `r` of `head` (not widened, reading narrow) beside a wide twin: a rule of the same head that reads an
+    /// annotation's copy (folded, so the original whole) where `r` reads the original (so its narrow copy), and is `r`
+    /// otherwise. A row `r` derives that the twin does not reads, at one of those places, a row the narrow copy holds
+    /// and the original does not (`rr_added_`), or for a negation one the original holds and the copy does not
+    /// (`rr_gone_`). So `r` is written once a place, that place read as its delta: the deltas' rows, not the tree's.
+    /// Where the places' originals are not all diffed, or one reaches `head` (its delta's negation would close a
+    /// cycle), `None`: written whole.
+    fn beside_twin(&self, v: &Version, r: RuleRef<'_>, head: &str, rw: &Fold<'a, '_>, out: &mut RuleOut<'_, '_>) -> Result<Option<Step>> {
+        let Some(sets) = self.twins.get(&twin_key(v, r, &|n| n.to_owned())) else { return Ok(None) };
+        let mut places: Vec<(usize, String)> = Vec::new();
+        let mut at = 0;
+        for l in r.body() {
+            let (a, agg) = match l.view() {
+                Lit::Atom(a) => (a, false),
+                Lit::Agg { atom, .. } => (atom, true),
+                _ => continue,
+            };
+            let rel = v.rel_name(a.rel());
+            let text = v.show_lit(r, l);
+            if self.read.contains(rel) && sets.iter().any(|t| t.contains(&text)) {
+                if agg || !self.diffed.of.contains(rel) || self.diffed.reaches(rel, head) || self.diffed.reaches(&narrow_name(rel), head) {
+                    return Ok(None);
+                }
+                places.push((at, if a.neg() { gone_name(rel) } else { added_name(rel) }));
+            }
+            at += 1;
+        }
+        if places.is_empty() {
+            return Ok(Some(Step::Drop));
+        }
+        let mut step = Step::Drop;
+        for (i, (place, delta)) in places.into_iter().enumerate() {
+            let mut f = Fold { v, at: rw.at, original: false, narrow_reads: true, head: None, changed: true, plain: rw.plain.clone(), ids: rw.ids.clone(), renames: vec![(place, delta)], atoms: 0 };
+            let s = out.rewrite(&mut f)?;
+            if i == 0 {
+                step = s;
+            }
+        }
+        Ok(Some(step))
+    }
+}
+
+/// A rule's text with each relation named by `name`, its body's literals in order: the key of its wide twins.
+fn twin_key(v: &Version, r: RuleRef<'_>, name: &dyn Fn(&str) -> String) -> String {
+    let head = rename_rels(&v.show_atom(r, r.head()), name);
+    let mut lits: Vec<String> = r.body().map(|l| rename_rels(&v.show_lit(r, l), name)).collect();
+    lits.sort_unstable();
+    format!("{head} :- {}", lits.join(", "))
+}
+
+/// Each rule that reads an annotation's copy (`folded`), by its text with the copies named as their originals
+/// (`twin_key`), and its literals that read one, so named.
+fn twins(v: &Version, folded: &HashMap<String, String>) -> HashMap<String, Vec<BTreeSet<String>>> {
+    let name = |n: &str| folded.get(n).cloned().unwrap_or_else(|| n.to_owned());
+    let mut out: HashMap<String, Vec<BTreeSet<String>>> = HashMap::new();
+    for r in v.rules() {
+        if folded.contains_key(v.rel_name(r.head().rel())) {
+            continue;
+        }
+        let lits: BTreeSet<String> = r
+            .body()
+            .filter(|l| l.atom().is_some_and(|a| folded.contains_key(v.rel_name(a.rel()))))
+            .map(|l| rename_rels(&v.show_lit(r, l), &name))
+            .collect();
+        if !lits.is_empty() {
+            out.entry(twin_key(v, r, &name)).or_default().push(lits);
+        }
+    }
+    out
+}
+
+/// A rule's or literal's text with each relation's name (an identifier outside a string, not a variable) `name`d.
+fn rename_rels(text: &str, name: &dyn Fn(&str) -> String) -> String {
+    let b = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'"' {
+            let mut j = i + 1;
+            while j < b.len() && b[j] != b'"' {
+                j += if b[j] == b'\\' { 2 } else { 1 };
+            }
+            let j = (j + 1).min(b.len());
+            out.push_str(&text[i..j]);
+            i = j;
+        } else if c.is_ascii_alphabetic() || c == b'_' {
+            let mut j = i;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            let word = &text[i..j];
+            if i > 0 && matches!(b[i - 1], b'$' | b'#' | b'@') {
+                out.push_str(word);
+            } else {
+                out.push_str(&name(word));
+            }
+            i = j;
+        } else {
+            out.push(c as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// The name of `orig` as hiding left it, for the rules that read it and are not its own (`Narrowing`).
@@ -1058,6 +1174,8 @@ pub(super) struct Diffed {
     doc: Option<(String, String)>,
     /// Each diffed original's recursive component (its own included): the originals it reads that read it.
     scc: HashMap<String, BTreeSet<String>>,
+    /// The program as written, each copy a node: who reads whom.
+    edges: HashMap<String, BTreeSet<String>>,
 }
 
 /// The most reads of its component a diffed rule may make: an addition's rule is one per way of reading each.
@@ -1142,7 +1260,7 @@ impl Diffed {
     fn new(v: &Version, folded: &HashMap<String, String>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, requests: &BTreeSet<String>, narrow: i64) -> Diffed {
         let node = v.columns_of("kind").and_then(|c| c.first().cloned());
         let doc = v.columns_of("docof").and_then(|c| c.get(1).cloned());
-        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new() };
+        let mut out = Diffed { of: BTreeSet::new(), read: read.clone(), cols: HashMap::new(), node, doc, scc: HashMap::new(), edges: HashMap::new() };
         if std::env::var("RERAIL_NARROW_DIFF").is_ok_and(|x| x == "off") || out.node.is_none() || out.doc.is_none() || read.is_empty() {
             return out;
         }
@@ -1282,7 +1400,25 @@ impl Diffed {
         out.cols = of.iter().map(|x| (x.clone(), v.columns_of(x).expect("shaped"))).collect();
         out.scc = scc.into_iter().filter(|(x, _)| of.contains(x)).collect();
         out.of = of;
+        out.edges = edges;
         out
+    }
+
+    /// Whether `from` reads `to`, through any number of rules.
+    fn reaches(&self, from: &str, to: &str) -> bool {
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        let mut todo = vec![from];
+        while let Some(n) = todo.pop() {
+            for m in self.edges.get(n).into_iter().flatten() {
+                if m == to {
+                    return true;
+                }
+                if seen.insert(m) {
+                    todo.push(m);
+                }
+            }
+        }
+        false
     }
 
     /// Rule `r` of diffed original `head` (its wide rule written already): its candidates' rules, and its recheck.
