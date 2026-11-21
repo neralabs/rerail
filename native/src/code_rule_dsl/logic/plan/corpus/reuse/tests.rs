@@ -201,7 +201,7 @@
     /// read there is left out of it without being listed (`reuse::measures_only`).
     #[test]
     fn every_switch_a_profile_reads_is_left_out_of_the_runs_key() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let dirs = [root.join("src/code_rule_dsl/logic/profile"), root.join("crates/prof/src")];
         let mut files = vec![root.join("src/code_rule_dsl/logic/profile.rs")];
         for d in dirs {

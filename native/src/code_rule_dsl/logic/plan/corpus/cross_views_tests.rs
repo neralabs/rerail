@@ -185,7 +185,7 @@ fn r4_no_base_relation_is_kept() {
 fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     use crate::code_rule_dsl::logic::profile;
     let mut c = Corpus::new("r4-stats");
-    // The run resets the profile as it starts; the test's scope keeps its records after (decision 0442).
+    // The decisions are the run's (decision 0442): the test holds the run they are read in, which each run joins.
     let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     profile::set(true);
     let mut inside = false;

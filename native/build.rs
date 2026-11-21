@@ -13,6 +13,12 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // A debug CLI run compiling sources.rerail exhausts the default 1 MiB main-thread stack.
+        println!("cargo:rustc-link-arg-bin=rerail-engine=/STACK:8388608");
+    }
     check_compiler_cache();
     // The browser build (wasm32-wasip1) is no Node addon: napi-build would want emnapi.
     if !std::env::var("TARGET")
@@ -181,6 +187,30 @@ fn is_checkout(directory: &Path) -> bool {
 /// dependency, so a stored clause result is only reused by the build that would compute it.
 /// `RERAIL_GRAMMAR_BUILD_ID` covers the parser and grammar versions a stored tape was parsed with.
 /// The language registry is engine source: which dialects a language spans and what it supports.
+/// The workspace crates `manifest`'s crate depends on by path (`path = "..."` naming a directory with a `Cargo.toml`),
+/// and theirs, transitively; not the vendored crates, whose versions the lock pins. Each directory once, in order.
+fn path_crates(manifest: &Path) -> Vec<PathBuf> {
+    let own = manifest.canonicalize().expect("the manifest directory");
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut pending = vec![own.clone()];
+    while let Some(dir) = pending.pop() {
+        let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else { continue };
+        for line in text.lines() {
+            let Some(at) = line.find("path = \"") else { continue };
+            let rest = &line[at + "path = \"".len()..];
+            let Some(end) = rest.find('"') else { continue };
+            let Ok(dep) = dir.join(&rest[..end]).canonicalize() else { continue };
+            if !dep.join("Cargo.toml").is_file() || dep == own || dep.components().any(|c| c.as_os_str() == "vendor") || seen.contains(&dep) {
+                continue;
+            }
+            seen.push(dep.clone());
+            pending.push(dep);
+        }
+    }
+    seen.sort();
+    seen
+}
+
 fn build_identities(registry: &[(String, Vec<u8>)]) {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let lock = manifest
@@ -200,6 +230,33 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
         engine.update([0]);
         engine.update(std::fs::read(path).expect("engine source is readable"));
         engine.update([0]);
+    }
+    // The workspace crates the engine reaches by path are its code too: the lock names them, not what they hold, so a
+    // change to one (the accelerator's pool, a device crate) kept the id, and what the id keys (a stored clause
+    // result, the test stores' template) outlived the build that made it.
+    let root = manifest.canonicalize().expect("the manifest directory");
+    let root = root.parent().expect("workspace root");
+    for krate in path_crates(&manifest) {
+        let mut files = Vec::new();
+        for part in ["src", "build.rs", "Cargo.toml"] {
+            let at = krate.join(part);
+            if at.is_dir() {
+                collect_sources(&at, &mut files);
+            } else if at.is_file() {
+                files.push(at.clone());
+            }
+            if at.exists() {
+                println!("cargo:rerun-if-changed={}", at.display());
+            }
+        }
+        files.sort();
+        for path in &files {
+            let relative = path.strip_prefix(root).expect("a path crate under the workspace root");
+            engine.update(relative.to_string_lossy().as_bytes());
+            engine.update([0]);
+            engine.update(std::fs::read(path).expect("path crate source is readable"));
+            engine.update([0]);
+        }
     }
     for (path, bytes) in registry {
         engine.update(path.as_bytes());

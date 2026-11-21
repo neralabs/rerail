@@ -140,7 +140,7 @@ fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTre
     install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
 }
 
-/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0500). None is
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
 /// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
 /// costs a join of its own and restricts nothing).
 pub(super) fn install_named(

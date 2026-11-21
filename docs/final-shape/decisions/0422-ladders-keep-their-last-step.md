@@ -31,3 +31,6 @@ steps against the engine) run on the steps that remain. The `.rr` tests that ope
 (`refuse M in L`) and step 12 (`reread R`) open step 22, which has both.
 
 The last removed commit with every step: `d3070e67c`.
+
+Since roll-up 20 (2026-11-20, 0484): Kotlin keeps no ladder. Its last step is the grammar itself,
+`kotlin_parser/kotlin.bitlex`, with no step number.

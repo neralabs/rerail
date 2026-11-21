@@ -2113,7 +2113,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2549,7 +2552,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2662,7 +2668,10 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))
     .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2904,7 +2913,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3085,7 +3097,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {

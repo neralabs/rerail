@@ -114,7 +114,7 @@ fn a_frozen_relations_orders_are_in_its_blocks_directory() {
     let r = ib.relation();
     // Column 1 asked for, the dedup order became `[1, 0]` (`Rel::want`): one order, found by its key.
     let i = r.find_order(&[1, 0], n as u32).expect("the order on [1, 0] in the directory");
-    assert_eq!(rerail_blocks::relation::Relation::order_rows(r.index(i)), n, "every row, in one run");
+    assert_eq!(rerail_blocks::relation::Relation::order_rows(r.index_at(i)), n, "every row, in one run");
     assert_eq!(r.orders().count(), rel.chains.len(), "every order kept is in the directory");
     assert!(!rel.chains.is_empty() && rel.chains.iter().all(|o| o.runs() == 1 && o.borrowed()), "handles to the block's orders, one run each");
     // A probe through the order on column 1 finds its row.

@@ -289,7 +289,7 @@ fn compile_failed(what: &str, error: impl std::fmt::Debug) -> ! {
 }
 
 pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
-    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    let builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[]), default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     let mut signature = module.make_signature();
     signature

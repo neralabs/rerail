@@ -72,9 +72,14 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
     // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings.
     use crate::code_rule_dsl::logic::program_image::Cell;
     let v = &p.v;
-    let settings = v.about_facts().into_iter().find(|f| v.text(f.name()) == "setting");
+    // The program's own row (`program`, one constant row) comes with the first about row a version states (Q358), a
+    // `.message` setting's too: it says nothing of the program, so it is taken out with them, and a program whose
+    // only setting is a message keys as one with none.
+    let about = v.about_facts();
+    let settings = about.iter().find(|f| v.text(f.name()) == "setting");
+    let own = about.iter().find(|f| v.text(f.name()) == "program").map_or(0, |f| f.hash());
     hash.update(b"\0program\0");
-    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
+    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).wrapping_sub(own).to_le_bytes());
     for row in settings.into_iter().flat_map(|f| f.rows()) {
         let cells: Vec<Cell> = row.collect();
         let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned(), Cell::Branded(b) => b.to_string() };

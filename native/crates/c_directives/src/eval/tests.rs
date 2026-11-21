@@ -285,7 +285,7 @@ fn the_paste_relexer_is_the_lexers() {
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
 
-/// A unit on the device from its main file alone, in P1's rounds of lookups (decision 0501 §1):
+/// A unit on the device from its main file alone, in P1's rounds of lookups (decision 0467 §1):
 /// the last round's unit and layout, and its files' paths.
 struct OnDevice {
     unit: Unit,
@@ -305,7 +305,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// device refuses it.
 fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
     use rerail_metal::pp_expand::*;
-    // The rooms carry from round to round (decision 0503 §6).
+    // The rooms carry from round to round (decision 0486 §6).
     let mut sizes: Option<Sizes> = None;
     let r = super::rounds::run(&cfg, io, path, cpp, |u, l| {
         let mut s = sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l));
@@ -356,10 +356,13 @@ struct Ran {
     per_cap: [f64; rerail_metal::pp_expand::ROOMS],
 }
 
+/// A unit settled by the rounds (`settled_many`): its expansion and its files' tapes, or why the rounds refused it.
+type SettledUnit = Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>;
+
 /// The units whose main files are `units`' (each its files), settled in batched rounds
 /// (`rounds::run_many`) under `cfg`: each its expansion and its files' tapes, or why the rounds
 /// refused it; the runs counted in `ran`.
-fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>> {
+fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<SettledUnit> {
     let cpp = cfg.opts.cpp;
     let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
         let t0 = std::time::Instant::now();
@@ -397,7 +400,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     let (ev, got, out) = lookups(&d.unit, &d.lay).unwrap();
     same(out.flags, 0, format!("{what}: P1's refusals"));
     same(out.requests.len(), 0, format!("{what}: the last round's requests"));
-    // R1, R3 and R5 of decision 0501: the tree the device grew, its layout and its activity are
+    // R1, R3 and R5 of decision 0467: the tree the device grew, its layout and its activity are
     // the spike's: every live instance's directives and stretches, by slot, with their file's
     // path, their index in it, and whether they are active.
     let dirs_of = |f: usize| (if f + 1 < ev.dir_bases.len() { ev.dir_bases[f + 1] } else { ev.rows.len() as u32 }) - ev.dir_bases[f];
@@ -450,7 +453,7 @@ fn lookups_agree(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::File
     Ok([got.len(), defs, builtins])
 }
 
-/// R4 of decision 0501: every `#if` and `#elif` is decided on the device as the serial pass's
+/// R4 of decision 0467: every `#if` and `#elif` is decided on the device as the serial pass's
 /// `if_value` decides it. Each expression below chooses its own text (`t` or `f` and its index),
 /// and the unit's output is the serial pass's, in C and C++. The expressions cover each operator
 /// and its precedence, the unsigned rules, the short circuits (a division by zero not evaluated
@@ -508,7 +511,7 @@ fn if_values_are_the_serial_passes() {
     }
 }
 
-/// R5 of decision 0501 (literal names): the device grows the include tree from the main file
+/// R5 of decision 0467 (literal names): the device grows the include tree from the main file
 /// alone, in rounds, and it is the spike's (checked inside `lookups_agree`: every live
 /// instance's directives and stretches by slot, with their file, and every name's meaning).
 /// Quoted names found by the includer's directory and by the search, `<…>` names, a quoted name
@@ -540,7 +543,7 @@ fn the_include_tree_is_the_spikes() {
     }
 }
 
-/// R5 of decision 0501 (expanded names, step 6): an include whose name is a macro's expansion,
+/// R5 of decision 0467 (expanded names, step 6): an include whose name is a macro's expansion,
 /// and a header test whose operand is one, resolve on the device as `Pp::header_of` spells the
 /// name: a string, an object-like or function-like macro giving `<…>` (its tokens joined, a
 /// blank where space was), a stringized operand, a name defined in an earlier header, a name
@@ -568,7 +571,7 @@ fn expanded_include_names_are_the_spikes() {
     }
 }
 
-/// R7 of decision 0501: each case §6 lists, refused until step 7, gives the serial pass's
+/// R7 of decision 0467: each case §6 lists, refused until step 7, gives the serial pass's
 /// tokens on the device, in C and C++, a round of 2 launches. A call across a stretch's end (its
 /// arguments over a `#define`, an `#undef`, a conditional, a `#line`, a pragma; nested; an exit
 /// whose `(` follows a directive; in a header), `#line` and line
@@ -667,7 +670,7 @@ fn the_refused_cases_are_the_serial_passes() {
     }
 }
 
-/// R6 of decision 0501: between rounds the host only answers requests. The rounds' runner reads
+/// R6 of decision 0467: between rounds the host only answers requests. The rounds' runner reads
 /// no spike and no serial pass, decides nothing about the unit (no tree, no slots, no activity,
 /// no definition), and its loop's only calls on the files are the search and the read.
 #[test]
@@ -682,7 +685,7 @@ fn the_host_only_loads_files_between_rounds() {
     assert!(!code.contains("io.") || code.matches("io.").count() == 3, "the runner calls the files only to search and read (the main file's read, a header's search and read)");
 }
 
-/// R3 of decision 0501: the device iterates the `#ifdef` family, the chains and the groups to
+/// R3 of decision 0467: the device iterates the `#ifdef` family, the chains and the groups to
 /// their fixpoint, and every directive's and stretch's activity is the spike's (checked inside
 /// `lookups_agree`), with every name's meaning. Nested chains, `#elifdef` and `#elifndef`,
 /// `#else`, a test that depends on a definition made under an earlier test (a chain of them,
@@ -708,7 +711,7 @@ fn the_groups_are_the_spikes() {
     }
 }
 
-/// R2 of decision 0501: `push_macro` and `pop_macro` are rows of the device's table, a pop's
+/// R2 of decision 0467: `push_macro` and `pop_macro` are rows of the device's table, a pop's
 /// value the one its push saw, matched as a stack per name (the spike's `resolve_rows`): every
 /// name then means on the device what it means in the spike. Nested pushes, a push of a name not
 /// defined, a pop with no push, a push and pop across an include, other names between.
@@ -823,7 +826,7 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches)
 }
 
-/// Decisions 0468 §4 and 0502 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
+/// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
 /// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
 /// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
@@ -849,8 +852,8 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
     let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
     let (unit, lay) = (&d.unit, &d.lay);
-    let wide = rerail_metal::pp_expand::expand_at(&unit, &lay, 0, 4096).unwrap();
-    let narrow = rerail_metal::pp_expand::expand_from(&unit, &lay, 0).unwrap();
+    let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
+    let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
     assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
     same(wide.refused, 0, "the halved grid's refusals");
     same(&wide.out, &narrow.out, "the halved grid's output");
@@ -879,7 +882,7 @@ fn part_tokens(part: &rerail_metal::pp_expand::Part, files: &[Vec<u8>], tapes: &
         .collect()
 }
 
-/// R1, R2 and R4 of decision 0502: a text `_Pragma`'s `push_macro`, `pop_macro` and `once` are
+/// R1, R2 and R4 of decision 0485: a text `_Pragma`'s `push_macro`, `pop_macro` and `once` are
 /// rows the iterations read, as the serial pass carries them out. Names after a pop in the text
 /// and in an `#if`; an include after `once` skipped; a pop through a macro, from a macro's operand,
 /// in a header, in an inactive group, nested with `#pragma push_macro`; a diagnostic pragma and a
@@ -936,7 +939,7 @@ fn pragma_rows_are_the_serial_passes() {
     same(on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).err(), Some("a _Pragma that makes a row"), "a _Pragma's row in an #if");
 }
 
-/// R3 of decision 0502: `__COUNTER__` in `#if`, `#elif`, an `#include`'s name and `#line`
+/// R3 of decision 0485: `__COUNTER__` in `#if`, `#elif`, an `#include`'s name and `#line`
 /// counts with the text's uses in the serial reading's order: text before and after, two lines,
 /// an arm not read, the text's uses feeding an `#if`, a call whose arguments run over a
 /// directive that counts, a header's uses. Each in C and C++, 2 launches.
@@ -1151,7 +1154,7 @@ fn pasting_is_the_serial_passes() {
         &[("main.c", "#define G(...) g(0, ## __VA_ARGS__)\nG() G(a) G(a, b)\n")],
         &[("main.c", "#define P(x) x ## _t\n#define Q(x) P(x)\n#define N 9\nP(N) Q(N) P(int)\n")],
         &[("main.c", "#define L(x) x ## L\n#define U(x) u ## x\nL(1) L(0x1) U(8) U(\"s\")\n")],
-        // A paste that spells a definition's name takes that name's ref (decision 0503 §10): it
+        // A paste that spells a definition's name takes that name's ref (decision 0486 §10): it
         // expands, `__LINE__` in it is the call's; one no definition has, a chain whose middle no
         // definition has, one defined after it, a left that is no identifier.
         &[("main.c", "#define C(a, b) a ## b\n#define C3(a, b, c) a ## b ## c\n#define W_1 one __LINE__\n#define W_ two\nC(W_, 1) C(W_, 2) C3(W, _, 1)\nC(\nW_,\n1) C(W, _) C(V_, 1) C(1, W_)\n#define V_1 three\nC(V_, 1)\n")],
@@ -1200,7 +1203,7 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
 }
 
-/// R8 of decision 0501 (and R10 of 0448): the corpus preprocessed on the device, each file its
+/// R8 of decision 0467 (and R10 of 0448): the corpus preprocessed on the device, each file its
 /// own unit from its main file alone (empty stubs for the headers it does not have), against the
 /// serial pass. The spike is not run: the rounds decide every directive and resolve every
 /// include. Every unit gives the serial pass's tokens, none is refused (a refusal is counted by
@@ -1248,7 +1251,7 @@ fn boost_preprocessor_is_the_serial_passes() {
 }
 
 /// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0468 §4,
-/// 0502 §1).
+/// 0485 §1).
 const LAUNCHES: usize = 2;
 
 /// What `against_serial` found.
@@ -1485,7 +1488,7 @@ fn a_unit_past_its_room_runs_again_larger() {
     }
 }
 
-/// Decision 0503 §9: an argument with no macro's, built-in's or call's name in it is read in
+/// Decision 0486 §9: an argument with no macro's, built-in's or call's name in it is read in
 /// place where the body uses it, with no list made for it. Used expanded, once and twice, with
 /// `#` and `##` beside, empty, with a painted name in it, with a function-like macro's name
 /// (scanned: not flat), as the last of a variadic call and under `__VA_OPT__`, and through levels
@@ -1511,7 +1514,7 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0503 §10: the expansion's tokens no item reads again are given back between the
+/// Decision 0486 §10: the expansion's tokens no item reads again are given back between the
 /// queue's runs. Chains of 150 calls each passing a state of 120 tokens on make more tokens than
 /// rung 0 holds, while few stay live: each settles at rung 0, the serial pass's. The state passed
 /// through plain calls, through an argument scanned at each level (a dead argument's list), and
@@ -1604,6 +1607,9 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
+/// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
+/// pass's output; each room's use.
+type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);
 /// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
 /// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
 /// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
@@ -1624,7 +1630,7 @@ fn the_output_is_pieces_that_refer_to_the_text() {
 }
 
 /// `expanded`, with the run's own figures (its rooms' use).
-fn expanded_x(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]) {
+fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
     use rerail_c_pp::files::Search;
     let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
@@ -1684,11 +1690,11 @@ fn where_an_evaluations_gpu_time_goes() {
         for g in [1u64, 32] {
             let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
                 .iter()
-                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, g).unwrap().unwrap_or(f64::NAN))))
+                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap().unwrap_or(f64::NAN))))
                 .collect();
             eprintln!("{what}, {g} groups (us, cumulative): {}", t.join(", "));
             // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
-            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, g).unwrap().unwrap_or(f64::NAN))).collect();
+            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap().unwrap_or(f64::NAN))).collect();
             let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
             eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
         }

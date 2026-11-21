@@ -306,7 +306,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
@@ -748,9 +748,15 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
 
 /// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
 /// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
-/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept. The workspace is
+/// reached through a symbolic link: a unit's reads are kept under their canonical names, and the edit is named
+/// under the workspace's as given too (`Observer::changed_since`), as where the temporary directory is a link (macOS's
+/// `/var`).
 #[test]
 fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not.
+    let _switches = super::switches::reading();
     crate::install_store_functions();
     // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
     // (after the first observer, which turns it off once a process).
@@ -760,8 +766,12 @@ fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
     crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
     let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("real/sys")).unwrap();
     let ws = dir.join("ws");
-    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.join("real"), &ws).unwrap();
+    #[cfg(not(unix))]
+    let ws = dir.join("real");
     std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
     std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
     std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
@@ -867,6 +877,10 @@ unused(f) :- def(f, _), !used(f).
 /// decode one into (`front::tests::no_tree_program_comes_back`). The outputs are a run's with an empty store.
 #[test]
 fn a_maintained_run_decodes_and_copies_no_tree() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("no-trees");
     std::fs::create_dir_all(&dir).unwrap();
@@ -911,6 +925,8 @@ unused(f) :- def(f, _), !used(f).
 /// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1034,6 +1050,8 @@ reach(a, a) :- side(a), never(a).
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1563,16 +1581,23 @@ fn a_runs_output_directory_is_rerails_own() {
 /// `start` (a process a test starts, `switches::started`) while another thread holds `switch` through `switches::set`,
 /// as a test beside it does (`cross_file_rows_are_memoised_per_import_component`'s `RERAIL_INLINE_ONLY`, the session
 /// tests' `RERAIL_CROSS_K4`): the process waits for it, and takes none of it.
-fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce() -> T) -> T {
-    let (held, holding) = std::sync::mpsc::channel();
+///
+/// A test holding the switches over its runs (`switches::reading`) lets them go for this (`held`), and takes them again
+/// after: the other thread's `set` waits for every reader, the test's too, and the test waits for it to set.
+fn beside_a_switch<T>(switch: (&'static str, &'static str), held: &mut Option<super::switches::Reading>, start: impl FnOnce() -> T) -> T {
+    let reading = held.take().is_some();
+    let (held_by_other, holding) = std::sync::mpsc::channel();
     let other = std::thread::spawn(move || {
         let _switched = super::switches::set(&[switch]);
-        held.send(()).unwrap();
+        held_by_other.send(()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
     });
     holding.recv().unwrap();
     let out = start();
     other.join().unwrap();
+    if reading {
+        *held = Some(super::switches::reading());
+    }
     out
 }
 
@@ -1586,10 +1611,14 @@ fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce()
 /// wrote ("a write gathered for the store in a warm run").
 #[test]
 fn the_run_after_a_cold_one_writes_nothing() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE);
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE, &mut switches);
 }
 
 /// The same with tape values (decision 0431): a policy that parses string annotations. The warm run reads each
@@ -1598,9 +1627,9 @@ fn the_run_after_a_cold_one_writes_nothing() {
 #[test]
 fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
-    let c408 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
-    cold_then_warm(temp.path(), Some(&c408), &files);
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
 
 /// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
@@ -1616,12 +1645,12 @@ fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
     std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
-    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE);
+    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE, &mut None);
 }
 
 /// A cold run of `program` (else the pickle pack's) over `files` under `base`, then a warm one under
 /// `RERAIL_WARM=list`, which writes nothing.
-fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)]) {
+fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)], switches: &mut Option<super::switches::Reading>) {
     let src = base.join("src");
     for (path, text) in files {
         let at = src.join(path);
@@ -1665,7 +1694,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     run(false);
     let cold = manifests();
     assert!(!cold.is_empty(), "the cold run recorded its manifests");
-    beside_a_switch(("RERAIL_CROSS_K4", "off"), || run(true));
+    beside_a_switch(("RERAIL_CROSS_K4", "off"), switches, || run(true));
     let warm = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
@@ -1679,6 +1708,10 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
 /// (e70f79dab). The runs are processes of their own, as `the_run_after_a_cold_one_writes_nothing`'s are.
 #[test]
 fn a_rule_edit_over_known_files_writes_their_entries_with_no_sql_in_the_waves() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path();
     let src = base.join("src");
@@ -1725,7 +1758,7 @@ y = x{i} + 2
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
@@ -1745,6 +1778,10 @@ fn one_corpus_run_for_a_parent() {
 /// ran another plan and recorded two manifests of its own).
 #[test]
 fn a_second_run_in_one_process_records_the_first_runs_manifest() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
     let base = kept.as_deref().unwrap_or(temp.path());
@@ -1779,7 +1816,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     run(1);
     let one = manifests();
     // A process of two: the second names the same. Another test's switch is held as it is started.
-    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), || run(2));
+    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), &mut switches, || run(2));
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
@@ -1811,7 +1848,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1998,7 +2035,7 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -2348,7 +2385,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;

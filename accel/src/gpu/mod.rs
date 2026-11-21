@@ -328,7 +328,9 @@ impl Drop for RunningCount {
 }
 
 /// A batch of programs running on the lanes' pool ([`crate::exec::lane_spawn`]).
-struct Running(std::sync::mpsc::Receiver<(std::thread::Result<Result<Vec<Output>, String>>, f64)>);
+struct Running(std::sync::mpsc::Receiver<Ran>);
+/// A batch's outputs (or why it failed, or its panic) and the CPU its thread spent.
+type Ran = (std::thread::Result<Result<Vec<Output>, String>>, f64);
 
 impl crate::exec::Pending for Running {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
@@ -381,10 +383,10 @@ impl GpuBackend {
         let t = std::time::Instant::now();
         let mut outs = Vec::with_capacity(jobs.len());
         for (i, j) in jobs.into_iter().enumerate() {
-            if let Some(bad) = &j.bad {
-                if read::<u32>(bad, 1)[0] != 0 {
-                    return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
-                }
+            if let Some(bad) = &j.bad
+                && read::<u32>(bad, 1)[0] != 0
+            {
+                return Err(format!("launch {i} ({}): a code is not below the width", ks[i].form().name()));
             }
             outs.push(match j.read {
                 Read::Ready(o) => o,

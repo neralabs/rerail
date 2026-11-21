@@ -66,8 +66,12 @@ typedef decltype(sizeof 0) size_t;
 #undef UKL_CPU_BACKEND
 
 // The GPU languages' built-in math the kernels call: Metal's and CUDA's `min`, `max`, `fma`, `sqrt`.
-template <typename A, typename B> static inline auto min(A a, B b) -> decltype(a < b ? a : b) { return b < a ? b : a; }
-template <typename A, typename B> static inline auto max(A a, B b) -> decltype(a < b ? a : b) { return a < b ? b : a; }
+// `min` and `max` return a value of the operands' common type. A `decltype(a < b ? a : b)` return type is a
+// reference when both have one type (the conditional of two lvalues is one), to a parameter of the call: a dangling
+// reference, read after the call's frame is gone, which optimized code had reused (Q441: weights read as
+// `weightBits`, then a split's index of -1).
+template <typename A, typename B> static inline auto min(A a, B b) { return b < a ? b : a; }
+template <typename A, typename B> static inline auto max(A a, B b) { return a < b ? b : a; }
 static inline float fma(float a, float b, float c) { return __builtin_fmaf(a, b, c); }
 static inline double fma(double a, double b, double c) { return __builtin_fma(a, b, c); }
 static inline float sqrt(float x) { return __builtin_sqrtf(x); }

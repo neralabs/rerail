@@ -1302,15 +1302,16 @@ impl ProgramPass for InlineFilters {
         if bodies.is_empty() {
             return Ok(());
         }
-        let mut fresh = 0usize;
         let mut out: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = Vec::new();
-        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = v
+        // Each rule with how many inlinings made it: a definition's variables are renamed apart by that count
+        // (`_f<k>`), the rule's own: their names follow neither the program's order of rules nor its definitions'.
+        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>, usize)> = v
             .rules()
             .filter(|r| !bodies.contains_key(v.rel_name(r.head().rel())))
-            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect()))
+            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect(), 0))
             .collect();
         work.reverse();
-        while let Some((rule, body)) = work.pop() {
+        while let Some((rule, body, depth)) = work.pop() {
             let at = body.iter().position(|x| matches!(x, FLit::Placed(p) if matches!(p.lit.view(), Lit::Atom(a) if !a.neg() && bodies.contains_key(rel_of(a)))));
             let Some(at) = at else {
                 out.push((rule, body));
@@ -1318,8 +1319,8 @@ impl ProgramPass for InlineFilters {
             };
             let FLit::Placed(read_p) = body[at].clone() else { unreachable!("a read") };
             let Lit::Atom(read) = read_p.lit.view() else { unreachable!("a read") };
+            let fresh = depth + 1;
             for &def in &bodies[rel_of(read)] {
-                fresh += 1;
                 // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
                 // an equality.
                 let mut local: BTreeSet<Slot> = head_slots(def);
@@ -1346,7 +1347,7 @@ impl ProgramPass for InlineFilters {
                 }
                 let mut c = body.clone();
                 c.splice(at..=at, inlined);
-                work.push((rule, c));
+                work.push((rule, c, fresh));
             }
         }
         let input = w.input().clone();

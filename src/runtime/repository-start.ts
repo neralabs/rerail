@@ -21,6 +21,8 @@ import { checkouts, events, repositories, sessions } from "../engine/storage/sch
 import { holdsTable } from "../engine/storage/table-probe.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
+import { collectAnalysisCaches, queueAnalysisScopeReleases, settleAnalysisScopeReleases } from "../engine/native/analysis-scope.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
@@ -121,9 +123,9 @@ export function sessionNoteRules(workspace: string, databasePath = defaultRerail
 }
 
 /**
- * The effective state of many workspaces over one open connection, as the daemon answers per request. Each
- * workspace's git location is read once; the database is read on every call. With `spelling`, the folder as a Windows
- * host spelt it, also the start or stop Rerail 0.1.4 saved under it ({@link spelledCheckout}).
+ * The effective state of many workspaces over one open connection, as the daemon answers per request: each call
+ * resolves the workspace's current checkout and reads its start state. With `spelling`, the folder as a Windows host
+ * spelt it, also the start or stop Rerail 0.1.4 saved under it ({@link spelledCheckout}).
  */
 export function startStateReader(database: RerailDatabase): (workspace: string, spelling?: string) => RepositoryStartState {
   const resolveCheckout = createCheckoutResolver(database);
@@ -135,8 +137,7 @@ export function startStateReader(database: RerailDatabase): (workspace: string, 
 
 /**
  * The per-event check of a resident runtime. OMP and Pi sessions outlive a stop issued from another
- * session, the CLI or the dashboard, so they read the state again on every event: a few indexed rows
- * over a connection held for the runtime's life.
+ * session, the CLI or the dashboard. They check the current checkout and its settings on every event.
  */
 export class RepositoryStartWatch {
   readonly #database: RerailDatabase;
@@ -241,6 +242,10 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
   database.transaction(tx => {
     tx.update(repositories).set({ started, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
+    if (!started) {
+      const directories = tx.select({ directory: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all();
+      queueAnalysisScopeReleases(tx, directories.map(({ directory }) => directory), database.$client.name);
+    }
     clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -251,6 +256,7 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
+    if (!started) queueAnalysisScopeReleases(tx, [checkout.checkoutPath], database.$client.name);
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -323,14 +329,27 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
   let steered: readonly string[];
+  const settleLocalRelease = () => {
+    if (isMainRerailBuild()) return;
+    try {
+      settleAnalysisScopeReleases(databasePath, -1);
+    } catch (error) {
+      process.stderr.write(`rerail: analysis scope release is pending: ${String(error)}\n`);
+    }
+    void collectAnalysisCaches(databasePath).catch(error => process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`));
+  };
   try {
     const known = lookupCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, known));
     if (known === undefined) {
+      database.transaction(tx => queueAnalysisScopeReleases(tx, [workspace], database.$client.name), { behavior: "immediate" });
+      settleLocalRelease();
       io.say(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with ${startCommand}.`);
       return previous;
     }
-    setStarted(database, recordCheckout(database, workspace), false, wholeRepository);
+    const checkout = recordCheckout(database, workspace);
+    setStarted(database, checkout, false, wholeRepository);
+    settleLocalRelease();
     const session = options.session;
     steered = session?.sessionId === undefined ? [] : sessionSteeredRules(database, session.host, session.sessionId);
   } finally {

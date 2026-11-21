@@ -14,7 +14,9 @@
 # directory, and WSL's VM) from one process list a sample, with a process's parent and command line
 # asked of CIM once, when it is first seen.
 $ErrorActionPreference = "SilentlyContinue"
-(Get-Process -Id $PID).PriorityClass = "Idle"
+# Below the farm's jobs, not Idle: under a Windows test run's load an Idle process got no CPU at all,
+# even with half the machine free, and stopped in its setup with no sample sent.
+(Get-Process -Id $PID).PriorityClass = "BelowNormal"
 $PERIOD = 3.0
 $LIFETIME = 600
 $out = [Console]::Out

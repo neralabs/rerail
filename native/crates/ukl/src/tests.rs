@@ -4,7 +4,7 @@ use std::process::Command;
 
 /// `forest/src`, where MLDB's tree is.
 fn forest() -> String {
-    format!("{}/../../../forest/src", env!("CARGO_MANIFEST_DIR"))
+    format!("{}/../../../forest/src", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
 }
 
 /// The tokens of preprocessed text, its `#` lines (line markers, pragmas) left out.
@@ -37,7 +37,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
         c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     }
     c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir())).arg(format!("-I{f}/mldb/block/ukl"));
-    c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
+    c.arg(format!("-I{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -65,7 +65,7 @@ fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
 /// Each library header alone, for each backend: it takes what it needs by `#include`, and preprocesses as clang does.
 #[test]
 fn every_library_header_stands_alone_on_every_backend() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Cpu, Backend::OpenCl] {
         // A body is included by its header, with its parameters, and refuses to stand alone.
         for (name, _) in LIBRARY.iter().filter(|(n, _)| !n.starts_with("ukl/body/")) {
@@ -79,7 +79,7 @@ fn every_library_header_stands_alone_on_every_backend() {
 /// front end accepts: with the SIMD group emulated (width 32), and at width 1.
 #[test]
 fn every_library_header_is_opencl_c_1_2() {
-    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    let dir = format!("{}/lib", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let tmp = std::env::temp_dir().join(format!("rerail-ukl-cl-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     for width in ["32u", "8u", "1u"] {

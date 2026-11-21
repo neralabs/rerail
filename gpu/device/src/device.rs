@@ -247,7 +247,7 @@ impl Device {
     pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
         let cores = self.gpu_cores()? as u64;
         let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
-        let by_memory = if local == 0 { by_threads } else { (self.max_threadgroup_memory() / local).max(1) };
+        let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));
         Some(cores * by_threads.min(by_memory))
     }
 

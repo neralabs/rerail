@@ -1,5 +1,5 @@
-// The release build of the native engine for one target: package.yml's native job, release-cache.yml (the cargo cache
-// it restores, built by the same command) and ci.yml's build job (the Linux x64 engine every test job runs).
+// The release build of the native engine for one target: package.yml's native job, release-cache.yml (the compile cache
+// store it starts from, built by the same command) and ci.yml's build job (the Linux x64 engine every test job runs).
 //
 //   node scripts/build/release-engine.mjs <target>
 //

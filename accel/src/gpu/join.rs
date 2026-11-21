@@ -737,7 +737,7 @@ pub struct Keyed {
     nruns: Held,
     /// Columns 1.. in the sorted order (column 0 is the runs' keys).
     others: Vec<Column>,
-    /// The screen of its keys (decision 0500): a probe tests a left key with a hash and one load before its search
+    /// The screen of its keys (decision 0488): a probe tests a left key with a hash and one load before its search
     /// of the runs, and one the screen refuses has no pairs. Made in the sort's submission from the runs where the
     /// sort has `SCREENED_ROWS` rows, or a column's kept filter bound where it lies (`screen_by`).
     screen: Option<Screen>,
@@ -787,7 +787,7 @@ fn screen_reads() -> String {
     format!(
         r#"{reads}
 // Whether the screen (a `bloom::Bloom` at byte `at` of `f`; none at NO_SCREEN) may hold `key`: a hash and one load.
-// A key it refuses is in no run (decision 0500).
+// A key it refuses is in no run (decision 0488).
 UKL_INLINE bool join_may_hold(UKL_GLOBAL const uint8_t* f, uint32_t at, uint64_t key)
 {{
   if (at == 0xffffffffu) return true;
@@ -900,7 +900,7 @@ impl Keyed {
         f64::from_bits(self.gpu.load(std::sync::atomic::Ordering::Relaxed))
     }
 
-    /// Screens its probes by a column's kept filter (decision 0500): a `bloom::Bloom` at byte `at` of `buffer` (its
+    /// Screens its probes by a column's kept filter (decision 0488): a `bloom::Bloom` at byte `at` of `buffer` (its
     /// block's), kept bound while `keep` lives, which must hold every key of its column 0. It takes the place of the
     /// screen the sort made, if any: the device reads the host's filter where it lies.
     pub fn screen_by(&mut self, buffer: Buffer, at: usize, keep: Box<dyn std::any::Any + Send + Sync>) {
@@ -997,7 +997,7 @@ pub fn encode_sorted_pairs(pass: &Pass, pairs: &Held, n: usize, first_bits: u32,
     pass.run(&narrow, &[&words.buffer, &lead.buffer], &[nn, u32::from(width == Width::W64), second_bits], &[], groups(n));
     pass.run(&init, &[&lead.buffer, &keys_a.buffer, &idx_a.buffer], &[nn], &[], groups(n));
     radix_sort(pass, width, [&keys_a.buffer, &idx_a.buffer], [&keys_b.buffer, &idx_b.buffer], n, bits, &space);
-    let order = if passes % 2 == 0 { &idx_a } else { &idx_b };
+    let order = if passes.is_multiple_of(2) { &idx_a } else { &idx_b };
     pass.run(&gather, &[&words.buffer, &order.buffer, &out.buffer], &[nn], &[], groups(n));
     keep.extend([lead, keys_a, keys_b, idx_a, idx_b]);
     keep.extend(owned);
@@ -1035,7 +1035,7 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
     let passes = bits.div_ceil(8);
     let perm = Held::new(4 * n)?;
     let other = scratch(IDX, 4 * n)?;
-    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes % 2 == 0 { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
+    let (idx_a, idx_b): (&Buffer, &Buffer) = if passes.is_multiple_of(2) { (&perm.buffer, &other) } else { (&other, &perm.buffer) };
     let starts = Held::new(4 * (n + 1))?;
     let rkeys = Held::new(kb * n)?;
     let nruns = Held::new(4)?;
@@ -1048,7 +1048,7 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
         let nn = n as u32;
         pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
         radix_sort(pass, key, [&keys_a, idx_a], [&keys_b, idx_b], n, bits, &space);
-        let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
+        let keys = if passes.is_multiple_of(2) { &keys_a } else { &keys_b };
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
@@ -1095,7 +1095,7 @@ pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> 
 /// submission. Per column: the radix sort with its runs (`encode_sort`), a value's count its run's length;
 /// `col_stats` reduces the lengths a tile a threadgroup, `col_sum` the tiles'; a second sort of the lengths gives
 /// the longest runs (`col_top`). The host reads one small buffer a column. Exact, as the CPU's batch is. A column's
-/// keys are not made here: the statistics read the column's own (`logic::bloom::Keys`, decision 0500).
+/// keys are not made here: the statistics read the column's own (`logic::bloom::Keys`, decision 0488).
 ///
 /// A column the device holds (`StatCol::Device`) is not read by the host: its span is found on the device
 /// (`col_span`, `col_base`, `col_narrow`), and its keys sorted 32 bits wide. A column whose span passes 32 bits is made again in a second
@@ -1787,7 +1787,7 @@ mod tests {
             let mut keep = Vec::new();
             encode_sorted_pairs(&pass, &pairs, n, fb, sb, &out, &mut keep).unwrap();
             pass.commit_wait().unwrap();
-            let got: Vec<(u32, u32)> = read(&out, 2 * n).chunks_exact(2).map(|p| (p[0], p[1])).collect();
+            let got: Vec<(u32, u32)> = read(&out, 2 * n).as_chunks::<2>().0.iter().map(|p| (p[0], p[1])).collect();
             let mut want: Vec<(u32, u32)> = want_in.iter().map(|p| (p[0], p[1])).collect();
             want.sort_unstable();
             assert_eq!(got, want, "{n} pairs of {fb} and {sb} bits");
@@ -1834,7 +1834,7 @@ mod tests {
         assert_eq!(got, want);
     }
 
-    /// Decision 0500, one format: the device's screen of a sort's keys is, word for word, the filter the host makes of
+    /// Decision 0488, one format: the device's screen of a sort's keys is, word for word, the filter the host makes of
     /// them in a block (`rerail_blocks::bloom`), and a sort screened by that host filter, bound where it lies, gives a
     /// probe the host join's pairs, alone and in the fused dispatch (which tests a sort's screen too), as does the
     /// sort's own screen.
@@ -1890,19 +1890,23 @@ mod tests {
         }
     }
 
-    /// Decision 0500: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
-    /// its runs. A probe whose keys mostly miss (2,000,000 left keys, 1% of them among 200,000 or 4,000,000 right
-    /// ones, the others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without
-    /// it; its device time is printed for both.
+    /// Decision 0488: a sort of `SCREENED_ROWS` rows or more is screened by its runs' filter, made on the device from
+    /// its runs. A probe whose keys mostly miss (60,000 left keys, 1% of them among 8,192 or 65,536 right ones, the
+    /// others between them; 16 and 64-bit sorts) finds the host join's pairs with the filter and without it. The
+    /// filter at its most words (`screen_words`' clamp, 4,000,000 rows) is the same kernel at another size: its sizes
+    /// are held below, not sorted here (a sort of millions on the CPU backend took 155 s, a test's seconds many times).
     #[test]
     fn a_screened_probe_finds_the_hosts_pairs() {
+        assert_eq!(screen_words(4_000_000), Some(1 << 19));
+        assert_eq!(screen_words(65_536), Some(8192));
+        assert_eq!(screen_words(1 << 23 | 1), None);
         if device().is_err() {
             return;
         }
-        for (nr, modulus, high) in [(200_000, 60_000, 0), (200_000, 1 << 50, -(1 << 55)), (4_000_000, 1 << 50, -(1 << 55))] {
+        for (nr, modulus, high) in [(8192, 60_000, 0), (8192, 1 << 50, -(1 << 55)), (65_536, 1 << 50, -(1 << 55))] {
             // The right's keys even, the left's misses odd and among them: a miss's search ends anywhere in the runs.
             let right: Vec<i64> = rows(nr, 21, modulus, high).into_iter().map(|v| v & !1).collect();
-            let mut left: Vec<i64> = rows(2_000_000, 22, modulus, high).into_iter().map(|v| v | 1).collect();
+            let mut left: Vec<i64> = rows(60_000, 22, modulus, high).into_iter().map(|v| v | 1).collect();
             for (i, l) in left.iter_mut().enumerate().filter(|(i, _)| i % 100 == 0) {
                 *l = right[i % right.len()];
             }
@@ -1913,8 +1917,8 @@ mod tests {
             let column = || vec![Column::upload(&left).unwrap()];
             let (with, without) = (probe(&column(), &screened, 0).unwrap(), probe(&column(), &plain, 0).unwrap());
             // Interleaved, 20 each: a probe's GPU time moves by a fifth between runs at a millisecond. The CPU backend
-            // runs the kernels on the host, where a probe of these 2,000,000 keys takes a second and its time says
-            // nothing of a device's: one each there, for the pairs alone.
+            // runs the kernels on the host, where a probe's time says nothing of a device's: one each there, for the
+            // pairs alone.
             let times = if rerail_device::device::backend() == "CPU" { 1 } else { 20 };
             let (mut gpu_with, mut gpu_without) = (Vec::new(), Vec::new());
             for _ in 0..times {
@@ -1927,7 +1931,7 @@ mod tests {
             let (mut a, mut b) = (with.pairs, without.pairs);
             a.sort_unstable();
             b.sort_unstable();
-            assert!(want.len() >= 20_000, "{} pairs", want.len());
+            assert!(want.len() >= 600, "{} pairs", want.len());
             assert_eq!(a, want);
             assert_eq!(b, want);
             println!("{nr} right rows, modulus {modulus}: {} pairs; probe GPU (median of {times}) with the filter {:.0} us, without {:.0} us", want.len(), median(&mut gpu_with), median(&mut gpu_without));

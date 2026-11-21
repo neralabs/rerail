@@ -46,6 +46,9 @@ const RUN: &str = "rr_combined_tail_run";
 /// The relation holding the read record: (path, sha256 hex, or "" for a miss).
 const READ_FILE: &str = "rr_combined_read_file";
 
+/// Paths followed during include resolution, including aliases and the implicit prelude.
+const RESOLVES: &str = "rr_combined_resolves";
+
 /// The source the entry of texts `key` is kept under: a small text naming the key.
 fn source_text(key: &[u8; 32]) -> String {
     format!("rerail/combined\0{}", hex(key))
@@ -74,13 +77,35 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(&[format!("rerail combined entry {SCHEMA}\0").as_bytes(), plan().plans[0].as_slice(), key.as_slice()].concat())
 }
 
+/// The embedded phase's text determines its source. The common program plan supplies the engine
+/// and grammar versions. The caller names this entry in the manifest of the phase that reads it.
+pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> super::Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+    let Some(store) = store else { return Ok((rr::parse_version(source)?, None)) };
+    let mut hash = Sha256::new();
+    hash.update(b"rerail/embedded-phase/v1\0");
+    hash.update(source.as_bytes());
+    let key = hash.finalize().into();
+    store.settle(&queued(&key));
+    if let Some(v) = lookup_version(store, &key)? {
+        crate::code_rule_dsl::prof::count("rr.embedded_program_hits", 1);
+        return Ok((v, Some(key)));
+    }
+    crate::code_rule_dsl::prof::count("rr.embedded_program_compiles", 1);
+    let (v, read) = rr::recording(|| rr::parse_version(source));
+    let v = v?;
+    record_version(store, "an embedded phase program", &key, &read, &v, &[]);
+    Ok((v, Some(key)))
+}
+
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
 /// whose bytes' sha256 is `sha256`. The path is in it: the files an include finds beside it are another directory's
 /// elsewhere, and the read record names this one's.
-pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, sha256: &[u8; 32]) -> [u8; 32] {
+pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, library: &std::path::Path, sha256: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail/rule-file\0");
-    hash.update(path.to_string_lossy().as_bytes());
+    hash.update(b"rerail/rule-file/v2\0");
+    hash.update(library.as_os_str().as_encoded_bytes());
+    hash.update(b"\0");
+    hash.update(path.as_os_str().as_encoded_bytes());
     hash.update(b"\0");
     hash.update(sha256);
     hash.finalize().into()
@@ -90,7 +115,9 @@ pub(in crate::code_rule_dsl) fn rule_file_key(path: &std::path::Path, sha256: &[
 /// is the entry's read record, checked as a rule file's is.
 pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail/text-header\0");
+    hash.update(b"rerail/text-header/v2\0");
+    hash.update(rr::library_root().as_os_str().as_encoded_bytes());
+    hash.update(b"\0");
     hash.update(src.as_bytes());
     hash.finalize().into()
 }
@@ -111,9 +138,31 @@ pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResul
     Ok(program_text::load_image(store, &digest)?.map(|(v, _)| v))
 }
 
+/// A process hit already checked these inputs. Match them against this store's entry and verify its program is available.
+pub(in crate::code_rule_dsl) fn retains_read(store: &ContentStore, key: &[u8; 32], files: &[LibraryFile]) -> StoreResult<bool> {
+    use crate::code_rule_dsl::prof;
+    let Some(read) = prof::time("rr.inspect.read_record", || read_record(store, key))? else { return Ok(false) };
+    if read.files != files { return Ok(false); }
+    prof::time("rr.inspect.image_available", || program_text::available(store, &read.program))
+}
+
+/// A combined program's entry as `read_record` reads it.
+pub(in crate::code_rule_dsl) struct ReadRecord {
+    pub program: [u8; 32],
+    pub files: Vec<LibraryFile>,
+    pub resolutions: Vec<(PathBuf, PathBuf)>,
+}
+
 /// The digest of the program `key`'s entry keeps, and the library files it read, when the store (or the engine's
 /// bundle) keeps one whose files all still read as recorded.
 fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 32], Vec<LibraryFile>)>> {
+    let Some(read) = read_record(store, key)? else { return Ok(None) };
+    Ok(LibraryFile::inputs_match(&read.files).then_some((read.program, read.files)))
+}
+
+/// The entry `key` keeps, as recorded (its files not checked): its program's digest, the library files it read (a miss
+/// with no digest), and the paths its includes resolved through.
+pub(in crate::code_rule_dsl) fn read_record(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<ReadRecord>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
     let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
@@ -133,18 +182,23 @@ fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 
     let Ok(facts) = program_facts::decode(&entry) else { return Ok(None) };
     let mut read = Vec::new();
     for row in facts.get(READ_FILE).into_iter().flatten() {
-        let file = match row.as_slice() {
-            [Value::Str(path), Value::Str(digest)] => LibraryFile { path: PathBuf::from(path.as_str()), sha256: unhex(digest) },
-            _ => return Ok(None),
+        let [Value::Str(path), Value::Str(digest)] = row.as_slice() else { return Ok(None) };
+        let sha256 = if digest.is_empty() {
+            None
+        } else {
+            let Some(hash) = unhex(digest) else { return Ok(None) };
+            Some(hash)
         };
-        if !file.unchanged() {
-            return Ok(None);
-        }
-        read.push(file);
+        read.push(LibraryFile { path: PathBuf::from(path.as_str()), sha256 });
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(digest) else { return Ok(None) };
-    Ok(Some((digest, read)))
+    let mut resolutions = Vec::new();
+    for row in facts.get(RESOLVES).into_iter().flatten() {
+        let [Value::Str(path), Value::Str(target)] = row.as_slice() else { return Ok(None) };
+        resolutions.push((PathBuf::from(path.as_str()), PathBuf::from(target.as_str())));
+    }
+    Ok(Some(ReadRecord { program: digest, files: read, resolutions }))
 }
 
 thread_local! {
@@ -165,6 +219,19 @@ pub(in crate::code_rule_dsl) fn read_before_the_run(key: [u8; 32]) {
 /// The rule file entries this thread read since the last outermost run took them.
 pub(super) fn take_read_before() -> Vec<[u8; 32]> {
     READ_BEFORE.with_borrow_mut(std::mem::take)
+}
+
+/// Catalogs inspect policies on a different thread, and sometimes in a different store, from execution.
+/// Only the consumer of an inspected policy names its entries in a run's manifest.
+pub fn inspect_separately<T>(inspect: impl FnOnce() -> T) -> T {
+    struct Restore(Vec<[u8; 32]>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            READ_BEFORE.with_borrow_mut(|keys| *keys = std::mem::take(&mut self.0));
+        }
+    }
+    let _restore = Restore(take_read_before());
+    inspect()
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -189,15 +256,33 @@ pub(in crate::code_rule_dsl) fn record_version(store: &ContentStore, what: &'sta
 
 /// `record_version`, naming the kept tail run it was made over or kept (`RUN`, decision 0393).
 pub(super) fn record_version_ran(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey], run: Option<[u8; 32]>) {
-    let Some(encoded) = program_text::encode_version(v) else { return };
-    record_encoded(store, what, key, read, encoded, images, run);
+    record_version_with(store, what, key, read, v, images, run, &[]);
 }
 
-fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey], run: Option<[u8; 32]>) {
+/// `record_version`, with the paths its includes resolved through (`rr_combined_resolves`), as a Git policy's include
+/// graph keeps them.
+pub(in crate::code_rule_dsl) fn record_version_resolved(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey], resolutions: &[(PathBuf, PathBuf)]) {
+    record_version_with(store, what, key, read, v, images, None, resolutions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_version_with(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey], run: Option<[u8; 32]>, resolutions: &[(PathBuf, PathBuf)]) {
+    let Some(encoded) = program_text::encode_version(v) else { return };
+    record_encoded(store, what, key, read, encoded, images, run, resolutions);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey], run: Option<[u8; 32]>, resolutions: &[(PathBuf, PathBuf)]) {
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
+    if !resolutions.is_empty() {
+        let rows = resolutions.iter().map(|(path, target)| [
+            Value::Str(path.to_string_lossy().into_owned().into()), Value::Str(target.to_string_lossy().into_owned().into()),
+        ].into()).collect();
+        facts.insert(RESOLVES.to_owned(), rows);
+    }
     let images = images.iter().filter_map(|k| k.sha256_bytes()).map(|d| [Value::Str(hex(&d).into())].into()).collect();
     facts.insert(IMAGE.to_owned(), images);
     if let Some(run) = run {

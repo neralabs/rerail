@@ -248,7 +248,7 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) r_view: u32,
     /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
     pub(in crate::code_rule_dsl) v_parent: u32,
-    /// The probed relation's screen (decision 0500): its key `screen - 1`'s column's kept filter, a
+    /// The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a
     /// `rerail_blocks::bloom::Bloom` at byte `screen_at` of the screen's buffer (the filter's block, bound where it
     /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
     pub(in crate::code_rule_dsl) screen: u32,
@@ -768,7 +768,7 @@ fn held_block(device: &rerail_device::device::Device, facts: &std::sync::Arc<cra
     Ok(Held::of_block(facts.block.device_buffer(device)?, rerail_blocks::region::whole(&facts.block), keep))
 }
 
-/// A stage's screen (decision 0500, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
+/// A stage's screen (decision 0488, `Stage::screen`): the probed relation's key `key`'s column's kept filter, a
 /// `rerail_blocks::bloom::Bloom` at byte `at` of `held` (the filter's block, bound where it lies: nothing copied).
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Screen {
@@ -1030,7 +1030,7 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
     /// Stages whose grids were sized on the device (`Scan::size`).
     pub(in crate::code_rule_dsl) sized: u32,
-    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0500).
+    /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
     pub(in crate::code_rule_dsl) screened: u32,
 }
 
@@ -1123,7 +1123,7 @@ impl Batch {
             .collect()
     }
 
-    /// `stage` screened by `screen` (decision 0500): the buffer to bind as the stage's `F` (the batch's dummy for
+    /// `stage` screened by `screen` (decision 0488): the buffer to bind as the stage's `F` (the batch's dummy for
     /// none), held by the pass that binds it (decision 0491 step 2).
     fn screen(&mut self, stage: &mut Stage, screen: Option<&Screen>) -> Buffer {
         match screen {
@@ -1836,7 +1836,7 @@ pub mod tests {
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
     }
 
-    /// Decision 0500: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
+    /// Decision 0488: a stage screened by its relation's kept filter (a `bloom::Bloom` in a block of the run's
     /// relations, bound where it lies) makes the rows it makes unscreened: a join, an anti-join and a semi-join, each
     /// keyed by a column whose filter holds every key of it. A filter of none of the keys refuses every binding: the
     /// join and the semi-join make no rows, the anti-join keeps them all (the kernels test it).
@@ -2207,7 +2207,7 @@ impl Batch {
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
                                 hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, pad: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
-        // Its rows written through the bounded writer, checked after the work (decision 0463).
+        // Its rows are written by the fold, through the writer (decision 0463): checked when the batch is done.
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
         let hb = bound(map.home)?;

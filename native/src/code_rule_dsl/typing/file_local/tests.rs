@@ -706,7 +706,7 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
     assert!(rules_of(&out, "fl_outer").is_empty(), "the product is gone:\n{}", out.show());
     // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash. The first part is
-    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0500): two parts,
+    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0488): two parts,
     // one key, and the key's rule reads `encl`.
     let shown = out.show();
     let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
@@ -778,7 +778,6 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
     let (result, made) = pushed(read(text));
-    let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }

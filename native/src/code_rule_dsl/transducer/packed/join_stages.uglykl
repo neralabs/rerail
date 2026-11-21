@@ -42,7 +42,7 @@ typedef struct Stage {
     UKL_GLOBAL const ViewDir* v_dir;
     uint32_t r_view;
     uint32_t v_parent;
-    // The probed relation's screen (decision 0500): its key `screen - 1`'s column's kept filter, a `bloom::Bloom` at
+    // The probed relation's screen (decision 0488): its key `screen - 1`'s column's kept filter, a `bloom::Bloom` at
     // byte `screen_at` of the kernel's `F`; 0 for none.
     uint32_t screen, screen_at;
     uint32_t screen_pad[2];
@@ -273,7 +273,7 @@ UKL_INLINE void probe(StageP s, Longs R, UKL_PRIVATE const int64_t* kv, UKL_PRIV
 }
 
 // A binding's candidates (`probe`), and its key values.
-// A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0500) has none, and
+// A key the probed relation's screen refuses (`Stage::screen`, a column's kept filter: decision 0488) has none, and
 // its index group is not read. `F` is the screen's buffer.
 UKL_INLINE void candidates(StageP s, Longs L, uint32_t t, Longs R, UKL_GLOBAL const uint8_t* F, UKL_PRIVATE int64_t* kv,
                            UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {

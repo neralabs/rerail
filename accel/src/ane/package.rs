@@ -233,6 +233,12 @@ pub struct Blob {
     count: u32,
 }
 
+impl Default for Blob {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Blob {
     pub fn new() -> Self {
         Blob { bytes: vec![0u8; 64], count: 0 }

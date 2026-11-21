@@ -58,8 +58,9 @@ fn the_if_evaluator_is_the_serial_passes() {
     const COLON: u32 = 25;
     let v = |x: u64| (0u32, x);
     let o = |op: u32| (op, 0u64);
-    // Each expression, its truth and its value's low word.
-    let cases: Vec<(&str, Vec<(u32, u64)>, u32, u32)> = vec![
+    // An expression's text, its items (an operator and a value each), its truth and its value's low word.
+    type Case = (&'static str, Vec<(u32, u64)>, u32, u32);
+    let cases: Vec<Case> = vec![
         ("1", vec![v(1)], 1, 1),
         ("1 == 1", vec![v(1), o(EQ), v(1)], 1, 1),
         ("1 + 1", vec![v(1), o(PLUS), v(1)], 1, 2),
@@ -229,7 +230,7 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
-/// `<ukl/pool.h>` over a grid (decision 0503 §10): the pieces of ranges given, taken by every
+/// `<ukl/pool.h>` over a grid (decision 0486 §10): the pieces of ranges given, taken by every
 /// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
 /// round, each lies inside one given range and fits its class, and where the takers ask for
 /// more than a class holds, every block of it is taken.
@@ -291,7 +292,7 @@ fn the_pool_gives_each_block_once() {
     }
 }
 
-/// `<ukl/pool.h>`'s split takes over a grid (decision 0503 §10): every thread of 8 groups takes
+/// `<ukl/pool.h>`'s split takes over a grid (decision 0486 §10): every thread of 8 groups takes
 /// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
 /// while others take; then they are given back and taken again. No unit is taken twice, each block
 /// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of

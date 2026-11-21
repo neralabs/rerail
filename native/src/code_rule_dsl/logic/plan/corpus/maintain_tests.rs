@@ -249,8 +249,8 @@ fn r2_a_new_process_reads_its_kept_rows_in_place() {
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
 fn r1_the_engine_source_names_no_maintenance_relation() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
-    let root = if root.exists() { root } else { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
+    let root = if root.exists() { root } else { std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
     let mut found = Vec::new();
     let mut stack = vec![root];
     while let Some(d) = stack.pop() {

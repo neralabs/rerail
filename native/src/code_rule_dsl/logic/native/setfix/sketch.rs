@@ -3,7 +3,7 @@
 //! counters, about 9% off), and, while it holds at most `SMALL` values or a bounded integer page, each value's exact count (then the distinct
 //! values and the sum are exact too). Compact labels use a 16 KiB page; sparse label sets retain at most 1,024 counters.
 //! Identity columns keep the fixed-size fallback. Exact counts are updated as rows arrive, never by a planning-time scan.
-//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0500), set
+//! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0488), set
 //! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
 //! The screens test probes against it, and the planner counts the keys two columns share by it.
 
@@ -104,9 +104,10 @@ pub(super) struct Sketch {
     /// Its join-size counters and, while it has at most `SMALL` values, each one's rows (`join_size::Counts`, in a
     /// block): this sketch is their one writer; the planner's join sizes and the statistics' keys read them there.
     counts: Arc<Counts>,
-    /// Whether it writes `counts`: a clone reads the counts it was cloned with until it first adds, then writes a
-    /// copy of its own (as `own_keys`).
-    own_counts: bool,
+    /// Held by it and its clones while they share `counts`: a sketch that adds while another holds it writes a copy
+    /// of its own first, the original as well as a clone, so neither's rows reach the other's counts (a clone's
+    /// counts are the column's as it was cloned). The one left holding it alone writes the shared counts in place.
+    sharing: Arc<()>,
     rows: u64,
     dense: Option<Dense>,
     sparse: Option<Sparse>,
@@ -122,20 +123,16 @@ pub(super) struct Sketch {
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), own_counts: true, rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
+        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), sharing: Arc::new(()), rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
     }
 }
 
 /// A clone shares the filter until it adds to it (`own_keys`): a kept relation reopened to be maintained copies its
-/// columns' filters only where its rows change them. Past its few values it shares the counts the same way. While
-/// the sketch still keeps its few values, the clone takes counts of its own: the sketch's next values may end them
-/// (`Counts::end_few`) in place, and their filter is the sketch's alone, so a clone sharing them would keep neither
-/// (its `keys` had no answer; one cold hogql run in four stopped there).
+/// columns' filters only where its rows change them. It shares the counts too (`sharing`): whichever of them adds
+/// first while they are shared takes counts of its own, so the other's few values are never ended in place under it.
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
-        let few = self.counts.few_len().is_some();
-        let counts = if few { Arc::new(Counts::clone(&self.counts)) } else { Arc::clone(&self.counts) };
-        Sketch { registers: self.registers.clone(), counts, own_counts: few, rows: self.rows, dense: self.dense.clone(),
+        Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), sharing: Arc::clone(&self.sharing), rows: self.rows, dense: self.dense.clone(),
                  sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
     }
 }
@@ -154,9 +151,9 @@ impl Sketch {
         if rho > self.registers[r] {
             self.registers[r] = rho;
         }
-        if !self.own_counts {
+        if Arc::strong_count(&self.sharing) > 1 {
             self.counts = Arc::new(Counts::clone(&self.counts));
-            self.own_counts = true;
+            self.sharing = Arc::new(());
         }
         self.counts.count(h);
         self.rows += 1;
@@ -179,33 +176,31 @@ impl Sketch {
                 }
                 self.dense=None;
             }
-        } else if self.counts.few_len().is_some() {
-            if !self.counts.add_few(v) {
-                // Its `SMALL + 1`th value: the few values and their rows, read where they lie (`counts`), make what
-                // follows them.
-                let counts = &self.counts;
-                let small = || counts.few().into_iter().flatten();
-                // Retain bounded label domains beyond SMALL without linear searches.
-                // Large identity columns retain the fixed-size sketch fallback.
-                let base=v & !((DENSE_WIDTH as i64)-1);
-                if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
-                    let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
-                    for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
-                    dense.add(v);
-                    self.dense=Some(dense);
-                } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
-                    let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
-                }
-                // Its keys from here on in a filter, from the values it held and this one.
-                let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
-                for h in small().map(|e| mix(e[0])).chain([h]) {
-                    keys.add_hashed(h);
-                    self.sample.offer(h);
-                }
-                self.keys = Some(Arc::new(keys));
-                self.own_keys = true;
-                self.counts.end_few();
+        } else if self.counts.few_len().is_some() && !self.counts.add_few(v) {
+            // Its `SMALL + 1`th value: the few values and their rows, read where they lie (`counts`), make what
+            // follows them.
+            let counts = &self.counts;
+            let small = || counts.few().into_iter().flatten();
+            // Retain bounded label domains beyond SMALL without linear searches.
+            // Large identity columns retain the fixed-size sketch fallback.
+            let base=v & !((DENSE_WIDTH as i64)-1);
+            if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
+                let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
+                for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
+                dense.add(v);
+                self.dense=Some(dense);
+            } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
+                let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
             }
+            // Its keys from here on in a filter, from the values it held and this one.
+            let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
+            for h in small().map(|e| mix(e[0])).chain([h]) {
+                keys.add_hashed(h);
+                self.sample.offer(h);
+            }
+            self.keys = Some(Arc::new(keys));
+            self.own_keys = true;
+            self.counts.end_few();
         }
     }
 
@@ -341,7 +336,7 @@ pub mod tests {
         s.add(10);
         assert_eq!((few.few_len(), counts.join(&ten).rows), (Some(11), 1.0), "read where they lie, after the add");
         let mut c = s.clone();
-        assert!(!Arc::ptr_eq(&c.counts, &s.counts) && c.own_counts, "a clone of few values counts its own");
+        assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         c.add(10);
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
         // Past its few values, the counters, still the sketch's own.
@@ -351,13 +346,14 @@ pub mod tests {
         assert!(few.few_len().is_none() && Arc::ptr_eq(few, &s.counts));
         // Past them, a clone reads them where they lie until it adds.
         let mut d = s.clone();
-        assert!(Arc::ptr_eq(&d.counts, &s.counts) && !d.own_counts, "a clone reads them");
+        assert!(Arc::ptr_eq(&d.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         d.add(5);
         assert!(!Arc::ptr_eq(&d.counts, &s.counts), "a clone writes its own once it adds");
     }
 
-    /// A clone taken while the sketch keeps its few values still has keys after the sketch passes them: its counts
-    /// are its own, not the sketch's, which end their few values in place (`Counts::end_few`) and keep their filter.
+    /// A clone taken while the sketch keeps its few values still has keys after the sketch passes them: the sketch,
+    /// adding while they are shared, takes counts of its own, and ends those few values (`Counts::end_few`), not the
+    /// clone's.
     #[test]
     fn a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them() {
         let mut s = Sketch::default();
@@ -371,6 +367,28 @@ pub mod tests {
         assert!(s.counts.few_len().is_none() && matches!(s.keys(), Keys::Filter(_)));
         let Keys::Few(few) = c.keys() else { panic!("the clone's ten values are its keys") };
         assert_eq!((few.few_len(), c.ndv()), (Some(10), 10));
+    }
+
+    /// A clone's counts are the column's as it was cloned: the first sketch's later rows, past its few values here,
+    /// never reach them, and the clone still has its few values as its keys (the 9,010-file run's panic: "a sketch
+    /// past its few values keeps their filter", from a clone whose shared counts the first sketch had ended).
+    #[test]
+    fn a_clone_keeps_its_counts_when_the_first_sketch_adds() {
+        let mut s = Sketch::default();
+        for v in 0..10 {
+            s.add(v);
+        }
+        let c = s.clone();
+        for v in 10..1_000 {
+            s.add(v);
+        }
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&c.sharing) == 1);
+        assert_eq!((c.counts.few_len(), c.ndv(), c.rows), (Some(10), 10, 10));
+        assert!(matches!(c.keys(), Keys::Few(_)), "its few values are its keys");
+        assert!(s.counts.few_len().is_none() && matches!(s.keys(), Keys::Filter(_)));
+        let mut c = c;
+        c.add(3);
+        assert_eq!(c.counts.few_len(), Some(10), "the clone, alone now, writes the counts in place");
     }
 
     #[test]

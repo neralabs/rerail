@@ -11,7 +11,8 @@
 # programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
 [profile.default]
 default-filter = """not (
-    test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
+    binary(=git_revision_cli)
+  | test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
   | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent|library_modules_link_to_the_lowering_of_them_together)/)
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
   | test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)
@@ -29,8 +30,7 @@ default-filter = """not (
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
   | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
-  | (package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs))
-  | (package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes))
+  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -59,16 +59,10 @@ test-group = "fsevents"
 filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
-# A device sort's screen against the host join: sorts and probes of 2,000,000 left and up to 4,000,000 right keys.
-# On the CPU backend the kernels run on the host: 155 s on a Linux host (GB10, debug), one probe of each kind a case.
+# Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
+# and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).
 [[profile.default.overrides]]
-filter = "package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs)"
-slow-timeout = { period = "60s", terminate-after = 8 }
-
-# Kotlin's last ladder step compiled three times (one program each time, and the walk lemmas'): 131 s on a Linux
-# Spark, ~255 s on an M1 Max, in a debug build (Q371).
-[[profile.default.overrides]]
-filter = "package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes)"
+filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]

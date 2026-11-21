@@ -229,10 +229,9 @@ impl ContentStore {
             let mut statement = connection.prepare_cached(
                 "SELECT t.tape_id, t.raw_length, t.seg, t.seg_at, t.seg_len FROM json_each(?1) j JOIN tape_objects t ON t.tape_id=j.value",
             )?;
-            let rows = statement
+            statement
                 .query_map([list], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))?
-                .collect::<Result<_, _>>()?;
-            rows
+                .collect::<Result<_, _>>()?
         };
         // An archived tape is placed back first (decision 0450 step 4), as every reader a warm run uses does.
         if self.placed_again(rows.iter().map(|&(id, _, [seg, ..])| (OBJECT_TAPE, id, seg)))? {

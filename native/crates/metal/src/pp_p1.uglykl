@@ -1,4 +1,4 @@
-// P1 on the device (decision 0501): the unit's include tree, made and laid out, and its
+// P1 on the device (decision 0467): the unit's include tree, made and laid out, and its
 // conditionals decided, iterated to their fixpoint.
 //
 // An instance is a file entered at an include (`PpNode`): its file, its parent instance and the
@@ -136,7 +136,7 @@ UKL_INLINE void p1_gap_slot(PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint3
     gslot[w] = live[i] == 0u ? PP_NONE : base[i] + k + first + (gshift[w] - gc[w]);
 }
 
-// --- The conditionals (decision 0501 §4): the groups' activity, to its fixpoint -----------------
+// --- The conditionals (decision 0467 §4): the groups' activity, to its fixpoint -----------------
 //
 // An instance has a word for each of its file's groups (from its `grp_first`): group 0 the
 // file's own, always active; group `g` the one its arm opens. An iteration, from the last one's
@@ -217,7 +217,7 @@ UKL_INLINE void p1_tests(PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t
     if (v) ukl_atomic_min(&taken[grp_first[i] + d.chain], w - insts[i].dir_first);
 }
 
-// Whether directive word `w`'s line is read (decision 0502 §3): an `#elif` (or `#elifdef`,
+// Whether directive word `w`'s line is read (decision 0485 §3): an `#elif` (or `#elifdef`,
 // `#elifndef`) after its chain's taken arm, the last iteration's, is not; every other is.
 UKL_INLINE void p1_line_read(PP_GLOBAL const PpInst* insts, PP_GLOBAL const uint32_t* n_nodes, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const PpDir* rows,
                              PP_GLOBAL const uint32_t* grp_first, PP_GLOBAL const uint32_t* taken, PP_GLOBAL uint32_t* read, uint32_t w) {
@@ -264,7 +264,7 @@ UKL_INLINE void p1_grp_settle(PP_GLOBAL const uint32_t* n_grp, PP_GLOBAL const u
     }
 }
 
-// --- The includes (decision 0501 §5) -------------------------------------------------------------
+// --- The includes (decision 0467 §5) -------------------------------------------------------------
 //
 // An active include's name is its header token (`<…>`, a `header` node) or its string literal.
 // Its key is the name's, with whether it is `<…>`, the including file for a quoted name, and the
@@ -283,7 +283,7 @@ UKL_INLINE void p1_grp_settle(PP_GLOBAL const uint32_t* n_grp, PP_GLOBAL const u
 #define K_LINE (20u)
 #define K_HEADER (37u)
 
-// P1's refusals (`P1_FLAGS`): a store's room, and the cases a later step of 0501 builds.
+// P1's refusals (`P1_FLAGS`): a store's room, and the cases a later step of 0467 builds.
 #define P1_ROOM (1u)
 // `P1_NEED`'s words (`pp_expand.rs`'s `NEED_*`).
 #define NEED_DIRS (0u)

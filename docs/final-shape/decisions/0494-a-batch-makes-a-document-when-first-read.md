@@ -189,3 +189,51 @@ Each has its test before the code that meets it.
    Open: the footprint's +125 MB. It is not the CPU lane's 64 MB tape slab (a run with no device at all peaks
    higher), nor the heap at the peak (within 20 MB of 0458's, the slab's zeroed pages aside), nor the blocks' free
    lists (their free bytes are pages given back; with no split of a fitted chunk the run is the same).
+   That last was wrong: the free lists held 316 MB at the end of a cold run, about 200 MB of it resident (step 6).
+6. The footprint: the blocks' free lists. R7. Done (2026-11-20, user: "please do spike 3"). A free chunk's first
+   word held its list's link, so its first page stayed; free chunks never merged, so one under a page never freed
+   one. Three spikes, each with the 589 outputs unchanged, three alternated rounds (load 9–29, footprint at most):
+   | | HEAD | links outside the chunks | small structures on the heap | buddies, links outside |
+   |---|---|---|---|---|
+   | footprint | 703–728 MB | 646–666 MB | 693–718 MB | 631–650 MB |
+   | peak RSS | 891–900 MB | 889–895 MB | 858–860 MB | 830–836 MB |
+   | instructions | 202.7–203.8 G | 202.8–203.9 G | 202.4–202.7 G | 202.7–203.5 G |
+
+   The small structures were the planner's and setfix's sketches, statkeep's `Exact` and `Groups` (a census of the
+   chunks under a page: the relations' rows about 97 MB of them, the sketches about 88 MB, `Exact` 30 MB, `Groups`
+   14 MB); on the heap they saved 10 MB, and splitting no fitted chunk under a page saved none. Built: the third,
+   decision 0342 as amended (the lists in the ledger, a page given back once no live chunk shares it, buddies
+   merged, a chunk from the front aligned to its size up to 1 MB). Near the peak the free-listed blocks hold 80 MB
+   live in 84 MB of pages holding a live byte; the rest is given back.
+
+   Cold, three alternated rounds (load 17–25): 648–656 MB of footprint at most to HEAD's 714–724 MB and 0458's
+   596–608 MB; 202.9–203.1 G instructions to HEAD's 202.4–202.7 G and 0458's 194.5–195.3 G.
+
+   The 40–50 MB left are the blocks', not the heap's. `vmmap` taken back to back through a run of each, the five
+   samples of most footprint: the heap (jemalloc's region) 362–378 MB dirty to 0458's 360–381 MB, the blocks 135–169
+   MB to 0458's 112–134 MB. The heap's 16–23 MB more in single samples before was their timing. A profiled run's heap
+   by span does not say it either: its snapshot of the strata under way moves by tens of MB between runs, and the
+   profile's own author-join sources (`rr::profile_join_sources`, 7 MB) are counted in ours alone. Open: the blocks'
+   35 MB at the peak.
+
+## Reads side by side make a document once (2026-11-20)
+
+A group is made unlocked (its prefilter and matchers run on the pool), and it was kept only if no other read had
+made one of its documents meanwhile. With the base relations counted on the pool (Q396, 0487's merge), every count
+read the whole batch at once: each made every document, and all but one set their groups aside. On the data layer's
+`leg-083-typed` over 901 files that was 3,604 documents' rows for 901, 835 G instructions and 2.6 GB at the peak.
+
+- **Claims.** A group's documents are claimed by its thread while it is made (`State::claimed`). A read finding
+  documents another thread claimed waits for them: it runs the pool's next job (`rayon::yield_now`), else waits for a
+  group to end (1 ms at most a wait), and reads them once made. A claim is given up when its group ends, made or not
+  (`Claim`'s drop, a panic's too).
+- **No maker waits.** A thread making a group of the batch (`State::makers`) makes what it reads itself, as before:
+  a read under it, a job it ran while its group's jobs ran, never waits. So no two makers wait on each other.
+- **Checks.** `syntax::tests::reads_side_by_side_make_each_document_once`: a thread a relation, each reads it whole at
+  once, and every group made is kept (`Batch::makes` is `Batch::groups`).
+- **The counts in waves.** The counts side by side each list their relation's rows (`RelStats::count`, 48 bytes a
+  row), so counting every relation at once held 1.2 GB more. They are counted in waves within a share of the
+  budget (`budget::share(256 MB)`, decision 0126), each wave side by side.
+
+The same run, CPU, unprofiled: 581 G instructions and 1.36 GB at the peak, 18.2 s (the hub before Q396's pool counts,
+measured the same way: 534–540 G, 1.14–1.15 GB, 28–30 s at a higher load). Cycles: 164 G to its 194–207 G.

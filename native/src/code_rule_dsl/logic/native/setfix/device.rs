@@ -1126,7 +1126,7 @@ fn owner_col(rel: &InRel, c: usize) -> usize {
     }
 }
 
-/// The screen of a stage of `rel` (decision 0500): the kept filter of the first of `d`'s keys' columns (the
+/// The screen of a stage of `rel` (decision 0488): the kept filter of the first of `d`'s keys' columns (the
 /// relation's own, before `narrowed`) whose sketch keeps one, where its sketches count every row (as the CPU's screen
 /// borrows it: `join_filter`), bound where it lies in its block. `None` for a view's rows, or no such key.
 fn screen_of(rel: &InRel, d: &mj::Stage) -> Result<Option<mj::Screen>, String> {
@@ -1224,7 +1224,7 @@ struct Run<'p> {
     places: Vec<Option<Vec<u32>>>,
     /// Per witness stage, its probes' relations, sorts and descriptors (their columns where the copies hold them).
     probes: Vec<Option<Vec<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, mj::Stage)>>>,
-    /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0500).
+    /// Each stage's screen: its relation's kept filter of a key's column (`screen_of`, decision 0488).
     screens: Vec<Option<mj::Screen>>,
     /// The head's distinct rows (a column per slot of `uniq_cols`), made on the device after the last stage; their
     /// count is `totals`' last word.
@@ -1945,16 +1945,10 @@ fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batc
         if !runs.is_empty() && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
             break;
         }
-        let mut r = match Run::new(plan) {
-            Ok(r) => r,
-            // The runs encoded so far go: the passes that bind their buffers hold them until their work completes
-            // (decision 0491 step 2).
-            Err(e) => return Err(e),
-        };
-        if let Err(e) = r.encode(0, batch, rep, &mut Own::default(), names) {
-            // The runs encoded so far, and this one's stages before the refusal: their passes hold their buffers.
-            return Err(e);
-        }
+        // On a refusal the runs encoded so far go, with this one's stages before it: the passes that bind their
+        // buffers hold them until their work completes (decision 0491 step 2).
+        let mut r = Run::new(plan)?;
+        r.encode(0, batch, rep, &mut Own::default(), names)?;
         bytes += r.bytes();
         runs.push(r);
     }

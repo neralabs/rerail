@@ -68,6 +68,10 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
+    /// The output of the stream's newlines (`BlockNative::newlines`), where the body stores its rows: the format 16
+    /// tape's newline index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
+    /// a token loop's tier 1 (0177), which makes no mask, as the lean lexer makes none; its index is the scan's.
+    pub newlines: Option<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -298,6 +302,27 @@ impl Batch {
             self.run(*entry);
         }
         self.unstrip(program, rows);
+        self.end_streams(program);
+    }
+
+    /// Each extract's stream ended in two entries of its file's length, past its count, as simdjson's stage 1 ends
+    /// its index: tier 2 takes a token with one load (`rust_stream`'s `take`), the end's start the file's length,
+    /// whose byte (padding) no switch takes. The extract's slack (`capacity`) holds them.
+    fn end_streams(&mut self, program: &CompiledBlock) {
+        let fields: Option<[u64; 3]> = program.records.as_ref().map(|t| [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64]);
+        for row in &self.rows {
+            for e in 0..program.extracts.len() {
+                let count = self.counts[row.counts as usize + e];
+                let field = program.records.as_ref().and_then(|t| [t.starts, t.lasts].iter().position(|&x| usize::from(x) == e));
+                for j in count..count + 2 {
+                    let at = match (field, &program.records, fields) {
+                        (Some(field), Some(t), Some(cols)) => row.positions + t.layout.index(field, j, cols, row.capacity),
+                        _ => row.positions + e as u64 * row.capacity + j,
+                    };
+                    self.positions[at as usize] = row.len as u32;
+                }
+            }
+        }
     }
 
     /// The program's pass `k` alone (the record pass last): for the profile, the passes before
@@ -1191,7 +1216,10 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
         }
         for o in inst.operands() {
             let on_vectors = plan.lanes[o] && plan.lanes[x] && !words[x];
-            if inside[o] && !inside[x] && !on_vectors {
+            // A region's value on the vectors leaves for no member of it: the region makes it in its own branch
+            // (decision 0423), and this way runs on blocks the region skips.
+            let regions_own = plan.region_of[x].is_some_and(|r| plan.regions[r].vectors.contains(&o));
+            if inside[o] && !inside[x] && !on_vectors && !regions_own {
                 exit[o] = true;
             }
             if inside[x] && !inside[o] && !(plan.lanes[o] && plan.lanes[x]) {
@@ -2788,6 +2816,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
+        newlines: native.newlines.filter(|o| !native.cpu_unstored().contains(o)),
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,
@@ -4273,6 +4302,14 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    (tables, mult, slots)
+}
+
+/// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
+pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 

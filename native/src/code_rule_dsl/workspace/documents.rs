@@ -175,14 +175,14 @@ pub(super) fn prefetch(store: &ContentStore, sources: &[HashKey]) -> Result<Stor
             grammar_version(),
             i64::from(tape::formats::stored_version()),
         )
-        .map_err(|error| invalid(error.to_string()))?;
+        .map_err(super::api::store_unavailable)?;
     let tapes = objects
         .values()
         .flat_map(|stored| stored.tapes.values().copied())
         .collect::<Vec<_>>();
     let derived = store
         .file_documents_bulk(&tapes)
-        .map_err(|error| invalid(error.to_string()))?;
+        .map_err(super::api::store_unavailable)?;
     Ok(StoredDocuments { objects, derived })
 }
 
@@ -280,10 +280,7 @@ pub(super) fn source(state: &mut WorkspaceState, path: &str) -> Result<Arc<Strin
         .objects
         .get(&version.source)
         .ok_or_else(|| invalid(format!("{path}'s current source is not in the store")))?;
-    let bytes = storage
-        .store
-        .get_source(objects.source)
-        .map_err(|e| invalid(e.to_string()))?;
+    let bytes = storage.store.get_source(objects.source).map_err(super::api::store_unavailable)?;
     if HashKey::sha256(&bytes) != version.source {
         return Err(invalid(format!(
             "{path}'s stored source is not its current version"

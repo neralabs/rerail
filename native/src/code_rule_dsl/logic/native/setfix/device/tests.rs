@@ -510,7 +510,7 @@
         let read = |fns: u32, sym: u32| -> Option<String> {
             // SAFETY: the store's cache, in its live block; an entry found is complete.
             unsafe {
-                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                let r = rerail_clif::view::cache::text_find(kept.cache(), fns, sym);
                 (r & 3 == 0).then(|| {
                     let e = (r & !3) as *const u8;
                     let len = e.add(12).cast::<u32>().read() as usize - 16;

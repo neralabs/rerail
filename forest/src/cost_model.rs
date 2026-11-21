@@ -119,6 +119,12 @@ pub struct CostModel {
     device: OnceLock<Option<Arc<(DeviceForest, DeviceBucketizer)>>>,
 }
 
+// The device's copy is shared by the threads that price (`CostModel::device`), on every backend.
+const _: fn() = || {
+    fn shared<T: Send + Sync>() {}
+    shared::<(DeviceForest, DeviceBucketizer)>();
+};
+
 /// A job's lane and names as the model knows them (`CostModel::job`).
 #[derive(Clone, Copy)]
 pub struct JobKey(Entry);

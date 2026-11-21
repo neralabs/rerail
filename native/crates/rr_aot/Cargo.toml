@@ -18,14 +18,16 @@ rerail-context = { path = "../context" }
 rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 rerail-rr-syntax = { path = "../rr_syntax" }
+# The language the format 16 source is generated for (`lang`, decision 0535).
+rerail-tape-format = { path = "../tape_format" }
 
 [build-dependencies]
 rerail-context = { path = "../context", optional = true }
 rerail-compiler = { path = "../compiler", optional = true }
 rerail-rr-parser = { path = "../rr_parser", optional = true }
+rerail-tape-format = { path = "../tape_format" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-rr-aot = { path = ".", features = ["test-hooks"] }
-rerail-tape-format = { path = "../tape_format" }
 libc = "0.2.189"

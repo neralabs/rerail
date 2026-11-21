@@ -33,7 +33,7 @@ pub(super) struct Fields {
     pub(super) layouts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>>,
 }
 
-/// The prefix of the pair relations a deferred join's reader reads (decision 0500).
+/// The prefix of the pair relations a deferred join's reader reads (decision 0488).
 pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
 impl Fields {

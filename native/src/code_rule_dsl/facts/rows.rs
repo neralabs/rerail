@@ -13,8 +13,8 @@
 //! ```
 //!
 //! A segment and the tail are relations of `rerail_blocks` (columns in doubling chunks), read through the reads
-//! written once (`rerail_clif::relation`: the host's are `rerail_blocks::generated_reads`, the kernels' the same
-//! reads in MSL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
+//! written once (`rerail_clif::relation`: the host's written directly in `rerail_blocks`, the kernels' the same
+//! reads in UKL). They live in shared FACTS blocks (`Facts`): a block holds many relations, in host memory the device
 //! reads through a no-copy wrap of its used extent (decision 0435 §1). A block never moves, and reserves address space
 //! enough that a tail grows in it in place (decision 0445): its pages are taken as rows are written, and a dead
 //! relation's go back to the OS. Where a reservation is memory (WASI), a block is sized, and a tail whose block is full
@@ -31,9 +31,9 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
-/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
-const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+/// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
+/// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(any(unix, windows), target_pointer_width = "64"));
 
 /// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
 /// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
@@ -992,7 +992,7 @@ impl std::ops::Deref for Part {
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
 
-/// A column's blocked Bloom filter (decision 0500, `rerail_blocks::bloom`) in a block of the run's relations: the
+/// A column's blocked Bloom filter (decision 0488, `rerail_blocks::bloom`) in a block of the run's relations: the
 /// block the relations whose keys it holds are made in, so the device binds it as it binds them and reads it where
 /// it lies, as the host does. Its chunks go back to the block's free list when it is dropped.
 pub struct FactsBloom {

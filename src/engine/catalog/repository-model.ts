@@ -223,7 +223,16 @@ export interface SkippedRulePack {
 }
 
 /** The rules and packs installed on this machine (`rule-catalog.ts`). */
+export interface RrPolicySource {
+  readonly id: string;
+  readonly path: string;
+  readonly payloadHash: string;
+  readonly mode: RuleMode;
+  readonly inputs: readonly { path: string; sha256: string | null }[];
+}
+
 export interface RuleCatalog {
+  readonly rrPolicies?: readonly RrPolicySource[];
   readonly documents: ReadonlyMap<string, RuleDocument>;
   readonly packs: ReadonlyMap<string, RulePack>;
   /** Rule id → id of the pack that holds it (a rule is in at most one pack). */

@@ -381,6 +381,7 @@ impl<'v> Ctx<'v, '_> {
             if pos.is_empty() {
                 return None;
             }
+            // A nullary atom is an existence test: it runs with no bindings.
             let first = |i: usize| match rest[i].first() {
                 Some(t) if is_const(t) => true,
                 Some(Tm::Own(TermRef::Var(x))) => bound.contains(x),

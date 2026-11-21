@@ -21,6 +21,9 @@ cranelift-module = { version = "=0.125.4", optional = true }
 # The layout a relation's reads follow (`relation`, decision 0325).
 rerail-blocks = { path = "../blocks", optional = true }
 
+[dev-dependencies]
+rerail-clif = { path = ".", features = ["test-hooks"] }
+
 # The JIT, as the compiler's: Cranelift's natively, the tree's stand-in on WASM (`wasm/cranelift-jit`, which no
 # JIT runs on), by one name (`lib.rs`).
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
@@ -28,5 +31,3 @@ cranelift-jit = { version = "=0.125.4", optional = true }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit", optional = true }
-[dev-dependencies]
-rerail-clif = { path = ".", features = ["test-hooks"] }

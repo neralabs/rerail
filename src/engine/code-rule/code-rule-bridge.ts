@@ -1020,6 +1020,15 @@ interface TakenWorktree {
   readonly scan: SourceScan;
 }
 /**
+ * A walk's changes as Git's verdicts sort them (`#separateOwnWrites`): those Git did not write, for the session to
+ * claim; those another writer or Git made that are still audited; and the digest each uncaptured change had before.
+ */
+interface SortedWrites {
+  readonly unwritten: CodeRuleEdit[];
+  readonly notOwn: CodeRuleEdit[];
+  readonly uncaptured: Map<string, string>;
+}
+/**
  * What the Git of `checkout` lists as modified or untracked: as the walk listed it, else listed now; undefined when it
  * ran past its time limit.
  */
@@ -1173,6 +1182,15 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
+/** Whether `checkout` is still a Git checkout: its `.git` entry is there. A look that fails otherwise says nothing of it. */
+async function stillACheckout(checkout: string): Promise<boolean> {
+  try {
+    await lstat(join(checkout, ".git"));
+    return true;
+  } catch (error) {
+    return !hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR");
+  }
+}
 function sha256(data: string | Buffer): string {
   return createHash("sha256").update(data).digest("hex");
 }
@@ -1288,6 +1306,19 @@ function takeFirstSeen(scan: FirstSightTake, sources: ReadonlyArray<Source | und
     bytes += Buffer.byteLength(source.text);
   }
   return bytes;
+}
+
+/**
+ * The digests `uncaptured` holds for `edits`. A walk's map also holds those of the changes it took for Git's, or dropped
+ * with a worktree being removed (`#separateOwnWrites`): no edit needs their preimages, so no Git is read for them.
+ */
+function batchDigests(edits: readonly CodeRuleEdit[], uncaptured: ReadonlyMap<string, string>): Map<string, string> {
+  const digests = new Map<string, string>();
+  for (const { path } of edits) {
+    const digest = uncaptured.get(path);
+    if (digest !== undefined) digests.set(path, digest);
+  }
+  return digests;
 }
 
 /**
@@ -1653,7 +1684,7 @@ export class CodeRuleBridge {
     discovery.toolCalls.begin(toolCallId, await filesystemClock(), isCommandTool(toolName));
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
-    this.#auditor.refreshOwners?.(paths);
+    this.#auditor.refreshOwners?.();
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
     await this.#rememberIgnoreFiles(paths);
     if (paths.length === 0) {
@@ -1724,7 +1755,7 @@ export class CodeRuleBridge {
     this.#pending.delete(toolCallId);
     if (pending === undefined || failed) return [];
     this.refreshCodeRules();
-    this.#auditor.refreshOwners?.(pending.paths);
+    this.#auditor.refreshOwners?.();
     this.#reportIgnoredEdits(discovery.root, pending.paths);
     await this.#noteIgnoreRules(pending.paths);
     const { edits, uncaptured, notFromCapture } = await this.#readEdits(discovery, pending, options.reported);
@@ -2984,7 +3015,9 @@ export class CodeRuleBridge {
    * Git command, and, in the session folder, any other writer's (`#claimOwnWrites`). Neither kind is reported as this
    * session's edit. Of those, only a source this session had changed is still audited, as the source it now is with no
    * generated lines and in `log` mode: the evaluator holds its older text, and steers queued for that text are out of
-   * date. Any other is the same to the evaluator as the files it never saw.
+   * date. Any other is the same to the evaluator as the files it never saw. The walk of the other worktrees drops every
+   * change of a checkout in a worktree it may show the session first (`#mayFirstSee`), or in one it knew where it finds
+   * a file gone, whose `.git` entry is gone once its Git has been read (`#checkoutStands`).
    */
   async #separateOwnWrites(
     discovery: SourceDiscovery,
@@ -2992,24 +3025,55 @@ export class CodeRuleBridge {
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
-    const unwritten: CodeRuleEdit[] = [];
-    const notOwn: CodeRuleEdit[] = [];
+    const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
-    unwritten.push(...unowned);
+    sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
-      for (const edit of group) {
-        const verdict = verdicts.get(edit.path);
-        if (verdict === undefined) unwritten.push(edit);
-        else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, notOwn);
-        else {
-          uncaptured.delete(edit.path);
-          unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
-        }
-      }
+      if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
+    const { unwritten, notOwn } = sorted;
     const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
     return { own, notOwn };
+  }
+
+  /**
+   * Whether `checkout` is still the checkout whose Git gave the walk its verdicts, given its changes `group`. In another
+   * worktree only Git's verdicts tell Git's own files from writes: at the walk's first sight of it, every file stamped
+   * since the session opened (`#firstSightPaths`); in one it knew, each file it saw there that is gone. `git worktree
+   * remove` deletes the worktree's files, its `.git` entry among them, before Git stops listing the worktree, and a Git
+   * started there once the entry is gone reads no checkout, or the one around the worktree, so each of those files
+   * would be taken for a write. There the entry is looked for once Git has answered: still there, Git read this
+   * checkout; gone, the worktree is being removed or was, its files went with it, as a worktree gone before the walk is
+   * applied took its own (`#syncWorktrees`), and none of them is an edit. The removal deletes a folder's entries in the
+   * order the file system lists them, so the entry may still be there at the look while the removal goes on: the files
+   * it deleted before then are deletions Git's verdicts judge, as a person's are. A walk that finds only writes in a
+   * worktree it knew, as it does on most walks, looks for nothing.
+   */
+  async #checkoutStands(discovery: SourceDiscovery, walk: WalkStart, checkout: string, group: readonly CodeRuleEdit[]): Promise<boolean> {
+    if (walk.inSession) return true;
+    const named = sessionPath(discovery.root, checkout);
+    const worktree = walk.worktrees.has(named) ? named : rootHolding(walk.worktrees, named);
+    if (worktree === undefined) return true;
+    const mayBeRemoved = this.#mayFirstSee(discovery, worktree) || group.some(edit => edit.deleted === true);
+    return !mayBeRemoved || await stillACheckout(checkout);
+  }
+
+  /**
+   * Sorts one checkout's changes by Git's verdicts: one Git did not write stays to be claimed (`unwritten`), with the
+   * text Git's move proves it was changed from when there is one; one Git wrote is audited only as `#sortUnownedWrite`
+   * says.
+   */
+  #sortByVerdicts(group: readonly CodeRuleEdit[], verdicts: ReadonlyMap<string, GitVerdict>, sorted: SortedWrites): void {
+    for (const edit of group) {
+      const verdict = verdicts.get(edit.path);
+      if (verdict === undefined) sorted.unwritten.push(edit);
+      else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, sorted.notOwn);
+      else {
+        sorted.uncaptured.delete(edit.path);
+        sorted.unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
+      }
+    }
   }
 
   /**
@@ -3484,7 +3548,7 @@ export class CodeRuleBridge {
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
-    const unresolved = this.#recoverFromTexts(uncaptured, recovered);
+    const unresolved = this.#recoverFromTexts(batchDigests(edits, uncaptured), recovered);
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
       await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {

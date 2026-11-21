@@ -1,0 +1,41 @@
+// The filtered tree walk shared by source discovery and Git document rules.
+.decl git_inventory_selection(selection: symbol)
+.input git_inventory_selection
+
+.decl inventory_directory(repo: symbol, path: symbol, tree: symbol)
+.decl git_inventory_child_request(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol)
+.decl git_inventory_child_of(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol, path: symbol)
+
+inventory_directory(r, "", t) :- git_source_tree(r, t).
+git_object_request(r, tree) :- inventory_directory(r, _, tree).
+git_inventory_child_request(r, s, p, n, m, "utf8") :-
+    inventory_directory(r, p, t), git_tree_entry(r, t, n, m, _), git_inventory_selection(s).
+git_inventory_child_request(r, s, p, n, m, "bytes") :-
+    inventory_directory(r, p, t), git_tree_entry_bytes(r, t, n, m, _), git_inventory_selection(s).
+// Check a proposed child against the tree at each ancestor placement. Propagate requests up
+// its parent chain and proofs down that same chain. Each accepted path contains distinct trees.
+.decl inventory_step(repo: symbol, parent: symbol, path: symbol, child: symbol)
+inventory_step(r, p, path, child) :-
+    inventory_directory(r, p, t), git_tree_entry(r, t, name, 16384, child),
+    git_inventory_child_request(r, s, p, name, 16384, "utf8"),
+    git_inventory_child_of(r, s, p, name, 16384, "utf8", path).
+
+.decl inventory_ancestor_check(repo: symbol, path: symbol, candidate: symbol)
+inventory_ancestor_check(r, parent, candidate) :- inventory_step(r, parent, _, candidate).
+inventory_ancestor_check(r, parent, candidate) :-
+    inventory_ancestor_check(r, path, candidate), inventory_step(r, parent, path, _).
+
+.decl inventory_ancestor_clear(repo: symbol, path: symbol, candidate: symbol)
+inventory_ancestor_clear(r, "", candidate) :-
+    inventory_ancestor_check(r, "", candidate), git_source_tree(r, root), root != candidate.
+inventory_ancestor_clear(r, path, candidate) :-
+    inventory_ancestor_check(r, path, candidate), inventory_step(r, parent, path, tree),
+    inventory_ancestor_clear(r, parent, candidate), tree != candidate.
+inventory_directory(r, path, child) :-
+    inventory_step(r, parent, path, child), inventory_ancestor_clear(r, parent, child).
+
+.decl git_inventory_file(repo: symbol, selection: symbol, path: symbol, mode: number, blob: symbol)
+git_inventory_file(r, s, p, m, b) :-
+    inventory_directory(r, base, t), git_tree_entry(r, t, name, m, b),
+    git_inventory_child_request(r, s, base, name, m, "utf8"),
+    git_inventory_child_of(r, s, base, name, m, "utf8", p), m >= 32768, m < 36864.

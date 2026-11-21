@@ -1,4 +1,4 @@
-//! Joins deferred to their readers' requests (decision 0500). A binary positive join over a key its head projects
+//! Joins deferred to their readers' requests (decision 0488). A binary positive join over a key its head projects
 //! away (`wide(a, b) :- lhs(a, k), rhs(b, k)`) is driven by what its readers request: the pairs, or one endpoint
 //! (`DEFERRED_PAIRS`, a demand relation as `upstream`'s), or else kept as its two factors, which meet in each reader
 //! (`file_local::factorize_intermediates`), with a pair cache where the factors are small. A frequently requested
@@ -99,7 +99,7 @@ fn reader_binds(v: &Version, rule: RuleRef<'_>, j: usize, cols: &[usize]) -> boo
 /// hold more constants), and every other literal is a positive atom of no constant, reached from those. `PT010(g, x)
 /// :- exc_call(c, "pytest.raises"), .., field(c, "function", g0), unparen(g0, g), text(g, x)` asks for `exc_call`'s
 /// every call through `field(c, "function", _)`, which `exc_call`'s rule reads: corpus0's request made 1.23 M rows of
-/// work to guard a join of 42 k (decision 0500). A cost guess, never a matter of rows: a join left as written is
+/// work to guard a join of 42 k (decision 0488). A cost guess, never a matter of rows: a join left as written is
 /// always right.
 fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof) -> bool {
     use super::Part;
@@ -431,7 +431,7 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     Ok(Some(label))
 }
 
-/// The deferred joins pass (decision 0500) under a deferral (`preparation::Deferral`): its decisions, and the report
+/// The deferred joins pass (decision 0488) under a deferral (`preparation::Deferral`): its decisions, and the report
 /// of each join (`profile::author_joins::TOPIC`, which `preparation::front` reads back for the pair caches).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct DeferJoins {
     deferral: Deferral,
@@ -635,7 +635,7 @@ mod tests {
 
     /// A reused product whose readers, or the rules over them, read an answer only a node's document gives (`value`)
     /// is factorized but not cached: a cache's readers are the cross-file part's, which has no documents to answer
-    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0500).
+    /// it from. Decided from the program, so a run is never prepared again to find it (decision 0488).
     #[test]
     fn a_product_read_with_a_documents_answer_is_not_cached() {
         let src = |reader: &str| format!("

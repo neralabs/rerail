@@ -344,7 +344,7 @@ UKL_INLINE void pp_guards(PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint3
 // Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
 // `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
 // its word is an identifier: the key the names pass gave that leaf. One thread a row.
-// What a `#pragma` does (decision 0501 §3), by its first word as the spike's `pragma` reads it:
+// What a `#pragma` does (decision 0467 §3), by its first word as the spike's `pragma` reads it:
 // `once`, and `push_macro` or `pop_macro` with `( "name"` after it.
 #define A_NONE (0u)
 #define A_ONCE (1u)

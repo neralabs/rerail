@@ -23,7 +23,6 @@ pub mod pp_arena;
 /// The preprocessor's evaluator over tapes (decision 0436).
 pub mod pp_eval;
 /// Macro expansion on the device (decision 0448).
-#[cfg(target_os = "macos")]
 pub mod pp_expand;
 /// The preprocessing words on the device (decision 0348, stage 5).
 pub mod pp_on;

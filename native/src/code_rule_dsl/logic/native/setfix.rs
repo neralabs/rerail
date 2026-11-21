@@ -90,6 +90,7 @@ mod view_tests;
 #[cfg(test)]
 mod base_probe;
 mod inputs_tests;
+// macOS's: it reads the malloc zones' statistics and logger, an OS fact (decision 0440 step E keeps those there).
 #[cfg(all(test, target_os = "macos"))]
 mod blocks_compare_tests;
 #[cfg(test)]
@@ -3528,7 +3529,7 @@ pub fn keep_trial_rows(conn: impl Scoped, name: &str) -> Result<u64> {
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
 /// and each value's postings when a bounded exact histogram is available.
-/// `keys`: each column's keys (`Sketch::keys`, decision 0500), read where they are kept; `counts`, its counts for
+/// `keys`: each column's keys (`Sketch::keys`, decision 0488), read where they are kept; `counts`, its counts for
 /// join sizes (`Sketch::counts`).
 pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)>, pub keys: Vec<crate::code_rule_dsl::logic::bloom::Keys>, pub counts: Vec<std::sync::Arc<crate::code_rule_dsl::logic::join_size::JoinCounts>> }
 pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
@@ -4637,6 +4638,7 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::held(table);
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
+    // Not observed (`author_joins::observe`): an earlier run's set, which this run's maintenance changes, not its own.
     on(conn).derived.lock().insert(table.to_owned(), rel);
 }
 
@@ -4664,7 +4666,7 @@ pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
 }
 
 impl InRel {
-    /// Column `c`'s kept filter (decision 0500), where its sketches count every row of its own (no view's): what a
+    /// Column `c`'s kept filter (decision 0488), where its sketches count every row of its own (no view's): what a
     /// screen of a probe of it may borrow, the CPU's and the device's.
     pub fn kept_keys(&self, c: usize) -> Option<&Arc<crate::code_rule_dsl::logic::bloom::Kept>> {
         if self.view.is_some() || self.sketches.len() != self.k {
@@ -5706,7 +5708,7 @@ impl InRel {
     /// (0364 R2). `None` where it did not start as the marked relation.
     pub fn delta_ids_since_mark(&self, old: &RelMark) -> Option<DeltaIds<'_>> {
         // A view is a read of its source, which does not change while it is held: the same view over the same source
-        // and rows has no change (corpus0's `kind` view had its heavy values counted again 594 times, decision 0500).
+        // and rows has no change (corpus0's `kind` view had its heavy values counted again 594 times, decision 0488).
         // Any other view's change is not known.
         if let Some(v) = &self.view {
             let same = self as *const InRel as usize == old.at && self.k == old.k && self.len() == old.n
@@ -7843,7 +7845,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         cands = Cands::Owned(order);
                     }
                 }
-                // A screened scan (decision 0500): its candidates selected by the screen a block of keys at a time
+                // A screened scan (decision 0488): its candidates selected by the screen a block of keys at a time
                 // (`Screening::select`), so only the rows it passes go on, and none is tested again at the screened
                 // step. A view's rows read as the probe found them (`Cands::Read`) are tested a binding at a time.
                 if i == 0 && keys.is_empty() && let Some(f) = cx.screen && let Some(c) = f.scan_col() {
@@ -8893,7 +8895,7 @@ pub mod posted_tests {
         }
     }
 
-    /// A view's mark (`InRel::mark`) finds it unchanged while it reads the same source (decision 0500: heavy values
+    /// A view's mark (`InRel::mark`) finds it unchanged while it reads the same source (decision 0488: heavy values
     /// over a view were counted again at every stratum); another source, or another relation, is not known.
     #[test]
     fn a_views_mark_finds_it_unchanged_over_its_source() {

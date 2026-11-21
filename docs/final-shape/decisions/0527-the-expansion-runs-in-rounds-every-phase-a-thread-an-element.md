@@ -25,7 +25,7 @@ What was built kept the setup parallel and the expansion serial:
 - **Its parallelism was the lists ready at once, not the tokens.** A unit with a few top calls ran
   a few SIMD groups while the rest polled an empty queue (up to 4,096 polls each).
 - **A chain went one list at a time,** and a long list 32 tokens at a time on one SIMD group.
-- **0503 and 0520 §4 added pauses between the queue's runs** to give stores back as a chain grew.
+- **0486 and 0520 §4 added pauses between the queue's runs** to give stores back as a chain grew.
 
 This decision is the expansion as rounds, every phase of a round one thread an element.
 
@@ -45,7 +45,7 @@ an atomic add). `QCTL` 0 counts the items the top's rounds ran, against the work
 `X_WORK`). A next round past its half is room (`X_ROOM`, `QCTL` 3), and `ctl` 13 is the largest
 round, the room the next run is sized from.
 
-**Giving back (0503 §10) is between rounds,** where a store's front passed its mark. No item runs
+**Giving back (0486 §10) is between rounds,** where a store's front passed its mark. No item runs
 then, so the pause needs no stop between items. The ring's rebase is gone with the ring.
 
 ## 2. Every phase a thread an element
@@ -93,7 +93,7 @@ SIMD-group operation switches each thread of the group.
 | | Requirement | Test |
 |---|---|---|
 | R1 | Every evaluation test finishes within 1 s, under cargo on the CPU backend | `cargo nextest run -p rerail-c-directives --lib --profile second` (stops each test at 1 s) |
-| R2 | The expansion's tests give the serial pass's tokens | the eval tests (0448 R5–R8, 0502, 0503, 0520) |
+| R2 | The expansion's tests give the serial pass's tokens | the eval tests (0448 R5–R8, 0485, 0486, 0520) |
 | R3 | A round's items run on every SIMD group of the grid; nothing polls | `px_worker` takes its share by index, with no queue |
 
 ## Steps

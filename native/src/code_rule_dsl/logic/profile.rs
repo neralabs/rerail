@@ -410,7 +410,7 @@ pub struct GpuTotal {
     pub arena_reruns: u64,
     /// Stages whose grids the device sized.
     pub sized: u64,
-    /// Stages screened by their relation's kept filter (decision 0500).
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
 }
 
@@ -3084,7 +3084,7 @@ pub struct Report {
     pub arena_reruns: u32,
     /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
     pub sized: u32,
-    /// Stages screened by their relation's kept filter (decision 0500).
+    /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u32,
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
     pub per_symbol: u32,

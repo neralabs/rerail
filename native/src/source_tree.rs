@@ -7,6 +7,19 @@
 //! so was every crate above it: a compiler cache shared by the checkouts could reuse none of them.
 use std::path::{Path, PathBuf};
 
+/// A path's canonical name: absolute, its links resolved, and the one name the engine gives it on every system. On
+/// Windows that is the drive's name (`C:\\a\\b`), not the verbatim one std's `canonicalize` returns (`\\?\\C:\\a\\b`), in
+/// which `/` is no separator and which compares unequal to the drive's (`dunce`). Elsewhere it is std's.
+pub trait Canonical {
+    fn canonical(&self) -> std::io::Result<PathBuf>;
+}
+
+impl<P: AsRef<Path> + ?Sized> Canonical for P {
+    fn canonical(&self) -> std::io::Result<PathBuf> {
+        dunce::canonicalize(self)
+    }
+}
+
 /// The checkout's root: the directory that holds `native/Cargo.toml` and `docs/rule-syntax`. The first
 /// found of:
 ///
@@ -24,10 +37,30 @@ pub fn root() -> Option<PathBuf> {
     find()
 }
 
-/// The checkout's `native/` directory: `native` (as the working directory has it) outside a checkout,
-/// so that what is read from it is not found, as before outside one.
+/// The checkout's or installed package's `native/` directory.
 pub fn native() -> PathBuf {
+    if std::env::var_os("RERAIL_SOURCE_ROOT").is_none()
+        && let Some(native) = beside_image("native", "src/code_rule_dsl/typing/programs/sources.rerail")
+    {
+        return native;
+    }
     root().map_or_else(|| PathBuf::from("native"), |root| root.join("native"))
+}
+
+/// The `.rerail` library from a source checkout or from the package that contains the addon.
+pub fn rule_library() -> PathBuf {
+    const LIBRARY: &str = "docs/rule-syntax/lib";
+    if let Some(root) = std::env::var_os("RERAIL_SOURCE_ROOT") {
+        return PathBuf::from(root).join(LIBRARY);
+    }
+    beside_image(LIBRARY, "core.rerail")
+        .unwrap_or_else(|| root().map_or_else(|| PathBuf::from(LIBRARY), |root| root.join(LIBRARY)))
+}
+
+fn beside_image(directory: &str, marker: &str) -> Option<PathBuf> {
+    let image = image()?;
+    let image = image.canonicalize().unwrap_or(image);
+    image.ancestors().map(|dir| dir.join(directory)).find(|dir| dir.join(marker).is_file())
 }
 
 fn find() -> Option<PathBuf> {

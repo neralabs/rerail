@@ -41,6 +41,7 @@ use std::path::Path;
 pub enum Error {
     Front(super::front::Error),
     Sql(rusqlite::Error),
+    Cache(crate::content_store::StoreError),
     /// The facts have no planner statistics, or statistics of other data.
     Statistics(String),
     /// A rule the planner cannot order or lower.
@@ -52,8 +53,15 @@ impl fmt::Display for Error {
         match self {
             Error::Front(e) => write!(f, "{e}"),
             Error::Sql(e) => write!(f, "{e}"),
+            Error::Cache(e) => write!(f, "{e}"),
             Error::Statistics(m) | Error::Plan(m) => f.write_str(m),
         }
+    }
+}
+
+impl From<crate::content_store::StoreError> for Error {
+    fn from(error: crate::content_store::StoreError) -> Self {
+        Self::Cache(error)
     }
 }
 
@@ -455,10 +463,10 @@ pub struct Stats {
     /// (rel, col) → its heavy values (decision 0209 §4), made for the columns a line raised (`Run::heavy_for`).
     /// Shared, not copied, by a component's model.
     pub heavy: ColMap<std::sync::Arc<table::HeavyCol>>,
-    /// (derived rel, col) → its keys (decision 0500: the native relation's sketch's few values, or its filter), read
+    /// (derived rel, col) → its keys (decision 0488: the native relation's sketch's few values, or its filter), read
     /// where the engine keeps them: the keys two columns share price a probe's hits (`atom_rows`).
     pub keys: ColMap<super::bloom::Keys>,
-    /// (derived rel, col) → its counts for join sizes (decision 0500: the native relation's sketch's counters,
+    /// (derived rel, col) → its counts for join sizes (decision 0488: the native relation's sketch's counters,
     /// `join_size`): a probe by one atom's column is priced by the rows the two columns join (`atom_rows`).
     pub counts: ColMap<std::sync::Arc<super::join_size::JoinCounts>>,
     /// rel → the engine's relation as its heavy values were made or last merged over (`InRel::mark`): its change
@@ -466,7 +474,7 @@ pub struct Stats {
     pub heavy_mark: table::RelMap<std::sync::Arc<super::native::component::RelMark>>,
     /// (rel, col) → heavy values a model or any of its forks made, with the engine's relation as they were made
     /// over (`InRel::mark`): shared by a model's forks (`fork`), which plan a wave's components apart and take their
-    /// own back only as each retires. A fork takes an entry whose mark finds the relation unchanged (decision 0500:
+    /// own back only as each retires. A fork takes an entry whose mark finds the relation unchanged (decision 0488:
     /// corpus0's components counted each chunk's `kind` view again, 107 times). Held by the model, not the process.
     pub heavy_shared: std::sync::Arc<parking_lot::Mutex<HashMap<(String, usize), (std::sync::Arc<super::native::component::RelMark>, std::sync::Arc<table::HeavyCol>)>>>,
     /// (rule, binding pattern) → [bindings in, bindings out]: fanouts native joins observed, per rule (`obs_rule`).
@@ -1215,7 +1223,7 @@ thread_local! {
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
 fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
     with_plans(|p| {
-                let shared = p.as_ref()?;
+        let shared = p.as_ref()?;
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
@@ -1490,6 +1498,7 @@ impl OrderedPlans {
 pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlans) {
     let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
     let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
+    // The view is the plans its extent binds (its jobs carry it), and its own (`enter_plans`) go back to it.
     let r = {
         // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
         // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
@@ -1987,7 +1996,8 @@ pub fn plans_to_store() -> Option<StoredPlans> {
 
 /// `RERAIL_JOIN_LINES=FILE` (a measurement aid): each line that ran a search's work or more, appended as it ends,
 /// tab-separated: its stratum, its delta, its order (literal positions), its rows of work, its price for the rows it
-/// read, its wall seconds, its plan key and its rule.
+/// read, its wall seconds, its plan key, each step's bindings in and out (`in/out`, by step, in the order run) and
+/// its rule.
 /// The run's own (opened once a run, decision 0442).
 fn line_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
@@ -3399,7 +3409,7 @@ impl Model {
         expected.as_ref().and_then(|(_, e)| joins::step_miss(e, steps, SEARCH_WORK))
     }
 
-    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0500's measure of what the counters do not
+    /// A mispredicted line, step by step (`RERAIL_JOINS_LOG`, decision 0488's measure of what the counters do not
     /// price): each step's literal, the rule it was priced by, its rows priced, and the bindings in and rows out it
     /// made so far (`steps`).
     fn describe_miss(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, order: &[Step], steps: &[(u64, u64)]) -> String {
@@ -3982,7 +3992,7 @@ impl Model {
                         if joined_else { all = false; }
                         by_cols.extend(b.args(*d).iter().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(x) if *x == v)).map(|(dc, _)| (dr, dc)));
                     }
-                    // Each column priced with its kept keys (decision 0500), read where the engine keeps them.
+                    // Each column priced with its kept keys (decision 0488), read where the engine keeps them.
                     let priced = |r: &str, c: usize| self.heavy_of(r, c).map(|h| table::PricedCol::new(h, self.stats.keys.at(r, c)));
                     if all && !by_cols.is_empty() && let Some(here) = priced(rel, c)
                         && let Some(by) = by_cols.iter().map(|&(dr, dc)| priced(dr, dc)).collect::<Option<Vec<_>>>()
@@ -3992,7 +4002,7 @@ impl Model {
                         misses_counted.set(misses_counted.get() | 1 << c.min(63));
                         return f.max(0.01);
                     }
-                    // Decision 0500: drawn through one atom's column, the rows the two columns join (their sketches'
+                    // Decision 0488: drawn through one atom's column, the rows the two columns join (their sketches'
                     // counters, `join_size`) over that column's rows are this column's rows a binding, the bindings
                     // that miss counted in. Only where the counters tell the join's size.
                     if all && let [(dr, dc)] = by_cols[..]
@@ -4057,7 +4067,7 @@ impl Model {
                             b.args(*d).iter().position(|t| matches!(t, TermRef::Var(x) if *x == v)).and_then(|c2| Some((domains[c2]?, (*d, c2))))
                         })
                         .fold((f64::INFINITY, None), |m, (n, at)| if n < m.0 { (n, Some(at)) } else { m });
-                    // Where both columns' keys are kept (decision 0500), the bindings that hit are the share of the
+                    // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
                     let kept = at.and_then(|(d, c2)| {
@@ -5621,7 +5631,7 @@ impl Fx<'_> {
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
-                .map(|l| LiveRel::of_native(l))
+                .map(LiveRel::of_native)
                 .collect());
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
@@ -5640,7 +5650,7 @@ impl Fx<'_> {
         }
         Ok(super::native::component::live_changed(self.db, name, seen)?
             .into_iter()
-            .map(|l| l.map(|l| LiveRel::of_native(l)))
+            .map(|l| l.map(LiveRel::of_native))
             .collect())
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
@@ -7020,7 +7030,7 @@ pub struct LiveRel {
     pub ndv: Vec<i64>,
     pub sq: Vec<i64>,
     pub freq: Vec<(usize, HashMap<Constant, i64>)>,
-    /// Each column's keys, where the native engine keeps them (decision 0500), else none.
+    /// Each column's keys, where the native engine keeps them (decision 0488), else none.
     pub keys: Vec<super::bloom::Keys>,
     /// Each column's counts for join sizes, where the native engine keeps them (`join_size`), else none.
     pub counts: Vec<std::sync::Arc<super::join_size::JoinCounts>>,
@@ -10452,7 +10462,8 @@ impl<'a> Run<'a, '_> {
                         let shown = order.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join(".");
                         let wall = walled.get(line).copied().unwrap_or(0.0);
                         use std::io::Write as _;
-                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{text}", key as u64);
+                        let steps = c.iter().map(|(i, o)| format!("{i}/{o}")).collect::<Vec<_>>().join(" ");
+                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{steps}\t{text}", key as u64);
                     }
                 }
                 lines_push(runs);
@@ -11072,9 +11083,9 @@ fn retainable_stratum(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>
         && !rules.iter().any(|&r| vs.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })))
 }
 
-/// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
+/// Old frames could record a nonempty answer digest beside an unmaterialized, empty payload.
 fn answer_read(p: &str) -> String {
-    format!("answer:{p}")
+    format!("answer:v2:{p}")
 }
 
 /// A set of answered rows' digest (`rows_digest`, of no rows when none), of relation `p`'s content (`Cells`).
@@ -11086,7 +11097,7 @@ fn answers_digest(f: Fields<'_>, db: &Connection, p: &str, rows: Option<&BTreeSe
     rows_digest(&Cells::new(&atoms, &stored_types(f, p, vec![b'i'; width])), &flat, rows.len())
 }
 
-/// A stratum's reads with its native step's answers (`answer:<p>` for each relation its requests produce), when
+/// A stratum's reads with its native step's answers (one digest per produced relation), when
 /// it makes requests of its own.
 fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
     let mut reads = reads?;
@@ -11108,13 +11119,16 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
+    if scc.contains("source_language_classification") {
+        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+    }
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
         let got = if run.native_rels.contains(r) {
             super::native::component::kept_rows(db, r)
         } else if f.produced(r) && !f.is_input(r) {
-            // A produced relation's answers, in its table (none when no rule reads it).
+            // SQL holds the answers when the relation is outside the native component.
             produced_rows(db, run, r)
         } else {
             None
@@ -12495,6 +12509,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 for (j, rules, moved) in reached_strata {
                     let scc = &sccs[j];
+                    if scc.contains("source_language_classification") {
+                        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+                    }
                     let key = stratum_key(scc);
                     reached += 1;
                     // A view of an input's columns (Q37) keeps nothing: it is held again in place, which is no work,
@@ -12674,7 +12691,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
-            // its answers are among what it reads (`answer:<p>`), so it is clean while they are as they were.
+            // Its reads include the observed answers. A changed answer invalidates the stratum.
             // (A request whose answers are all above the stratum is answered there, once its rows are whole.)
             let asks: Vec<&String> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(*p))).collect();
             // A stratum of produced relations above their requests is their native step: their rows are the answers.
@@ -12824,8 +12841,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 if let Some(at) = run.logging {
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
-                // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
+                // A later program can reuse this producer even when the current cone has no local reader.
+                // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
+                if f0.is_input(rel) || rows.is_empty() {
+                    continue;
+                }
+                if strata_kept.is_none()
+                    && !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str()))
+                {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above

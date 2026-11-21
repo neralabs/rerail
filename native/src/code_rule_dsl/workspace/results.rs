@@ -256,14 +256,11 @@ pub(super) fn evicted_file_states(
     let injected = false;
     // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
     // resident file: the stored results remain, so a later read answers them (O22).
-    let results = (!injected)
-        .then(|| {
-            storage
-                .store
-                .local_check_results_by_key(&keys, catalog)
-                .ok()
-        })
-        .flatten();
+    let results = match (!injected).then(|| storage.store.local_check_results_by_key(&keys, catalog)) {
+        Some(Ok(results)) => Some(results),
+        Some(Err(error)) if state.scan_fingerprints.is_some() => return Err(super::api::store_unavailable(error)),
+        _ => None,
+    };
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -523,24 +520,36 @@ pub(super) fn serialize_result_page(
     state: &mut WorkspaceState,
     cursor: usize,
     maximum_bytes: usize,
+    include_fingerprints: bool,
 ) -> Result<String> {
     if cursor == 0 {
         state.result_page_index = Some(build_result_page_index(state)?);
     }
     let index = state
         .result_page_index
-        .as_ref()
+        .take()
         .filter(|index| index.revision == state.revision)
         .ok_or_else(|| invalid("result page cursor is stale; restart at cursor 0"))?;
     let total = index.violations.len();
     let mut bytes = 0_usize;
     let start = cursor.min(total);
     let mut next = start;
+    let mut entries = Vec::new();
     for violation in &index.violations[start..] {
-        if next > start && bytes.saturating_add(violation.len()) > maximum_bytes {
+        let entry = if include_fingerprints {
+            let mut finding: Value = serde_json::from_str(violation).map_err(json_error)?;
+            if let Some(fingerprint) = super::scan_fingerprints::of_violation(state, &finding)? {
+                finding["fingerprint"] = json!(fingerprint);
+            }
+            std::borrow::Cow::Owned(serde_json::to_string(&finding).map_err(json_error)?)
+        } else {
+            std::borrow::Cow::Borrowed(violation.as_ref())
+        };
+        if next > start && bytes.saturating_add(entry.len()) > maximum_bytes {
             break;
         }
-        bytes = bytes.saturating_add(violation.len());
+        bytes = bytes.saturating_add(entry.len());
+        entries.push(entry);
         next += 1;
     }
     let done = next >= total;
@@ -560,7 +569,7 @@ pub(super) fn serialize_result_page(
     page.extend_from_slice(format!(",\"cursor\":{next},\"done\":{done},\"failures\":").as_bytes());
     serde_json::to_writer(&mut page, failures).map_err(json_error)?;
     page.extend_from_slice(format!(",\"revision\":{},\"violations\":[", state.revision).as_bytes());
-    for (position, violation) in index.violations[start..next].iter().enumerate() {
+    for (position, violation) in entries.into_iter().enumerate() {
         if position > 0 {
             page.push(b',');
         }
@@ -568,8 +577,8 @@ pub(super) fn serialize_result_page(
     }
     page.extend_from_slice(b"]}");
     let page = String::from_utf8(page).map_err(|error| invalid(error.to_string()))?;
-    if done {
-        state.result_page_index = None;
+    if !done {
+        state.result_page_index = Some(index);
     }
     Ok(page)
 }
