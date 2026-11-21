@@ -614,28 +614,47 @@ impl AtomsDir {
 type AtomicI64Ref = std::sync::atomic::AtomicI64;
 type AtomicU64Ref = std::sync::atomic::AtomicU64;
 
-/// The string of `id` in the directory at `dir` (host addresses), through the reads written once in CLIF
-/// (`atoms_at`, `atoms_len`): `None` for an id none of its runs holds.
+/// The string of `id` in the directory at `dir` (host addresses): `None` for an id none of its runs holds. The
+/// atoms reads written directly (decision 0517): the run holding `id` found by a binary search of the runs' first ids,
+/// as the reads in CLIF (`atoms_at`, `atoms_len`, the JIT's and the kernels') find it; a test holds the two equal.
 ///
 /// # Safety
 /// `dir` is a directory made for the host (`AtomsDir::new` with host addresses), whose blocks are mapped.
 pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
-    // SAFETY: the caller's.
+    if id == 0 {
+        return Some(&[]);
+    }
+    // SAFETY: the caller's: a host directory, its spans' offsets host addresses' differences.
     unsafe {
-        let len = crate::generated_reads::atoms_len(dir, id);
-        if len == u32::MAX {
+        let root = &*dir.cast::<AtomsDirRoot>();
+        let entries = root.entries.as_ptr();
+        // The last run whose first id is at most `id`, if `id` is below its end.
+        let (mut lo, mut hi) = (0u32, root.n as u32);
+        while lo < hi {
+            let middle = lo.wrapping_add(hi) >> 1;
+            if (*entries.add(middle as usize)).first <= id {
+                lo = middle + 1;
+            } else {
+                hi = middle;
+            }
+        }
+        let e = &*entries.add(lo.checked_sub(1)? as usize);
+        if id >= e.end {
             return None;
         }
-        let at = crate::generated_reads::atoms_at(dir, id) as *const u8;
-        Some(std::slice::from_raw_parts(at, len as usize))
+        // Its string ends at `ends[id - from]` and begins where the one before it ends (`0` for the run's first).
+        let i = id.wrapping_sub(e.from) as usize;
+        let ends = e.ends.as_ptr();
+        let (start, end) = (if i == 0 { 0 } else { *ends.add(i - 1) }, *ends.add(i));
+        Some(std::slice::from_raw_parts(e.strings.as_ptr().wrapping_add(start as usize), end.wrapping_sub(start) as u32 as usize))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// Decision 0478 step 2b: an id's string read through the directory, by the reads written once in CLIF (their
-    /// generated Rust), is the block's own, in every run: a run that begins past its block's first id (a pending
-    /// block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
+    /// Decision 0478 step 2b: an id's string read through the directory, by the host's read written directly
+    /// (`str_in`, decision 0517), is the block's own, in every run: a run that begins past its block's first id (a
+    /// pending block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
     #[test]
     fn the_directorys_reads_find_every_atom_where_its_block_holds_it() {
         use super::{AtomRead, AtomsDir, AtomsW, str_in};

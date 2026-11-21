@@ -480,6 +480,10 @@ pub struct BlockProgram {
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
     pub masks: Vec<u16>,
+    /// The value, also an output, whose bits are the stream's `\n` bytes, where the program has a tree section: the
+    /// format 16 tape's newline index is made from its words (`rerail_tape_format::newlines::index_of`), with no scan of
+    /// the source of its own.
+    pub newlines: Option<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -778,7 +782,7 @@ impl BlockProgram {
                     BlockOp::Const(_) | BlockOp::Not(_) | BlockOp::And(..) | BlockOp::Or(..) | BlockOp::Xor(..) | BlockOp::AndNot(..) => true,
                     _ => false,
                 });
-                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty()
+                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty() && self.newlines.is_none()
             }
             None => !self.ops.iter().any(|op| matches!(op, BlockOp::Cmp { .. } | BlockOp::Bit { .. })),
         };
@@ -795,7 +799,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(&self.newlines).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -895,6 +899,11 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        // Likewise the newlines, tagged.
+        if let Some(v) = self.newlines {
+            out.extend_from_slice(b"newlines");
+            out.extend_from_slice(&v.to_le_bytes());
+        }
         // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
@@ -985,6 +994,11 @@ impl BlockProgram {
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
             .collect()
+    }
+
+    /// Each mask's output index.
+    pub fn newline_output(&self) -> Option<usize> {
+        self.newlines.map(|v| self.outputs.iter().position(|&o| o == v).expect("verified: the newlines are an output"))
     }
 
     /// Each mask's output index.
@@ -1811,6 +1825,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     }
     for value in &block.masks {
         let _ = writeln!(out, "  block {at} mask %{value}");
+    }
+    if let Some(value) = block.newlines {
+        let _ = writeln!(out, "  block {at} newlines %{value}");
     }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);

@@ -60,6 +60,9 @@ structure! {
 pub trait Backing: Send + Sync {
     fn base(&self) -> *mut u8;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// The device buffer over the whole of it, made once by its owner.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn buffer(&self) -> Option<rerail_device::device::Buffer> {
@@ -76,6 +79,18 @@ pub fn zeroed_bytes() -> u64 {
 #[derive(Default)]
 struct Zeroed(std::sync::atomic::AtomicU64);
 
+#[cfg(test)]
+thread_local! {
+    /// This thread's bytes zeroed: a test's own count, which the tests running beside it do not move.
+    static ZEROED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The bytes this thread zeroed (`zeroed_bytes`, a test's own).
+#[cfg(test)]
+pub(crate) fn zeroed_here() -> u64 {
+    ZEROED_HERE.with(std::cell::Cell::get)
+}
+
 /// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
 ///
 /// # Safety
@@ -83,6 +98,8 @@ struct Zeroed(std::sync::atomic::AtomicU64);
 unsafe fn zero(p: *mut u8, len: usize) {
     unsafe { std::ptr::write_bytes(p, 0, len) };
     rerail_context::with_local::<Zeroed, _>(|z| z.0.fetch_add(len as u64, Relaxed));
+    #[cfg(test)]
+    ZEROED_HERE.with(|z| z.set(z.get() + len as u64));
 }
 
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
@@ -392,7 +409,7 @@ impl Block {
     /// file, a new buffer) is not zeroed as it is allocated.
     pub fn over_with(kind: u32, backing: Box<dyn Backing>, dirty: bool) -> Block {
         let (base, reserved) = (backing.base(), backing.len());
-        assert!(reserved >= PAGE && base as usize % 64 == 0, "a backing of at least a page, 64-byte aligned");
+        assert!(reserved >= PAGE && (base as usize).is_multiple_of(64), "a backing of at least a page, 64-byte aligned");
         unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) };
         let mut b = Block::make(base, reserved, 0, None, true, Some(backing));
         b.dirty = dirty;

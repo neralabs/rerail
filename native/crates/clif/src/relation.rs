@@ -1,6 +1,7 @@
 //! A relation's reads as CLIF functions, written once (decision 0325): what `rerail_blocks`' `Rows` and `Relation`
-//! read, for the host (the Rust backend: the blocks crate's `generated_reads.rs`), the kernels (the MSL backend:
-//! `<ukl/reads/relation.h>`) and the JIT (inlined where hot).
+//! read, for the kernels (the UKL backend: `<ukl/reads/relation.h>`) and the JIT (inlined where hot). The host's
+//! are written directly in the blocks crate (`Rows::get`, `Relation::get`, `Relation::dead_bit`, `Relation::group`,
+//! `mix`; decision 0517), held equal to these by the tests.
 //!
 //! A read takes a descriptor's address (a `Rows`, or a `Relation`) and reaches everything else through the block's
 //! self-relative references: a span's items lie `off` bytes from the span's own address, a column's chunk `chunk[k]`
@@ -356,6 +357,12 @@ mod tests {
             };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
         let rel_group: Group = unsafe { std::mem::transmute(reads.function("rel_group")) };
+        // The key hash's mix: the host's (`rerail_blocks::mix`) is the read's.
+        type Mix = extern "C" fn(*const u8, u64, u64) -> u64;
+        let rel_key_mix: Mix = unsafe { std::mem::transmute(reads.function("rel_key_mix")) };
+        for (h, v) in [(0u64, 0i64), (rerail_blocks::SEED, 1), (u64::MAX, -1), (0x1234_5678_9abc_def0, i64::MIN), (7, 0x7fff_ffff_ffff_ffff)] {
+            assert_eq!(rel_key_mix(std::ptr::null(), h, v as u64), rerail_blocks::mix(h, v), "mix of {h:#x} and {v}");
+        }
 
         let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
         let lock = Mutex::new(());
@@ -391,9 +398,25 @@ mod tests {
                 let h = rerail_blocks::key_hash(&[key]);
                 let group = rel.group(0, h);
                 let g = rel_group(desc, 0, h);
-                let index_rows = rel.index(0).rows.as_slice();
+                let index_rows = rel.index_at(0).rows.as_slice();
                 let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - index_rows.as_ptr() as usize) / 4 };
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
+            }
+        }
+
+        // A continuation of the base, and one of it (a fork of a fork, decision 0384 step 8), each with rows of its
+        // own: every id each reads, down the chain, by the host's `Relation::get` (written directly, decision 0517)
+        // and the JIT's `rel_get`.
+        let first = Relation::try_continue(&base_block, &spec, base, 3_000).expect("a continuation");
+        RelW { block: &base_block, rel: first, lock: &lock }.extend(&(0..900i64).flat_map(|i| [i << 40 | 5, 70 + i % 3]).collect::<Vec<_>>());
+        let second = Relation::try_continue(&base_block, &spec, first, first.len_all() - 100).expect("a continuation of one");
+        RelW { block: &base_block, rel: second, lock: &lock }.extend(&(0..300i64).flat_map(|i| [-(i << 20), 90 + i % 7]).collect::<Vec<_>>());
+        for rel in [first, second] {
+            let desc = std::ptr::from_ref(rel).cast::<u8>();
+            for id in 0..rel.len_all() {
+                for c in 0..2u32 {
+                    assert_eq!(rel_get(desc, id, c) as i64, rel.get(id, c as usize), "rel_get of a continuation's row {id} column {c}");
+                }
             }
         }
     }
@@ -454,11 +477,13 @@ mod tests {
         let rel = Relation::create(&block, &spec, None);
         RelW { block: &block, rel, lock: &lock }.extend(&(0..20_000i64).collect::<Vec<_>>());
         let dir = rel.rows.col(0);
+        let reads = crate::jit::Reads::new();
+        // SAFETY: `rows_at`'s signature: the rows' descriptor, a row, a column.
+        let rows_at: extern "C" fn(*const u8, u32, u32) -> u64 = unsafe { std::mem::transmute(reads.function("rows_at")) };
         for i in 0..rel.rows.len() {
             let (k, l) = rerail_blocks::rows::chunk_of(i, rel.rows.min_log);
             let by_host = std::ptr::from_ref(dir) as i64 + dir.chunk[k].load(std::sync::atomic::Ordering::Relaxed) + 8 * l as i64;
-            // SAFETY: a live descriptor and a reserved row.
-            let by_read = unsafe { rerail_blocks::generated_reads::rows_at(std::ptr::from_ref(&rel.rows).cast(), i, 0) } as i64;
+            let by_read = rows_at(std::ptr::from_ref(&rel.rows).cast(), i, 0) as i64;
             assert_eq!(by_read, by_host, "row {i}");
         }
     }

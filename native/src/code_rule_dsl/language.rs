@@ -60,7 +60,7 @@ enum PatternSyntax {
     Dollar,
     /// `$X`, `$_`, `$$X` and `$$$` written with `µ` for `$` (`own_metavariables`), as ast-grep writes
     /// them for its Python: the vendored grammars but ECMAScript's, the dialects Rerail parses itself
-    /// (Blade's Forte, `.rr`, the format strings, ESLint's directives), and a language left out of the build.
+    /// (Blade's Forte, `.rerail`, the format strings, ESLint's directives), and a language left out of the build.
     Micro,
 }
 

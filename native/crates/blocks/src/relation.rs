@@ -240,12 +240,21 @@ impl Relation {
         if self.continues() { self.base_rows + self.rows.len() } else { self.rows.len() }
     }
 
-    /// Row `id`'s value in column `c`, by the read written once (`rel_get`): a continuation's id below `base_rows`
-    /// read in its base, its own rows from `base_rows` on (a delta's own ids count from its base's too).
+    /// Row `id`'s value in column `c`: a continuation's id below `base_rows` read in its base, which may continue
+    /// another (a fork of a fork, decision 0384 step 8: the chain walked to the relation whose own rows hold `id`), its
+    /// own rows from `base_rows` on (a delta's own ids count from its base's too). Written directly (decision 0517);
+    /// the read in CLIF (`rel_get`) is the JIT's and the kernels', and a test holds the two equal.
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        // SAFETY: a live descriptor; the read finds the row where it lies.
-        unsafe { crate::generated_reads::rel_get(std::ptr::from_ref(self).cast(), id, c as u32) as i64 }
+        let mut rel = self;
+        loop {
+            let off = rel.base_off.load(Acquire);
+            if off == 0 || id >= rel.base_rows {
+                return rel.rows.get(id.wrapping_sub(rel.base_rows), c);
+            }
+            // SAFETY: a continuation's base lies in its block at `off` from it, kept while it is (its holder's).
+            rel = unsafe { &*(std::ptr::from_ref(rel).cast::<u8>().offset(off as isize).cast::<Relation>()) };
+        }
     }
 
     /// A delta of `base` with no rows of its own whose dead bits are `words` (row `id` dead when bit `id` of them is
@@ -350,30 +359,28 @@ impl Relation {
         self.rows.get(id - self.base_rows, c)
     }
 
-    /// Whether the dead bits mark row `id`: the read written once (`rel_dead`, decision 0325).
+    /// Whether the dead bits mark row `id` (the CLIF's `rel_dead`, decision 0325): none past the bits.
     #[inline]
     pub fn dead_bit(&self, id: u32) -> bool {
-        // SAFETY: a live descriptor; the read checks `id` against the bits' length.
-        unsafe { crate::generated_reads::rel_dead(std::ptr::from_ref(self).cast(), id) != 0 }
+        self.dead.as_slice().get((id >> 6) as usize).is_some_and(|w| w >> (id & 63) & 1 != 0)
     }
 
     #[inline]
-    #[allow(clippy::should_implement_trait, reason = "the relation's index `i` of its sorted orders, by number: not `ops::Index`")]
-    pub fn index(&self, i: usize) -> &Index {
+    pub fn index_at(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
     }
 
-    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket, found
-    /// by the read written once (`rel_group`, decision 0325).
+    /// One relation's rows for a key of hash `h` on index `i`, before liveness and key equality: its bucket (the
+    /// CLIF's `rel_group`, decision 0325). None for an index of no buckets.
     #[inline]
     pub fn group(&self, i: usize, h: u64) -> &[u32] {
-        // SAFETY: a live descriptor; index `i` is one of its indexes.
-        let g = unsafe { crate::generated_reads::rel_group(std::ptr::from_ref(self).cast(), i as u32, h) };
-        let (start, len) = ((g >> 32) as usize, (g & 0xffff_ffff) as usize);
-        if len == 0 {
+        let ix = self.index_at(i);
+        let offs = ix.offs.as_slice();
+        if offs.is_empty() {
             return &[];
         }
-        &self.index(i).rows.as_slice()[start..start + len]
+        let b = (h & ix.mask) as usize;
+        &ix.rows.as_slice()[offs[b] as usize..offs[b + 1] as usize]
     }
 
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
@@ -578,7 +585,7 @@ impl Relation {
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
             let me = std::ptr::from_ref(self).cast_mut();
-            if self.indexes.len() == 0 {
+            if self.indexes.is_empty() {
                 let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
                 Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
                 self.flags.fetch_or(ADDED, Release);
@@ -1230,7 +1237,7 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        let ix = self.top.index(i);
+        let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
             let own = leading(self.top, cols, key);

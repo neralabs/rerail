@@ -5701,6 +5701,12 @@ down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start")
 
 - **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
   runs every step, none refused.
+- **Found 2026-11-20** (the ladders cut to their grammars, 0499): both JSON forms now run on Metal (0 refused, since
+  5670277876's early start), and `every_grammar_on_metal_equals_the_interpreter` (the test's new name) fails: on 42
+  of 378 `jsonc` files, all with comments, the outputs are equal and extract 4 (a comment's last bytes) differs, e.g.
+  `"// /* x\nfalse"`: Metal `[6]`, the interpreter `[2, 12]`. The same with the old seeds (`15-jsonc`: 39 files) and
+  with the newline output (0493) taken out, so neither change causes it. `json-rfc` is equal. **Done when** this
+  test passes.
 
 
 ### Q197. Tier 1 with no general body (0383) differs from the interpreter on 14 corpus programs

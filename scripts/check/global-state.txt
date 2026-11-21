@@ -70,7 +70,6 @@ native/crates/tape_format/src/f16.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/blade/forte/directives/mod.rs::DEFAULTS	stays	computed once from the engine's constants
 native/src/code_rule_dsl/build_ids.rs::ENGINE	stays	computed once from the engine's own build
 native/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engine's own build
-native/src/code_rule_dsl/build_ids.rs::REBUILT	stays	computed once from the engine's own grammar
 native/src/code_rule_dsl/compile/ast_rule.rs::BY_DIALECT	stays	each grammar's supertype names, computed once from its kind catalog (the engine's own constants)
 native/src/code_rule_dsl/compile/resolve.rs::FLOW_RESOLVES	stays	computed once from the engine's constants
 native/src/code_rule_dsl/cpython/mod.rs::LOAD	stays	code registered at load (an init-array entry)

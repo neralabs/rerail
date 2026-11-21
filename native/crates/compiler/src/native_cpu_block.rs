@@ -68,6 +68,10 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
+    /// The output of the stream's newlines (`BlockNative::newlines`), where the body stores its rows: the format 16
+    /// tape's newline index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
+    /// a token loop's tier 1 (0177), which makes no mask, as the lean lexer makes none; its index is the scan's.
+    pub newlines: Option<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -1154,7 +1158,6 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
 /// another reads as a word, an output, or a carried one (`exits`). A value on the vectors that
 /// another on the vectors reads is made again there by its reader (`Lanes`), so it leaves none.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, grouped: &[Option<usize>], store_at: &[Vec<u16>], sink_at: &[Vec<usize>], regions: usize, order: &mut Order, slow_blocks: &std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>) -> Option<usize> {
     let native = e.native;
     let state = e.state;
@@ -1162,8 +1165,21 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
     let n = native.insts.len();
     let known = ascii_known(native, plan);
     let output: Vec<bool> = (0..n).map(|x| native.outputs.contains(&(x as u16))).collect();
+    // What a region reads, and what that reads, is the region's to make, in its own branch (decision 0423), from the
+    // bytes: not the split's. A value the region alone reads is not the body's (`live`), so no exit would take it
+    // past the join, and the region would read its ASCII word, a constant, on every block; one that left would be
+    // made outside the region's branch. Operands come before their readers.
+    let mut regions_read = vec![false; n];
+    for x in (0..n).rev() {
+        if plan.region_of[x].is_some() || regions_read[x] || plan.regions.iter().any(|r| r.vectors.contains(&x)) {
+            regions_read[x] = true;
+            for o in native.insts[x].operands() {
+                regions_read[o] = true;
+            }
+        }
+    }
     let inside: Vec<bool> = (0..n)
-        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && plan.region_of[x].is_none() && grouped[x].is_none())
+        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && !regions_read[x] && grouped[x].is_none())
         .collect();
     // A value on the vectors is made from its operands' vectors, again in each reader
     // (`Lanes`): one past the branch that reads a known value there would make it on every
@@ -2770,6 +2786,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
+        newlines: native.newlines.filter(|o| !native.cpu_unstored().contains(o)),
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,
@@ -4255,6 +4272,14 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    (tables, mult, slots)
+}
+
+/// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
+pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 
@@ -9080,7 +9105,7 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
 /// a block that skips it (decision 0423): the first instruction made for one (its source
 /// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
 /// value. Cold blocks (the edge part) make values without the regions.
-fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize, String)> {
     if entered.is_empty() {
         return None;
     }
@@ -9095,7 +9120,7 @@ fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::
             let v = loc.bits() as usize - 1;
             for &(r, active) in entered {
                 if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
-                    return Some((r, v));
+                    return Some((r, v, func.dfg.display_inst(i).to_string()));
                 }
             }
         }
@@ -9876,8 +9901,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         if let Some(&body) = hot.first() {
             sink_extracts(&mut context.func, body);
         }
-        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
-            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
+        if let Some((r, v, inst)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423): `{inst}`")));
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));

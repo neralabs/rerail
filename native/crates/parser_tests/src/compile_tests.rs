@@ -196,11 +196,15 @@ fn every_total_is_one_flag_on_every_executor() {
     }
 }
 
-/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
+/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks. None
+/// without a device (`executors::no_device`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
+    if crate::executors::no_device() {
+        return Vec::new();
+    }
     vec![
         ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
         ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
@@ -340,7 +344,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
                 let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
                 let file = [block::BatchFile { bytes: &bytes, program: 0 }];
-                for blocks in [3, 29] {
+                for blocks in [3, 29].into_iter().filter(|_| !crate::executors::no_device()) {
                     let run = run_serial_split(&[&native], &file, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("the forward carry runs: {e:?}"));
                     got.push((format!("metal forward carry, segments of {blocks}"), run.run.files[0].outputs.clone()));
                 }
@@ -498,7 +502,7 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    for width in LaneWidth::ALL {
+    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
         for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
             for spins in [SPINS, 0] {
                 let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));

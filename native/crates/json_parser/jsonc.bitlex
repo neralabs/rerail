@@ -1,7 +1,7 @@
-# Step 15: JSON with comments, as tree-sitter-json parses it: step 14 and `//` and `/* */`
+# JSON with comments, as tree-sitter-json parses it: `json-rfc.bitlex`'s JSON and `//` and `/* */`
 # comments, extras placed where tree-sitter places them.
 #
-# Every file step 14 accepts, this one accepts with the same nodes. A comment adds a leaf
+# Every file `json-rfc.bitlex` accepts, this one accepts with the same nodes. A comment adds a leaf
 # `comment` in the lowest node holding the tokens on either side.
 #
 # The string state is found without comments, as simdjson's; so a comment holding a quote, or

@@ -1,5 +1,12 @@
 use super::*;
 
+/// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
+/// `block_program::ready`): a test's device half is left out.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn no_device() -> bool {
+    rerail_metal::block_program::ready().is_err()
+}
+
 /// The lean scan's rows of `src`: its reference.
 fn lean(src: &[u8], cpp: bool) -> Vec<Row> {
     let opts = if cpp { rerail_c_pp::Options::cpp(17, true) } else { rerail_c_pp::Options::c(17, true) };
@@ -170,16 +177,16 @@ fn directives_read_as_the_lean_scan_reads_them() {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
+        let metal = if no_device() { Vec::new() } else { c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}")) };
         for (src, m) in cases.iter().zip(metal) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
     }
 }
 
-/// What the step does not read is refused, never read wrong.
+/// What the grammar does not read is refused, never read wrong.
 #[test]
-fn what_the_step_does_not_read_is_refused() {
+fn what_the_grammar_does_not_read_is_refused() {
     let c = compiled_or_panic();
     for src in ["#if A\n#define X\n", "#define X 1\rx\n", "auto s = R\"x(x)x\";\n", "auto s = R\"(x\n", "auto s = R\"(a\\\nb)\";\n", "int n = '.5'a + 1;\n", "#define X \"open\n", "/* open\n", "??=define X\n", "%:define X\n", "#error don't\n"] {
         assert!(c.read(src.as_bytes()).is_none(), "{src:?}");
@@ -269,20 +276,6 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        assert_eq!(c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0], Some(got), "Metal");
+        assert!(no_device() || c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0] == Some(got), "Metal");
     }
 }
-
-/// The ladder's step compiles to the native IR, and is `GRAMMAR`, which the other tests compile
-/// through Cranelift too. The earlier steps are in git's history (decision 0422).
-#[test]
-fn every_ladder_step_compiles() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
-    let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
-    steps.sort();
-    for p in &steps {
-        crate::lower_kinds(&std::fs::read_to_string(p).unwrap(), KINDS, FIELDS).unwrap_or_else(|e| panic!("{}: {e}", p.display()));
-    }
-    assert_eq!(std::fs::read_to_string(steps.last().unwrap()).unwrap(), GRAMMAR, "the last step is the grammar");
-}
-

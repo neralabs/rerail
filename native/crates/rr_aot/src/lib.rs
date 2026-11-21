@@ -61,7 +61,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     let native = native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     let two = rust_stream::rust_source_at(&native, widths, tag)?;
     let (widths16, tag16) = c.parser.sixteen().ok_or("no format 16 tier 2")?.widths_tag();
-    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16)?;
+    let sixteen = rust_stream::rust_source_16(&native, widths16, tag16, lang())?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
     if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) || sealed(&sixteen) != Some(tier2_16_aot::SOURCE) {
         return Err("the ahead-of-time source is of another program than the JIT compiles".into());
@@ -90,6 +90,12 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
         unsafe { c.parser.sixteen_mut().ok_or("no format 16 tier 2")?.set_entry(entry16, 4) };
     }
     Ok(c)
+}
+
+/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0516): the run's
+/// node numbers are its, literals in the source, so a format 16 run of the ahead-of-time build takes it.
+pub fn lang() -> &'static rerail_tape_format::f16::Lang {
+    rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("rr's format 16 table")
 }
 
 /// Without the generated tiers there is no ahead-of-time build.

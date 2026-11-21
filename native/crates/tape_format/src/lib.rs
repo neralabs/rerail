@@ -21,15 +21,15 @@ pub mod tape;
 pub mod f16;
 pub mod home;
 pub mod newlines;
-/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
-mod generated_reads;
-/// The tape's writer's ops as Rust, from CLIF (decision 0434 §6): `rerail_clif::writer::rust_source`.
-mod generated_writer;
+/// The tape's reads in Rust, written directly (decision 0510): this crate's readers'.
+pub mod reads;
+/// The tape's writer in Rust, written directly (decision 0505): the host's, and a generated tier 2's `w` module.
+pub mod writer16;
 
 
-/// The writer's ops as Rust source (`generated_writer`, the host's own): a tier 2 generated ahead of time that writes
-/// format 16 holds it as a module of its own and calls the ops at its node words (`rerail_compiler::rust_stream`).
-pub const WRITER_RUST: &str = include_str!("generated_writer.rs");
+/// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
+/// holds it as its module `w` (`rerail_compiler::rust_stream`).
+pub const WRITER_RUST: &str = include_str!("writer16.rs");
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:

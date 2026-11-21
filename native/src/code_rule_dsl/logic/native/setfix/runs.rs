@@ -564,7 +564,7 @@ impl Run {
     pub(super) unsafe fn in_block(owner: &crate::code_rule_dsl::facts::rows::Part, i: usize) -> Run {
         use rerail_blocks::relation::ORDER_ROWS;
         let block = &owner.facts().block;
-        let ix = owner.rel().index(i);
+        let ix = owner.rel().index_at(i);
         let at = |p: *const u8| block.offset_of(p);
         // SAFETY: the caller's: each span is written in `owner`'s block, which its relation keeps.
         unsafe {

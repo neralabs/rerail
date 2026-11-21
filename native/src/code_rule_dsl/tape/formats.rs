@@ -270,7 +270,7 @@ impl TreeOps {
     }
 
     /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
-    pub(super) fn finish(self) -> Option<f16::Finished> {
+    pub(super) fn finish(mut self) -> Option<f16::Finished> {
         let why = match self.bad {
             Some(why) => why,
             None => match self.w.finish() {

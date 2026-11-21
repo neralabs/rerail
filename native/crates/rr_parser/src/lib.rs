@@ -1,4 +1,4 @@
-//! The `.rerail` parser: the Bitlex grammar of `.rerail` (the last step of `rr_syntax/bitlex_ladder/`), compiled
+//! The `.rerail` parser: the Bitlex grammar of `.rerail` (`rr.bitlex`), compiled
 //! once per process through the Bitlex compiler to tier 1 and tier 2 on Cranelift, and shared by
 //! every thread.
 //!
@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/22-test-blocks.bitlex");
+const GRAMMAR: &str = include_str!("../rr.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rerail`
@@ -219,6 +219,13 @@ mod token_local_tests;
 
 #[cfg(test)]
 pub mod tests {
+    /// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
+    /// `block_program::ready`): a test's device half is left out, as the executors' are.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn no_device() -> bool {
+        rerail_metal::block_program::ready().is_err()
+    }
+
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is
@@ -528,6 +535,9 @@ pub mod tests {
     #[test]
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn a_refused_files_records_stop_on_metal() {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let c = super::compiled().expect("compiles");
@@ -585,8 +595,8 @@ pub mod tests {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let mut on = Vec::new();
-            assert!(super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
-            assert_eq!(on, got);
+            assert!(no_device() || super::metal_tapes(super::compiled().expect("compiles"), &files, &mut on), "Metal runs the batch");
+            assert!(no_device() || on == got, "Metal's tapes, the CPU's");
         }
         for (src, g) in files.iter().zip(&got) {
             assert_eq!(*g, super::tape(src), "{src:?}");
@@ -1925,7 +1935,7 @@ pub mod tests {
 
     /// Each of `short`'s position lists a prefix of `long`'s: a refused file's records, cut at
     /// the token that refused. Metal's check against the CPU's reads it.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn prefix_of(short: &[Vec<u32>], long: &[Vec<u32>]) -> bool {
         short.len() == long.len() && short.iter().zip(long).all(|(s, l)| l.starts_with(s))
     }
@@ -2363,10 +2373,11 @@ pub mod tests {
         {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
-            let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            // No device here: no Metal run to hold to the CPU's.
+            let on = if no_device() { Vec::new() } else { run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1").run.files };
             // Metal sets the gap marks tier 2 on the CPU tests itself: its codes are the
             // interpreter's whole, up to a refusal (`codes_agree`), as the CPU's.
-            for (k, m) in got.run.files.iter().enumerate() {
+            for (k, m) in on.iter().enumerate() {
                 let interp = new.program.block_programs[0].run(refs[k]);
                 let refused = interp.totals.iter().any(|&t| t != 0);
                 assert!(codes_agree(&m.codes, &interp.codes, refused), "file {k}: Metal's codes ({} of {}), up to a refusal", m.codes.len(), interp.codes.len());
@@ -2412,6 +2423,9 @@ pub mod tests {
     /// Metal's tier 1 refuses each of `cases` where the CPU's does (`a_numbers_checks_are_at_its_token`).
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn metal_refuses_as_the_cpu(c: &crate::Compiled, refs: &[&[u8]], cases: &[(String, bool)]) {
+        if no_device() {
+            return;
+        }
         use rerail_compiler::block;
         use rerail_metal::block_program::serial::{Segments, run_serial_split};
         let want = c.parser.tier1.run_files(refs);
@@ -3225,7 +3239,7 @@ mod json_probe {
     #[ignore = "a probe: run by hand"]
     fn json_loop_against_step_14() {
         let new = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
-        let old = program(include_str!("../../compiler/bitlex_ladder/14-json.bitlex")).unwrap_or_else(|e| panic!("14-json: {e}"));
+        let old = program(include_str!("../../json_parser/json-rfc.bitlex")).unwrap_or_else(|e| panic!("json-rfc: {e}"));
         let r = new.block_programs[0].records.as_ref().expect("records");
         eprintln!("rules {:?}\nreaders {:?}", r.rules, r.readers);
         let inputs: Vec<&[u8]> = vec![
@@ -3349,7 +3363,7 @@ mod json_probe {
     }
 
     /// The split tier 1 stores a block's word only where a reader reads it from the rows (decision
-    /// 0347): tier 2's masks and the marks. Its totals are its refusals' flags, each one running
+    /// 0347): tier 2's masks, the marks, and the newlines the line index is made from (decision 0493). Its totals are its refusals' flags, each one running
     /// word (simdjson's `error` register), no row: the token loop makes the rest from the bytes.
     #[test]
     fn json_split_stores_only_what_rows_are_read_for() {
@@ -3362,7 +3376,7 @@ mod json_probe {
         let stored: Vec<usize> = (0..p.outputs.len()).filter(|k| !unstored.contains(k)).collect();
         assert!(!p.totals.is_empty(), "the refusals' totals");
         for k in &stored {
-            assert!(p.masks.contains(k) || marks.contains(k), "output {k} stored a block, read by no row's reader");
+            assert!(p.masks.contains(k) || marks.contains(k) || p.newlines == Some(*k), "output {k} stored a block, read by no row's reader");
         }
         for t in &p.totals {
             assert!(!stored.contains(t) || p.masks.contains(t) || marks.contains(t), "total {t} stored a block");

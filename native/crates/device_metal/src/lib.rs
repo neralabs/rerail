@@ -633,7 +633,7 @@ pub use rerail_logic::threads;
 
 /// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
 /// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
-/// queue Q23). The first registration holds, so a test may call it at any point. `.rr` text is read too (the parity
+/// queue Q23). The first registration holds, so a test may call it at any point. `.rerail` text is read too (the parity
 /// cases' programs, on the CPU pool's workers): without its pack a worker panicked, intermittently, by which test ran
 /// first. And Python's embedder, as the engine's load registers it.
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]

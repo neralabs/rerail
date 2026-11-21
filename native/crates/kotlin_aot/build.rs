@@ -6,7 +6,7 @@
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../kotlin_parser/bitlex_ladder");
+    println!("cargo:rerun-if-changed=../kotlin_parser/kotlin.bitlex");
     println!("cargo:rerun-if-changed=src/tier1_source.rs");
     #[cfg(feature = "generated")]
     generate();

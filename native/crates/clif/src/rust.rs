@@ -1,8 +1,8 @@
 //! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
-//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and the
-//! tape's reads (`reads`), for the tape crate.
+//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler. (The reads
+//! in Rust are written directly: decisions 0510, 0517.)
 //!
 //! A function's graph is structured control (`Shape`); each value a local, a block's
 //! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
@@ -51,12 +51,6 @@ fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 thread_local! {
     /// The constants that are addresses of the JIT's process (`translate`'s `addresses`).
     static ADDRESSES: std::cell::RefCell<Vec<(i64, i64, String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The functions' style: `None` the parser's (`translate`), else the reads' (`translate_reads`), each
-    /// function's inlining by its id.
-    static READS: std::cell::RefCell<Option<Vec<(u32, bool)>>> = const { std::cell::RefCell::new(None) };
-    /// Whether a load of the reads' memory is checked against the tape's bytes (`ld`): not the writer's ops'
-    /// (`translate_ops`).
-    static CHECKED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// A translation's stack. Writing a function's structured control (`Shape::tree`) recurses as deep as the code it
@@ -65,124 +59,13 @@ thread_local! {
 /// pages are committed only as they are touched.
 const STACK: usize = 64 << 20;
 
-/// `f` on a thread with a translation's stack (`STACK`), the caller waiting; the translation's own setting
-/// (`CHECKED`) carried there. A translation's other thread-locals are set inside `f`.
+/// `f` on a thread with a translation's stack (`STACK`), the caller waiting. A translation's thread-locals are set
+/// inside `f`.
 pub fn on_translation_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    let checked = CHECKED.with(std::cell::Cell::get);
     std::thread::scope(|s| {
-        let t = std::thread::Builder::new().name("rerail-clif translation".to_owned()).stack_size(STACK).spawn_scoped(s, move || {
-            CHECKED.with(|c| c.set(checked));
-            f()
-        });
+        let t = std::thread::Builder::new().name("rerail-clif translation".to_owned()).stack_size(STACK).spawn_scoped(s, f);
         t.expect("rerail-clif: a translation's thread").join().unwrap_or_else(|p| std::panic::resume_unwind(p))
     })
-}
-
-/// The writer's ops (`writer::OPS`) as Rust: `translate_reads` of a relation's family, but each load a plain one.
-/// The ops' loads are of the region's parts, each in its part by the host's reservations before the op (decision
-/// 0434 §6); the parts are buffers of their own, so no one span bounds them as `ld` bounds a tape's.
-pub fn translate_ops(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
-    CHECKED.with(|c| c.set(false));
-    let out = translate_reads(funcs, entries, crate::reads::Family::Relation);
-    CHECKED.with(|c| c.set(true));
-    out
-}
-
-/// Whether the functions are the reads' (`translate_reads`): no pinned register; and function `id`'s
-/// attribute.
-fn read_style(id: u32) -> Option<&'static str> {
-    READS.with(|r| r.borrow().as_ref().map(|hot| if hot.iter().any(|&(f, h)| f == id && h) { "#[inline(always)]" } else { "#[inline(never)]" }))
-}
-
-/// The tape's reads as Rust (decision 0310), for the tape crate: `funcs` by their user name's index, each
-/// with whether it is hot, the JIT's mark (a hot one `#[inline(always)]`, as the JIT's pass inlines it, a
-/// cold one `#[inline(never)]`); each of `entries` a safe public function of its name, over the tape's bytes
-/// and its view. A load of the tape (one not marked aligned: the view's fields are) is checked against the
-/// tape's bytes, as the slices a hand-written reader indexes: a corrupt tape panics where it is read. Each
-/// function takes the bytes' length first, where the parser's take the pinned register. No addresses, no
-/// vectors: plain Rust for every target.
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
-    on_translation_stack(|| translate_reads_here(funcs, entries, family))
-}
-
-fn translate_reads_here(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
-    READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
-    ADDRESSES.with(|a| a.borrow_mut().clear());
-    let result = (|| {
-        let mut out = String::from(
-            "/// A load of `T` at address `at` of the tape that starts at `base`, `len` bytes long.\n\
-             #[inline(always)]\n\
-             fn ld<T: Copy>(base: u64, len: u64, at: usize) -> T {\n    \
-                 let off = (at as u64).wrapping_sub(base);\n    \
-                 if off > len || len - off < core::mem::size_of::<T>() as u64 {\n        \
-                     past();\n    \
-                 }\n    \
-                 // SAFETY: the load lies in the tape's bytes, as just checked.\n    \
-                 unsafe { core::ptr::read_unaligned(at as *const T) }\n\
-             }\n\n\
-             #[cold]\n\
-             #[inline(never)]\n\
-             fn past() -> ! {\n    \
-                 panic!(\"a read past the tape's bytes: a corrupt tape\")\n\
-             }\n\n",
-        );
-        for (id, f, _) in funcs {
-            function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?;
-        }
-        for &(entry, n) in entries {
-            let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
-            let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
-            if family == crate::reads::Family::Relation {
-                // A relation's read: its descriptor's address, every load an aligned word of its block (`ld`'s
-                // check is the tape's alone).
-                if types.first() != Some(&"u64") {
-                    return Err(format!("{n}: a relation's read takes its descriptor first"));
-                }
-                let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
-                let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
-                let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-                let ret = ty(ret.value_type)?.0;
-                writeln!(
-                    out,
-                    "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
-                    if params.is_empty() { "" } else { ", " },
-                    params.join(", "),
-                    args.concat()
-                )
-                .unwrap();
-                continue;
-            }
-            if types.get(..2) != Some(&["u64", "u64"][..]) {
-                return Err(format!("{n}: a read takes the tape and its view first"));
-            }
-            let params: Vec<String> = types.iter().enumerate().skip(2).map(|(i, t)| format!("a{i}: {t}")).collect();
-            let args: Vec<String> = (2..types.len()).map(|i| format!(", a{i}")).collect();
-            let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-            let ret = ty(ret.value_type)?.0;
-            // A read that takes an address past the tape and its view (`tape_lz4`'s destination) writes or reads
-            // there unchecked: unsafe, its address the caller's to give.
-            if types[2..].contains(&"u64") {
-                writeln!(
-                    out,
-                    "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n///\n/// # Safety\n/// Each address it takes is valid for what the read says it does there.\n#[inline(always)]\npub unsafe fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: the caller's for the addresses; each load of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
-                    params.join(", "),
-                    args.concat()
-                )
-                .unwrap();
-                continue;
-            }
-            writeln!(
-                out,
-                "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n#[inline(always)]\npub fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
-                params.join(", "),
-                args.concat()
-            )
-            .unwrap();
-        }
-        Ok(out)
-    })();
-    READS.with(|r| *r.borrow_mut() = None);
-    result
 }
 
 /// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: each of
@@ -248,13 +131,8 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     };
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), local(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
-    match read_style(id) {
-        Some(inline) => writeln!(out, "{inline}\nunsafe fn f{id}(len: u64, {}) -> {ret_ty} {{", params.join(", ")).unwrap(),
-        None => {
-            writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
-            out.push_str("    let mut pin = pin;\n");
-        }
-    }
+    writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    out.push_str("    let mut pin = pin;\n");
     let absorbed = absorbed(f);
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
@@ -591,47 +469,75 @@ impl Shape {
 
     /// The code of node `x` and the nodes it dominates: each node's own code by `emit`, given
     /// the node (its place in the graph given) and its branches' code (`jump(k)`, its `k`th
-    /// successor's).
+    /// successor's). Its labels `'bN` (a loop's) and `'mN` (a merge's), N the node.
     pub fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
-        let within = self.within(emit, x, &self.merges[x])?;
+        self.tree_named(emit, x, &|x, looped| if looped { format!("b{x}") } else { format!("m{x}") })
+    }
+
+    /// As `tree`, each label named by `name` (its node, whether a loop's): a loop's and a merge's of one node differ,
+    /// and so do two nodes' (each name its node's, a copy's its own: `copy_of`).
+    pub fn tree_named(&self, emit: Emit<'_>, x: usize, name: Names<'_>) -> Result<String, String> {
+        self.tree_labelled(emit, x, name, &|_, k| k.to_string())
+    }
+
+    /// As `tree_named`, each dispatch's value named by `label` (the dispatch's node, and the place of the entry it
+    /// goes on to): `d = {label}` at an edge into the loop, `{label} =>` its arm, as the lean parser's named
+    /// `Label`s. `tree_named`'s are the places, numbers.
+    pub fn tree_labelled(&self, emit: Emit<'_>, x: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
+        let within = self.within(emit, x, &self.merges[x], name, label)?;
         Ok(match (self.header[x], self.c) {
             (false, _) => within,
-            (true, false) => format!("'b{x}: loop {{\n{within}}}\n"),
+            (true, false) => format!("'{}: loop {{\n{within}}}\n", name(x, true)),
             (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
         })
     }
 
+    /// The node a dispatch's `k`th entry is: what its label names.
+    pub fn entry_of(&self, dispatch: usize, k: usize) -> usize {
+        self.succ[dispatch][k]
+    }
+
+    /// The graph's node that node `x` is (a copy of), `None` for a dispatch.
+    pub fn block_of(&self, x: usize) -> Option<usize> {
+        self.block[x]
+    }
+
+    /// Which copy of its graph's node node `x` is: 0 the first, then each one made after it.
+    pub fn copy_of(&self, x: usize) -> usize {
+        self.block[..x].iter().filter(|&&b| b.is_some() && b == self.block[x]).count()
+    }
+
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
-    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
+    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue '{};", name(to, true)) }
         } else if self.merge[to] {
-            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break '{};", name(to, false)) }
         } else {
-            self.tree(emit, to)?
+            self.tree_labelled(emit, to, name, label)?
         };
         Ok(match self.label.get(&(x, k)) {
-            Some(j) => format!("d = {j}; {jump}"),
+            Some(&j) => format!("d = {}; {jump}", label(to, j)),
             None => jump,
         })
     }
 
-    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize]) -> Result<String, String> {
+    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize], name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         if let Some((&y, rest)) = ys.split_first() {
-            let inner = self.within(emit, x, rest)?;
-            let after = self.tree(emit, y)?;
+            let inner = self.within(emit, x, rest, name, label)?;
+            let after = self.tree_labelled(emit, y, name, label)?;
             if self.c {
                 return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
             }
-            return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
+            return Ok(format!("'{}: {{\n{inner}}}\n{after}", name(y, false)));
         }
         let Some(b) = self.block[x] else {
             if self.c {
                 // A jump in a case breaks the `switch`, then the construct around it.
                 let mut s = String::from("switch (d) {\n");
                 for k in 0..self.succ[x].len() {
-                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k)?).unwrap();
+                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k, name, label)?).unwrap();
                 }
                 s.push_str("default: break;\n}\n");
                 return Ok(s);
@@ -639,14 +545,27 @@ impl Shape {
             let mut s = String::from("match d {\n");
             // Only the arms an edge labels (`thread` leaves some none).
             for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
-                writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
+                // An arm of one line on its line, a longer one's lines within it.
+                let arm = self.transfer(emit, x, k, name, label)?;
+                let l = label(x, k);
+                if arm.trim_end().contains('\n') {
+                    writeln!(s, "{l} => {{\n{}\n}}", arm.trim_end()).unwrap();
+                } else {
+                    writeln!(s, "{l} => {{ {arm} }}").unwrap();
+                }
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
             return Ok(s);
         };
-        emit(b, &|k| self.transfer(emit, x, k))
+        emit(b, &|k| self.transfer(emit, x, k, name, label))
     }
 }
+
+/// A label's name (`Shape::tree_named`): of its node, and whether a loop's.
+pub type Names<'a> = &'a dyn Fn(usize, bool) -> String;
+
+/// A dispatch's value (`Shape::tree_labelled`): of the dispatch's node, and its entry's place.
+pub type Labels<'a> = &'a dyn Fn(usize, usize) -> String;
 
 /// A node's own code (`Shape::tree`): the node, and its branches' code.
 pub type Emit<'a> = &'a dyn Fn(usize, &dyn Fn(usize) -> Result<String, String>) -> Result<String, String>;
@@ -867,21 +786,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let from = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
         }
-        // A read's load of the tape: checked against its bytes (`translate_reads`).
-        // The tape's loads are read-only and not marked aligned (the view's fields are); a load that may be written
-        // (a 16z block's slot, which the decoder bounds itself, decision 0463) is not the tape's.
-        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32
-            if read_style(u32::MAX).is_some() && CHECKED.with(std::cell::Cell::get) && data.memflags().is_some_and(|m| m.readonly() && !m.aligned()) =>
-        {
-            let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
-            let t = match op {
-                Opcode::Uload8 => "u8",
-                Opcode::Uload16 => "u16",
-                Opcode::Uload32 => "u32",
-                _ => u,
-            };
-            set(format!("ld::<{t}>({base}, len, {}) as {u}", addr(&args[0])))
-        }
         Opcode::Load => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const {u}) }}", addr(&args[0]))),
         Opcode::Uload8 => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const u8) }} as {u}", addr(&args[0]))),
         Opcode::Uload16 => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const u16) }} as {u}", addr(&args[0]))),
@@ -896,27 +800,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
-        // A rolling cache's words (decision 0353 step 4b, 0478 step 2d), shared with other threads and the device: u32s,
-        // sequentially consistent as CLIF's atomics are.
-        Opcode::AtomicLoad | Opcode::AtomicStore | Opcode::AtomicRmw | Opcode::AtomicCas if u != "u32" && op != Opcode::AtomicStore => {
-            return Err(format!("an atomic of {u}"));
-        }
-        Opcode::AtomicLoad => set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]))),
-        Opcode::AtomicStore => format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).store({} as u32, core::sync::atomic::Ordering::SeqCst) }};", addr(&args[1]), args[0]),
-        Opcode::AtomicRmw => {
-            let how = match data {
-                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "fetch_add",
-                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "fetch_or",
-                _ => return Err("an atomic other than an add or an or".into()),
-            };
-            set(format!("unsafe {{ (*({} as *const core::sync::atomic::AtomicU32)).{how}({}, core::sync::atomic::Ordering::SeqCst) }}", addr(&args[0]), args[1]))
-        }
-        Opcode::AtomicCas => set(format!(
-            "unsafe {{ match (*({} as *const core::sync::atomic::AtomicU32)).compare_exchange({}, {}, core::sync::atomic::Ordering::SeqCst, core::sync::atomic::Ordering::SeqCst) {{ Ok(x) | Err(x) => x }} }}",
-            addr(&args[0]), args[1], args[2]
-        )),
-        Opcode::Fence => "core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);".to_owned(),
-        Opcode::GetPinnedReg if read_style(u32::MAX).is_some() => return Err("a read takes no pinned register".into()),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),
         Opcode::GetStackPointer => set("sp()".to_string()),
@@ -930,11 +813,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(r) => f.params.user_named_funcs()[*r].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            let call = if read_style(callee).is_some() {
-                format!("unsafe {{ f{callee}(len, {}) }}", args.join(", "))
-            } else {
-                format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "))
-            };
+            let call = format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "));
             // Its results returned as they are (`returned_call`): the call in the return, so
             // rustc hands its caller's result on (a tail call, no copy through the stack).
             if returned_call(f, inst) {
