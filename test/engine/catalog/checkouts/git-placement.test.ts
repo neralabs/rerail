@@ -21,7 +21,9 @@ import { basename, delimiter, dirname, isAbsolute, join, parse, relative, resolv
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkoutRealpath, physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { declaredSubmodulePaths } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import {
+  readRemoteAddress,
   repositoryIdentityLocation,
   resolveCloneId,
   worktreeRegistry,
@@ -931,6 +933,29 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
     git(main, "worktree", "add", "--quiet", "-b", "new", join(root, "new"));
     expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
     expect(gitsRegistry(main)).toHaveLength(3);
+  });
+
+  it("gives Git's remote and declared submodules of another account's checkout once the system's file takes its trust away", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "remote", "add", "origin", "https://example.invalid/team/main.git");
+    await writeFile(join(main, ".gitmodules"), "[submodule \"lib\"]\n\tpath = lib\n\turl = ./lib\n");
+    git(main, "update-index", "--add", "--cacheinfo", `160000,${execFileSync("git", ["-C", main, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()},lib`);
+    const system = join(root, "system.gitconfig");
+    await writeFile(system, "[safe]\n\tdirectory = *\n");
+    // The test set-up turns the system's file off; Git reads this one in its place.
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "0");
+    vi.stubEnv("GIT_CONFIG_SYSTEM", system);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "global.gitconfig"));
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    expect(readRemoteAddress(main)).toEqual({ name: "origin", url: "https://example.invalid/team/main.git" });
+    expect(declaredSubmodulePaths(main)).toEqual(["lib"]);
+
+    // An administrator removes the entry from the system's file, which neither answer reads: Git refuses the folder.
+    await writeFile(system, "");
+    expect(readRemoteAddress(main)).toBeUndefined();
+    expect(declaredSubmodulePaths(main)).toEqual([]);
   });
 
   it("places another account's checkout Git trusts through safe.directory, and no longer once the entry is removed", async () => {
