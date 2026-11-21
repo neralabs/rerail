@@ -972,7 +972,7 @@ describe("a state file Windows left behind", () => {
 
     it("asks the engine to prove itself, and sends the event once it does, when the engine's binding will not load in the hook's process", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
-      // The binding that asks Windows which process holds the pipe is missing, as while an update replaces it.
+      // The binding that asks Windows which process serves the pipe is missing, as while an update replaces it.
       vi.stubEnv("RERAIL_ENGINE_PATH", join(home, "missing-engine.node"));
       try {
         const unloaded = (answer: EngineProofAnswer): DaemonMachine => ({ ...answering(answer), pipeServer });
