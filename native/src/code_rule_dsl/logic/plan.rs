@@ -4109,7 +4109,29 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 {
+            // Only where the placed atoms join the columns' variables (one reached from another): two variables bound by
+            // atoms sharing none are a cross product's pairs, independent, and most pairs are none of the relation's.
+            // `open_tuple`'s `child($t, $c, _)` after `kind($t, tuple)` and a scan of `unparen($c, $m)` was priced at a row
+            // a pair (10.7 M) for 790, and the tail's witness pricing (Q146) took the cross product as nearly free:
+            // 61 M rows, 19.7 s of ep2's cold run.
+            let joined_by_placed = || {
+                let vars: Vec<_> = cols.iter().filter_map(|&c| args[c].var()).collect();
+                let Some(&start) = vars.first() else { return false };
+                let mut reached = VarSet::new();
+                reached.insert(start);
+                let mut grew = true;
+                while grew {
+                    grew = false;
+                    for (d, dvars, _) in &binding_domains {
+                        if *d != i && dvars.is_subset(bound) && !dvars.is_disjoint(&reached) && !dvars.is_subset(&reached) {
+                            reached.extend(dvars);
+                            grew = true;
+                        }
+                    }
+                }
+                vars.iter().all(|v| reached.contains(*v))
+            };
+            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && joined_by_placed() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
                 rows = rows.max(card / combinations);
             }
