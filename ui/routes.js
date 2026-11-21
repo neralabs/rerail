@@ -5,7 +5,8 @@
  * (`sessionId=<id>`, with the `host` it ran in); every route keeps that scope. The hash names the view: `#overview`
  * (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog), `#packs?review=1` (the
  * review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule, `?outcome=logged|steered|declined` sets
- * its chip), `#sessions` (`?filter=violations|declined` sets its chip; an old `in-progress` opens All), `#settings`,
+ * its chip), `#sessions` (`?filter=violations|declined` sets its chip; an old `in-progress` opens All), `#settings`
+ * (`?section=about` scrolls to About Rerail),
  * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it), and
  * `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers, the CLI
  * and the status line written before v8 keep working: `#rules` is Overview, `#activity` History, `#rule-packs` the
@@ -26,6 +27,7 @@
  * @property {string} [session]      The session Sessions selects.
  * @property {boolean} [jump]        Sessions scrolls to the selected session's first violation.
  * @property {string} [conflict]     The conflict Merge Assist shows (`merge` routes only).
+ * @property {"about"} [section]     The section Settings scrolls to (`settings` routes only).
  */
 
 /** Hashes that name a view by themselves, the legacy ones included. */
@@ -75,6 +77,7 @@ export function parseRoute(hash) {
   if (view === "sessions" && sessionFilter) return { view, sessionFilter };
   const conflict = params.get("conflict");
   if (view === "merge" && conflict) return { view, conflict };
+  if (view === "settings" && params.get("section") === "about") return { view, section: "about" };
   return { view };
 }
 

@@ -109,19 +109,23 @@ export function claudeManagedSettingsPath(platform: NodeJS.Platform = process.pl
 function rerailDataAccess(id: Harness, connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
   switch (id) {
     case "claude-code":
-      if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data." };
+      if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data.", fix: null };
+      if (platform === "win32") {
+        return { access: "file-tools", why: "Claude Code has no sandbox on Windows, so its file tools cannot read Rerail's data but its shell commands can.", fix: null };
+      }
       return claudeSandboxOn(platform, join(home, ".claude", "settings.json"), claudeManagedSettings)
-        ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data." }
-        : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can." };
+        ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data.", fix: null }
+        : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can.",
+          fix: "Turn it on to keep them out too: run /sandbox in Claude Code." };
     case "cursor":
       return connected && existsSync(join(home, ".cursor", "cli-config.json"))
-        ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can." }
-        : { access: "open", why: "Nothing keeps Cursor's agent out of Rerail's data." };
+        ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can.", fix: null }
+        : { access: "open", why: "Nothing keeps Cursor's agent out of Rerail's data.", fix: null };
     case "codex":
-      return { access: "open", why: "Codex's sandbox lets commands read every file, Rerail's data included." };
+      return { access: "open", why: "Codex's sandbox lets commands read every file, Rerail's data included.", fix: null };
     case "omp":
     case "pi":
-      return { access: "open", why: `${CODING_AGENT_NAMES[id]} has no sandbox, so its agent can read Rerail's data.` };
+      return { access: "open", why: `${CODING_AGENT_NAMES[id]} has no sandbox, so its agent can read Rerail's data.`, fix: null };
   }
 }
 

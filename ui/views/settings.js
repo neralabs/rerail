@@ -1,9 +1,10 @@
 /**
- * Settings (`#settings`). General: theme, the status line, when Rerail was installed, where history is kept (and
- * clearing the shown repo's), and the shown repo's Follow .gitignore. Repos: every repo Rerail knows, with how many
- * rules it has and a switch where it has any. Coding agents: which are connected, whether each connected one's tools
- * can read Rerail's data, with the command that changes the connection.
- * Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
+ * Settings (`#settings`). General: theme, the status line, where history is kept (and clearing the shown repo's), and
+ * the shown repo's Follow .gitignore. Repos: every repo Rerail knows, with how many rules it has and a switch where it
+ * has any. Coding agents: which are connected, whether each connected one's tools can read Rerail's data, with the
+ * command that changes the connection. About Rerail (`#settings?section=about`, where the top bar's version leads):
+ * the version, its release notes and how to update, when it was installed, and an Update row while a newer version is
+ * out. Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, failed, fmt, plural } from "../format.js";
@@ -14,17 +15,20 @@ import { applyTheme, invalidate, toast } from "../shell.js";
 import { loadRepoRuleCounts } from "../repo-rule-counts.js";
 import { repoTag } from "../repo-rules.js";
 import { repoCounts } from "../render/repos.js";
-import { agentStatus, installedLabel } from "../settings-model.js";
+import { agentStatus, installedLabel, newerRelease, releaseUrl } from "../settings-model.js";
 
 export const needs = [];
 
 const UNINSTALL_COMMAND = "rerail install --remove";
+const UPDATE_COMMAND = "rerail update";
 
 /** Clear history: asked (the row shows the question), then clearing (the request is out). */
 let clearAsk = false;
 let clearing = false;
 /** The poll (`data.updatedAt`) the repos' rule counts were last read after. */
 let countsRound = -1;
+/** A link to About Rerail (`#settings?section=about`) waits to scroll there until the sections above it have loaded. */
+let scrollToAbout = false;
 
 function row(label, sub, right, attrs = null) {
   return h("div.srow2", attrs, h("div.rt", null, label, sub ? h("span.sub", null, sub) : null), right);
@@ -50,14 +54,11 @@ function historyRow() {
 }
 
 function general() {
-  const installed = installedLabel(data.health?.installedAt);
   return h("section", null, h("div.ghead", null, h("h2", null, "Settings")),
     h("div.list", null,
       row("Theme", null, seg("theme", [["", "System"], ["light", "Light"], ["dark", "Dark"]], ui.theme)),
       row("Footer", "Shows in Claude Code, OMP and Pi only.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
-      installed === null ? null : row("Installed", null, h("span.val", null, installed)),
-      data.health ? row("Version", null, h("span.val", null, data.health.version)) : null,
       historyRow(),
       gitignoreRow()));
 }
@@ -89,12 +90,16 @@ function repos() {
     h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "Rerail has not seen a repo yet."))));
 }
 
-/** One coding agent: its name over its state, for a connected one whether its tools can read Rerail's data, and the command that changes it. */
+/**
+ * One coding agent: its name over its state, for a connected one whether its tools can read Rerail's data (in warning
+ * colour only with something to do, which follows on its own line), and the command that changes it.
+ */
 function agentRow(agent) {
   const status = agentStatus(agent);
   return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
     h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
       status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
+      status.data?.fix ? h("span.st.fix", null, status.data.fix) : null,
       status.problem ? h("span.tip", null, status.problem) : null),
     status.command === null ? null : copyButton(status.command.text, status.command.label));
 }
@@ -106,6 +111,33 @@ function agents() {
   const connected = data.agents.filter(a => a.connected && !a.problem).map(a => a.name);
   return h("section", null, head(connected.length ? `Connected to ${andList(connected)}.` : "No coding agent connected yet."),
     h("div.list.agents", null, data.agents.map(agentRow)));
+}
+
+const releaseLink = (version, label) =>
+  h("a.rel", { href: releaseUrl(version), target: "_blank", rel: "noopener noreferrer", title: `Rerail ${version}’s release notes, on GitHub` }, label, " ↗");
+
+/**
+ * About Rerail: Version, Installed and, only while the daemon reports a newer version, Update to <version>. Rerail never
+ * updates on its own, and the dashboard can't run the update: updating replaces the daemon that serves this page. So
+ * the rows give the command. Until the daemon can say a newer version is out, the Version row always says how to
+ * update; once it does, the steps move to the Update row, and a Rerail that is up to date shows its version alone.
+ */
+function about() {
+  const version = data.health?.version ?? null, installed = installedLabel(data.health?.installedAt);
+  if (version === null && installed === null) return null;
+  const latest = newerRelease(data.health), knows = typeof data.health?.update?.latest === "string";
+  const how = ["Rerail never updates on its own. To update, run ", h("code", null, UPDATE_COMMAND), " in a terminal or ask your coding agent: ", h("code", null, "/rerail-update"), "."];
+  return h("section", { id: "about" }, h("div.ghead", null, h("h2", null, "About Rerail")),
+    h("div.list", null,
+      version === null ? null : row("Version",
+        [...(knows ? ["Rerail never updates on its own."] : how), latest === null ? h("span.relline", null, releaseLink(version, `${version} release notes`)) : null],
+        h("span.val.vrow", null, latest === null ? null : h("span.badge.info", { title: `Rerail ${latest} is out` }, "Update available"), h("span", null, version))),
+      installed === null ? null : row("Installed", null, h("span.val", null, installed)),
+      latest === null ? null : row(`Update to ${latest}`,
+        ["Run ", h("code", null, UPDATE_COMMAND), " in a terminal, or ask your coding agent: ", h("code", null, "/rerail-update"),
+          ". It backs up your rules and history first; new sessions use the new version.",
+          h("span.relline", null, releaseLink(latest, `What’s new in ${latest}`))],
+        copyButton(UPDATE_COMMAND, "Copy update command"))));
 }
 
 function uninstall() {
@@ -125,13 +157,19 @@ function refreshCounts() {
 export function render(root) {
   refreshCounts();
   const counts = data.repositories.map(repoCounts);
-  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.version, data.health?.database.path,
+  const sig = JSON.stringify([ui.theme, data.presence, ui.scope, data.followGitignore, data.health?.installedAt, data.health?.version, data.health?.update, data.health?.database.path,
     data.repositories, data.repository?.repositoryKey, data.repository?.name, counts, data.agents, data.agentsError, clearAsk, clearing]);
-  setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), uninstall()));
+  setContent(root, sig, () => h("div.settings", null, general(), repos(), agents(), about(), uninstall()));
+  if (scrollToAbout) {
+    document.getElementById("about")?.scrollIntoView({ block: "start" });
+    // The coding agents above load after the page opens and push About Rerail down: scroll again once they are in.
+    if (data.agents !== null || data.agentsError !== null) scrollToAbout = false;
+  }
 }
 
 /** The coding agents, the status line and Follow .gitignore are read on demand, each time Settings opens. */
-export function enter() {
+export function enter(route) {
+  scrollToAbout = route?.section === "about";
   clearAsk = false;
   countsRound = -1;
   data.agentsError = null;

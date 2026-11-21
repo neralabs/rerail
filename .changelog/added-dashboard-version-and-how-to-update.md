@@ -1,0 +1,1 @@
+The dashboard's version in the top bar now opens a new About Rerail section in Settings, with that version's release notes and how to update. A coding agent's line on reading Rerail's data turns yellow only when there is something to do, with the step under it. Overview's banner buttons now match in both themes.

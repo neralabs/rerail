@@ -170,7 +170,12 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .repomenu .sub{margin:3px 0 0;padding:8px 10px 6px;border-top:1px solid var(--border);font-size:12px;line-height:1.5;color:var(--muted-foreground)}
 .status{margin-left:auto;display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;color:var(--muted-foreground);font-size:12px;text-align:right}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
-.status .ver{margin-right:6px}
+.status .verwrap{display:inline-flex;align-items:center;gap:8px;margin-right:6px}
+/* The version keeps its quiet colour whatever the status beside it says (Stopped, Daemon not responding). */
+.status .ver{color:var(--muted-foreground)}
+.status .ver:hover{color:var(--foreground);text-decoration:underline;text-underline-offset:3px}
+.status .vnew{padding:1px 8px;border-radius:var(--pill);background:var(--info-subtle);color:var(--info-foreground);font-weight:500}
+.status .vnew:hover{filter:brightness(.96)}
 .status.warn{color:var(--warning-foreground)} .status.warn .dot{background:var(--warning-foreground)}
 .status.down{color:var(--danger-foreground)} .status.down .dot{background:var(--danger-foreground)}
 
@@ -270,8 +275,9 @@ body[data-panel="open"] .panel{display:flex}
 .welcome > .ico{color:var(--info-foreground)}
 .welcome.warn > .ico{color:var(--warning-foreground)}
 .welcome .mono{background:var(--subtle);padding:1px 6px;border-radius:var(--radius-md);color:var(--foreground);-webkit-box-decoration-break:clone;box-decoration-break:clone}
-.welcome .btn:not(.solid){border-color:transparent;background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--foreground)}
-.welcome .btn:not(.solid):hover{background:color-mix(in srgb,var(--foreground) 14%,transparent)}
+/* Every banner's button is the solid brand one, so the banners read as one set in both themes; a link stays a link. */
+.welcome .btn:not(.ghost):not(.danger){background:var(--brand);border-color:var(--brand);color:var(--primary-foreground)}
+.welcome .btn:not(.ghost):not(.danger):hover{background:var(--brand);opacity:.92}
 .welcome .x{color:var(--muted-foreground)}
 
 /* ---- sections and lists ---- */
