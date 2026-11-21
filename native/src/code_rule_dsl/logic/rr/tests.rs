@@ -4969,7 +4969,8 @@ fn a_demand_split_stays_linear_in_the_modules() {
         let c: Vec<&str> = l.split('\t').collect();
         (c[0], c[1], c[3].parse().unwrap())
     }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    // The typing programs run as the run's phases (decision 0083; the bridge's "typing programs" job went in 91f31ae830).
+    assert!(rows.iter().any(|(part, _, _)| part.contains(": phase ")), "the typing phases ran: {heads}");
     let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
     for (part, head, work) in &rows {
         if head.starts_with("pre_") || head.starts_with("demand_") {
