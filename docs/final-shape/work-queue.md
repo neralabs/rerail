@@ -1,5 +1,11 @@
 # Work queue
 
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
 ## Intro
 
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
@@ -8880,3 +8886,62 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   level would wait again.
 - **Do**: row blocks that pass the budget spill to the deferrable tier (mmap slabs) rather than hold device leases;
   reserve a block's written extent, not twice it.
+
+### Q414. (Q383 on rr-align) Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose
+
+- **Here** (the hub's merge of rr-align at 48ce04a06b): this record keeps the numbers of its time. Its 0513 is
+  0500 here, its Q379-Q382 are Q386-Q389, and the second copies it calls Q384 and Q385 keep Q354 and Q353 (the
+  first copies are Q383 and Q382).
+
+- **Merged** (2026-11-20): final-rerail-shape-phased-facts at 4b093e78ea, its own lazy batch (0504) and its merge of
+  the hub (6868107a33). The hub carries older commits of cost-classifier and CUDA-support than rr-align has, so
+  rr-align's side was taken in their files (the pp batch, the Metal runtime, the plan's checks, the deferred joins).
+- **Numbers.** The hub had renumbered rr-align's decisions and items; the merged tree takes the hub's numbers:
+  - decisions (rr-align's → here): 0464 → 0473, 0465 → 0474, 0466 → 0482, 0467 → 0479, 0472 → 0477,
+    0476 → 0483, 0479 → 0484, 0480 → 0464, 0482 → 0466, 0483 → 0475, 0484 → 0465, 0485 → 0476, 0486 → 0472.
+    rr-align's 0477 (joins deferred to their readers) collides with the hub's 0477 (the serial phases' locks) and is
+    0513, past the highest number on any branch (0512). 0487-0489 keep theirs.
+  - items: rr-align's Q329, Q330, Q345 and Q346 are Q370, Q367, Q329 and Q330 here (the hub's), and rr-align's own
+    Q347-Q350 are Q379-Q382 (the hub uses Q347-Q350). Q190 keeps its number. The roll-up records Q380-Q382 keep the
+    numbers of their time; this list maps them.
+  - our side's citations in code and docs were rewritten by these maps: only lines of ours alone (in rr-align's file,
+    not in theirs), and never a number named as another branch's ("0466 on X", "was 0466").
+  - rule files are `.rerail` (theirs' rename): our tests and the deferred-joins scripts name them so.
+- **Resolved by hand**: the chunk scope is theirs' (`ChunkScope`, `InChunk`, `setfix::carried`; rr-align's
+  `RunChunk` gone); `factorize::round` keeps rr-align's form with theirs' key chaining; metal_join's `row_stage`
+  takes the test's id at P[5] and the library scan's n + 1 counts; the label passes' `whole` check reads the
+  backend-neutral `ComputeFunction::max_threads_per_group`; `idle_room` reads its own memory's reservations;
+  `shape_base` is gone with theirs' maintenance forms, so the deferred pairs match their head as written; 0361's
+  step 6 is rr-align's text once (the merge had left theirs' older copy after it).
+- **Found and fixed** (red at the merge, and at theirs' own tip on the m1max):
+  - `every_verdict_the_device_keeps_is_the_cpus` lost 11-35 of 1,157 verdicts in 2 runs of 4 here, and in every run
+    at 4b093e78ea. The kernel's lanes looked their rows' verdicts up at once; lanes whose symbols share an entry (64
+    symbols of a test) waited on another lane of their own SIMD group making it, which does not progress while they
+    spin, so they ran out of spins and each took a second entry of the key, and the verdicts ORed into the copies
+    were split between them. Now one lane an entry looks first and the group's others after it (`join_stages`'s
+    verdict stage, a SIMD-group barrier between).
+  - `parity_random_mixed` gave a `sql_upper` text with 26 zero bytes past its own: a kept text read with plain loads
+    of another group's writes (Q367's second cause). The kept texts are read and written through `UKL_COHERENT`.
+  - On Linux (all roll-up 19-21's widenings): `blocks_compare_tests` uses macOS's malloc zones and is macOS's again;
+    two accel tests used Metal's `get()` for the portable `layer()`; the blocks examples' and c_directives' gates.
+  - `run_state::STATE` listed six thread-locals no file declares (test_pool's `MEASURED`, `WORKING_SET`; setfix
+    device's `AUTOMATA`, `GROWTH`, `RESIDENT`, `TESTS`): cut.
+- **Tested**: Linux, the engine and the merged crates checked with every target, no warnings; rerail-logic's run
+  state, plan, factorize, deferred, product demand, shapes and bloom tests (291 pass, 3 ignored as before);
+  rerail-store's kept facts (8); rerail-device-metal on the CPU backend (70). macOS: the same check on the m3; on the
+  m1max rerail-c-directives (47; the 16 ignored are corpus, data and measurement tests), rerail-metal (22), and
+  rerail-device-metal (71) in 16 full runs after the fixes, 7 more on the m3.
+- **Then fixed**: the same test still lost 7-17 verdicts in 2 runs of 24 on the m1max, with the cache's counts
+  showing 30 misses for 19 keys and no duplicate counted: a reader saw a slot's number (a relaxed atomic) with an
+  older entry offset, key or completion, took the entry for another key's, and made a second entry. The cache's
+  lookup and take now fence after a numbered slot before reading its entry (the half of the pair the writer's
+  fence before the number lacked); 24 of 24 runs pass on the m1max, and rerail-device-metal on Linux (70). Theirs'
+  items Q353 and Q354, each twice, are Q384 and Q385 for their second copies.
+
+---
+
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.

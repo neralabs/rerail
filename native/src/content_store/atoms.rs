@@ -466,6 +466,26 @@ impl Kept {
         true
     }
 
+    /// The cache's header word at `at` (`view::cache`'s counts and modes), which its reads keep with atomics.
+    fn header(&self, at: i32) -> &std::sync::atomic::AtomicU32 {
+        // SAFETY: a u32 of the cache's header, in the block `self` keeps, aligned as the header is.
+        unsafe { &*self.cache().add(at as usize).cast::<std::sync::atomic::AtomicU32>() }
+    }
+
+    /// Keeps the cache's statistics too (hits, waits, duplicates), for a test or a tuning run.
+    pub fn count_statistics(&self) {
+        self.header(rerail_clif::view::cache::STATS).store(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// The cache's counts, named: lookups with no room, misses, entries promoted, generations turned, and (with
+    /// `count_statistics`) hits, waits and duplicates.
+    pub fn counts(&self) -> String {
+        use rerail_clif::view::cache as c;
+        [("failed", c::FAILED), ("misses", c::MISSES), ("promoted", c::PROMOTED), ("rotated", c::ROTATED), ("hits", c::HITS), ("waited", c::WAITED), ("duplicates", c::DUPLICATES)]
+            .map(|(name, at)| format!("{name} {}", self.header(at).load(std::sync::atomic::Ordering::Relaxed)))
+            .join(", ")
+    }
+
     /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
     pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
         // SAFETY: as `get`'s.

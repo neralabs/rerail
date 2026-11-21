@@ -74,11 +74,11 @@ impl Memory {
         }
     }
 
-    /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger
-    /// and the live leases. Never the driver's count, which counts every no-copy wrap of host memory again (decision
-    /// 0435 §2).
+    /// The bytes idle buffers may hold, with `need` more about to be leased: what `budgets` leave past the ledger,
+    /// the live leases and the admissions' reservations. Never the driver's count, which counts every no-copy wrap
+    /// of host memory again (decision 0435 §2).
     fn idle_room(&self, budgets: &crate::budget::Budgets, need: usize) -> usize {
-        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need)
+        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
     }
 
     /// Releases idle buffers until they fit what `budgets` leave with `need` more leased (`Pool::trim`).

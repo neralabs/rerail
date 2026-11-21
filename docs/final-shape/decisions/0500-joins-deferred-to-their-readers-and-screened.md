@@ -362,3 +362,26 @@ version instead of replaying the tree's rewrite:
   report explains the current snapshot (`cache_boundary_edits_explain_the_current_snapshot`).
 - Tests: the five of `product_demand::deferred` (rerail-logic), the session test above (rerail-engine).
 
+
+## Inspecting a join in a rule
+
+(Moved here from `docs/code-rule-profiling.md`, which main removed in #831.)
+
+Run the native CLI with a profile directory. Use a fresh store to measure the first evaluation.
+
+```sh
+RERAIL_PROFILE="$PWD/tmp/slf-profile" RERAIL_TAPE_CACHE="$PWD/tmp/slf-profile.sqlite" \
+  nice -n 19 rerail-engine run-policies /path/to/python/corpus "$PWD/tmp/slf-output" \
+  docs/rule-syntax/packs/python/ruff-slf001-private-member-access.rerail
+```
+
+Open `tmp/slf-profile/profile.txt` and look for **Joins in authored rules**. Each entry names the relation and gives
+the file and line of its definitions. A reader entry identifies the clause that reads the relation and the columns
+that lack a lookup value.
+
+On a 100-file PostHog run, the readers of `slf_class_head` requested 46 distinct pairs. The engine checked the
+requested pairs directly, so the rule author can keep the original clause.
+
+For a shared cache, the profile shows the plan choice, the observed cache size when available, and the cache limit.
+The limit applies to optional pairs; factors and required output use more memory. A run that reuses all its findings
+has no new join measurements.

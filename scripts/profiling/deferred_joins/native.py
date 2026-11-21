@@ -138,7 +138,7 @@ def check(engine, work, case, mode, phase=None, cache_rows=None):
     if case == "document-lookup":
         return document_lookup(engine, work, mode, cache_rows)
     src, expect = example("below" if phase else case)
-    rules = work / "join.rr"
+    rules = work / "join.rerail"
     corpus = work / "corpus"
     corpus.mkdir(exist_ok=True)
     if not (corpus / "input.py").exists():

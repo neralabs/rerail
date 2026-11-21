@@ -1560,7 +1560,12 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.switch_to_block(slot_out);
     cache_stat(b, cache, c::DUPLICATES);
     b.f.ins().jump(miss, &[]);
+    // A fence between the slot's number and its entry's offset, key and completion: the writer's fence before it put
+    // the number is half of the pair; without this half a reader on a weakly ordered device (Metal's relaxed atomics)
+    // can see the number with an older offset, key or completion, take the entry for another key's, and decode the
+    // block into a second entry, splitting what the block's users add to it.
     b.f.switch_to_block(candidate);
+    b.f.ins().fence();
     let n = b.f.ins().iadd_imm(number, -1);
     let e = entry_of(b, generation, n);
     let k64 = b.f.ins().iadd_imm(e, i64::from(c::KEY));
@@ -1789,7 +1794,9 @@ fn cache_take(
     let none_yet = b.f.ins().icmp_imm(IntCC::Equal, number, 0);
     let keyed = b.f.create_block();
     b.f.ins().brif(none_yet, mine_already, &[], keyed, &[]);
+    // The fence pairing with the writer's before its number (as in the lookup): its entry's offset and key as written.
     b.f.switch_to_block(keyed);
+    b.f.ins().fence();
     let other = b.f.ins().iadd_imm(number, -1);
     let other = entry_of(b, head, other);
     let held = b.f.ins().load(I64, rw, other, c::KEY);

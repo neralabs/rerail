@@ -4109,6 +4109,7 @@ UKL_COLD uint64_t clif_tape_z_block(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE 
   {b=13u;continue;}
  }
  case 18u:{
+  ukl_fence_device();
   uint32_t v97=v84+((uint32_t)(18446744073709551615ul));
   uint64_t v98=((uint64_t)(v97));
   uint64_t v99=((uint64_t)((uint64_t)(v98)<<(((uint32_t)(2))&63u)));
@@ -4254,6 +4255,7 @@ UKL_COLD uint64_t clif_tape_z_block(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE 
   if(v177!=0){b=46u;continue;}else{b=49u;continue;}
  }
  case 49u:{
+  ukl_fence_device();
   uint32_t v178=v176+((uint32_t)(18446744073709551615ul));
   uint64_t v179=((uint64_t)(v178));
   uint64_t v180=((uint64_t)((uint64_t)(v179)<<(((uint32_t)(2))&63u)));
@@ -4574,6 +4576,7 @@ UKL_COLD uint64_t clif_tape_z_block(UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE 
   if(v356!=0){b=86u;continue;}else{b=89u;continue;}
  }
  case 89u:{
+  ukl_fence_device();
   uint32_t v357=v355+((uint32_t)(18446744073709551615ul));
   uint64_t v358=((uint64_t)(v357));
   uint64_t v359=((uint64_t)((uint64_t)(v358)<<(((uint32_t)(2))&63u)));
