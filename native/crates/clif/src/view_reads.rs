@@ -83,8 +83,10 @@ pub struct ViewRow {
     pub key: u32,
     pub rows: [u32; ROWS],
     pub view: crate::view::TapeView,
+    /// The tape's length in bytes from `tape`: the host's reads read it as a slice (`rerail_tape_format::view_reads`).
+    pub bytes: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>()).next_multiple_of(8));
+const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then `child`'s sibling view (`SIBLING`), which no kernel reads.
 pub const ROWS: usize = VIEWS.len() + 1;
@@ -154,6 +156,14 @@ impl ViewDir {
     pub unsafe fn block_rows(this: *const Self) -> *mut ViewRow {
         // SAFETY: the caller's.
         unsafe { Self::rows_of(this).cast_mut() }
+    }
+    /// Its homes' address, for their writer (`made::directory`, the reads layer's rows).
+    ///
+    /// # Safety
+    /// As `block_of`, its homes allocated.
+    pub unsafe fn homes_mut(this: *mut Self) -> *mut ViewHome {
+        // SAFETY: the caller's.
+        unsafe { Self::block_of(this).add(std::ptr::addr_of!((*this).homes).read() as usize).cast::<ViewHome>().cast_mut() }
     }
     /// How many documents.
     ///
@@ -306,7 +316,7 @@ pub fn ukl() -> String {
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
     ];
     let mut s = format!(
-        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
+        "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
          typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint32_t ends[{}];\n    uint32_t counted;\n    uint32_t pad;\n}} ViewDir;\n",
         ROWS,

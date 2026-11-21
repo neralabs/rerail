@@ -864,6 +864,41 @@ keeps one across its values. Readers that read one row at a time with no memo (`
 Cold hogql gives 1,629 findings at 91.4 B and 90.0 B instructions (89.4 B and 91.2 B before), so the executor's
 point reads (`RowRef`) carry no memo yet.
 
+**Step 3, the views' reads (2026-11-21).** **The user (2026-11-21):** "why does step 2 need to use the JIT? Surely we
+can make Rust code that reads the same data structure". So the CPU's reads are Rust written directly, not the JIT:
+- `rerail_tape_format::view_reads`: `Tape` (formats 15, 16 and 16z) and `Doc`, a document's views as reads of its
+  entry (`ViewDoc`), its tape and its lines where they lie: node, child, field, core, line, the four `Loc` views and
+  the report location, the CLIF reads' twins. Also the views no CLIF reads yet (tape, `ast_depth`, `node_order`,
+  `next_sibling`), their first definition here.
+- `rerail_tape_format::reads::f16z`: 16z's reads through the shared cache (`cache::get`, the CLIF lookup's twin,
+  decision 0536's shape), so the host's reads and the device's decode into the same cache.
+
+The directory's reads layer is written a row at a time (`made::Docs::reads`), on its document's first read through
+the views, so a lazy batch makes only the documents it reads (decision 0494). Its homes are fixed: row `i`'s tape in
+home `2i`, its lines in `2i + 1`, the 16z cache in `2n` (`ViewDir::cache` names it once made). A row holds its tape's
+length (`ViewRow::bytes`, in the row's tail padding: the layout the kernels read is unchanged). The device's
+directory (`device_chunk::views_in_place`) is the batch's, now held by the batch rather than its chunk: it writes
+every row through the same `reads`, then finds what the device reads. A layered source's directory (`views_over`)
+is still made whole, apart.
+
+`Viewed`'s point reads (`value_memo`, `row_at_memo`, and `value` and `row_at` through them) find the document by the
+memo and read the column through its row (`Docs::read`, a `Doc`). A row is read off the projection only where it
+has no tape read, counted once by why (`views.refused.*`): a document in another block, a tape not read in place,
+a 16z entry larger than the batch's cache was made for (a lazy batch's cache is sized by its first 16z document),
+and, for the `Loc` views, positions not in the block (a guest's segments or mapped placement). `Viewed`'s scans
+(`each_row`) and lookups still walk `Projected`; they go next, with the host structures of step 4.
+
+Tests: `the_views_read_through_the_directory_are_the_projections` (every view's every row and column, both ways,
+through `Source::value` and `row_at` too, each format, core.rerail's shape and T's, a docstring-only document among
+them), `the_view_reads_are_the_hosts_rows` (the Rust reads against the JIT's and the hand-made rows),
+`the_rust_16z_reads_are_the_jits`, and the syntax tests (71 on Linux).
+
+Cold hogql gives 1,629 findings at 91.3 B and 91.3 B instructions (91.4 B and 90.0 B before; this Mac at a load of
+about 12), and its profile counts no `views.refused.*`: every document's rows are read through the directory. On
+Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum` (the mini's
+Xcode license is still not agreed to).
+
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

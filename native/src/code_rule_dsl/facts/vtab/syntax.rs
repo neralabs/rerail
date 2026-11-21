@@ -1715,6 +1715,10 @@ pub struct Batch {
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     chunk: OnceLock<device_chunk::Chunk>,
+    /// The batch's views' directory as the device reads it (`device_chunk::views_in_place`), once asked; `None`
+    /// when a document's tape is not where the device reads it.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    views: OnceLock<Option<device_chunk::ViewsInPlace>>,
     /// What a group's rows are made with (`make_rows`): the projection, the `match_all` regexes, the markers of the
     /// `fstring_template` atoms, the span prefilter's binding, the store's atoms, and the `ast` matchers' wave.
     projection: Arc<Projection>,
@@ -2960,6 +2964,8 @@ impl Batch {
             block,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             chunk: OnceLock::new(),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            views: OnceLock::new(),
             projection,
             matches: matches.to_vec(),
             markers: markers.to_vec(),
@@ -3461,10 +3467,15 @@ impl Batch {
     /// stale memo costs a comparison, never a wrong document (the search per row was 13 s of the pack's cold run).
     /// A memo is the caller's for one view of one batch: a reader of several keeps one each.
     pub fn locate(&self, view: View, row: usize, memo: &mut u32) -> (&Projected, usize) {
+        let (doc, i) = self.locate_doc(view, row, memo);
+        (&self.docs[doc], i)
+    }
+    /// `locate`'s document, by index, and the row's index in it, with no document made.
+    pub fn locate_doc(&self, view: View, row: usize, memo: &mut u32) -> (usize, usize) {
         let firsts = self.firsts(view);
         let doc = firsts.doc_of(row, *memo);
         *memo = doc as u32;
-        (&self.docs[doc], row - firsts.at(doc))
+        (doc, row - firsts.at(doc))
     }
     /// The documents of file `file`'s programs (decision 0431 §4).
     fn programs_of(&self, file: u32) -> impl Iterator<Item = usize> + '_ {
@@ -3651,7 +3662,7 @@ impl Source for Viewed {
         // none where its buffers have none (`views_in_place`).
         let on_device = rerail_accel::gpu::join::device().is_ok();
         let in_place = (on_device && (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
-            .then(|| device_chunk::views_in_place(&self.batch, chunk))
+            .then(|| device_chunk::views_in_place(&self.batch))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .and_then(|v| {
@@ -3927,9 +3938,17 @@ impl Source for Viewed {
     fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
         self.row_value(row, column, memo)
     }
-    /// The row's node selected once (`Projected::node`), however many columns read it.
+    /// The row read through its document's directory row (`view_reads::Doc`, decision 0353 step 3 on the CPU), its
+    /// document found by the memo; read off the projection where the row has no tape read (`Docs::reads`, counted).
     fn row_at_memo(&self, row: usize, columns: &[usize], out: &mut [i64], memo: &mut u32) {
-        let (p, i) = self.batch.locate(self.view, row, memo);
+        let (doc, i) = self.batch.locate_doc(self.view, row, memo);
+        if let Some(d) = self.batch.docs.read(doc, matches!(self.view, View::Loc(_))) {
+            for (o, &c) in out.iter_mut().zip(columns) {
+                *o = self.read_value(&d, i, c);
+            }
+            return;
+        }
+        let (p, i) = (&self.batch.docs[doc], i);
         if matches!(self.view, View::Loc(_)) {
             for (o, &c) in out.iter_mut().zip(columns) {
                 *o = self.value_at(p, i, c);
@@ -4077,8 +4096,38 @@ impl Viewed {
         true
     }
     fn row_value(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
-        let (p, i) = self.batch.locate(self.view, row, memo);
-        self.value_at(p, i, column)
+        let (doc, i) = self.batch.locate_doc(self.view, row, memo);
+        match self.batch.docs.read(doc, matches!(self.view, View::Loc(_))) {
+            Some(d) => self.read_value(&d, i, column),
+            None => self.value_at(&self.batch.docs[doc], i, column),
+        }
+    }
+    /// Row `i` of a document's rows in this view, column `c`, read through its directory row (`view_reads::Doc`).
+    pub(super) fn read_value(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, c: usize) -> i64 {
+        use rerail_tape_format::view_reads::Place as P;
+        let (i, c) = (i as u32, c as u32);
+        match self.view {
+            View::Node => d.node(i, c),
+            View::Line => d.line(i, c),
+            View::Child => d.child(i, c),
+            View::Field => d.field(i, c),
+            View::Tape => d.tape_row(i, c),
+            View::Core => d.core(i, c),
+            View::Depth => d.depth_row(i, c),
+            View::Order => d.order_row(i, c),
+            View::Sibling => d.sibling(i, c),
+            View::Loc(place) => d.loc(
+                match place {
+                    Place::Line => P::Line,
+                    Place::EndLine => P::EndLine,
+                    Place::Col => P::Col,
+                    Place::Docof => P::Docof,
+                    Place::Report => P::Report,
+                },
+                i,
+                c,
+            ),
+        }
     }
 }
 
@@ -4352,6 +4401,32 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
 /// Whether a batch of `shape` binds a view named `name`.
 pub fn has_view(shape: Shape, name: &str) -> bool {
     named_views(shape).iter().any(|(n, _)| *n == name)
+}
+
+/// Each of the batch's views' rows read both ways, for the tests (decision 0353 step 3 on the CPU): its name, its row,
+/// the projection's values (`Viewed::value_at`), the values read through its document's directory row
+/// (`view_reads::Doc`), the source's (`Source::value`) and its whole row's (`row_at`). `Err` names a document whose
+/// row is not read through the directory, and why.
+#[cfg(feature = "test-hooks")]
+#[allow(clippy::type_complexity)]
+pub fn views_read_both_ways(batch: &Arc<Batch>) -> Result<Vec<(&'static str, usize, [Vec<i64>; 4])>, String> {
+    use crate::code_rule_dsl::facts::vtab::NO_MEMO;
+    let mut out = Vec::new();
+    for (name, view) in named_views(batch.shape) {
+        let v = Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() };
+        let ncols = v.columns().len();
+        let all: Vec<usize> = (0..ncols).collect();
+        let mut memo = NO_MEMO;
+        for row in 0..v.len() {
+            let (doc, i) = batch.locate_doc(view, row, &mut memo);
+            let d = batch.docs.read(doc, matches!(view, View::Loc(_))).ok_or_else(|| format!("{name}: document {doc}'s row is not read ({:?})", batch.docs.reads(doc).err()))?;
+            let p = &batch.docs[doc];
+            let mut whole = vec![0i64; ncols];
+            v.row_at(row, &all, &mut whole);
+            out.push((name, row, [(0..ncols).map(|c| v.value_at(p, i, c)).collect(), (0..ncols).map(|c| v.read_value(&d, i, c)).collect(), (0..ncols).map(|c| v.value(row, c)).collect(), whole]));
+        }
+    }
+    Ok(out)
 }
 
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.

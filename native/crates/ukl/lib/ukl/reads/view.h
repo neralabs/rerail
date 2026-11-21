@@ -14,6 +14,7 @@ typedef struct ViewRow {
     uint32_t key;
     uint32_t rows[10];
     uint32_t view[32];
+    uint32_t bytes;
 } ViewRow;
 typedef struct ViewHome {
     uint64_t host;

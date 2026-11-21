@@ -2495,7 +2495,7 @@ fn the_views_directory_is_the_hosts_too() {
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let chunk = batch.chunk();
-    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory, device or not");
+    let views = device_chunk::views_in_place(&batch).expect("a directory, device or not");
     let block = &chunk.block;
     // SAFETY: the directory, its rows and its homes, in the batch's block, which the batch holds.
     let dir = unsafe { &*block.ptr::<ViewDir>(views.at) };
@@ -2511,8 +2511,56 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key);
     }
-    let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && homes.iter().all(|h| h.gpu != 0);
-    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home");
+    // The homes its rows name (fixed: a row's tape in `2i`, its lines in `2i + 1`), and the 16z cache's where it has one.
+    assert_eq!(dir.nhomes as usize, 2 * rows.len() + 1, "two homes a row, and the cache's");
+    let named = rows.iter().flat_map(|r| r.homes).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
+    let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && named.into_iter().all(|h| homes[h].gpu != 0);
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home its rows name");
+}
+
+/// Decision 0353, step 3 on the CPU (step 3): `Viewed` reads each row through its document's directory row
+/// (`view_reads::Doc`, the reads written directly in Rust over the batch's entry, tape and lines where they lie).
+/// Every view's every row and column read so is the projection's (`Viewed::value_at`), for each format and
+/// dialect, in core.rerail's shape and T's, a document of a docstring alone among them; every document's row is
+/// read, none refused; and the rows the source answers (`Source::value`, `row_at`) are those.
+#[test]
+fn the_views_read_through_the_directory_are_the_projections() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    let cases: &[(&str, &str, &str)] = &[
+        ("python", "m.py", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("python", "d.py", "\"\"\"only a docstring\"\"\"\n"),
+        ("typescript", "k.ts", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let store = ContentStore::open(&temp("views-read-dir")).unwrap();
+    let mut tried = 0usize;
+    for format in Format::ALL {
+        for shape in [Shape::Core, Shape::T] {
+            let docs: Vec<Document> = cases
+                .iter()
+                .enumerate()
+                .map(|(k, &(label, path, source))| {
+                    let lang = dialect_by_label(label).unwrap();
+                    let grammar = Grammar::new(lang).unwrap();
+                    let source = Arc::new(source.to_owned());
+                    let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+                    let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+                    let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.in_format(format, source.as_bytes()), lines).unwrap());
+                    Document { key: k as u32 + 1, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: None, guest: None, module: None, unpackaged: false }
+                })
+                .collect();
+            let projection = Projection { shape, ..Projection::core() };
+            let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+            let at = format!("{} {shape:?}", format.name());
+            for (name, row, [want, read, value, whole]) in views_read_both_ways(&batch).unwrap_or_else(|e| panic!("{at}: {e}")) {
+                assert_eq!(read, want, "{at} {name}: row {row}, read through the directory");
+                assert_eq!(value, want, "{at} {name}: row {row}'s values");
+                assert_eq!(whole, want, "{at} {name}: row {row} whole");
+                tried += want.len();
+            }
+        }
+    }
+    assert!(tried > 1000, "{tried} values read");
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches written directly in Rust (`ViewDir::doc_of_row`,
@@ -2529,7 +2577,7 @@ fn the_directorys_searches_are_the_jits() {
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let chunk = batch.chunk();
-    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+    let views = device_chunk::views_in_place(&batch).expect("a directory");
     // One directory: the batch's, its search layer's and its reads layer's (no second one made for the device).
     assert_eq!(views.at, batch.docs.dir_at(), "the views' directory is the batch's");
     let jit = rerail_clif::jit::Reads::new();
@@ -2608,7 +2656,7 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let chunk = batch.chunk();
-    let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+    let views = device_chunk::views_in_place(&batch).expect("a directory");
     // SAFETY: the directory in the batch's block, which the batch holds.
     let dir = unsafe { &*chunk.block.ptr::<ViewDir>(views.at) };
     let rows = unsafe { dir.rows() };

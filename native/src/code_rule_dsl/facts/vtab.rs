@@ -91,6 +91,8 @@ pub struct ZCache {
     pub at: usize,
     pub len: usize,
     pub buffer: Option<rerail_device::device::Buffer>,
+    /// The most bytes an entry takes (`Spec::entry_bytes`): a view's entry size where its reads share the cache.
+    pub entry: usize,
 }
 
 impl ZCache {

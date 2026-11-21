@@ -13,6 +13,9 @@ use crate::code_rule_dsl::logic::profile;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod reads;
+pub use reads::RowReads;
+
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it and places, as its
 /// projection has them; the documents' table keeps them.
 pub type ViewCounts = [u32; 4];
@@ -24,22 +27,32 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
 /// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
-/// (`Batch::firsts`), and the reads layer when its views are read in place (`device_chunk::views_in_place`). Its
-/// offset in the block.
+/// (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed: row
+/// `i`'s tape in home `2i`, its lines in `2i + 1`, the 16z cache in `2n` (`ViewDir::cache` is `2n + 1` once it is
+/// made). Its offset in the block.
 pub(super) fn directory(block: &Block, keys: impl Iterator<Item = u32>, n: usize) -> usize {
-    use rerail_clif::view_reads::{ViewDir, ViewRow};
+    use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let rows: *mut ViewRow = block.alloc_t(n.max(1));
+    let homes: *mut ViewHome = block.alloc_t(2 * n + 1);
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for key in keys.take(n) {
-        // SAFETY: row `k` of the rows just allocated in `block`.
-        unsafe { rows.add(k).write(ViewRow { key, ..Default::default() }) };
+        // SAFETY: row `k` of the rows just allocated in `block`, and its two homes.
+        unsafe {
+            rows.add(k).write(ViewRow { key, homes: [2 * k as u32, 2 * k as u32 + 1], ..Default::default() });
+            homes.add(2 * k).write(ViewHome::default());
+            homes.add(2 * k + 1).write(ViewHome::default());
+        }
         k += 1;
     }
     assert_eq!(k, n, "a key for every document");
+    // SAFETY: the cache's home, just allocated.
+    unsafe { homes.add(2 * n).write(ViewHome::default()) };
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, rows: block.offset_of(rows) as u64, ..Default::default() }) };
+    unsafe {
+        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: 2 * n as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, ..Default::default() })
+    };
     at
 }
 
@@ -56,6 +69,8 @@ pub struct Docs {
     context: Context,
     /// How many projections are made (R2's tests read it).
     made: AtomicUsize,
+    /// The directory's reads layer, each row written on its document's first read through the views (`reads`).
+    layer: reads::Layer,
 }
 
 struct Slot {
@@ -91,8 +106,9 @@ impl Docs {
         let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
         let given = documents.iter().map(|d| given.get(&d.key).copied()).collect();
         let dir = directory(&context.block, documents.iter().map(|d| d.key), documents.len());
-        let slots = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
-        Self { slots, dir, tags, given, context, made: AtomicUsize::new(0) }
+        let slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
+        let layer = reads::Layer::new(slots.len());
+        Self { slots, dir, tags, given, context, made: AtomicUsize::new(0), layer }
     }
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
@@ -119,7 +135,8 @@ impl Docs {
             }
         }
         let dir = directory(&context.block, slots.iter().map(|s| s.input.key), slots.len());
-        (Self { slots, dir, tags, given, context, made: AtomicUsize::new(0) }, at)
+        let layer = reads::Layer::new(slots.len());
+        (Self { slots, dir, tags, given, context, made: AtomicUsize::new(0), layer }, at)
     }
     /// Whether every document's views' counts were given: the views' row space is known with none made.
     pub fn given_all(&self) -> bool {
