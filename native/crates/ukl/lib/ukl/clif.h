@@ -2,7 +2,9 @@
 // (`ukl/memory.h`): their two hooks, which a kernel source may define before it includes the reads, and the casts of
 // the base to the coherent memory a cache's reads and writes go through (decision 0353 step 4b).
 //
-// The reads themselves are generated (`rerail_clif::ukl`): `<ukl/reads/*.h>`.
+// The reads: the tape's, written by hand to the CLIF's functions and held to them by tests (`<ukl/reads/tape.h>`,
+// `tape_z.h`, both `tape_body.h`; decision 0518), and the rest generated (`rerail_clif::ukl`: `view.h`, `ids.h`,
+// `relation.h`).
 
 #pragma once
 #include <ukl/memory.h>

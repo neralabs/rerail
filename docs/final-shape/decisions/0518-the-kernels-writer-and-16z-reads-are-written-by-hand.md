@@ -31,8 +31,16 @@ headers).
      JIT's test; `the_writer_headers_constants_are_the_ops` holds the header's layout constants (`CLIF_W_*`: the
      state's field offsets, the parts' numbers, format 16's constants, the failures) to `writer.rs`'s.
    - the 16z reads: the device's tape tests, which read 16z batches through the header against the host's reads.
-4. **The generators of these two go** (`writer::ukl_source`, `reads::tape_z_ukl_source`) with their `are_these`
-   checks. The other carried reads (`tape.h`, `view.h`, `ids.h`, `relation.h`) stay generated for now.
+4. **The generators of these go** (`writer::ukl_source`, `reads::tape_z_ukl_source`, and `reads::tape_ukl_source`
+   too: `tape.h` is the same reads without the 16z bodies, so both are one hand-written `tape_body.h`) with their
+   `are_these` checks. The other carried reads (`view.h`, `ids.h`, `relation.h`) stay generated for now.
+5. **A wait in hand-written kernel code is a turn of its function's one loop**, and the turn's only way back is at
+   the loop's foot: no `continue`, and no inner loop that polls. On Apple's GPUs the lanes of a SIMD group do not each
+   go their own way. Lanes that take a way back while others of the group are still in the turn run round it again
+   and again, and the others stand still. A lane waiting for a 16z block that another lane of its group had claimed
+   so ran its wait to its end, its SPIN polls, while the claimant stood before its decode. The translator's output
+   kept this by accident: one loop over a `switch`, every block a turn. The hand-written lookup (`clif_tc_get`) keeps
+   it by its shape.
 
 ## Steps
 
@@ -40,4 +48,12 @@ headers).
    and spark1's CUDA, and on a Linux host's CPU backend; it compiles as OpenCL C 1.2 (no farm host has an OpenCL
    device). The `_Search2`/`_Search3` jumps of liblz4's `LZ4HC_compress_hashChain`, which the CLIF writes as blocks
    and jumps, are a loop over a state (`UKL_W_MAIN`, `UKL_W_SEARCH2`, `UKL_W_SEARCH3`): no backend has `goto`.
-2. `<ukl/reads/tape_z.h>` by hand.
+2. **Done (2026-11-20): the tape's reads by hand.** `<ukl/reads/tape_body.h>`, 63 KB, is both `tape.h` and
+   `tape_z.h` (198 KB and 59 KB generated), each a wrapper that names its set. Its constants
+   (`CLIF_T_*`) are held to the views' by `the_tape_headers_constants_are_the_views`. It passes the device's tape
+   tests (formats 16, 16z and 15) on the Mac mini's Metal, spark1's CUDA and a Linux host's CPU, and the engine's
+   resident-tape, slab and label-kernel tests on the Mac mini. The first hand-written lookup failed on Metal only:
+   its waits were loops of their own, and a lane waiting for its own SIMD group's claim spun out every time (about
+   1.5M failed reads, 35 to 78 s a command buffer, on the M3). Hence point 5. Once a lookup of a batch's cache has
+   failed, no lookup waits any more: the batch is refused (0463), and a lookup gone wrong costs a few turns, not
+   minutes of the GPU.

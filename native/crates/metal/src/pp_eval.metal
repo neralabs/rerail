@@ -3,7 +3,7 @@
 // slab residency placed them: `data` is the first document's slab, the others reached from it by
 // the slabs' addresses (0353 step 4, 0471), and `files` their views (`DocView`, the residency's
 // layout). The tape is read through the reads
-// written once in CLIF (`<ukl/reads/tape.h>`, decision 0310), each node where it lies: nothing is
+// written once in CLIF (decision 0310; `<ukl/reads/tape.h>`, their kernels' copy, 0518), each node where it lies: nothing is
 // decoded into another array. Every size a pass needs is made on the device (counts, a prefix
 // sum, and the next dispatch's arguments).
 //

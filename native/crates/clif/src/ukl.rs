@@ -64,9 +64,8 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        // Cold (a call) where 0310's policy marks the read so, and a read's 16z body called apart (decision 0353 step
-        // 4b, past `Z_APART`): inlined, each view's kernel carried the decoder once for every tape read in it.
-        let hot = *id < crate::reads::Z_APART && crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        // Cold (a call) where 0310's policy marks the read so.
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();

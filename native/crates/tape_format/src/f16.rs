@@ -2223,6 +2223,13 @@ DEFINE_KERNEL2(tests, t_reads,
         q.flush().await_().unwrap();
         let got: Vec<u32> = read(&out, n * DEVICE_READS);
         eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
+        // A 16z tape's cache, as the device's reads left it: what they found, waited for and failed to find.
+        if view.format == rerail_clif::view::F16Z_FORMAT {
+            let back: Vec<u8> = read(&tb, bytes.len());
+            // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+            let counts = unsafe { rerail_clif::view::cache::Counts::read(back.as_ptr().add(view.side[0] as usize)) };
+            eprintln!("{}: {what}: the cache's counts: {:?}", rerail_gpu::device::backend(), counts.named());
+        }
         const NAMES: [&str; 10] = ["size", "end of subtree", "code", "start", "end", "parent", "next", "next in parent", "first child", "child count"];
         for i in 0..n {
             let (g, w) = (&got[i * DEVICE_READS..][..DEVICE_READS], &want[i * DEVICE_READS..][..DEVICE_READS]);

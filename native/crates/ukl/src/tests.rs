@@ -149,13 +149,14 @@ fn an_in_memory_kernel_gets_its_backends_shim() {
     assert!(metal.contains("threadgroup_barrier(mem_flags::mem_threadgroup)"), "{metal}");
 }
 
-/// A hand-written MSL kernel that takes the generated reads (decision 0440 §3.3): the Metal front end's own headers
-/// left to it, the reads' hooks as the kernel defines them, and the tape's two sets of reads refused together.
+/// A hand-written MSL kernel that takes the tape's reads (decision 0440 §3.3): the Metal front end's own headers left
+/// to it, the reads' hooks as the kernel defines them, and the tape's two sets of reads refused together.
 #[test]
-fn a_metal_kernel_takes_the_generated_reads() {
+fn a_metal_kernel_takes_the_tapes_reads() {
     let k = "#include <metal_stdlib>\nusing namespace metal;\n#define CLIF_VIEW_SPACE device\n#define clif_view(v, a) the_kernels_view(v, a)\n#include <ukl/reads/tape.h>\nkernel void k() {}\n";
     let out = crate::metal_source("k.metal", k).unwrap_or_else(|e| panic!("{e}"));
-    assert!(out.contains("clif_tape_number(device const uint8_t* t,device const uint32_t* v"), "the view where the kernel reads it");
+    let squeezed: String = out.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(squeezed.contains("clif_tape_number(deviceconstuint8_t*t,deviceconstuint32_t*v"), "the view where the kernel reads it");
     assert!(out.contains("the_kernels_view(v,") || out.contains("the_kernels_view(v ,"), "the kernel's load of the view");
     assert!(!out.contains("metal_stdlib"), "the front end's own header, left to it");
     assert!(crate::takes_library(k) && !crate::takes_library("#include <metal_stdlib>\n"));

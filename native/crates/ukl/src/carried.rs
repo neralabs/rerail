@@ -34,10 +34,13 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
-    // The reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here so
-    // that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
+    // The tape's reads for the kernels, written by hand (decision 0518): one body, which `tape.h` reads formats 15
+    // and 16 through and `tape_z.h` 16z too.
+    ("ukl/reads/tape_body.h", include_str!("../lib/ukl/reads/tape_body.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
     ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
+    // The other reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here
+    // so that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
