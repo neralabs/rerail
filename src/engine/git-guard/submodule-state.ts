@@ -169,16 +169,18 @@ export async function recordsNoSubmodule(index: string): Promise<boolean> {
   return bytes !== undefined && !bytes.includes(GITLINK_MODE) && !bytes.includes(SPLIT_INDEX_LINK);
 }
 
-/** The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read. */
+/** The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read or close. */
 async function fileBytes(path: string): Promise<Buffer | undefined> {
   const handle = await open(path, READ_WITHOUT_WAITING).catch(() => undefined);
   if (handle === undefined) return undefined;
   try {
-    return (await handle.stat()).isFile() ? await handle.readFile() : undefined;
+    try {
+      return (await handle.stat()).isFile() ? await handle.readFile() : undefined;
+    } finally {
+      await handle.close();
+    }
   } catch {
     return undefined;
-  } finally {
-    await handle.close();
   }
 }
 
@@ -592,6 +594,9 @@ export function repositoryConfig(gitFolder: string): string | undefined {
 /**
  * The words a config file holds where it defines a filter driver (`[filter "x"]`, `[filter.x]`) or includes a file that
  * may (`[include]`, `[includeIf "..."]`): Git takes a section's name in any case, and a key only under its section.
+ * They are matched anywhere in the text, not only at a line's start, since Git also opens a section after another one
+ * on the same line. That costs a listing where the word stands in a key or value: a partial clone's config holds it in
+ * `remote.<name>.partialclonefilter`, so a partial clone's config is still listed, as before the in-process reads.
  */
 const DRIVER_SECTIONS = /filter|include/iu;
 /** The most bytes of a repository's config file Rerail reads to see that it defines no driver; Git lists a larger one. */
@@ -623,12 +628,22 @@ function namesNoDriver(path: string): boolean {
 function configText(path: string): string | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return file === "absent" ? "" : undefined;
+  return readClosing(file, opened => readWithin(opened, MAX_READ_CONFIG_BYTES)?.toString("latin1"));
+}
+
+/**
+ * What `read` gives of the open file `file`, which it then closes; undefined when the read or the close fails, so a
+ * file whose close fails is one that cannot be read and Git is asked, as before the in-process reads.
+ */
+function readClosing<T>(file: number, read: (file: number) => T): T | undefined {
   try {
-    return readWithin(file, MAX_READ_CONFIG_BYTES)?.toString("latin1");
+    try {
+      return read(file);
+    } finally {
+      closeSync(file);
+    }
   } catch {
     return undefined;
-  } finally {
-    closeSync(file);
   }
 }
 
@@ -647,9 +662,8 @@ function openedFile(path: string): number | "absent" | undefined {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : undefined;
   }
-  if (isFile(file)) return file;
-  closeSync(file);
-  return undefined;
+  // Not a file: it is closed, and a close that fails changes nothing.
+  return isFile(file) ? file : readClosing(file, () => undefined);
 }
 
 function isFile(file: number): boolean {
@@ -696,14 +710,10 @@ function validHead(path: string): boolean {
 function headText(path: string): string | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
-  try {
+  return readClosing(file, opened => {
     const head = Buffer.alloc(255);
-    return head.toString("latin1", 0, readSync(file, head));
-  } catch {
-    return undefined;
-  } finally {
-    closeSync(file);
-  }
+    return head.toString("latin1", 0, readSync(opened, head));
+  });
 }
 
 /** Whether Git could enter `path` (`access(path, X_OK)`); on Windows, whether it is there. */
@@ -756,14 +766,7 @@ function statOf(path: string): Stats | undefined {
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */
 function textOf(path: string): string | undefined {
   const file = openedFile(path);
-  if (typeof file !== "number") return undefined;
-  try {
-    return readFileSync(file, "utf8");
-  } catch {
-    return undefined;
-  } finally {
-    closeSync(file);
-  }
+  return typeof file === "number" ? readClosing(file, opened => readFileSync(opened, "utf8")) : undefined;
 }
 
 /** How a question fails in `gitFolder`, which holds no repository, as Git fails it. */

@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -256,18 +256,36 @@ describe("Rerail's Git calls start no filter program only a repository's own con
       expect([audit.status, audit.stdout]).toEqual([128, ""]);
     }, 60_000);
 
-  it("lists the config where the environment names the Git folder, which Rerail does not find in process", async () => {
+  it.each(["GIT_DIR", "GIT_COMMON_DIR"])(
+    "runs no driver of the repository %s names, in a checkout whose own config defines none", async name => {
+      const root = await folder();
+      const marker = join(root, "filter-ran");
+      const files = { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" };
+      const work = await repository(root, "work", files);
+      const other = await repository(root, "other", files);
+      git(other, "config", "filter.probe.clean", recording(marker));
+      await writeFile(join(work, "notes.txt"), "two\n");
+      const env = { [name]: join(other, ".git") };
+
+      const answers = [runGit(work, AUDIT_DIFF, { env }), await runGitWithoutBlocking(work, AUDIT_DIFF, { env })];
+
+      expect(runs(marker)).toBe(0);
+      expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    }, 60_000);
+
+  it("asks the submodules of the index GIT_INDEX_FILE names, in a checkout whose own index records none", async () => {
     const root = await folder();
-    const marker = join(root, "filter-ran");
-    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
-    git(work, "config", "filter.probe.clean", recording(marker));
-    await writeFile(join(work, "notes.txt"), "two\n");
-    const env = { GIT_DIR: join(work, ".git") };
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "notes.txt": "one\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    const index = join(root, "with-sub.index");
+    await copyFile(join(work, ".git", "index"), index);
+    git(work, "rm", "--quiet", "--cached", "sub");
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
 
-    const answers = [runGit(work, AUDIT_DIFF, { env }), await runGitWithoutBlocking(work, AUDIT_DIFF, { env })];
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF, { env: { GIT_INDEX_FILE: index } });
 
-    expect(runs(marker)).toBe(0);
-    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect([audit.status, audit.stdout]).toEqual([0, "sub\0"]);
   }, 60_000);
 });
 
