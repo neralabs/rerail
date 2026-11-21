@@ -127,10 +127,15 @@ impl Default for Sketch {
 }
 
 /// A clone shares the filter until it adds to it (`own_keys`): a kept relation reopened to be maintained copies its
-/// columns' filters only where its rows change them.
+/// columns' filters only where its rows change them. Past its few values it shares the counts the same way. While
+/// the sketch still keeps its few values, the clone takes counts of its own: the sketch's next values may end them
+/// (`Counts::end_few`) in place, and their filter is the sketch's alone, so a clone sharing them would keep neither
+/// (its `keys` had no answer; one cold hogql run in four stopped there).
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
-        Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), own_counts: false, rows: self.rows, dense: self.dense.clone(),
+        let few = self.counts.few_len().is_some();
+        let counts = if few { Arc::new(Counts::clone(&self.counts)) } else { Arc::clone(&self.counts) };
+        Sketch { registers: self.registers.clone(), counts, own_counts: few, rows: self.rows, dense: self.dense.clone(),
                  sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
     }
 }
@@ -336,15 +341,36 @@ pub mod tests {
         s.add(10);
         assert_eq!((few.few_len(), counts.join(&ten).rows), (Some(11), 1.0), "read where they lie, after the add");
         let mut c = s.clone();
-        assert!(Arc::ptr_eq(&c.counts, &s.counts) && !c.own_counts, "a clone reads them");
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts) && c.own_counts, "a clone of few values counts its own");
         c.add(10);
-        assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
         // Past its few values, the counters, still the sketch's own.
         for v in 11..1_000 {
             s.add(v);
         }
         assert!(few.few_len().is_none() && Arc::ptr_eq(few, &s.counts));
+        // Past them, a clone reads them where they lie until it adds.
+        let mut d = s.clone();
+        assert!(Arc::ptr_eq(&d.counts, &s.counts) && !d.own_counts, "a clone reads them");
+        d.add(5);
+        assert!(!Arc::ptr_eq(&d.counts, &s.counts), "a clone writes its own once it adds");
+    }
+
+    /// A clone taken while the sketch keeps its few values still has keys after the sketch passes them: its counts
+    /// are its own, not the sketch's, which end their few values in place (`Counts::end_few`) and keep their filter.
+    #[test]
+    fn a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them() {
+        let mut s = Sketch::default();
+        for v in 0..10 {
+            s.add(v * 1_000_003);
+        }
+        let c = s.clone();
+        for v in 10..(2 * SMALL as i64) {
+            s.add(v * 1_000_003);
+        }
+        assert!(s.counts.few_len().is_none() && matches!(s.keys(), Keys::Filter(_)));
+        let Keys::Few(few) = c.keys() else { panic!("the clone's ten values are its keys") };
+        assert_eq!((few.few_len(), c.ndv()), (Some(10), 10));
     }
 
     #[test]
