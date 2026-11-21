@@ -1179,6 +1179,9 @@ impl Task for WorkspaceStorageTask {
             // The task's run, on the workspace's shared object (decision 0442).
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
+            // Every write of the attach waits on other writers for one deadline in all: the store's open, the
+            // analysis scope's acquisition and the snapshot's publication (which joins this one).
+            let _deadline = OperationDeadline::enter();
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
             // and interactive edits evaluate without reuse. Only a root outside any repository is
@@ -1192,9 +1195,16 @@ impl Task for WorkspaceStorageTask {
                 publication_milliseconds: 0.0,
             };
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
-            let owner = if let Some(owner) = self.analysis_owner.take() {
+            // The analysis scope this attach owns: named by the root, taken on the store.
+            let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
+                .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
+            let in_memory = self.store_path == Path::new(":memory:");
+            // A snapshot's inventory is read under its owner, so its owner is taken first. A directory's is taken once
+            // the snapshot is published (below): before it, an attach outside Git would create the store, and a
+            // writer the store's open or publication meets would be met by the acquisition instead.
+            let mut owner = if let Some(owner) = self.analysis_owner.take() {
                 Some(owner)
-            } else if self.store_path == Path::new(":memory:") {
+            } else if in_memory || self.snapshot.is_none() {
                 None
             } else {
                 let store = match crate::content_store::ContentStore::open(&self.store_path) {
@@ -1202,8 +1212,6 @@ impl Task for WorkspaceStorageTask {
                     Err(error) => return Ok(cache_failed(error)),
                 };
                 if let Err(error) = check_store_identity(&store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
-                let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
-                    .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
                 match store.begin_analysis_scope_at(&scope, self.analysis_generation) {
                     Ok(owner) => Some(owner),
                     Err(error) => return Ok(cache_failed(error)),
@@ -1244,18 +1252,29 @@ impl Task for WorkspaceStorageTask {
                 deferred,
             )?;
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let unavailable = |reason: String| StorageAttachment {
+                attached: false,
+                reason: Some(reason),
+                cache_unavailable: true,
+                discovery_milliseconds,
+                publication_milliseconds,
+            };
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Unavailable(reason) => {
-                    return Ok(StorageAttachment {
-                        attached: false,
-                        reason: Some(reason),
-                        cache_unavailable: true,
-                        discovery_milliseconds,
-                        publication_milliseconds,
-                    });
-                }
+                Attached::Unavailable(reason) => return Ok(unavailable(reason)),
             };
+            // A directory's owner, on the store the attach opened, under the attach's deadline.
+            if owner.is_none() && !in_memory {
+                if let Err(error) = check_store_identity(&context.store, self.expected_store.as_deref()) {
+                    return Ok(unavailable(error.to_string()));
+                }
+                owner = match context.store.begin_analysis_scope_at(&scope, self.analysis_generation) {
+                    Ok(owner) => Some(owner),
+                    Err(StoreError::Busy) => return Ok(unavailable(
+                        "content store busy: another writer held it past the write deadline while taking the analysis scope".to_owned())),
+                    Err(error) => return Ok(unavailable(error.to_string())),
+                };
+            }
             let guard = match self.state.lock() {
                 Ok(guard) => guard,
                 Err(error) => {
