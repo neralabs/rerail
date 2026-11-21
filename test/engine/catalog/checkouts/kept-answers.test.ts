@@ -9,9 +9,12 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
+import { declaredSubmodulePaths, keptSubmoduleCount } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import { keptConfigCount } from "../../../../src/engine/catalog/checkouts/git-placement.js";
 import {
   keptAnswerCounts,
+  keptRemoteCount,
+  readRemoteAddress,
   repositoryIdentityLocation,
   worktreeRegistry,
   type RepositoryIdentityLocation,
@@ -145,6 +148,23 @@ describe("what the catalog keeps for a worktree leaves with it", () => {
     const started = vi.mocked(runGit).mock.calls.length;
     askAgain(main, ...stay);
     expect(gitProcessesSince(started)).toBe(0);
+  });
+
+  it("the remote and the submodules kept for each worktree, removed with Git, once Git lists the repository's worktrees again", async () => {
+    const before = { remotes: keptRemoteCount(), submodules: keptSubmoduleCount() };
+    const keptNow = (): Record<string, number> => ({ remotes: keptRemoteCount() - before.remotes, submodules: keptSubmoduleCount() - before.submodules });
+    // With a config.worktree of its own, each worktree's remote is kept under its own Git folder.
+    const { main, worktrees } = await withWorktrees(6, true);
+    for (const checkout of [main, ...worktrees]) {
+      writeFileSync(join(checkout, ".gitmodules"), "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib\n");
+      readRemoteAddress(checkout);
+      declaredSubmodulePaths(checkout);
+    }
+    expect(keptNow()).toEqual({ remotes: 7, submodules: 7 });
+
+    for (const worktree of worktrees.slice(0, 4)) git(main, "worktree", "remove", "--force", worktree);
+    expectGitsRegistries(main);
+    expect(keptNow()).toEqual({ remotes: 3, submodules: 3 });
   });
 
   it("worktrees removed by hand, once Git lists the repository's worktrees again though it still lists them", async () => {

@@ -1047,7 +1047,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startOrError(() => startGit(executable, args, gitEnvironment(executable), "pipe"));
+  const child = startOrError(() => startGit(executable, args, gitEnvironment(executable, options.env), "pipe"));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
   let failure: Error | undefined;

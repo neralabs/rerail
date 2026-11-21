@@ -30,8 +30,9 @@ import {
   type PlacementInputs,
 } from "./checkouts/git-placement.js";
 import { foldersGitSearches } from "./checkouts/git-search.js";
+import { forgetGoneSubmodules } from "./checkouts/declared-submodules.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { nativeGitAccess } from "../native/git-access.js";
+import { learnGitAccess, standingGitAccess } from "../native/git-access.js";
 import { GitUnavailableError, gitHome, gitText, runGit, runGitAsync, type GitReadOptions, type GitResult } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -454,7 +455,8 @@ function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly 
 /**
  * Drops each answer kept for a folder whose answer names `common`, a common Git folder in its {@link storedForm}, once
  * the folder is gone, and the config facts kept for files in `common` that are gone: a removed worktree's answers, its
- * own and those of the folders in it, leave with it, and a checkout that stays keeps its own. Each answer is matched by
+ * own and those of the folders in it, its remote and its submodules among them, leave with it, and a checkout that
+ * stays keeps its own. Each answer is matched by
  * the stored form of its common Git folder, read when it was kept, since an answer Git printed and one read from the
  * files can spell that folder two ways (on macOS a letter case, on Windows a drive letter's case or an 8.3 short
  * name), and a config file's path is spelt from the folder as asked. No ask takes an answer kept for
@@ -463,7 +465,8 @@ function keepList(place: RegistryPlace, registry: WorktreeRegistry & { readonly 
  * holds only the lists of its own repositories, whose folders Git's list reads too.
  */
 function forgetGone(common: string): void {
-  for (const kept of [heldTopLevels, gitAcceptances]) forgetGoneFrom(kept, common);
+  for (const kept of [heldTopLevels, gitAcceptances, keptRemotes]) forgetGoneFrom(kept, common);
+  forgetGoneSubmodules(common);
   forgetGoneConfigs(common);
 }
 
@@ -475,6 +478,11 @@ function forgetGoneFrom(kept: Map<string, { readonly common: string }>, common: 
 /** How many answers each map keeps: for tests, which count what a removed worktree leaves behind. */
 export function keptAnswerCounts(): { readonly heldTopLevels: number; readonly gitAcceptances: number; readonly gitPlacedCommons: number } {
   return { heldTopLevels: heldTopLevels.size, gitAcceptances: gitAcceptances.size, gitPlacedCommons: gitPlacedCommons.size };
+}
+
+/** How many clones' remotes are kept ({@link readRemoteAddress}): for tests, which count what a removed worktree leaves behind. */
+export function keptRemoteCount(): number {
+  return keptRemotes.size;
 }
 
 /**
@@ -808,8 +816,12 @@ export function readRemoteAddress(root: string): RemoteAddress | undefined {
   return keepRemote(source, answers);
 }
 
-/** {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. */
+/**
+ * {@link readRemoteAddress} for `root` learnt without blocking the caller's thread, unless a kept answer stands. The
+ * engine's owner of its Git reads, which names the system files, is made first the same way ({@link learnGitAccess}).
+ */
 export async function learnRemoteAddress(root: string, options: GitReadOptions = {}): Promise<void> {
+  await learnGitAccess(options);
   const source = remoteSource(root);
   if (source === undefined || keptRemotes.get(source.key)?.facts === source.facts) return;
   const answers: GitResult[] = [];
@@ -822,6 +834,8 @@ export async function learnRemoteAddress(root: string, options: GitReadOptions =
 interface KeptRemote {
   readonly facts: string;
   readonly remote: RemoteAddress | undefined;
+  /** The clone's common Git folder, as {@link heldTopLevels} keeps it: the answer leaves once its Git folder is gone ({@link forgetGone}). */
+  readonly common: string;
 }
 
 /**
@@ -833,6 +847,7 @@ const keptRemotes = new Map<string, KeptRemote>();
 interface RemoteSource {
   readonly key: string;
   readonly facts: string;
+  readonly common: string;
 }
 
 /**
@@ -846,7 +861,7 @@ function remoteSource(root: string): RemoteSource | undefined {
   if (inputs === undefined || !inputs.owned) return undefined;
   const own = configText(join(inputs.gitFolder, "config.worktree"));
   const facts = remoteFacts(own, inputs.linkedCommon ?? inputs.gitFolder);
-  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : inputs.gitFolder, facts };
+  return facts === undefined ? undefined : { key: own === NO_FILE ? inputs.realCommon : inputs.gitFolder, facts, common: inputs.realCommon };
 }
 
 /**
@@ -892,12 +907,14 @@ const GIT_TRUE = /^(?:1|true|yes|on)$/iu;
 
 /**
  * The system files Git reads: none under `GIT_CONFIG_NOSYSTEM`; else `GIT_CONFIG_SYSTEM`, or where it is unset the file
- * Rerail's Git was built to read, as the engine's owner of its Git reads names it ({@link nativeGitAccess}), with the
- * file Apple Git reads beside it. Undefined where Git named no system file.
+ * Rerail's Git was built to read, as the engine's owner of its Git reads names it, with the file Apple Git reads beside
+ * it. Undefined where Git named no system file, or no owner stands ({@link standingGitAccess}): this read loads no
+ * engine and asks Git nothing to make one.
  */
 function systemConfigFiles(): string[] | undefined {
   if (GIT_TRUE.test(process.env["GIT_CONFIG_NOSYSTEM"] ?? "")) return [];
-  const access = nativeGitAccess();
+  const access = standingGitAccess();
+  if (access === undefined) return undefined;
   const named = process.env["GIT_CONFIG_SYSTEM"] ?? access.systemConfig;
   return named === null ? undefined : [named, access.installationConfig].filter(file => file !== null);
 }
@@ -984,7 +1001,7 @@ function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteSte
 function keepRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
   const step = remoteStep(answers);
   const remote = "remote" in step ? step.remote : undefined;
-  if (source !== undefined && answers.every(answer => answer.status === 0)) keptRemotes.set(source.key, { facts: source.facts, remote });
+  if (source !== undefined && answers.every(answer => answer.status === 0)) keptRemotes.set(source.key, { facts: source.facts, remote, common: source.common });
   return remote;
 }
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;

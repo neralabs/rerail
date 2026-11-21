@@ -47,21 +47,18 @@ function startedRepository(count: number): { root: string; checkouts: string[]; 
   return { root, checkouts: [main, ...worktrees], databasePath };
 }
 
-/** The null device as Rerail names it to Git (`--git-dir`) to ask it outside any repository. */
-const NULL_DEVICE = process.platform === "win32" ? "nul" : "/dev/null";
-
 const isGit = ([file]: readonly unknown[]): boolean => /^git(\.exe)?$/iu.test(basename(String(file)));
 
 /**
- * The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran, but for Git asked
- * outside any repository (`--git-dir` the null device): a process reads its Git's installation that way once, at its
- * first in-process Git read, two Git processes for the life of a daemon whatever its sessions, and reads no checkout.
+ * The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran, Git asked outside any
+ * repository (`--git-dir` the null device) among them: a process reads its Git's installation that way, the system
+ * file the remote's facts name included.
  */
 async function blockingGitStarts(act: () => Promise<unknown>): Promise<string[][]> {
   const calls = vi.mocked(childProcess.spawnSync).mock.calls;
   const before = calls.length;
   await act();
-  return calls.slice(before).filter(call => isGit(call) && !(call[1] as string[]).includes(`--git-dir=${NULL_DEVICE}`)).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
+  return calls.slice(before).filter(isGit).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
 }
 
 describe("a repository's first events in a daemon", () => {
@@ -72,8 +69,17 @@ describe("a repository's first events in a daemon", () => {
     beforeEach(() => {
       started = startedRepository(6);
     });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
 
-    it("open sessions in the main checkout and six worktrees, each writing a file in another, record each one's events in order, and start no Git the daemon waits on", async () => {
+    // The first runs before any engine read of the process, as a daemon's first sessions do; the test home sets
+    // GIT_CONFIG_NOSYSTEM, under which the remote names no system file.
+    it.each([
+      ["with the system file read, before the process read Git's installation", undefined],
+      ["with GIT_CONFIG_NOSYSTEM set", "1"],
+    ])("open sessions in the main checkout and six worktrees, each writing a file in another, record each one's events in order, and start no Git the daemon waits on, %s", async (_, noSystem) => {
+      vi.stubEnv("GIT_CONFIG_NOSYSTEM", noSystem);
       const { root, checkouts, databasePath } = started;
       const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: checkouts[0]!, autostart: false, embedder: testEmbedder });
       const reader = new SqliteSessionReader(databasePath);

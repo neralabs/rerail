@@ -5,13 +5,33 @@
  * ({@link PlacementInputs.stamp}), the `.gitmodules` text, and the index file, which Git replaces whole at every write,
  * so a new file stands under its name. A checkout with no `.gitmodules` declares none, and Git is not started to say so.
  */
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { fileText, placementInputs, type PlacementInputs } from "./git-placement.js";
 import { runGit, runGitAsync, type GitReadOptions, type GitResult } from "../../git.js";
 
-/** Each checkout's declared submodule paths, relative to its top level, with the facts Git's answer rested on. */
-const kept = new Map<string, { readonly facts: string; readonly paths: readonly string[] }>();
+/**
+ * Each checkout's declared submodule paths, relative to its top level, with the facts Git's answer rested on and the
+ * real path of the checkout's common Git folder, by which the answer leaves once the checkout is gone
+ * ({@link forgetGoneSubmodules}).
+ */
+const kept = new Map<string, { readonly facts: string; readonly paths: readonly string[]; readonly common: string }>();
+
+/** What Git's answer for a checkout rests on, and the real path of the checkout's common Git folder. */
+interface Facts {
+  readonly text: string;
+  readonly common: string;
+}
+
+/** Drops the answer kept for each checkout of the repository whose common Git folder is `common` once it is gone. */
+export function forgetGoneSubmodules(common: string): void {
+  for (const [root, answer] of kept) if (answer.common === common && !existsSync(root)) kept.delete(root);
+}
+
+/** How many checkouts' submodules are kept: for tests, which count what a removed worktree leaves behind. */
+export function keptSubmoduleCount(): number {
+  return kept.size;
+}
 
 /**
  * The paths, relative to `root` (a checkout's top level), of the submodules it declares: kept while its facts read the
@@ -21,7 +41,7 @@ export function declaredSubmodulePaths(root: string): readonly string[] {
   const facts = submoduleFacts(root);
   if (facts === NONE) return [];
   const known = facts === undefined ? undefined : kept.get(root);
-  if (known !== undefined && known.facts === facts) return known.paths;
+  if (known !== undefined && known.facts === facts?.text) return known.paths;
   const answers: GitResult[] = [];
   for (let step = submoduleStep(answers); "ask" in step; step = submoduleStep(answers)) answers.push(runGit(root, step.ask));
   return keep(root, facts, answers);
@@ -36,7 +56,7 @@ export async function learnDeclaredSubmodules(root: string, options: GitReadOpti
   const facts = submoduleFacts(root);
   if (facts === undefined || facts === NONE) return [];
   const known = kept.get(root);
-  if (known?.facts === facts) return known.paths;
+  if (known?.facts === facts.text) return known.paths;
   const answers: GitResult[] = [];
   for (let step = submoduleStep(answers); "ask" in step; step = submoduleStep(answers)) answers.push(await runGitAsync(root, step.ask, options));
   return keep(root, facts, answers);
@@ -50,16 +70,16 @@ const NONE = "none";
  * or reads the index of a folder another account owns only while a `safe.directory` entry, in a file not read here,
  * trusts it.
  */
-function submoduleFacts(root: string): string | undefined {
+function submoduleFacts(root: string): Facts | typeof NONE | undefined {
   const modules = fileText(join(root, ".gitmodules"));
   if (modules === "none") return NONE;
   const inputs = process.env["GIT_INDEX_FILE"] === undefined ? placementInputs(root) : undefined;
   return modules === undefined || inputs?.owned !== true ? undefined : factsOf(inputs, modules.text);
 }
 
-function factsOf(inputs: PlacementInputs, modules: string): string | undefined {
+function factsOf(inputs: PlacementInputs, modules: string): Facts | undefined {
   const index = fileIdentity(join(inputs.gitFolder, "index"));
-  return index === undefined ? undefined : [inputs.stamp, index, modules].join("\0");
+  return index === undefined ? undefined : { text: [inputs.stamp, index, modules].join("\0"), common: inputs.realCommon };
 }
 
 /** A file's identity as a fact (device, file id, size and change time), "none" when nothing is there; undefined when unreadable. */
@@ -95,10 +115,10 @@ function gitlinks(stdout: string): string[] {
 }
 
 /** The paths `answers` give, kept under `facts` only when Git answered each question to its end. */
-function keep(root: string, facts: string | undefined, answers: readonly GitResult[]): readonly string[] {
+function keep(root: string, facts: Facts | undefined, answers: readonly GitResult[]): readonly string[] {
   const step = submoduleStep(answers);
   const paths = "paths" in step ? step.paths : [];
-  if (facts !== undefined && answers.every(answeredToItsEnd)) kept.set(root, { facts, paths });
+  if (facts !== undefined && answers.every(answeredToItsEnd)) kept.set(root, { facts: facts.text, paths, common: facts.common });
   else kept.delete(root);
   return paths;
 }

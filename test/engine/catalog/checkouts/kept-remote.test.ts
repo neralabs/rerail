@@ -3,10 +3,13 @@ import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { learnRemoteAddress, readRemoteAddress, type RemoteAddress } from "../../../../src/engine/catalog/repository-identity.js";
+import { runRemoteCommand } from "../../../../src/cli/index.js";
+import { lookupCheckout, recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
+import { learnRemoteAddress, normalizeRemoteAddress, readRemoteAddress, type RemoteAddress } from "../../../../src/engine/catalog/repository-identity.js";
 import { runGit } from "../../../../src/engine/git.js";
-import { nativeGitAccess } from "../../../../src/engine/native/git-access.js";
-import type { NativeGitAccess } from "../../../../src/engine/native/native.js";
+import { standingGitAccess } from "../../../../src/engine/native/git-access.js";
+import { loadNativeBinding, type NativeGitAccess } from "../../../../src/engine/native/native.js";
+import { openRerailDatabase } from "../../../../src/engine/storage/database.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
@@ -16,13 +19,19 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
 
 vi.mock("../../../../src/engine/native/git-access.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/native/git-access.js")>();
-  return { ...actual, nativeGitAccess: vi.fn(actual.nativeGitAccess) };
+  return { ...actual, standingGitAccess: vi.fn(actual.standingGitAccess) };
+});
+
+vi.mock("../../../../src/engine/native/native.js", async importOriginal => {
+  const actual = await importOriginal<typeof import("../../../../src/engine/native/native.js")>();
+  return { ...actual, loadNativeBinding: vi.fn(actual.loadNativeBinding) };
 });
 
 const folders: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
-  vi.mocked(nativeGitAccess).mockReset();
+  vi.mocked(standingGitAccess).mockReset();
+  vi.mocked(loadNativeBinding).mockReset();
   for (const folder of folders.splice(0)) removeFolderSync(folder);
 });
 
@@ -310,7 +319,7 @@ describe("the system files a kept remote rests on, as the engine's owner of its 
     write(file, "[core]\n");
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", undefined);
     vi.stubEnv("GIT_CONFIG_SYSTEM", undefined);
-    vi.mocked(nativeGitAccess).mockReturnValue(gitAccess(files(file, join(at.root, "built.gitconfig"))));
+    vi.mocked(standingGitAccess).mockReturnValue(gitAccess(files(file, join(at.root, "built.gitconfig"))));
     expect(remoteAsks(() => readRemoteAddress(at.main))).toBeGreaterThan(0);
     expect(remoteAsks(() => readRemoteAddress(at.main))).toBe(0);
 
@@ -322,12 +331,38 @@ describe("the system files a kept remote rests on, as the engine's owner of its 
     const at = clone();
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", undefined);
     vi.stubEnv("GIT_CONFIG_SYSTEM", undefined);
-    vi.mocked(nativeGitAccess).mockReturnValue(gitAccess({ systemConfig: null, installationConfig: null }));
+    vi.mocked(standingGitAccess).mockReturnValue(gitAccess({ systemConfig: null, installationConfig: null }));
     readRemoteAddress(at.main);
     expect(remoteAsks(() => readRemoteAddress(at.main))).toBeGreaterThan(0);
 
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", "true");
     readRemoteAddress(at.main);
     expect(remoteAsks(() => readRemoteAddress(at.main))).toBe(0);
+  });
+
+  it("is Git's answer, for a checkout's record and lookup and for rerail remote too, where no engine loads", async () => {
+    const at = clone();
+    git(at.main, "remote", "add", "origin", ONE);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", undefined);
+    vi.stubEnv("GIT_CONFIG_SYSTEM", undefined);
+    vi.mocked(loadNativeBinding).mockImplementation(() => {
+      throw new Error("Unsupported platform or missing native addon");
+    });
+    const key = normalizeRemoteAddress(ONE);
+    await learnRemoteAddress(at.main);
+    expect(readRemoteAddress(at.main)).toEqual(gitsRemote(at.main));
+    const database = openRerailDatabase(join(at.root, "rerail.sqlite"));
+    try {
+      expect(recordCheckout(database, at.main).repositoryKey).toBe(key);
+      expect(lookupCheckout(database, at.main)?.repositoryKey).toBe(key);
+    } finally {
+      database.$client.close();
+    }
+    const home = join(at.root, "home");
+    mkdirSync(home);
+    const printed: string[] = [];
+    const stdout = { write: (text: string | Uint8Array): boolean => printed.push(String(text)) > 0 };
+    expect(await runRemoteCommand(["exclude", "--repo", at.main], { home, stdout })).toBe(0);
+    expect(printed.join("")).toContain(`of ${key}`);
   });
 });
