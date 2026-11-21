@@ -2246,8 +2246,13 @@ fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) -> 
 fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
-    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
-    let shared_outputs = |r: &str| r == "violation" || r == crate::code_rule_dsl::logic::rr::UNPLACED || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
+    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy). R9's relations too: each
+    // program's findings' nodes by clause (named by the clause), one rule refusing them and the placement it reads,
+    // the same rules in every program, so a pack holds one of each, not one a program.
+    let shared_outputs = |r: &str| {
+        use crate::code_rule_dsl::logic::rr::{FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE, UNPLACED};
+        r == "violation" || [UNPLACED, FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE].contains(&r) || crate::code_rule_dsl::logic::rr::is_diagnostic(r)
+    };
     let file_inputs = file_inputs(prog);
     let inputs = prog.input_names();
     let (declared, facts) = (prog.declared_names(), prog.fact_names());
@@ -12048,6 +12053,29 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// Decision 0431 R9's relations are a pack's, not a program's (`own_names`): each program's findings' nodes by
+    /// clause and the one rule refusing them are the same relations in every program, so a pack holds one of each.
+    /// Each program's own, they were 310 relations and as many strata in one pack of corpus0's policies.
+    #[test]
+    fn a_packs_programs_share_their_unplaced_findings_relations() {
+        use super::link::Part as _;
+        let text = r#"
+.policy "t:shared-unplaced" revision 1
+.decl e(n: node)
+.input e
+.violation Hit(at: node) "a hit"
+Hit(n) :- e(n).
+"#;
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+        assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
+        let own = super::own_names(&super::link::Versioned::of_version(v).unwrap(), &crate::code_rule_dsl::logic::rr::core_names());
+        for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
+            assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
+        }
+        assert!(own.contains("Hit"), "the finding's relation is the program's own: {own:?}");
+    }
+
     /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q89): the
     /// values the program tests (`binding_domains`' lookups by constant), and every value of a column of few
     /// (`small_values`). Held whole, every distinct value of every export column was 118 MB of the cross part's

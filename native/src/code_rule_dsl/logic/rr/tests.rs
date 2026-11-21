@@ -2554,6 +2554,45 @@ Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
 }
 
+/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
+/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
+/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+#[test]
+fn a_program_refuses_its_unplaced_findings_in_one_rule() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let guests = r#"
+.policy "t:unplaced-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let plain = r#"
+.policy "t:unplaced-once-plain" revision 1
+.language python
+.violation Name(at: node) "a name"
+.violation Number(at: node) "an integer"
+Name(i) :- kind(i, "identifier").
+Number(i) :- kind(i, "integer").
+"#;
+    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+        let rule = dir.join(format!("{name}.rerail"));
+        std::fs::write(&rule, program).unwrap();
+        let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
+        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
+        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
+        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
+        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R9: a finding at a node of a string inside another tape value (`'int'` in `"List['int']"`) has no
 /// place: that string stands in the outer value's text, which is no file's. It is refused, naming its clause, not
 /// dropped.

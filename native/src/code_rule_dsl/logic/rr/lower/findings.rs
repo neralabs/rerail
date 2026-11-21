@@ -34,6 +34,11 @@ pub const PLACED_AT: &str = "rr_placed_at";
 /// (`guest_place`), in that string's document. One relation a program's findings placed through a string read, not a
 /// join each writes again (346 diagnostics on corpus0 each made every guest's placement).
 pub const PLACED_LINE: &str = "rr_placed_line";
+/// Decision 0431 R9: each finding at a node, by its clause, `(clause, n)`: a program's findings placed through a string
+/// (`FOUND_THROUGH`) or not (`FOUND_NODE`). `UNPLACED` refuses them in one rule a program, not one a finding (each a
+/// negation split, a demand and a join of its own: three strata a finding).
+pub const FOUND_THROUGH: &str = "rr_found_through";
+pub const FOUND_NODE: &str = "rr_found_node";
 
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
@@ -344,21 +349,20 @@ impl<'p> Findings<'_, 'p> {
                 self.b.fields().declare_absent(UNPLACED, &[("clause", "sym")]);
                 self.b.fields().add_output(UNPLACED);
                 let clause = self.s(&f.name);
-                let mut o = self.open(UNPLACED, &[clause]);
-                self.put(&mut o, &f.name, &cols, false);
                 if f.node {
-                    self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
+                    // The finding's node, by its clause; the program's one rule refuses those unplaced.
+                    let found = if through { FOUND_THROUGH } else { FOUND_NODE };
+                    self.unplaced_nodes(found, through)?;
+                    let mut o = self.open(found, &[clause, v0.clone()]);
+                    self.put(&mut o, &f.name, &cols, false);
+                    self.close(o)?;
                 } else {
+                    let mut o = self.open(UNPLACED, &[clause]);
+                    self.put(&mut o, &f.name, &cols, false);
                     self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
+                    self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
+                    self.close(o)?;
                 }
-                self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
-                if through {
-                    // The node's document is a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a
-                    // value in the hidden range is refused too), and no file's string places it.
-                    self.put(&mut o, "tape_of", &[d.clone(), w()], false);
-                    self.put(&mut o, PLACED_AT, std::slice::from_ref(&v0), true);
-                }
-                self.close(o)?;
             }
             if at_document && !f.node && place_values {
                 let path = self.call(PLACE_PATH, vec![v0.clone()]);
@@ -741,6 +745,26 @@ impl<'p> Findings<'_, 'p> {
             self.diagnostic_rule(policy, finding, &cols, Tm::Int(0), Location::Commit, &|me, o| me.put(o, &commit, &args, false))?;
         }
         Ok(())
+    }
+
+    /// `UNPLACED`'s rule over the nodes of `found` (`FOUND_THROUGH`, `FOUND_NODE`), once a program: a finding at a node
+    /// of no file's document, and, `through`, of a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a
+    /// value in the hidden range is refused too) that no file's string places.
+    fn unplaced_nodes(&mut self, found: &str, through: bool) -> Result<(), Error> {
+        if self.b.declares(found) {
+            return Ok(());
+        }
+        self.b.fields().declare(found, &[("clause", "sym"), ("n", "node")]);
+        let (clause, n, d) = (self.v("rr_clause"), self.v("rr_n"), self.v("rr_d"));
+        let mut o = self.open(UNPLACED, std::slice::from_ref(&clause));
+        self.put(&mut o, found, &[clause, n.clone()], false);
+        self.put(&mut o, "node", &[d.clone(), n.clone(), Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d.clone(), Tm::Wild, Tm::Wild], true);
+        if through {
+            self.put(&mut o, "tape_of", &[d, Tm::Wild], false);
+            self.put(&mut o, PLACED_AT, std::slice::from_ref(&n), true);
+        }
+        self.close(o)
     }
 
     /// `PLACED_LINE`'s rule, once a program: a tape value's node `n`, placed by `guest_place` at a string `s` whose
