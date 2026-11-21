@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { closeSync, constants, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { replaceFile } from "../file-replace.js";
+import { openNoFollowSync } from "../no-follow.js";
 
 /**
  * The Rerail home's untaken events: events whose hook found the home's daemon running but not reading. The first hook
@@ -216,11 +217,18 @@ export const NO_UNTAKEN_EVENTS: UntakenEventTaker = { taken: async () => undefin
 const PASS_SLICE = 16;
 
 /**
+ * How many passes may fail to read an event's file (another program holds it, no descriptor is free) before it is lost.
+ */
+const READ_TRIES = 3;
+
+/**
  * The taker of `home`'s untaken events for its daemon, which hands each to `handler`. Each pass first moves the taken
  * mark on, so hooks stop counting what it takes, then hands the events on a slice at a time: the daemon answers between
- * slices. Each name is met once: a file Windows keeps from removal is removed at a later pass and not handed on twice,
- * and a file the daemon cannot read fails in the pass that met it and is never read again. So a pass writes into the
- * folder only for names it has not met, and a pass its own writes start finds none and writes nothing.
+ * slices. Each name is handed on once: a file Windows keeps from removal is removed at a later pass and not handed on
+ * twice. A file the daemon cannot read now is read again at the next pass, until `READ_TRIES` passes could not; one
+ * that is no event a hook wrote (a folder, a link, a pipe, a size other than its name's) fails in the pass that met it.
+ * Each failure goes to stderr (daemon.log) with the event's name. A pass writes into the folder only for names newer
+ * than its taken mark, so a pass its own writes start, or one that reads such a file again, writes nothing.
  */
 export function untakenEventTaker(home: string, handler: UntakenHandler): UntakenEventTaker {
   const taker = new Taker(home, handler);
@@ -249,6 +257,8 @@ class Taker {
    * removed at a later pass where it can be, never handed on or failed again.
    */
   readonly #done = new Set<string>();
+  /** By name, how many passes could not read an event's file, which stays for the next. */
+  readonly #unread = new Map<string, number>();
   #running: Promise<void> | undefined;
   #next: Promise<void> | undefined;
 
@@ -275,19 +285,66 @@ class Taker {
     const fresh = untakenNames(this.home).filter(name => !this.#done.has(name.name));
     if (fresh.length === 0) return;
     await markTaken(this.home, fresh.at(-1)!);
-    void reportPass(fresh, await this.#handOnInSlices(fresh), this.handler);
+    void reportPass(await this.#handOnInSlices(fresh), this.handler);
   }
 
-  /** Hands `names` on a slice per turn of the event loop, and returns each one's check: true once it passed. */
-  async #handOnInSlices(names: readonly UntakenName[]): Promise<Promise<boolean>[]> {
-    const checks: Promise<boolean>[] = [];
+  /** Hands `names` on a slice per turn of the event loop, and returns those handed on, each with its check. */
+  async #handOnInSlices(names: readonly UntakenName[]): Promise<HandedOn[]> {
+    const handed: HandedOn[] = [];
     for (let start = 0; start < names.length && !this.closed; start += PASS_SLICE) {
-      // Each check's end is heard at once, so one that fails while later slices are handed on is no unhandled rejection.
-      for (const name of names.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#done).then(() => true, () => false));
+      for (const name of names.slice(start, start + PASS_SLICE)) {
+        const check = this.#handOn(name);
+        // Each check's end is heard at once, so one that fails while later slices are handed on is no unhandled
+        // rejection.
+        if (check !== undefined) handed.push({ name, passed: check.then(() => true, (error: unknown) => toldFailed(name, error)) });
+      }
       await nextTurn();
     }
-    return checks;
+    return handed;
   }
+
+  /**
+   * Hands the event `name` holds to the handler, removes its file, and returns its check, failed where the file is no
+   * event or could not be read `READ_TRIES` times; undefined, the file left for the next pass, while fewer passes could
+   * not read it. The taker is done with a name it hands on (`#done`), so it is met once.
+   */
+  #handOn(name: UntakenName): Promise<void> | undefined {
+    const read = this.#read(name);
+    if (read === undefined) return undefined;
+    // Begun before its file goes, in the folder's order: a daemon checks a session's events in the order it begins
+    // them.
+    const check = read instanceof Error ? Promise.reject(read) : this.handler.take({ body: read, arrivedAt: name.order[0]! });
+    this.#unread.delete(name.name);
+    this.#done.add(name.name);
+    removedName(this.home, name.name, this.#done);
+    return check;
+  }
+
+  /** What `name`'s file holds, or why it fails; undefined, said on stderr, when the next pass reads it again. */
+  #read(name: UntakenName): string | Error | undefined {
+    try {
+      return eventText(join(untakenFolder(this.home), name.name), name.bytes);
+    } catch (thrown) {
+      const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+      const tries = (this.#unread.get(name.name) ?? 0) + 1;
+      if (error instanceof NotAnEventError || tries >= READ_TRIES) return error;
+      this.#unread.set(name.name, tries);
+      process.stderr.write(`rerail: the event a hook left in ${name.name} could not be read, and is read again at the next pass: ${error.message}\n`);
+      return undefined;
+    }
+  }
+}
+
+/** An event a pass handed on, with its check: true once it passed. */
+interface HandedOn {
+  readonly name: UntakenName;
+  readonly passed: Promise<boolean>;
+}
+
+/** Says on stderr which event's check failed, and why; false, for the pass's count. */
+function toldFailed(name: UntakenName, error: unknown): false {
+  process.stderr.write(`rerail: the event a hook left in ${name.name} could not be checked: ${error instanceof Error ? error.message : String(error)}\n`);
+  return false;
 }
 
 /**
@@ -302,42 +359,37 @@ async function markTaken(home: string, newest: UntakenName): Promise<void> {
   await replaceFile(join(untakenFolder(home), TAKEN_MARK), newest.name, { mode: 0o600 }).catch(() => undefined);
 }
 
-/**
- * Hands the event `name` holds to `handler`, removes its file, and returns its check, failed where the file cannot be
- * read or its check fails. The taker is done with the name either way (`done`), so it is met once.
- */
-function handOn(home: string, name: UntakenName, handler: UntakenHandler, done: Set<string>): Promise<void> {
-  const check = begunCheck(join(untakenFolder(home), name.name), name, handler);
-  done.add(name.name);
-  removedName(home, name.name, done);
-  return check;
-}
+/** What a hook never leaves under an event's name: a folder, a link, a pipe, a file of another size than its name's. */
+class NotAnEventError extends Error {}
 
 /**
- * The check of the event at `path`, begun before its file goes, in the folder's order: a daemon checks a session's
- * events in the order it begins them. Failed where the file cannot be read: a take another daemon made first, a folder
- * under an event's name, a file another user wrote, or one another program holds without read sharing.
+ * The text of the event file at `path`, which a hook wrote whole: a regular file of the `bytes` its name says, within
+ * the folder's bound. It is looked at before it is opened, so a folder, a link or a pipe under its name is never
+ * opened; the open follows no link (`openNoFollowSync`) and, where the system has the flag (not Windows), waits for no
+ * pipe's writer, so one put under the name since is not read either.
  */
-function begunCheck(path: string, name: UntakenName, handler: UntakenHandler): Promise<void> {
-  let body: string;
+function eventText(path: string, bytes: number): string {
+  const info = lstatSync(path);
+  if (!info.isFile()) throw new NotAnEventError("it is not a file");
+  if (info.size !== bytes || bytes > UNTAKEN_MOST_BYTES) throw new NotAnEventError(`it holds ${info.size} bytes, where its name says ${bytes}`);
+  const fd = openNoFollowSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
-    body = readFileSync(path, "utf8");
-  } catch (error) {
-    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
   }
-  return handler.take({ body, arrivedAt: name.order[0]! });
 }
 
 /**
- * Tells `handler` of a pass once every check it began has ended (each true when it passed), over the names it handed
- * on: the first of `names`, one per check. A close cuts a pass short, and the names it did not hand on stay in the folder
- * for the next daemon's taker; a pass that handed on none tells nothing.
+ * Tells `handler` of a pass once every check it began has ended, over the events it handed on. A close cuts a pass
+ * short, and the names it did not hand on stay in the folder for the next daemon's taker, as does a file to be read
+ * again; a pass that handed on none tells nothing.
  */
-async function reportPass(names: readonly UntakenName[], checks: readonly Promise<boolean>[], handler: UntakenHandler): Promise<void> {
-  if (checks.length === 0) return;
-  const failed = (await Promise.all(checks)).filter(passed => !passed).length;
+async function reportPass(handed: readonly HandedOn[], handler: UntakenHandler): Promise<void> {
+  if (handed.length === 0) return;
+  const failed = (await Promise.all(handed.map(event => event.passed))).filter(passed => !passed).length;
   try {
-    handler.passed({ events: checks.length, from: names[0]!.order[0]!, to: names[checks.length - 1]!.order[0]!, failed });
+    handler.passed({ events: handed.length, from: handed[0]!.name.order[0]!, to: handed.at(-1)!.name.order[0]!, failed });
   } catch {
     // What the daemon says of a pass is its own; the events are checked whatever it could say.
   }

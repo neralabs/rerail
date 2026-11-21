@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { on, once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   leaveUntaken,
   UNTAKEN_EVENTS_DIR,
@@ -270,17 +270,62 @@ describe("the home's untaken events", () => {
   });
 
   // A file mode keeps no one from reading on Windows, and root reads it anyway.
-  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("remove a file the daemon cannot read once its pass failed it", async () => {
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("read a file the daemon could not read again at the next pass, saying so with its name, and check it once it reads", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    chmodSync(file, 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const taker = untakenEventTaker(rerailHome, handler);
+    await taker.taken();
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^rerail: the event a hook left in ${name!.replace(/\./gu, "\\.")} could not be read, and is read again at the next pass: EACCES`, "u")));
+    // Before, the pass that could not read it removed it, and the event was lost.
+    chmodSync(file, 0o600);
+    await taker.taken();
+    expect(handler.events.map(event => event.body)).toEqual(["unread"]);
+    expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("remove a file the daemon could not read at three passes, counted lost", async () => {
     const rerailHome = await home();
     await leaveUntaken(rerailHome, 7, "unread", 1_000);
     const [name] = await eventFiles(rerailHome);
     chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
     const handler = keeper();
     const taker = untakenEventTaker(rerailHome, handler);
     await taker.taken();
     await taker.taken();
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+    await taker.taken();
     expect(handler.events).toEqual([]);
     expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  // Windows makes a link only with a privilege.
+  it.runIf(process.platform !== "win32")("fail in the pass that met it, unopened, a link or a file of another size than its name says", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    const folder = join(rerailHome, UNTAKEN_EVENTS_DIR);
+    // A link of the size its name says, to a file beside it of that size too: only its kind tells it from an event.
+    writeFileSync(join(folder, "a.txt"), "taken");
+    symlinkSync("a.txt", join(folder, eventName(2_000)));
+    writeFileSync(join(folder, eventName(4_000)), "six b.");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    const taker = untakenEventTaker(rerailHome, { take: handler.take, passed: pass => reported.resolve(pass) });
+    await taker.taken();
+    // Before, the link and the larger file were read as events.
+    expect(handler.events.map(event => event.body)).toEqual(["first"]);
+    expect(await reported.promise).toEqual({ events: 3, from: 1_000, to: 4_000, failed: 2 });
+    expect(stderr).toHaveBeenCalledWith(`rerail: the event a hook left in ${eventName(4_000)} could not be checked: it holds 6 bytes, where its name says 5\n`);
   });
 
   it("move the taken mark only on, so a name the daemon could not take stays counted by no hook once an older event is taken", async () => {
@@ -323,7 +368,8 @@ describe("the home's untaken events", () => {
       }
       await taker.taken();
       expect(await eventFiles(rerailHome)).toEqual([]);
-      expect(handler.events.map(event => event.body)).toEqual(share === "Read" ? ["held"] : []);
+      // Before, a file held sharing None was lost at the pass that could not read it.
+      expect(handler.events.map(event => event.body)).toEqual(["held"]);
     },
   );
 
