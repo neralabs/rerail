@@ -4,6 +4,12 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
+## 0.2.1 (2026-11-21)
+
+### Changed
+
+- On Windows, a Claude Code hook call starts sooner after the first one: the hook launcher turns on Node's compile cache, so a hook reuses the code Node compiled for an earlier call instead of compiling its 2 MB script again. The first call after an install or an upgrade writes the cache. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off.
+
 ## 0.2.0 (2026-11-20)
 
 0.2.0 brings Rerail's new rule engine and the first of its new rule language. Code rules are still JSON, but the code they check is now read through the new engine's parsers and content store, and they can read C, C++, C#, Go, HTML, CSS, Markdown and JSON. Rule files in the new language, `.rerail`, can be tested with `rerail rules test` from a clone of Rerail's source; sessions, scans and rule packs do not run them yet. Rules also get a title in your own words, which a new or edited rule now needs. Before you update: rule pack versions published before 17 November 2026 accept only a Rerail below 0.2.0, so `rerail update` names the installed packs it leaves out, then lists the newer versions that fit with the `rerail packs add` command that installs them. The 17 November versions of the JavaScript, TypeScript, Python and PHP packs skip about 40 rules until their next version, which `rerail update` lists the same way. Your own code rules that test punctuation or a keyword the grammar implies are skipped too, until you rewrite them. The first run rebuilds the content store, and the package is about three times larger, about 240 MB to download.
