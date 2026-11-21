@@ -2510,12 +2510,18 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
         return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
     }
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
-    // A large one is alone in a block with room for its indexes (`Part::try_new`, `ALONE_ROWS`); a small one shares
-    // the run's block, its copy as small.
-    let part = Part::for_writes(k, n);
+    // A large one alone in a block with room past its rows for the indexes its readers probe it by (decision 0353
+    // step 6): in the run's shared block, a later probe found no room there and copied it (`DevIndex::moved`, 766.4
+    // MB in 247 copies on the M3's 300-file run, ab110). Its block is memory only as it is written. A small one
+    // shares the run's block, its copy as small.
+    let part = if n >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, (k + 1).min(rerail_blocks::relation::ADDED_INDEXES)) } else { Part::for_writes(k, n) };
     let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
     Ok((super::Placed::Part(part), dst, 0))
 }
+
+/// The rows from which a head's relation the device writes is alone in a block with room for its indexes
+/// (`head_room`).
+const ALONE_ROWS: usize = 4096;
 
 /// `room` (`head_room`'s) with its `n` rows written: the rows the store takes.
 ///
