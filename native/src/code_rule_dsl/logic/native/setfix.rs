@@ -7345,13 +7345,19 @@ fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 
 /// Runs a seed join: from its pairs when a level's batch made them (`level`), else by the host's walk.
 fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
-    match level::take(j)? {
-        Some(p) => {
+    match level::take(j) {
+        Ok(Some(p)) => {
             level::run_counts().used.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // From a level's pairs: unlimited.
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
-        None => run_join_limited(j, head, store, syms, fresh, limited),
+        Ok(None) => run_join_limited(j, head, store, syms, fresh, limited),
+        // The level's batch failed (a submission the device failed: its pairs partly written, none read): the
+        // seed's own walk, as when no batch made them.
+        Err(_) => {
+            crate::code_rule_dsl::prof::count("level joins: a batch failed, its seeds walked on the host", 1);
+            run_join_limited(j, head, store, syms, fresh, limited)
+        }
     }
 }
 
