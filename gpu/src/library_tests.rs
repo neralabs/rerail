@@ -914,7 +914,8 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
     let copy = time(q, &|q| q.enqueue_copy_between_device_regions(&fresh, &kb, 0, 0, 4 * n as u64));
     said("copy", copy);
     let ones = buffer_of(&vec![1u32; n]).unwrap();
-    let scanned = alloc::<u32>(n).unwrap();
+    // The scan writes `n + 1` values: the last is the total.
+    let scanned = alloc::<u32>(n + 1).unwrap();
     let scan = time(q, &|q| scan_exclusive_u32(q, &ones, &scanned, n as u32).unwrap());
     said("scan", scan);
     let table = HashTable::new((2 * n as u32).next_power_of_two()).unwrap();
