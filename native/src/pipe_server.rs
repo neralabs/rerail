@@ -188,7 +188,8 @@ mod windows {
         use windows_sys::Win32::Security::RevertToSelf;
         use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
         use windows_sys::Win32::System::Pipes::{
-            ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_TYPE_BYTE, PIPE_WAIT,
+            ConnectNamedPipe, CreateNamedPipeW, ImpersonateNamedPipeClient, PIPE_TYPE_BYTE,
+            PIPE_WAIT,
         };
 
         /// The process serving a pipe the lookup opens to ask its pid may not act as the process that asks.
