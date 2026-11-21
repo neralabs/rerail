@@ -163,6 +163,9 @@ pub struct ViewsInPlace {
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
     /// stage that reads the batch's views shares: none where no tape is 16z.
     pub cache: Option<rerail_device::device::Buffer>,
+    /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
+    /// stages that read its views are compiled for it (decision 0576).
+    pub format: u32,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
@@ -256,6 +259,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = docs.iter().all(|d| d.p.extra.is_some());
+    let mut format: Option<u32> = None;
     for (i, &DirDoc { p, dialect, rows: first_rows }) in docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
@@ -325,6 +329,11 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             row.entry = b.offset_of(entry.desc()) as u64;
             row.tape = address;
             row.view = view;
+            format = match format {
+                None => Some(view.format),
+                Some(f) if f == view.format => Some(f),
+                Some(_) => Some(0),
+            };
             if view.format == rerail_clif::view::F16Z_FORMAT {
                 zrows.push(i);
                 zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
@@ -363,7 +372,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
     let mut buffers = vec![buffer];
     buffers.extend(slabs);
-    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, _entries: entries })
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, format: format.unwrap_or(0), _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.

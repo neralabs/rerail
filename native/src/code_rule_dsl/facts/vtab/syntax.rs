@@ -3657,7 +3657,7 @@ impl Source for Viewed {
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
             .map(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
                 in_place.failed = in_place.cache_failed();
                 in_place
             });

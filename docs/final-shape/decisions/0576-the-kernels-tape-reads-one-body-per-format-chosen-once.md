@@ -70,6 +70,12 @@ format 16's reads alone.
    (`run_task_in`); it is called, and so are the interpreter's helpers inlined most (the captures' lookups, 14 and
    28 copies; the queue's insert; the arenas' reservations, 28; the lazy blocks' check, 10; the NFA's closure and
    find; the Lua class): the interpreter alone 21.8 → 12.9 s (`clc build`), the sweep 25 s alone.
+11. **The join kernels that read a view are compiled per format too.** A batch's views say their format once
+   (`ViewsInPlace::format`, each `ViewInPlace`'s: every document's, or 0 for several); a kernel that reads views
+   (`ix_bucket`, the stages', the scans', `witness_count`, `rows_copy`) is compiled for the format of the views it
+   reads, the view's format field a constant (`clif_view` at its offset), so the other formats' reads are dead. A
+   kernel over views of several formats takes the source of every format, as before; the kernels compiled ahead are
+   the run's format's (`Format::of_run`).
 
 ## Measured
 
@@ -91,6 +97,10 @@ interpreters); "> N" a compile still running when the bound ended it.
 With the task and the helpers called (§10), 4 at a time: the interpreter 27 s (15) and 29 s (16), the resident
 interpreter 28 s and 29 s, the sweep 29 s and 38 s, the label passes 50 s and 69 s; the join kernels as before
 (`stage_scatter` 50 s, `witness_count` 47 s); every fixed kernel in 183 s.
+
+With the join kernels per format (§11), 4 at a time: `rows_copy` alone 17.6 → 2.5 s; `ix_bucket` 7 s,
+`stage_count` 24 s, `stage_scatter` 59 s, `scan_count` 12 s, `witness_count` 28 s, `rows_copy` 8 s; every fixed
+kernel in 155 s.
 
 None of this is yet a kernel compiled in seconds: the join kernels, the label passes and the interpreter's own body
 (its opcodes' switch, 27 KB) are next.
