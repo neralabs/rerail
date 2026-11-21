@@ -4703,10 +4703,8 @@ impl CodeRuleDslRuntime {
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        contain_compile_panic(|| compile_rule(&source, &format, &capabilities_json)).map(|rule| {
-            CompiledCodeRuleDsl {
-                inner: Arc::new(rule),
-            }
+        compile_contained(&source, &format, &capabilities_json).map(|rule| CompiledCodeRuleDsl {
+            inner: Arc::new(rule),
         })
     }
 
@@ -4730,14 +4728,22 @@ impl CodeRuleDslRuntime {
     }
 }
 
-/// Runs `work`, a code rule compile, with a panic in it an error that reads the same whether
-/// `compile` ran it on the host's thread or `compile_async` on a pool thread.
-fn contain_compile_panic<T>(work: impl FnOnce() -> Result<T>) -> Result<T> {
-    crate::panic_boundary::contain_panic("code rule compile", work)
+/// `compile_rule`, with a panic in it an error that reads the same whether `compile` ran it on
+/// the host's thread or `compile_async` on a pool thread: both compile through here.
+fn compile_contained(
+    source: &str,
+    format: &str,
+    capabilities_json: &str,
+) -> Result<CompiledCodeRule> {
+    crate::panic_boundary::contain_panic("code rule compile", || {
+        compile_rule(source, format, capabilities_json)
+    })
 }
 
 /// One code rule document compiled against the capability manifest `capabilities_json`.
 fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRule> {
+    #[cfg(test)]
+    compile_panic_tests::panic_on(source);
     let capabilities = parse_capabilities(capabilities_json)?;
     let document = parse_document(source, format)?;
     let canonical_value = canonicalize_value(document);
@@ -4776,7 +4782,7 @@ impl napi::Task for CompileTask {
     type JsValue = CompiledCodeRuleDsl;
 
     fn compute(&mut self) -> Result<CompiledCodeRule> {
-        contain_compile_panic(|| compile_rule(&self.source, &self.format, &self.capabilities_json))
+        compile_contained(&self.source, &self.format, &self.capabilities_json)
     }
 
     fn resolve(
@@ -4792,14 +4798,35 @@ impl napi::Task for CompileTask {
 
 #[cfg(test)]
 mod compile_panic_tests {
+    /// The source `compile_rule` panics on in this crate's tests: no rule document makes it panic.
+    static PANICKING_SOURCE: &str = "a source whose compile panics";
+
+    /// Panics as a compile with a bug in it would, for `PANICKING_SOURCE` only.
+    pub(super) fn panic_on(source: &str) {
+        if source == PANICKING_SOURCE {
+            panic!("index out of range");
+        }
+    }
+
     #[test]
-    fn a_compile_panic_reads_the_same_on_either_thread() {
-        let error = super::contain_compile_panic::<()>(|| panic!("index out of range"))
-            .expect_err("a panic is an error");
-        assert_eq!(
-            error.reason,
-            "code rule compile panicked: index out of range"
+    fn a_compile_that_panics_reads_the_same_from_compile_and_from_compile_async() {
+        let reason = Some("code rule compile panicked: index out of range");
+        let compiled = super::CodeRuleDslRuntime::compile(
+            PANICKING_SOURCE.to_owned(),
+            "json".to_owned(),
+            "{}".to_owned(),
         );
+        assert_eq!(compiled.err().map(|error| error.reason).as_deref(), reason);
+        #[cfg(not(feature = "headless"))]
+        {
+            let mut task = super::CompileTask {
+                source: PANICKING_SOURCE.to_owned(),
+                format: "json".to_owned(),
+                capabilities_json: "{}".to_owned(),
+            };
+            let computed = napi::Task::compute(&mut task);
+            assert_eq!(computed.err().map(|error| error.reason).as_deref(), reason);
+        }
     }
 }
 
