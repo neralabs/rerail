@@ -27,6 +27,15 @@ function git(cwd: string, ...args: string[]): string {
   });
 }
 
+/** Whether the test's own Git answers `git <args>` in `cwd`, and its stdout ("" when it fails). */
+function gitAnswer(cwd: string, args: readonly string[]): [boolean, string] {
+  try {
+    return [true, git(cwd, ...args)];
+  } catch {
+    return [false, ""];
+  }
+}
+
 async function folder(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "rerail-git-submodules-"));
   roots.push(root);
@@ -457,6 +466,40 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
     // The path as Git joins it from the submodule's folder, so a diff with many submodules names the one that failed.
     expect(audit.stderr).toMatch(/^fatal: not a git repository: .+[\\/]sub\/\.\.\/missing\n$/u);
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("and take a submodule whose `.git` is a pipe for one not checked out, as Git's own diff takes it", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    unlinkSync(join(work, "sub", ".git"));
+    execFileSync("mkfifo", [join(work, "sub", ".git")]);
+    await writeFile(join(work, "top.txt"), "changed\n");
+
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
+  }, 60_000);
+
+  it.each([[100 * 1024, true], [1024 * 1024 + 1, false]])("and read a submodule's `.git` file of %i bytes as Git reads it, which fails past 1 MiB (answers: %s)", async (size, answered) => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    const gitfile = join(work, "sub", ".git");
+    const named = readFileSync(gitfile, "utf8").trimEnd();
+    // Git takes off every line end after the path. Git for Windows hides the file, which Windows refuses to open for writing.
+    unlinkSync(gitfile);
+    await writeFile(gitfile, named.padEnd(size, "\n"));
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([gitAnswer(work, AUDIT_DIFF), gitAnswer(work, SCAN_DIFF)]);
+    expect(answers.map(answer => answer.status === 0)).toEqual([answered, answered]);
   }, 60_000);
 
   it.skipIf(process.platform === "win32")("in the Git folder a submodule's `.git` named when Rerail looked, though it names a placed one by the status", async () => {

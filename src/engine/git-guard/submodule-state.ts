@@ -541,7 +541,8 @@ function byteOrder(left: string, right: string): number {
 
 /**
  * Whether the submodule at `folder` has a changed worktree as `is_submodule_modified` finds it: its `git status` lists
- * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`); how it
+ * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`, or one that
+ * is neither a folder nor a regular file); how it
  * failed when its `.git` names no repository, as Git's diff fails then; true, with no Git started in it, when the guard
  * cannot ask it ({@link UNASKED}).
  */
@@ -554,16 +555,17 @@ export async function submoduleChanged(folder: string, untrackedLeftOut: boolean
   return "ask" in repository ? await changedThroughGuard(repository, untrackedLeftOut, { open, depth }) : repository;
 }
 
-/** The most bytes of a `.git` file Rerail reads for the Git folder it names. */
-const MAX_GITFILE_BYTES = 64 * 1024;
+/** The most bytes of a `.git` file Git reads (`read_gitfile_gently`, 1 MiB): Git fails on a larger one, and so does Rerail. */
+const MAX_GITFILE_BYTES = 1024 * 1024;
 
 /**
  * The Git folder of the submodule checked out at `folder`, as `is_submodule_modified` finds it: `.git` when it is a
  * folder, else the folder a `.git` file's `gitdir: <path>` names, relative to `folder`. Undefined when there is no
- * `.git`, or it went before it could be read: the submodule is not checked out. How it failed for a `.git` file Git
- * cannot read as one, or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's
- * diff. Read once for each question and never handed to Git as a file, so the guard's listing and the status after it
- * open this one folder whatever `.git` names by then.
+ * `.git`, it is neither a folder nor a regular file (a FIFO, a socket), or it went before it could be read: the
+ * submodule is not checked out, as Git's diff takes it. How it failed for a `.git` file Git cannot read as one, or a
+ * Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff. Read once for each
+ * question and never handed to Git as a file, so the guard's listing and the status after it open this one folder
+ * whatever `.git` names by then.
  */
 export function submoduleGitFolder(folder: string): string | GitFailure | undefined {
   const dotGit = join(folder, ".git");
@@ -743,12 +745,13 @@ function linkOf(path: string): string | undefined {
 }
 
 /**
- * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it went
- * before it could be read, and how it failed for one Git cannot read as a `.git` file (not a regular file, too large,
- * no `gitdir:`) or that names a folder that cannot be read.
+ * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it is not
+ * a regular file, which Git skips, or went before it could be read, and how it failed for one Git cannot read as a
+ * `.git` file (too large, no `gitdir:`) or that names a folder that cannot be read.
  */
 function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
-  const text = stats.isFile() && stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
+  if (!stats.isFile()) return undefined;
+  const text = stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
   if (text === undefined) return undefined;
   if (!text.startsWith("gitdir: ")) return notARepository(dotGit);
   const named = text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "");
