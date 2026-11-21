@@ -18,6 +18,7 @@
 //! they were a check of their `stat`s; within a process, the graph is kept while every module and every absent
 //! candidate is as it was.
 
+use rerail_store::Canonical as _;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};
@@ -294,7 +295,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
 /// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
 /// to its read, which derives its graph again and reports the error.
 pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
-    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonicalize().ok()).map(Seed::File).collect();
+    let seeds: Vec<Seed> = paths.into_iter().filter_map(|p| p.canonical().ok()).map(Seed::File).collect();
     let _ = graphs(&seeds);
 }
 

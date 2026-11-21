@@ -4,6 +4,7 @@
 //! owner) run again in a child process of this test binary ([`in_child`]), since the environment
 //! and the installed setup belong to the whole process.
 
+use rerail_store::Canonical as _;
 use super::opener::{self, OpenError};
 use super::pool;
 use super::setup::{self, GitSetup};
@@ -26,7 +27,7 @@ fn temporary(name: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
-    path.canonicalize().unwrap()
+    path.canonical().unwrap()
 }
 
 fn git_output(directory: &Path, arguments: &[&str], env: &[(&str, &str)]) -> std::process::Output {
@@ -436,7 +437,7 @@ fn git_check_ignore(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {
 }
 
 fn comparable(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    path.canonical().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn matcher_answers(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {

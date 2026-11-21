@@ -16,6 +16,7 @@
 //! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
 //! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
+use rerail_store::Canonical as _;
 use super::{Error, Outcome, Result, lower, output};
 
 use crate::code_rule_dsl::facts::core::{self, Built};
@@ -2537,7 +2538,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
         .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
         .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
     let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| root.canonicalize().ok()).unwrap_or_else(|| root.to_path_buf());
+        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
@@ -3207,7 +3208,7 @@ fn run_handed(
             })
         });
         if component_seeded {
-            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rerail").canonicalize() {
+            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rerail").canonical() {
                 phase0::graph(&phase0::Seed::File(components))?;
             }
         }

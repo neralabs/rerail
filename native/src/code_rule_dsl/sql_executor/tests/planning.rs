@@ -8,9 +8,7 @@ fn sql_plan_feedback_writes_in_background_and_loads_in_a_fresh_process() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("costs.sqlite");
     for mode in ["write", "read"] {
-        let child = std::process::Command::new("nice")
-            .args(["-n", "19"])
-            .arg(std::env::current_exe().unwrap())
+        let child = crate::code_rule_dsl::test_support::this_binary()
             .args(["--exact", WRITER, "--ignored", "--nocapture"])
             .env("RERAIL_COSTS", &db)
             .env("RERAIL_THREADS", "2")

@@ -1,6 +1,7 @@
 //! Read-only source views of Git trees. Paths identify objects; they never name an extracted checkout.
 //! Like nera-data-layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
 
+use rerail_store::Canonical as _;
 use std::cell::RefCell;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -807,7 +808,7 @@ impl Snapshot {
         let work = repo.workdir().map(dunce::canonicalize).transpose().map_err(|e| e.to_string())?;
         let relative = |path: &Path| -> Result<PathBuf, String> {
             let Some(work) = &work else { return Ok(PathBuf::new()); };
-            path.canonicalize().map_err(|e| e.to_string())?.strip_prefix(work)
+            path.canonical().map_err(|e| e.to_string())?.strip_prefix(work)
                 .map(Path::to_owned).map_err(|e| e.to_string())
         };
         let prefix = relative(source)?;
@@ -836,7 +837,7 @@ impl Snapshot {
         let prefix = if selects_path { PathBuf::new() } else { prefix };
         let git_dir = repo
             .git_dir()
-            .canonicalize()
+            .canonical()
             .map_err(|e| e.to_string())?;
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let invocation = NEXT.fetch_add(1, Ordering::Relaxed);

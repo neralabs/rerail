@@ -696,7 +696,8 @@ fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
     let rule = dir.join("p.rerail");
     std::fs::write(&rule, format!(
         "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
-        lib = lib.display()
+        // Spelled with `/` in the rule's string literal, where `\` would start an escape (Windows takes either).
+        lib = lib.display().to_string().replace('\\', "/")
     )).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let (out, store) = (dir.join("out"), dir.join("store.sqlite"));

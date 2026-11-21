@@ -5,6 +5,7 @@
 //! It is found as the program runs, not written into the build (decision 0224). A crate that wrote
 //! its checkout's path in (`env!("CARGO_MANIFEST_DIR")`) was a different crate in every checkout, and
 //! so was every crate above it: a compiler cache shared by the checkouts could reuse none of them.
+use rerail_store::Canonical as _;
 use std::path::{Path, PathBuf};
 
 /// The checkout's root: the directory that holds `native/Cargo.toml` and `docs/rule-syntax`. The first
@@ -46,7 +47,7 @@ pub fn rule_library() -> PathBuf {
 
 fn beside_image(directory: &str, marker: &str) -> Option<PathBuf> {
     let image = image()?;
-    let image = image.canonicalize().unwrap_or(image);
+    let image = image.canonical().unwrap_or(image);
     image.ancestors().map(|dir| dir.join(directory)).find(|dir| dir.join(marker).is_file())
 }
 

@@ -47,6 +47,20 @@ pub(super) fn alone(test: &str) {
     assert!(status.success(), "{test} failed: {status}");
 }
 
+/// A child process of this test binary at the lowest priority: `nice -n 19` on Unix. Windows has no `nice`: a child
+/// there takes its parent's priority class when that is below normal, so a run started low keeps it.
+pub(super) fn this_binary() -> std::process::Command {
+    let binary = std::env::current_exe().unwrap();
+    #[cfg(unix)]
+    {
+        let mut command = std::process::Command::new("nice");
+        command.args(["-n", "19"]).arg(binary);
+        command
+    }
+    #[cfg(not(unix))]
+    std::process::Command::new(binary)
+}
+
 pub(super) const JSX_SOURCE: &str =
     "export const View = () => <button type=\"button\">Go</button>;\n";
 

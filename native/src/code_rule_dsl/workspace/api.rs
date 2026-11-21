@@ -1,6 +1,7 @@
 //! The N-API surface: the `CodeRuleDslWorkspace` class, the lease that guards its state, and the
 //! storage, apply, completion and result page async tasks.
 
+use rerail_store::Canonical as _;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
@@ -304,7 +305,7 @@ impl AnalysisScopeRun {
         if !run.is_open() {
             return Err(invalid("analysis scope run has finished"));
         }
-        if store != run.store_path() && !store.canonicalize().ok().zip(run.store_path().canonicalize().ok())
+        if store != run.store_path() && !store.canonical().ok().zip(run.store_path().canonical().ok())
             .is_some_and(|(requested, owned)| requested == owned) {
             return Err(invalid("analysis scope run belongs to another content store"));
         }
