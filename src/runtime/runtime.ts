@@ -981,6 +981,14 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
 }
 
 /**
+ * What the session store keeps of `event`: scrubbed of secrets (`scrubValue`), and a result whose call named a
+ * secret-like path (`withheld`) without its output. The live event, which rules match, keeps them.
+ */
+function storedPayload(event: AdapterEvent, withheld: boolean): unknown {
+  return event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event);
+}
+
+/**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
  * written down; the call itself is kept.
@@ -2791,30 +2799,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
-      // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
-      await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
-      state.secretCalls.add(event.toolCallId);
-    }
+    await this.#noteSecretCall(state, event);
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
     const observedAt = Date.now();
-    this.#sessionStore.append({
-      sessionId,
-      eventId: event.eventId,
-      kind: event.kind,
-      observedAt,
-      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
-      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
-    }, state.descriptor);
-    if (withheld) {
-      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
-      state.secretCalls.delete(event.toolCallId);
-      state.withheldResults.add(event.eventId);
-    }
-    // The row's kind and time go with the line, so the record of the event, should a power cut take its row, can be
-    // written again at the session's next open (`lostEvents`).
+    this.#sessionStore.append({ sessionId, eventId: event.eventId, kind: event.kind, observedAt, payload: storedPayload(event, withheld) }, state.descriptor);
+    if (withheld) await this.#noteWithheldResult(state, event);
+    // The row's kind and time go with the line, so the session's next open can record which events a power cut took
+    // (`lostEvents`).
     await this.#append(state, { type: "event", eventId: event.eventId, kind: event.kind, observedAt });
     state.processed.add(event.eventId);
+  }
+
+  /** A call that names a secret-like path, recorded before the event counts as processed: sent again after a crash here, it is judged again. */
+  async #noteSecretCall(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (event.kind !== "call" || !callNamesSecretPath(event.input, state.descriptor.cwd)) return;
+    await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
+    state.secretCalls.add(event.toolCallId);
+  }
+
+  /** A result of such a call, its output left out of its row, recorded once the row is written. */
+  async #noteWithheldResult(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+    state.secretCalls.delete(event.toolCallId);
+    state.withheldResults.add(event.eventId);
   }
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {
