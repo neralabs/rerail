@@ -1,6 +1,6 @@
-# 0573: The last escapes leave the walk, and the walk is the test build's
+# 0585: The last escapes leave the walk, and the walk is the test build's
 
-Status: decided (the user, 2026-11-21: "go ahead", on converting the two escapes left on the walk and then
+Status: decided (renumbered from 0573, which another worktree holds; the user, 2026-11-21: "go ahead", on converting the two escapes left on the walk and then
 keeping the walk for the test-build asserts only). Ends 0551's step D. Follows 0572 (a region token's parts).
 
 ## Intro
@@ -49,3 +49,7 @@ relies on is checked.
 
 Kotlin: 53/53 with the corpus; bitlex 11/11; the compiler's bitlex 9/9; `rerail-kotlin-aot` builds without
 `test-hooks`.
+
+## Since
+
+- 0586 keeps the `as` escape in the token loop. `code_l` and the test after the loop go with it.

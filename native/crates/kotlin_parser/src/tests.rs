@@ -35,12 +35,51 @@ fn same(texts: &[&str]) {
     }
 }
 
-/// Each of `texts` refused by the compiled grammar (to the lean parser).
+/// Each of `texts` refused by the compiled grammar (to the lean parser), by tier 1 as Rust where
+/// the interpreter's tier 1 refuses it.
 fn refused(texts: &[&str]) {
     let c = compiled().expect("compiles");
     for &text in texts {
         assert!(c.image(text).is_none(), "accepted {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
     }
+}
+
+/// Each of `texts`: tier 1 as Rust is the interpreter's tier 1, refused or not.
+fn tier1_same(texts: &[&str]) {
+    let c = compiled().expect("compiles");
+    for &text in texts {
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
+    }
+}
+
+/// "A dotted type after `as` before a `<`", which the token loop keeps (decision 0586): after a
+/// token, over a gap, over a token's bytes after its first (`..<`), and never from an `as` in a
+/// region or across one.
+#[test]
+fn the_as_escape_is_the_interpreters() {
+    refused(&[
+        "val a = b as java.util.List<Int>\n",
+        "val a = b as  x.y<Int>\n",
+        "val a = b as x?.y<Int>\n",
+        "val r = x as a.B..<c\n",
+    ]);
+    tier1_same(&[
+        "val a = b as List<Int>\n",
+        "val a = b // as\nval c = d.e<Int>()\n",
+        "val a = \"as\" + d.e<Int>()\n",
+        "val a = b /* as */ .e<Int>()\n",
+        "val a = b as x /* c */ .y<Int>()\n",
+        "val a = b as x\n.y<Int>()\n",
+        "val a = b as x.y\nval c = d<e>()\n",
+        "val a = b as(x.y<Int>)\n",
+        "val r = x as a..<c\n",
+        "val a = `as` .y<Int>()\n",
+    ]);
 }
 
 /// The parser as Rust (`rerail_kotlin_aot`, its `tier1.rs` and `tier2.rs`) is the Bitlex
