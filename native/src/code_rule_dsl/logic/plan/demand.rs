@@ -89,6 +89,27 @@ pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(
         return None;
     };
     let mut candidates = over::candidates(&f, placed, model);
+    // A relation that depends on an answer whose rows are a part of the chunk's inputs (decision 0431 §8: a tape
+    // value's `parse_of` or `parsed`, its nodes and text admitted with it) is not demanded: its readers' bodies less it
+    // (`pre_<i>`) would read those inputs before the answer, and find nothing of the value (Q325).
+    let grown: BTreeSet<&str> = f.answers().iter().map(|&(_, p)| f.rel_name(p)).filter(|p| f.is_input(p)).collect();
+    if !grown.is_empty() {
+        let v = &placed.v;
+        let mut above: BTreeSet<&str> = grown;
+        loop {
+            let before = above.len();
+            for r in v.rules() {
+                let head = v.rel_name(r.head().rel());
+                if !above.contains(head) && r.reads().any(|a| above.contains(v.rel_name(a.rel()))) {
+                    above.insert(head);
+                }
+            }
+            if above.len() == before {
+                break;
+            }
+        }
+        candidates.retain(|c| !above.contains(*c));
+    }
     if candidates.is_empty() {
         return None;
     }
@@ -272,7 +293,7 @@ mod tests {
 
     #[test]
     fn a_demand_prefix_keeps_only_reads_not_already_proved() {
-        let v = crate::code_rule_dsl::logic::rr::parse_version(
+        let program = crate::code_rule_dsl::logic::rr::parse_version(
             "
             .decl relation(k: number, value: number, tag: number)
             .decl veto(value: number)
@@ -283,12 +304,12 @@ mod tests {
             ",
         )
         .unwrap();
-        let base = Placed::whole(v);
+        let base = Placed::whole(program);
         let split = Split { pre: "pre_0".into(), vars: vec!["k".into(), "value".into()], cut: BTreeSet::from([3]) };
         let decls = [("pre_0".into(), vec![("k".into(), "int".into()), ("value".into(), "int".into())])];
         let actual = overlaid(&base, &BTreeSet::from(["veto"]), &BTreeMap::from([(0, split)]), &decls, &[]).unwrap();
-        let pre = actual.v.rules().find(|r| actual.v.rel_name(r.head().rel()) == "pre_0").unwrap();
-        assert_eq!(actual.v.show_rule(pre),"pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
+        let pre = actual.v.rules().find(|r| actual.v.rel_name(r.head().rel()) == "pre_0").map(|r| actual.v.show_rule(r)).unwrap();
+        assert_eq!(pre, "pre_0($k, $value) :- relation($k, $value, _), relation($k, _, 1)");
 
         let body = super::super::body::Body::of(&base.v, base.v.rule(base.id(0)).unwrap());
         assert!(!body.implied_read(0, &[0, 3]), "a cut read cannot prove a kept read");

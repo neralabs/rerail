@@ -127,7 +127,7 @@ fn head(p: &Placed, k: usize) -> &str {
     p.v.rel_name(p.rule(k).head().rel())
 }
 
-/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::of_program`, or an
+/// `p`'s composed query: its rules read by their handles, its fields from its version (`Placed::whole`, or an
 /// edit of one).
 pub(super) fn compile(p: &Placed, model: &mut Model) -> Result<Compiled> {
     let pf = p.fields()?;
@@ -569,11 +569,10 @@ impl Compiled {
                 )?;
                 }
                 out.kept.insert(rel.clone());
-                if let Some(hand) = hooks.hand_off.as_deref_mut().filter(|_|self.kept.contains(&rel)) {
-                    if hand(&rel)? {
+                if let Some(hand) = hooks.hand_off.as_deref_mut().filter(|_|self.kept.contains(&rel))
+                    && hand(&rel)? {
                         out.handed.insert(rel.clone());
                     }
-                }
                 if self.kept.contains(&rel) { continue; }
             }
             let domains = lowered.and_then(|l| l.domains.get(&rel));

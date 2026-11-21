@@ -95,7 +95,7 @@ export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
-export { steerOrigin } from "./code-rule/steer-origin.js";
+export { steerOrigin, steerTitle, type SteerRuleSource } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
@@ -117,6 +117,7 @@ export { listAnalysisStores, retireAnalysisStore } from "./native/analysis-store
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
+export { processStartedAt } from "./process-liveness.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export { commandLine, shellWord, type Shell } from "./command-line.js";
@@ -130,7 +131,7 @@ export {
   resetRepositoryHistory,
   resetRepositoryHistoryIn,
 } from "./storage/database.js";
-export { defaultRerailHome } from "./storage/rerail-home.js";
+export { defaultRerailHome, STATUS_LINES_FOLDER } from "./storage/rerail-home.js";
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {

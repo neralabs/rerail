@@ -1,5 +1,4 @@
 .policy "ruff-pyi056-unsupported-method-call-on-all" revision 1
-.guests off
 .description "Use += to add names to the module's export list instead of calling append, extend or remove on it; type checkers do not all support those method calls."
 .language python
 .mode steer

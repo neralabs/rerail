@@ -646,6 +646,37 @@ fn a_repeated_rule_does_not_keep_a_relation_from_its_twin() {
     assert_eq!(["p1", "p2"].iter().filter(|r| v.declares(r)).count(), 1, "{:?}", rules(&v));
 }
 
+/// A zero count over a body of several literals (`bounded-composed-graph-paths`' `bcgp_decorated`: no line that is
+/// not a decorator between a decorator and a later def) is read as a negation of its helper, and the helper keeps
+/// only the columns the negation reads: with the counted line and its text (`rr_any…`) as columns it was a row per
+/// line between every decorator and every later def of a file (3.6-10 M rows priced for 25,425 pairs on 91 files).
+/// The text is a span, a location: the helper reads the pairs, which have none, so it is no file's and keeps none.
+#[test]
+fn a_zero_counts_helper_keeps_only_the_columns_read() {
+    let (report, v) = simplified(
+        r#"
+        .decl doc(d: number, p: symbol, q: symbol)
+        .decl src_line(d: number, l: number, sp: span)
+        .input doc, src_line
+        .decl line(p: symbol, l: number, s: span)
+        line(p, l, s) :- doc(d, p, _), src_line(d, l, s).
+        .decl at(p: symbol, l: number)
+        .decl deco(p: symbol, a: number)
+        .decl def(p: symbol, b: number)
+        .decl decorated(p: symbol, a: number, b: number)
+        .output decorated
+        at(p, l) :- line(p, l, s), match("    @.+", s).
+        deco(p, a) :- line(p, a, s), match("    @k", s).
+        def(p, b) :- line(p, b, s), match("    def .*", s).
+        decorated(p, a, b) :- deco(p, a), def(p, b), b > a, count : { line(p, l, _), l > a, l < b, !at(p, l) } = 0.
+        "#,
+    );
+    let text = rules(&v);
+    let helper = text.iter().find(|r| r.starts_with("rr_agg")).unwrap_or_else(|| panic!("{text:?}"));
+    let head = &helper[..helper.find(" :-").unwrap()];
+    assert_eq!(head.matches('$').count(), 3, "{head}: {:?} {text:?}", report.projected);
+}
+
 /// A request never merges, but its widened copy left with the request's own rules is read as the request: once
 /// pruned, `eslint-yoda`'s `rr_wide_node_text_rr_token_req` held `rr_token_req`'s rules and rows. A copy whose rules
 /// differ stays. PR #508's eb4a92d28 (t47), on the tree's pass there; stated here on the version's.
@@ -740,35 +771,4 @@ fn a_relation_its_fact_tests_empty_takes_its_readers() {
     let heads: std::collections::BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
     assert!(!heads.contains("scope") && !heads.contains("reads") && !heads.contains("again"), "{heads:?}");
     assert!(rules(&v).iter().any(|r| r.contains("base(") && !r.contains("scope")), "{:?}", rules(&v));
-}
-
-/// A zero count over a body of several literals (`bounded-composed-graph-paths`' `bcgp_decorated`: no line that is
-/// not a decorator between a decorator and a later def) is read as a negation of its helper, and the helper keeps
-/// only the columns the negation reads: with the counted line and its text (`rr_any…`) as columns it was a row per
-/// line between every decorator and every later def of a file (3.6-10 M rows priced for 25,425 pairs on 91 files).
-/// The text is a span, a location: the helper reads the pairs, which have none, so it is no file's and keeps none.
-#[test]
-fn a_zero_counts_helper_keeps_only_the_columns_read() {
-    let (report, v) = simplified(
-        r#"
-        .decl doc(d: number, p: symbol, q: symbol)
-        .decl src_line(d: number, l: number, sp: span)
-        .input doc, src_line
-        .decl line(p: symbol, l: number, s: span)
-        line(p, l, s) :- doc(d, p, _), src_line(d, l, s).
-        .decl at(p: symbol, l: number)
-        .decl deco(p: symbol, a: number)
-        .decl def(p: symbol, b: number)
-        .decl decorated(p: symbol, a: number, b: number)
-        .output decorated
-        at(p, l) :- line(p, l, s), match("    @.+", s).
-        deco(p, a) :- line(p, a, s), match("    @k", s).
-        def(p, b) :- line(p, b, s), match("    def .*", s).
-        decorated(p, a, b) :- deco(p, a), def(p, b), b > a, count : { line(p, l, _), l > a, l < b, !at(p, l) } = 0.
-        "#,
-    );
-    let text = rules(&v);
-    let helper = text.iter().find(|r| r.starts_with("rr_agg")).unwrap_or_else(|| panic!("{text:?}"));
-    let head = &helper[..helper.find(" :-").unwrap()];
-    assert_eq!(head.matches('$').count(), 3, "{head}: {:?} {text:?}", report.projected);
 }

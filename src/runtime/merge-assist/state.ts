@@ -23,6 +23,8 @@ export const STATE_KEYS = {
   conflicts: (checkoutPath: string) => `conflicts:${checkoutPath}`,
   /** The person's Merge Assist settings for a repository: the conflict hook command (`conflict-delivery.ts`). */
   settings: (repositoryKey: string) => `settings:${repositoryKey}`,
+  /** The checkout's conflict events stored while the hook heard none, for the next change there to hand it (`conflict-hook.ts`). */
+  unheard: (checkoutPath: string) => `unheard:${checkoutPath}`,
 } as const;
 
 export function readState<T>(db: StateQueries, key: string, schema: z.ZodType<T>): T | undefined {

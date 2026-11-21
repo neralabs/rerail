@@ -21,26 +21,22 @@ impl Ids {
 
 const DOCUMENTS: &[&str] = &[
     "",
-    "vrai fausse nul",
-    "(vrai;fausse;nul)",
-    "<#a# = vrai; #b# = (1;2)>",
     "{\"a\": [1, 2.5e3, true, null, \"x\\n\"]}",
     "[1, 2,]",
     "// c\n[1]",
-    "{- open",
-    "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n.policy {\"a\": 1}",
-    "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }. violation violations",
-    "#include \"x\" .functor f(a: number): number stateful",
+    "true false null",
+    "[true,false,null]",
+    "{\"a\": true, \"b\": [1, 2]}",
+    "/* open",
+    "\"t\\\"x\\u00e9\"",
 ];
 
 #[test]
 fn records_are_each_tokens_bytes_and_code() {
-    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
-    steps.sort();
+    let steps = crate::ladder::grammars();
     let (mut with, mut tokens, mut worded) = (0, 0, 0);
-    for path in steps {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
-        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+    for (name, source) in steps {
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
         let ids = Ids::default();
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
@@ -87,8 +83,8 @@ fn records_are_each_tokens_bytes_and_code() {
             assert_eq!((&got.positions, &got.codes, &got.totals), (&run.positions, &run.codes, &run.totals), "{name}: {doc:?}: the compiled record pass");
         }
     }
-    assert!(with >= 10, "{with} steps with records");
-    assert!(tokens > 200 && worded > 20, "{tokens} tokens, {worded} words");
+    assert!(with == 2, "{with} grammars with records");
+    assert!(tokens > 100 && worded > 20, "{tokens} tokens, {worded} words");
 }
 
 /// The words' table: every word found, longer tokens and other words not; a word past eight

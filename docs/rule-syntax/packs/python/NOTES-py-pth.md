@@ -2,7 +2,7 @@
 
 The rules follow Ruff 0.16.9, the version the JSON was written from. Its source, fixtures and snapshots, at the
 recording's commit 0be08a2, are in
-`/Users/jeremy/orca/workspaces/rerail/wolfeel/.rerail/port-readiness/upstream/ruff/0be08a2…/crates/ruff_linter`.
+a Ruff checkout at 0be08a2…, under `crates/ruff_linter`.
 `src/rules/flake8_use_pathlib/helpers.rs` and `ruff_python_semantic/src/analyze/typing.rs` settled what the JSON
 left open. Ruff 0.15.7 is installed here, and I also ran it on every case.
 

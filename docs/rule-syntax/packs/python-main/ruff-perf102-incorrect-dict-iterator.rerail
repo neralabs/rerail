@@ -1,5 +1,4 @@
 .policy "ruff-perf102-incorrect-dict-iterator" revision 1
-.guests off
 .description "Iterate over a dict's keys or values instead of its items when a for loop uses only the key or only the value of each pair."
 .language python
 .mode steer

@@ -136,13 +136,13 @@ impl Git {
     fn read_object(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, oid: &str) -> Result<Vec<Record>, &'static str> {
         let id = Self::object_id(repo, oid)?;
         let observed = storage.and_then(|storage| storage.object(id));
-        if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref()) {
-            if let Some(tree) = snapshot::observed_tree(root, id, stamp) {
-                if !repo.has_object(id) { return Err("missing"); }
-                let mut records = vec![Record::text("kind", "tree"), Record::text("storage", stamp)];
-                records.extend(tree.iter().map(raw_tree_record));
-                return Ok(records);
-            }
+        if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref())
+            && let Some(tree) = snapshot::observed_tree(root, id, stamp)
+        {
+            if !repo.has_object(id) { return Err("missing"); }
+            let mut records = vec![Record::text("kind", "tree"), Record::text("storage", stamp)];
+            records.extend(tree.iter().map(raw_tree_record));
+            return Ok(records);
         }
         crate::code_rule_dsl::logic::profile::decision("Git metadata object read", || oid.to_owned());
         let object = snapshot::verified_object(repo, id).map_err(|error| {

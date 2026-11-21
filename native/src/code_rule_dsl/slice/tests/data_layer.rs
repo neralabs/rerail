@@ -129,7 +129,7 @@ fn data_layer_bench() {
         policies.push(policy);
     }
     let backend = match std::env::var("RERAIL_DL_BACKEND").as_deref() {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         Ok("metal") => ExecutionBackend::MetalBackground,
         _ => ExecutionBackend::CpuBackground,
     };

@@ -1,5 +1,4 @@
 .policy "ruff-d301-escape-sequence-in-docstring" revision 1
-.guests off
 .description "Make docstrings that contain backslashes raw strings; a backslash in a plain string starts an escape sequence and can change the text."
 .language python
 .mode steer

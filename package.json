@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -97,7 +97,7 @@
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
     "build:events": "esbuild src/harness/event-stream.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/harness/event-stream.js",
     "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/hosts/cursor/cursor-hook.js",
-    "build:claude": "esbuild src/hosts/claude/claude-hook.ts src/hosts/claude/claude-status.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --outdir=dist/hosts/claude",
+    "build:claude": "esbuild src/hosts/claude/claude-hook.ts src/hosts/claude/claude-status.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --outdir=dist/hosts/claude && node -e \"require('node:fs').copyFileSync('src/hosts/claude/claude-status.sh','dist/hosts/claude/claude-status.sh')\"",
     "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/hosts/codex/codex-hook.js",
     "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:owned-builtins && npm run check:folder-removal && npm run check:internal-refs && npm run check:node-structures && npm run check:pins && npm run check:ci-paths && npm run check:install-scripts",
     "check:boundaries": "node scripts/check/check-boundaries.mjs",
@@ -142,6 +142,7 @@
     "ui:scenario": "node --import tsx scripts/dev/ui-scenario.ts",
     "conformance:languages": "node --import tsx conformance/languages/cli.ts",
     "conformance:languages:check": "node --import tsx conformance/languages/cli.ts --check",
+    "translations:check": "node --import tsx scripts/ship/translations.ts check",
     "fixtures:pull": "node scripts/s3/pack-fixtures.mjs pull",
     "fixtures:stage": "node scripts/s3/pack-fixtures.mjs stage",
     "fixtures:push": "node scripts/s3/pack-fixtures.mjs push",
@@ -152,6 +153,7 @@
     "generate:schema": "node --import tsx scripts/generate/schema/schema-sql.ts",
     "generate:languages": "node --import tsx scripts/generate/languages/registry.ts",
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
+    "generate:ignored-directories": "node --import tsx scripts/generate/walk/ignored-directories.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
     "prepare": "node scripts/dev/install-git-hooks.mjs",

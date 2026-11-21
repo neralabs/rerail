@@ -1,5 +1,4 @@
 .policy "ruff-pth102-os-mkdir" revision 1
-.guests off
 .description "Use Path.mkdir() instead of os.mkdir(); path objects read better than string-based os calls."
 .language python
 .mode steer

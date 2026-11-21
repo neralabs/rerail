@@ -377,6 +377,29 @@ struct Shared {
     changed: Condvar,
 }
 
+impl Shared {
+    /// Waits, from `s`, until `done` holds. On a thread of a pool it runs the pool's jobs meanwhile: the writer is a
+    /// service of its starter's machine, so its parallel loops (`on_cores`: a kept block's columns) are jobs on that
+    /// machine's pool, and a pool thread that waited idle for the writer could hold the very thread they need. With
+    /// one thread (`RERAIL_THREADS=1`) that thread is the main one, `Machine::here`'s thread 0, and a run's end waited
+    /// in `written` for a write whose loop waited for it.
+    fn wait_until<'a>(&'a self, mut s: std::sync::MutexGuard<'a, State>, done: impl Fn(&State) -> bool) -> std::sync::MutexGuard<'a, State> {
+        let pool = rerail_accel::exec::on_pool();        while !done(&s) {
+            if !pool {
+                s = self.changed.wait(s).expect("the writer's state");
+                continue;
+            }
+            drop(s);
+            let helped = rerail_accel::exec::help_once();
+            s = self.state.lock().expect("the writer's state");
+            if !helped && !done(&s) {
+                s = self.changed.wait_timeout(s, Duration::from_millis(1)).expect("the writer's state").0;
+            }
+        }
+        s
+    }
+}
+
 /// A queued job, the bytes it holds, the keys it writes, and how it runs.
 type Queued = (Job, usize, Vec<Key>, Run, &'static str);
 
@@ -425,6 +448,9 @@ pub(crate) struct Writer {
     /// The store's identity (`store_identity`), set by its first handle: a store created again at the path has
     /// another, and a writer of its own (as it has atoms of its own).
     identity: std::sync::OnceLock<i64>,
+    /// The registry (`Writers`) of the object that registered it: its last handle leaves that one, on whatever thread
+    /// it is dropped, in a run or not (decision 0442).
+    registry: std::sync::OnceLock<std::sync::Weak<Writers>>,
 }
 
 impl Writer {
@@ -538,8 +564,8 @@ fn writers() -> Arc<Writers> {
 pub(super) fn register(path: &Path) -> Arc<Writer> {
     let held = writers();
     let mut all = held.0.lock().expect("the writers");
-    let entry = all.entry(path.to_path_buf()).or_default();
-    let w = Arc::clone(entry);
+    let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
+    w.registry.get_or_init(|| Arc::downgrade(&held));
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -555,6 +581,7 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
         entry.identity.get_or_init(|| identity);
     }
     let w = Arc::clone(entry);
+    w.registry.get_or_init(|| Arc::downgrade(&held));
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -563,12 +590,15 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
 fn unregister(path: &Path, w: &Arc<Writer>) {
     // Under the registry's lock: a handle opened meanwhile finds this writer, never a new one that cannot see its
     // queue (the writer's jobs never take this lock).
-    let held = writers();
-    let mut all = held.0.lock().expect("the writers");
+    // The registry it was registered in, not the thread's run: a handle dropped on a pool thread is in none.
+    let held = w.registry.get().and_then(std::sync::Weak::upgrade);
+    let mut all = held.as_ref().map(|h| h.0.lock().expect("the writers"));
     if w.handles.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
         return;
     }
-    if all.get(path).is_some_and(|x| Arc::ptr_eq(x, w)) {
+    if let Some(all) = all.as_mut()
+        && all.get(path).is_some_and(|x| Arc::ptr_eq(x, w))
+    {
         all.remove(path);
     }
     // Every run's wave still open is sealed: the store's last handle takes no more writes.
@@ -748,9 +778,7 @@ impl ContentStore {
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
-            while full(&s) {
-                s = w.shared.changed.wait(s).expect("the writer's state");
-            }
+            s = w.shared.wait_until(s, |s| !full(s));
             if let Some(t) = t {
                 let waited = t.elapsed().as_secs_f64();
                 s.held = (s.held.0 + 1, s.held.1 + waited);
@@ -1042,11 +1070,9 @@ impl ContentStore {
         if let Some((run, how)) = open {
             w.seal(run, how);
         }
-        let mut s = w.shared.state.lock().expect("the writer's state");
+        let s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
-        while s.keys.contains_key(key) {
-            s = w.shared.changed.wait(s).expect("the writer's state");
-        }
+        drop(w.shared.wait_until(s, |s| !s.keys.contains_key(key)));
         if let Some(t) = t {
             super::hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
         }
@@ -1063,9 +1089,7 @@ impl ContentStore {
         let mut s = w.shared.state.lock().expect("the writer's state");
         let target = s.sealed;
         let t = (s.applied < target).then(std::time::Instant::now);
-        while s.applied < target {
-            s = w.shared.changed.wait(s).expect("the writer's state");
-        }
+        s = w.shared.wait_until(s, |s| s.applied >= target);
         if let Some(t) = t {
             super::hazards::wait_in_wave("every queued write (written)", t.elapsed().as_secs_f64());
         }

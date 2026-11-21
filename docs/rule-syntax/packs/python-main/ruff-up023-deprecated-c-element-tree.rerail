@@ -1,5 +1,4 @@
 .policy "ruff-up023-deprecated-c-element-tree" revision 1
-.guests off
 .description "Import the ElementTree module instead of the deprecated cElementTree one; the C accelerator is used automatically."
 .language python
 .mode steer

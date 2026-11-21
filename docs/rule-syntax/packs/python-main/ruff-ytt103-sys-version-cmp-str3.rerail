@@ -1,5 +1,4 @@
 .policy "ruff-ytt103-sys-version-cmp-str3" revision 1
-.guests off
 .description "Compare sys.version_info to a tuple instead of comparing sys.version to a string; string order misjudges a two-digit minor version."
 .language python
 .mode steer

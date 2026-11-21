@@ -1,5 +1,4 @@
 .policy "bandit-b614-pytorch-load" revision 1
-.guests off
 .description "Load PyTorch files with weights_only=True or use safetensors; a full torch.load unpickles the file and can run arbitrary code."
 .language python
 .mode steer

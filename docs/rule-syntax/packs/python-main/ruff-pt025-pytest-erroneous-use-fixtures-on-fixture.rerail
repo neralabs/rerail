@@ -1,5 +1,4 @@
 .policy "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture" revision 1
-.guests off
 .description "Don't apply a pytest usefixtures marker to a fixture function; it has no effect there, so request other fixtures as parameters instead."
 .language python
 .mode steer

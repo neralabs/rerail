@@ -65,8 +65,7 @@ pub struct CodeRuleDslWorkspace {
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    #[napi(skip)]
-    pub closed: Arc<AtomicBool>,
+    #[napi(skip)] pub closed: Arc<AtomicBool>,
     /// What the workspace's runs share by design (decision 0442): its own, as apart from another workspace's as one
     /// in another process.
     #[napi(skip)] pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
@@ -324,12 +323,18 @@ fn check_store_identity(store: &crate::content_store::ContentStore, expected: Op
 
 /// The Node environment's machine (decision 0442). The addon's caller is the environment: it makes one machine and
 /// keeps it in its instance data, so every workspace it makes shares its pool, its CPU slot and its learned model,
-/// each workspace on a shared object of its own. Another environment (a worker thread) has its own.
+/// each workspace on a shared object of its own. Another environment (a worker thread) has its own. The main
+/// environment's lives as long as the process, on its main thread: that thread is one of its pool's
+/// (`Machine::here`), so its own work and its waits are the pool's.
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
     if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
         return Ok(Arc::clone(machine));
     }
-    let machine = crate::code_rule_dsl::logic::profile::Machine::new();
+    let machine = if crate::code_rule_dsl::logic::profile::is_main_thread() {
+        crate::code_rule_dsl::logic::profile::Machine::here()
+    } else {
+        crate::code_rule_dsl::logic::profile::Machine::new()
+    };
     env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
     Ok(machine)
 }
@@ -1186,9 +1191,16 @@ impl Task for WorkspaceStorageTask {
                 publication_milliseconds: 0.0,
             };
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
+            let (scope_root, scope_home) = (self.root.clone(), self.analysis_home.clone());
+            let scope = || crate::git_workspace::snapshot::analysis_scope(Path::new(&scope_root))
+                .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&scope_root), scope_home.as_deref()));
+            // A pinned revision's inventory is read under its owner, so its scope begins first, on the store it
+            // names. A working tree's begins on the store the attach opens, once Git has described the root: a root
+            // outside any repository makes no store, and a busy store is waited for once, under the attach's
+            // deadline, and reported as the attach reports it.
             let owner = if let Some(owner) = self.analysis_owner.take() {
                 Some(owner)
-            } else if self.store_path == Path::new(":memory:") {
+            } else if self.store_path == Path::new(":memory:") || self.snapshot.is_none() {
                 None
             } else {
                 let store = match crate::content_store::ContentStore::open(&self.store_path) {
@@ -1196,13 +1208,12 @@ impl Task for WorkspaceStorageTask {
                     Err(error) => return Ok(cache_failed(error)),
                 };
                 if let Err(error) = check_store_identity(&store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
-                let scope = crate::git_workspace::snapshot::analysis_scope(Path::new(&self.root))
-                    .unwrap_or_else(|| analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()));
-                match store.begin_analysis_scope_at(&scope, self.analysis_generation) {
+                match store.begin_analysis_scope_at(&scope(), self.analysis_generation) {
                     Ok(owner) => Some(owner),
                     Err(error) => return Ok(cache_failed(error)),
                 }
             };
+            let scoped_after = owner.is_none() && self.snapshot.is_none() && self.store_path != Path::new(":memory:");
             let discovered = if let Some(snapshot) = &self.snapshot {
                 use crate::git_workspace::snapshot::InventoryError;
                 match snapshot.workspace(&self.store_path, owner.as_ref()) {
@@ -1249,6 +1260,15 @@ impl Task for WorkspaceStorageTask {
                         publication_milliseconds,
                     });
                 }
+            };
+            let owner = if scoped_after {
+                if let Err(error) = check_store_identity(&context.store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }
+                match context.store.begin_analysis_scope_at(&scope(), self.analysis_generation) {
+                    Ok(owner) => Some(owner),
+                    Err(error) => return Ok(cache_failed(error)),
+                }
+            } else {
+                owner
             };
             let guard = match self.state.lock() {
                 Ok(guard) => guard,

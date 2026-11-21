@@ -7,11 +7,11 @@ Start with `/rerail-create` in your coding agent (`$rerail-create` in Codex):
 
 | You type | What happens |
 |---|---|
-| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, and writes the ones you pick |
+| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, tests them, and adds the ones that pass in Log until you approve them |
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-The agent tests each draft, reads it back, and adds it only after you say yes.
+The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added once they pass, and listed for you. Every rule the agent adds runs in Log, steering no one, until you approve it on its page in the dashboard: the dashboard's Overview says what they caught in Log and sends you to Created by you, where you read each one. The agent cannot approve a rule for you ([coding agents](rule-scoping.md#coding-agents)).
 
 <details>
 <summary>Where the agent's method comes from</summary>
@@ -99,7 +99,8 @@ Code rules check the files the agent edits; command rules check the commands it 
 
 - **Code rules** catch cross-layer imports, a call that bypasses a helper, a blocking call in async code, an old path
   still written in a `Justfile`, or a file in the wrong folder. A clause is a `regex` over a file's text or path, a
-  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue or Java.
+  `file` query, or a syntax query over Python, JavaScript, TypeScript, PHP, Blade, Rust, SQL, Vue, Java, C, C++, C#,
+  Go, HTML, CSS, Markdown or JSON.
 - **Command rules** catch force pushes, `--no-verify` or publishing.
 
 </details>
@@ -121,7 +122,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 ```json
 {
   "kind": "code",
-  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
+  "rule": { "format": "rerail.policy/v1", "id": "local:…", "revision": 1, "mode": "steer", "title": "…", "description": "…", "scope": { "include": ["…"], "exclude": [] }, "clauses": ["…"] },
   "cases": {
     "caught": [{ "path": "src/a.ts", "content": "…" }],
     "passed": [{ "path": "src/a.ts", "content": "…" }]
@@ -136,6 +137,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 |---|---|
 | `kind` | `code` |
 | `rule` | the rule document |
+| `rule.title` | the rule in your own words, as the dashboard lists it; the agent never reads it. `rules add` refuses a rule without one. |
 | `folder` | optional: the repository folder to add the rule at, `""` for the whole repository. Absent, a new rule goes to the whole repository and one already added stays where it is. |
 | `cases.caught`, `cases.passed` | files the rule must catch, and must let pass: `{ "path", "content" }` |
 
@@ -145,14 +147,17 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 
 ```sh
 rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
-rerail rules test rule.rerail               # a .rerail rule file: run the tests it carries (.test ... .end)
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
-rerail rules test rule.rerail               # a .rerail rule file: run the tests it carries (.test ... .end)
+rerail rules test rule.rerail           # a .rerail rule file: run the tests it carries (.test ... .end); none is an error
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
 rerail rules export --output rules.json # your rules, to read or edit one
 rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one too; adding it back stores your copy
 ```
+
+A `.rerail` file is a rule in Rerail's new rule language. `rules test` runs its tests only from a Rerail checkout, or
+with `RERAIL_SOURCE_ROOT` naming one, since the package does not ship the programs they read; elsewhere it refuses.
+Sessions, scans and rule packs do not run `.rerail` rules yet, and `rules add` takes only a JSON draft.
 
 <details>
 <summary>What the report shows and skips</summary>

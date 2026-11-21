@@ -26,7 +26,7 @@ impl Scratch {
         std::fs::create_dir_all(&base).expect("create scratch folder");
         // FSEvents reports real paths (`/private/var`, not `/var`); a host watches physical paths.
         #[cfg(unix)]
-        let base = std::fs::canonicalize(&base).expect("canonical scratch folder");
+        let base = dunce::canonicalize(&base).expect("canonical scratch folder");
         Self { base }
     }
 

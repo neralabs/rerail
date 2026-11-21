@@ -86,7 +86,7 @@ fn table_of(head: &[u8], codes: usize) -> Result<Table, Error> {
 fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
     // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
-    // so it must be the source the document holds (decision 0427).
+    // so it must be the source the document holds (decision 0463).
     const AT: usize = crate::code_rule_dsl::tape::header::SOURCE_LEN;
     let stated = head.get(AT..AT + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
     if stated != Some(source as u64) {
@@ -265,10 +265,8 @@ fn place(
             // SAFETY: as the codes', `4 * lines` bytes.
             let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
             lines[0] = 0;
-            let mut line = 1;
-            for (at, _) in source.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
-                lines[line] = at as u32 + 1;
-                line += 1;
+            for (start, (at, _)) in lines[1..].iter_mut().zip(source.iter().enumerate().filter(|(_, byte)| **byte == b'\n')) {
+                *start = at as u32 + 1;
             }
             view.lines = at(lines_at)?;
             view.line_count = count(plan.lines)?;
@@ -281,7 +279,7 @@ fn place(
             // SAFETY: the room `place` writes, read only while this view is made, inside the slab's mapping.
             let room = InSlab(tape.as_ptr(), tape.len());
             let z = resident::Tape16Z::from_bytes(resident::Home::Placed(Arc::new(room))).map_err(invalid)?;
-            if z.len() != plan.nodes || z.len() == 0 || z.source_len() != source.len() as u64 || tape[9] != lang.revision() {
+            if z.len() != plan.nodes || z.is_empty() || z.source_len() != source.len() as u64 || tape[9] != lang.revision() {
                 return Err(invalid("a tape and its source or language disagree"));
             }
             let zv = z.view(lang).map_err(invalid)?;
@@ -293,7 +291,7 @@ fn place(
             view.side = [0, 0, zv.side[2], zv.side[3]];
             (view.cut, view.per) = (zv.cut, zv.per);
             (view.lines, view.line_count) = (here(zv.lines)?, zv.line_count);
-            // The presence after the tape, in its home (decision 0426 §4, step 6): the kernels' `tape_has_kind`.
+            // The presence after the tape, in its home (decision 0434 §4, step 6): the kernels' `tape_has_kind`.
             view.presence = if zv.presence == 0 { 0 } else { here(zv.presence)? };
             view.codes = slab_table(table, lang, grammar, plan, offset, &mut new_table)?;
         }
@@ -370,7 +368,7 @@ pub fn drop_all() {
     clear();
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
     rerail_metal::pool::drop_all();
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     rerail_accel::gpu::shared::drop_idle();
     if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
         device.drop_label_pipelines();

@@ -5,8 +5,8 @@
 //! elsewhere. Each chunk fills the relations by running the matchers' wave over its documents' tapes
 //! (`facts::vtab::syntax::with_matchers`); a captured matcher's rows read W's bindings at each matched root. The
 //! joins read the matches as any base relation.
-use std::collections::{BTreeSet, HashMap};
 use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
+use std::collections::{BTreeSet, HashMap};
 
 pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) fn compiled(
 }
 
 /// Per matcher, the other matchers whose roots hold every node its rows are read at, where the rules say so
-/// (decision 0424): each rule that reads its relation joins its node with a column that only other matchers' roots
+/// (decision 0459): each rule that reads its relation joins its node with a column that only other matchers' roots
 /// fill (`raw_module_name(w, …)`, made from `rr_ast_11(w)`, beside `rr_ast_14(w, f)`). The wave knows every
 /// matcher's roots before it binds any capture, so a matcher's captures are bound only at the nodes in those roots:
 /// internal_dead_code's `mn_function` bound 737,806 roots for the 27,849 its join keeps (t45 §2). The magic rule of
@@ -65,7 +65,7 @@ pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]
                         Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
                         _ => continue,
                     };
-                    let Some(node) = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg()) else { return None };
+                    let node = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg())?;
                     read = true;
                     // Another positive atom of the body that binds the node where only matchers' roots fill it.
                     let roots = body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {

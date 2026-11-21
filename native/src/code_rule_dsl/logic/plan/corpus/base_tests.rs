@@ -280,7 +280,7 @@ t(s, l) :- text(n, s), line(n, l).
 /// `node` has its ERROR nodes, by kind as W's `kind: "ERROR"` finds them, and `syntax_error` has the file.
 #[test]
 fn a_tree_rooted_at_an_error_node_is_read() {
-    let (path, source) = ("l9750_graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
+    let (path, source) = ("graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
     let dir = corpus("error-root", &[(path, source)]);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -310,7 +310,7 @@ invalid(p) :- doc(d, p, _), syntax_error(d).
 /// rules run per chunk and in rules run once over every file.
 #[test]
 fn base_relations_read_are_inputs() {
-    let files = [("l9750_graphql/bad.py", "def f(:\n    ServerPlan\n"), ("l9750_graphql/ok.py", "x = 1\n")];
+    let files = [("graphql/bad.py", "def f(:\n    ServerPlan\n"), ("graphql/ok.py", "x = 1\n")];
     let dir = corpus("span-text", &files);
     let program = r#"
 .decl doc(d: number, path: symbol, module: symbol)
@@ -327,8 +327,8 @@ same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, 
 .output hit, plain, same
 "#;
     let got = run(&dir, program, &["hit", "plain", "same"]);
-    assert_eq!(got[0], [["l9750_graphql/bad.py"]]);
-    assert_eq!(got[1], [["l9750_graphql/ok.py"]]);
+    assert_eq!(got[0], [["graphql/bad.py"]]);
+    assert_eq!(got[1], [["graphql/ok.py"]]);
     assert_eq!(got[2], sorted(files.iter().map(|(p, _)| r![p, p])));
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -413,7 +413,7 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
 fn text_files_are_text_only_documents() {
     let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
     let md = "# Title\n\nneedle\n";
-    let files = [("docs/l9700_graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
+    let files = [("docs/graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
     let dir = corpus("text-docs", &files);
     std::fs::write(dir.join("docs/logo.png"), [0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00]).unwrap();
     let program = r#"
@@ -445,10 +445,10 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
 .output docs, treed, advertised, lines, tape, counts, hits
 "#;
     let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
-    let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
-    assert_eq!(got[0], sorted(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
+    let texts = [("docs/design/a.md", md), ("docs/graph_query.rst", rst), ("notes.txt", "")];
+    assert_eq!(got[0], sorted(["docs/design/a.md", "docs/graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
     assert_eq!(got[1], [["pkg/m.py"]]);
-    assert_eq!(got[2], [["docs/l9700_graph_query.rst"]]);
+    assert_eq!(got[2], [["docs/graph_query.rst"]]);
     let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| [vec![path.to_owned()], l].concat()).collect::<Vec<_>>();
     assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
     let table = |path: &str, source: &str| {
@@ -458,7 +458,7 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
     let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
     let python = (0..python.starts().len()).map(|i| r!["pkg/m.py", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]]);
     assert_eq!(got[4], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
-    assert!(got[4].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
+    assert!(got[4].contains(&r!["docs/graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
     assert_eq!(got[5], sorted(texts.iter().map(|(p, s)| r![p, w_lines(s, false).len()]).chain([r!["pkg/m.py", 1]])));
     let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
     let hits = sorted(hits);
@@ -1142,23 +1142,26 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
 /// A rule that drops the input's key, or filters it, is still a stratum.
 #[test]
 fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
-    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
-    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let dir = corpus("input-view", &[TREE]);
     let program = ".decl kind(n: node, k: symbol)\nkind(n, k) :- node(_, n, k, _, _).\n\
                    .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
                    .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
                    .output calls\n";
-    let before = crate::code_rule_dsl::logic::plan::input_views();
-    let viewed = run(&dir, program, &["calls"]);
-    let held = crate::code_rule_dsl::logic::plan::input_views() - before;
-    assert!(held >= 1, "kind is a view of node: {held}");
+    // Each run's own scope, held here: the views it held are the run's count (decision 0442), read before it ends.
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let viewed = {
+        let _run = scope();
+        let viewed = run(&dir, program, &["calls"]);
+        let held = crate::code_rule_dsl::logic::plan::input_views();
+        assert!(held >= 1, "kind is a view of node: {held}");
+        viewed
+    };
     let copied = {
         let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
-        let before = crate::code_rule_dsl::logic::plan::input_views();
+        let _run = scope();
         std::fs::remove_dir_all(dir.join(".out")).ok();
         let got = run(&dir, program, &["calls"]);
-        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), before, "RERAIL_COPY_VIEWS derives it");
+        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), 0, "RERAIL_COPY_VIEWS derives it");
         got
     };
     assert_eq!(viewed, copied);
@@ -1524,10 +1527,10 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
 }
 
 /// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
-/// ones included, and `parsed(s, "annotation", root)` its tree, decision 0055's guest asked for by `string_annotation`:
-/// the value parsed as `( … )`, in T's shape (this program declares its base relations) the guest's whole tree, its
-/// identifiers `text` rows as a file's are; a nested string's guest is made in the next round. T's shape keeps every
-/// document, so a guest that does not parse keeps its partial tree. A `Literal` argument is no type definition.
+/// ones included, and `parsed(s, "annotation", root)` its tree, a tape value asked for by `string_annotation`: the
+/// value parsed as the `annotation` fragment, from a `type` (decision 0466), its identifiers `text` rows as a file's
+/// are; a nested string's value is made in the next round. A value the parser refuses (`"not valid (("`, which Ruff
+/// refuses too) is one `ERROR` over the text, with no names. A `Literal` argument is no type definition.
 #[test]
 fn string_annotations_are_ruffs_with_their_trees() {
     let source = "from typing import List, Literal, Optional\nimport typing\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\", b: 'typing.Dict[str, \"Bar\"]') -> \"Baz\":\n    pass\n\ny: \"not valid ((\" = 1\nz: Literal[\"notatype\"] = 1\n";
@@ -1565,19 +1568,18 @@ files(p) :- doc(_, p, _).
             &["'typing.Dict[str, \"Bar\"]'", "str"],
             &["\"Bar\"", "Bar"],
             &["\"Baz\"", "Baz"],
-            &["\"not valid ((\"", "valid"],
         ])
     );
-    // Each root is its guest's module, over the string's value in `( … )`.
+    // Each root is its value's `type`, over the string's value (decision 0466); a refused one's an `ERROR`.
     assert_eq!(
         set(&got[2]),
         want(&[
-            &["\"List[int]\"", "module", "0", "11"],
-            &["\"Optional[Foo]\"", "module", "0", "15"],
-            &["'typing.Dict[str, \"Bar\"]'", "module", "0", "25"],
-            &["\"Bar\"", "module", "0", "5"],
-            &["\"Baz\"", "module", "0", "5"],
-            &["\"not valid ((\"", "module", "0", "14"],
+            &["\"List[int]\"", "type", "0", "9"],
+            &["\"Optional[Foo]\"", "type", "0", "13"],
+            &["'typing.Dict[str, \"Bar\"]'", "type", "0", "23"],
+            &["\"Bar\"", "type", "0", "3"],
+            &["\"Baz\"", "type", "0", "3"],
+            &["\"not valid ((\"", "ERROR", "0", "12"],
         ])
     );
     // The trees are no files.

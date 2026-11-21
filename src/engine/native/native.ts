@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
+import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -101,6 +102,13 @@ export interface NativeCompiledCodeRuleDsl {
   readsServerGraph(): boolean;
   /** Whether the code rule reads text: some clause, however nested, is a `regex` or `file` query, so files no language lists are read for it. */
   readsText(): boolean;
+  /**
+   * Whether a finding of the code rule in one file can depend on another file's text: a clause the engine evaluates over
+   * many files (any but a `regex`, `ast` or `file` forbid, and an `llm` clause, which reads no file), a `calls` or
+   * `importTarget` term, or a `report_when` gate.
+   * The engine routes each clause by the same predicates, so the answer cannot drift from what it evaluates.
+   */
+  readsOtherFiles(): boolean;
 }
 
 export interface NativeCodeRuleDslEditor {
@@ -271,6 +279,13 @@ export interface NativeGitIgnoreMatcher {
    * ignored folder names the folder's pattern. Null when Git does not ignore it; throws as `ignored` does.
    */
   ignoredBy(relativePath: string, isDirectory: boolean): NativeGitIgnoreMatch | null;
+  /**
+   * Whether a matcher opened now at this root would read the rules this one read: the configuration, read again as Git
+   * reads it (the system, global and repository files, their includes and conditions), chooses the same excludes file
+   * and pattern case, and the root `.gitignore`, `info/exclude` and the excludes file are as this matcher read them.
+   * When it would, each folder's `.gitignore` is read again as the next path enters the folder.
+   */
+  sourcesUnchanged(): boolean;
 }
 
 /** A pattern of Git's exclude stack that ignores a path (`NativeGitIgnoreMatcher.ignoredBy`). */
@@ -477,7 +492,12 @@ export interface NativeTreeWatcher {
    * network or remote file system, a WSL path, past Linux's watch budget, Windows with no oplock, an OS with no
    * adapter). Watching a root already watched replaces its folder set.
    */
-  watch(root: string, folders: string[]): boolean;
+  watch(root: string, folders: readonly string[]): boolean;
+  /**
+   * Watches `root` as `watch` does, but only with room the Linux watch budget has left: a root `watch` asks for that
+   * needs the room takes it, and this root's watch ends. Elsewhere, as `watch`. An engine built before it lacks it.
+   */
+  watchSpare?(root: string, folders: readonly string[]): boolean;
   /** Stops watching `root` and releases every handle on it, so `git worktree remove` and renames work at once. */
   unwatch(root: string): void;
   /** Takes every notice since the last take, at most one per root. Never blocks on the OS. */
@@ -508,7 +528,8 @@ export interface NativeBinding {
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
   LoadedRrPolicies: new (store?: string) => NativeLoadedRrPolicies;
   GitRevisionSource: new (root: string, revision: string, analysisScope: string, invocation?: string) => NativeGitRevisionSource;
-  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun | undefined, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource, loaded?: NativeLoadedRrPolicies): Promise<string>;
+  /** `target`: the policy files, the checkout's root, the content store, the output directory and the source paths the scan is held to. */
+  scanRrPoliciesAsync(target: { paths: string[]; root: string; store: string; output: string; sourcePaths?: string[] }, analysis?: NativeAnalysisScopeRun, source?: NativeGitRevisionSource, policySource?: NativeGitRevisionSource, loaded?: NativeLoadedRrPolicies): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;
@@ -552,6 +573,23 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
+  /**
+   * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
+   * before it lacks it.
+   */
+  startGit?(program: string, args: string[], env: string[], pipeStderr: boolean): EngineStartedGit;
+  /** Linux only: reaps a child `startGit` started once its exit pipe has closed. A binary built before it lacks it. */
+  reapGit?(pid: number): EngineGitExit;
+  /**
+   * Linux only: runs Git as `spawnSync` does, through `posix_spawn` (`git-start.ts`). A binary built before it lacks it.
+   */
+  runGit?(program: string, args: string[], env: string[], timeoutMs: number | undefined, maxBuffer: number): EngineGitRun;
+  /**
+   * Windows only: whether every path's owner is one Git for Windows takes as this process's user (the user, or the
+   * Administrators group while the process's token is a member); false when an owner cannot be read, and on every
+   * other platform. A binary built before it lacks it.
+   */
+  pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /** The content-store file name this binary's store schema owns (`content-v9.sqlite` at store floor 9). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string, expectedStore?: string, recorded?: boolean): void;
@@ -633,4 +671,36 @@ export function isWorkspaceBusy(error: unknown): boolean {
 
 export function nativeHealth(): NativeHealth {
   return loadNativeBinding().health();
+}
+
+/**
+ * On Windows, whether Git, started by this process, takes every one of `paths` as its user's own: the engine reads each
+ * owner as Git for Windows does. Undefined on every other platform, and when no engine here can tell (none loads, one
+ * built before it, or a read that throws), so the caller asks Git; the first such failure is reported
+ * ({@link reportOwnerReadFailure}).
+ */
+export function pathsOwnedByCurrentUser(paths: readonly string[]): boolean | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const binding = loadNativeBinding();
+    if (binding.pathsOwnedByCurrentUser === undefined) throw new Error("the engine was built before it could read a path's owner");
+    return binding.pathsOwnedByCurrentUser([...paths]);
+  } catch (error) {
+    reportOwnerReadFailure(error);
+    return undefined;
+  }
+}
+
+/** Whether a failure of the engine's owner read was reported in this process. */
+let ownerReadFailureReported = false;
+
+/**
+ * Writes the first failure of the engine's owner read to stderr, which a daemon keeps in its log, once per process:
+ * without that read every worktree a repository start places is asked of Git, one process each.
+ */
+function reportOwnerReadFailure(error: unknown): void {
+  if (ownerReadFailureReported) return;
+  ownerReadFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not read path owners, so Git places each worktree a start asks after: ${reason}\n`);
 }

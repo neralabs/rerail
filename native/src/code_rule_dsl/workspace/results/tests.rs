@@ -69,9 +69,10 @@
     fn coverage_reports_a_broken_files_partial_clause_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
         let directory = std::env::temp_dir().join(format!(
-            "rerail-coverage-{}-{:?}",
+            "rerail-coverage-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
+            // Its nanoseconds, not `SystemTime`'s `Debug` (`SystemTime { intervals: … }`: no file name on Windows).
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());
@@ -127,9 +128,10 @@
     fn blind_files_are_reported_by_reason_cold_warm_and_paged() {
         let _slot = WORKSPACE_TEST_SLOT.lock();
         let directory = std::env::temp_dir().join(format!(
-            "rerail-blind-{}-{:?}",
+            "rerail-blind-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
+            // Its nanoseconds, not `SystemTime`'s `Debug` (`SystemTime { intervals: … }`: no file name on Windows).
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let store = Arc::new(ContentStore::open(&directory.join("content.sqlite")).unwrap());

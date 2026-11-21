@@ -32,7 +32,15 @@
 
 // cratify: `compiled_view` is rerail-lang-php's (it mounts it)
 // cratify: `script_block` is rerail-lang-ecma's (it mounts it)
+// cratify: `call_argument` is rerail-lang-python's (it mounts it: it reads the scope table)
 pub mod host;
+pub mod inline_content;
+// cratify: `json_object` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod json_object;
+// cratify: `match_regex` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod match_regex;
+// cratify: `rule_pattern` is rerail-rr's (the rule-file language's, decision 0495)
+pub mod rule_pattern;
 pub mod raw_text;
 pub mod segments;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -66,19 +74,19 @@ impl Parse {
     /// parser reads the text, else by tree-sitter (one behavior: tree-sitter's tape, or a
     /// refusal). `None` where tree-sitter has no grammar for the dialect.
     pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
-        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, php_lean};
-        let ecma = |lean| {
-            Grammar::embedded(dialect)
-                .ok()
-                .and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok())
-        };
+        use crate::code_rule_dsl::tape::{Grammar, ecma_lean, html_lean, php_lean};
+        let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok());
         let lean = match dialect {
             GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
             GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
             GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
-            GrammarDialect::Php => Grammar::embedded(dialect)
-                .ok()
-                .and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            GrammarDialect::Html => Grammar::embedded(dialect).ok().and_then(|grammar| html_lean::encode(&grammar, text, budget).ok()),
+            // A literal grammar's dialect (decision 0495 §2): tree-sitter has none, and its registered parser reads it.
+            GrammarDialect::Regex => {
+                let grammar = Grammar::embedded(dialect).ok()?;
+                return crate::code_rule_dsl::tape::TapeImage::parse(&grammar, text, &budget)?.ok().map(|image| Self::Tape(image.primary));
+            }
             _ => None,
         };
         if let Some(tape) = lean.and_then(Result::ok) {
@@ -114,6 +122,9 @@ pub struct Program {
     pub segments: SegmentMap,
     /// The host bytes it cannot be read through, sorted: the host's syntax errors it reads.
     pub host_errors: Vec<Range<usize>>,
+    /// The host bytes of the node it stands at, where they are not its text's (decision 0470: a Python string's
+    /// program stands at the string, around its content); `None`: the innermost host node over its text.
+    pub at: Option<Range<usize>>,
 }
 
 /// Builds a host file's embedded program: one per registry `via`.
@@ -130,6 +141,29 @@ pub trait Embedder: Send + Sync {
     /// HTML file's scripts and styles, decision 0431 §4), else `build`'s one.
     fn build_all(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Vec<Program> {
         self.build(root, source, budget).into_iter().collect()
+    }
+
+    /// Whether each program stands at a place of its own (`build_all`'s several: the innermost host node over its
+    /// bytes), else the file's whole (its root, as a Vue component's view or a Blade file's compiled view is).
+    fn per_place(&self) -> bool {
+        false
+    }
+
+    /// Whether it reads the host through the file's scope table (decision 0470): its programs are then
+    /// `build_in_doc`'s, from the batch's document over the host's tape, and `build_all`, which has no document, builds
+    /// none.
+    fn reads_scope(&self) -> bool {
+        false
+    }
+
+    /// Whether its programs' syntax verdict is their tape's, not their language's own check of a file: they are no
+    /// files of their language (a rule's pattern, whose metavariables CPython refuses; decision 0495 §3).
+    fn tape_verdict(&self) -> bool {
+        false
+    }
+    /// The programs of the host `doc` (`reads_scope`).
+    fn build_in_doc(&self, _doc: &crate::code_rule_dsl::tape::TapeDoc, _budget: &dyn Fn() -> bool) -> Vec<Program> {
+        Vec::new()
     }
 }
 

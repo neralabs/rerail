@@ -1,5 +1,4 @@
 .policy "ruff-pth109-os-getcwd" revision 1
-.guests off
 .description "Use Path.cwd() instead of os.getcwd() or os.getcwdb(); path objects read better than string-based os calls."
 .language python
 .mode steer

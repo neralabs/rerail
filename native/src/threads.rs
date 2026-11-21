@@ -6,42 +6,31 @@
 //!                                           chunks cut and projected, the cores' launches
 //! ```
 //!
-//! There is one pool: the executor's (`rerail_accel::exec::configure`), which is rayon's global pool, so every
-//! parallel loop and job of the engine runs on it beside the executor's launches.
+//! A machine has one pool (decision 0442: `rerail_context::Cores`, made on its first job), so every parallel loop and
+//! job of a caller of the machine runs on it beside the executor's launches; two machines in a process have two.
 
 /// The setting: `RERAIL_THREADS`, a whole number of at least 1; else the cores the machine offers.
 pub fn max() -> usize {
     rerail_accel::exec::threads()
 }
 
-/// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
-/// the addon, `lib.rs`). The CLI registers its main thread. Node uses dedicated workers because its loading thread
-/// can wait for a background call. A pool already made is left as it is.
-pub fn configure(this_thread: bool) {
-    rerail_accel::exec::configure(this_thread);
+/// Registers what every block is made by before the first block (`rerail_accel::exec::configure`): the engine's
+/// `main`, Node's registration of the addon (`lib.rs`), a run. The pool is the machine's, sized to `max`; the
+/// engine's `main` makes its machine on the main thread (`Machine::here`), so that thread is one of the pool's.
+pub fn configure() {
+    rerail_accel::exec::configure();
     // Every job of the pool keeps its device wave apart from its thread's (decision 0386).
     crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
 }
 
 /// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
-}
+pub use crate::code_rule_dsl::logic::profile::is_main_thread;
 
-/// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
+/// The machine whose pool a caller's jobs run on (decision 0442): a program makes one (`Machine::here` on its main
+/// thread) and hands it to its commands.
+pub use crate::code_rule_dsl::logic::profile::Machine;
+
+/// Jobs on the caller's machine's pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
 /// handed the scope again, to start more.
 pub struct Jobs<'s, 'r>(
     #[cfg(not(target_family = "wasm"))] &'r rayon::Scope<'s>,
@@ -88,7 +77,7 @@ where
 pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
     #[cfg(not(target_family = "wasm"))]
     {
-        rayon::in_place_scope(|s| op(&Jobs(s)))
+        crate::code_rule_dsl::logic::profile::cores_scope(|s| op(&Jobs(s)))
     }
     #[cfg(target_family = "wasm")]
     {
@@ -97,8 +86,11 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 }
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
-/// waits must never run it on the caller's own stack. A pool worker or a service thread owns the job before the
-/// caller can help with other work.
+/// waits must never run it on the caller's own stack, and it may not hold one of the pool's threads (decision 0100
+/// §12: nothing that waits for another long job may itself be a job). It runs on a thread of its own: on the pool,
+/// its waits for the caller's answers held a thread the caller's chunks needed, and with 2 threads every run with a
+/// cone of requests stalled (the caller waited for chunks no thread was free to build). Its own parallel work still
+/// runs on the pool.
 pub(crate) struct Beside<T> {
     name: &'static str,
     slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
@@ -107,46 +99,36 @@ pub(crate) struct Beside<T> {
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
 /// every rule) is work the caller does not need done before it goes on. It reads no run context, so it carries none.
 pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
-    rayon::spawn(move || drop(value));
+    crate::code_rule_dsl::logic::profile::cores_spawn(move || drop(value));
 }
 
-/// Starts `f` beside the caller ([`Beside`]).
+/// Starts `f` beside the caller ([`Beside`]), on a stack the size of a pool thread's.
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+    beside_on(name, rerail_accel::exec::POOL_STACK, f)
+}
+
+/// [`beside`], on a thread with `stack` bytes of stack. A thread that cannot be started is the job's result, an `Err`
+/// that names it, so [`Beside::join`] reports it: nothing else would ever end its wait. It is not run on the caller's
+/// thread instead: it waits for the caller, so there it would never end.
+fn beside_on<T: Send + 'static>(name: &'static str, stack: usize, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
     let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let run = move || {
+    let started = rerail_accel::exec::service(name, Some(stack), move || {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.lock() = Some(r);
-    };
-    let unclaimed = if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        let pending = std::sync::Arc::new(parking_lot::Mutex::new(Some(run)));
-        let queued = std::sync::Arc::clone(&pending);
-        let (claimed, ready) = std::sync::mpsc::channel();
-        rayon::spawn(move || {
-            let job = queued.lock().take();
-            if let Some(job) = job {
-                let _ = claimed.send(());
-                job();
-            }
-        });
-        // Each available worker could itself be starting a request/answer pair.
-        // Give another worker first claim, without depending on one becoming free.
-        let _ = ready.recv_timeout(std::time::Duration::from_millis(1));
-        pending.lock().take()
-    } else {
-        Some(run)
-    };
-    if let Some(job) = unclaimed && let Err(error) = rerail_accel::exec::service(name, None, job) {
-        *slot.lock() = Some(Err(Box::new(error)));
+    });
+    if let Err(e) = started {
+        *slot.lock() = Some(Err(Box::new(format!("cannot start {name}: {e}"))));
     }
     Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value, running queued jobs and recording the wait under `site`.
+    /// Waits until `poll` gives a value, the wait recorded under `site`, running the pool's other jobs meanwhile: the
+    /// job is on a thread of its own, so the wait never takes it.
     pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
         rerail_accel::exec::help_until_as(site, poll)
     }
@@ -247,5 +229,15 @@ pub mod tests {
             answer.send(i * 2).unwrap();
         }
         assert_eq!(job.join().unwrap(), (0..20).map(|i| i * 2).sum::<u32>());
+    }
+
+    /// A job whose thread cannot be started (a stack larger than the address space) ends at once, as an `Err` that
+    /// names it: its caller's wait for it ends.
+    #[test]
+    fn a_job_beside_that_cannot_start_is_an_error() {
+        let job = super::beside_on("a test's unstartable job", 1 << 60, || ());
+        assert!(job.slot.lock().is_some(), "the failed start is the job's result");
+        let e = job.join().expect_err("a job that never started");
+        assert!(e.downcast_ref::<String>().is_some_and(|m| m.starts_with("cannot start a test's unstartable job: ")));
     }
 }

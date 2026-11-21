@@ -1,5 +1,4 @@
 .policy "ruff-pyi062-duplicate-literal-member" revision 1
-.guests off
 .description "Remove duplicate members from a Literal type; repeating a value adds nothing."
 .language python
 .mode steer

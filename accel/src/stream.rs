@@ -258,7 +258,7 @@ impl Executor {
     /// Runs `f` with a host stream named `name` open (a scope: its jobs may borrow what outlives the call). Jobs still
     /// queued when `f` returns (its caller waited for none of them: an error left early) are dropped unrun.
     pub fn stream<'s, R>(&self, name: &'static str, f: impl FnOnce(&Stream<'s, '_>) -> R) -> R {
-        rayon::in_place_scope(|scope: &rayon::Scope<'s>| {
+        rerail_context::cores_scope(|scope: &rayon::Scope<'s>| {
             let state = Arc::new(State {
                 name,
                 queue: Mutex::new(Vec::new()),
@@ -278,7 +278,7 @@ impl Executor {
             let r = f(&stream);
             // Unwaited jobs are not run: their workers find nothing left to claim.
             for j in std::mem::take(&mut *state.queue.lock().unwrap_or_else(|p| p.into_inner())) {
-                state.board.finish(j.ticket, false);
+                state.board.unqueue(j.ticket);
             }
             r
         })
@@ -381,5 +381,20 @@ mod tests {
             s.wait(h)
         });
         assert!(got.is_err());
+    }
+
+    /// A job still queued when the stream's caller returns (it left early, on an error) is dropped unrun: it leaves the
+    /// lane's queue, and since it never started, the lane's count of running jobs is not lowered for it (from 0, an
+    /// overflow) and it is no job the lane ran.
+    #[test]
+    fn a_job_dropped_unrun_leaves_the_queue_and_was_never_running() {
+        let exec = Executor::with(vec![Arc::new(crate::exec::CpuBackend::default())]);
+        exec.stream("dropped", |s| {
+            // Below the floor: no worker starts, and the caller waits for nothing.
+            let _ = s.submit(1e-9, || ());
+        });
+        let s = exec.score();
+        let u = &s.units[Lane::Cpu.index()];
+        assert_eq!((u.queued, u.running, u.jobs, u.failed), (0, 0, 0, 0));
     }
 }

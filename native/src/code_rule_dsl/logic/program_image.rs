@@ -277,7 +277,7 @@ impl Image {
             let b = (*bytes).as_ref();
             (b.as_ptr() as usize, b.len())
         };
-        if at % 16 != 0 {
+        if !at.is_multiple_of(16) {
             return Err(bad("shared bytes not at 16 bytes"));
         }
         Image::checked(Image { buf: Buf::Shared(bytes), len, regions: [(0, 0); REGIONS] }, Depth::Held)
@@ -309,7 +309,7 @@ impl Image {
                 return Err(bad(format!("region {r} is {width} bytes wide, not {}", WIDTH[r])));
             }
             let end = count.checked_mul(width as usize).and_then(|n| n.checked_add(offset));
-            if offset % 16 != 0 || offset < HEADER || end.is_none_or(|e| e > b.len()) {
+            if !offset.is_multiple_of(16) || offset < HEADER || end.is_none_or(|e| e > b.len()) {
                 return Err(bad(format!("region {r} out of bounds")));
             }
             *region = (offset, count);
@@ -801,7 +801,7 @@ impl Check<'_> {
                 let p = self.term(at + 1, e)?;
                 done(self.term(p, e)?)
             }
-            kind::AGG if self.im.node(at).0 >> 5 <= 5 && val < self.vars => {
+            kind::AGG if self.im.node(at).0 >> 5 <= 6 && val < self.vars => {
                 let mut p = at + 1;
                 p = match self.node(p, e)?.0 {
                     kind::WILD => self.leaf(p, e, kind::WILD)?,
@@ -812,6 +812,14 @@ impl Check<'_> {
                         p = self.leaf(p, e, kind::VAR)?;
                     }
                     p = self.leaf(p, e, kind::STR)?;
+                }
+                // A bounded min or max (decision 0511): its bound's variable, then its flags (1 a max, 2 strict).
+                if self.im.node(at).0 >> 5 == 6 {
+                    p = self.leaf(p, e, kind::VAR)?;
+                    if self.node(p, e)?.2 > 3 {
+                        return Err(bad(format!("node {at}: a bound's flags {}", self.node(p, e)?.2)));
+                    }
+                    p = self.leaf(p, e, kind::INT)?;
                 }
                 done(self.atom(p, e)?)
             }

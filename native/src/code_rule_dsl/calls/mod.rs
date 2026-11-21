@@ -1204,7 +1204,7 @@ impl Drop for EvaluationSlot {
 
 /// How `calls` reads a file's bindings: `resolves`' default reading, as a stub where the path is
 /// one (what `matcher::calls_tables` builds at a call node).
-pub(crate) fn reading(path: &str) -> Reading {
+pub fn reading(path: &str) -> Reading {
     Reading {
         stub: is_stub_file(path),
         ..Reading::default()
@@ -1230,7 +1230,7 @@ pub(crate) fn calls_document(
     doc: crate::code_rule_dsl::tape::TapeDoc,
     language: GrammarDialect,
 ) -> Option<(crate::code_rule_dsl::tape::TapeDoc, GrammarDialect)> {
-    if language.embeds().is_empty() {
+    if language.program_embeds().is_empty() {
         return Some((doc, language));
     }
     doc.guests()?.iter().find_map(|guest| {

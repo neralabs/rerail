@@ -1,5 +1,4 @@
 .policy "ruff-pyi047-unused-private-type-alias" revision 1
-.guests off
 .description "Use, make public or remove a private type alias that nothing in its file references; an unused private alias is likely a mistake."
 .language python
 .mode steer

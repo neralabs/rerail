@@ -73,7 +73,7 @@ impl IgnoreCoverage {
 impl Coverage {
     fn may_reinclude(&self, directory: &[u8]) -> bool {
         let mut state = self.start;
-        for byte in directory.iter().copied().chain([b'/']) {
+        for byte in directory.iter().copied().chain(*b"/") {
             state = self.dfa.next_state(state, byte);
         }
         let mut visited = HashSet::new();

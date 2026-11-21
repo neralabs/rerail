@@ -1,4 +1,4 @@
-//! `reference_edge` and `reference_open` (`logic::plan::corpus::references`) against W's reference graph on the
+//! `reference_edge` and `reference_open` (`python/references.rerail`, decision 0483) against W's reference graph on the
 //! replay's fixtures: for every event of the policies that read the graph (`internal-dead-code`'s relational
 //! `references`, `imperative-private-functions`' `calls { graph: references }`), the corpus runner's rows under the
 //! converter's `.references` setting equal the graph W's evaluation of the policy installs (`eval::stateless_calls`)
@@ -65,11 +65,9 @@ fn ours(dir: &std::path::Path, setting: &str) -> Graph {
 fn ours_at(dir: &std::path::Path, out: &std::path::Path, setting: &str) -> Graph {
     let program = format!(
         "{setting}
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl reference_edge(src: node, dst: node, via: symbol)
-.decl reference_open(n: node)
-.input doc, node, reference_edge, reference_open
+.language python
+.scope include \"**/*.py\", \"**/*.pyi\"
+#include \"python/references.rerail\"
 .decl edge(sp: symbol, ss: number, se: number, tp: symbol, ts: number, te: number, via: symbol)
 edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), node(d, s, _, ss, se), doc(d, sp, _), node(e, t, _, ts, te), doc(e, tp, _).
 .decl open(p: symbol, s: number, e: number)
@@ -175,7 +173,7 @@ fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
 /// name and a class's own, `self`, `cls`, `super()`, a constructor field (`_conn` from parameter `conn: Conn`), a
 /// parameter's declared type, both sibling links, a star import, a module member no definition gives, and a file
 /// that does not parse.
-const PACKAGE: [(&str, &str); 8] = [
+pub(super) const PACKAGE: [(&str, &str); 8] = [
     ("pkg/__init__.py", "from .base import Base\nfrom .store import Store\n__all__ = [\"Base\", \"Store\"]\n"),
     ("pkg/conn.py", "class Conn:\n    def execute(self, q):\n        return q\n\n    def close(self):\n        pass\n"),
     ("pkg/base.py", "class Base:\n    def setup(self):\n        return self.prepare()\n\n    def prepare(self):\n        return 1\n"),
@@ -284,7 +282,7 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
 
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("repo");
-    write_files(&repo, PACKAGE.into_iter());
+    write_files(&repo, PACKAGE);
     let git = |args: &[&str]| {
         let output = std::process::Command::new("git")
             .args(["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgSign=false"])

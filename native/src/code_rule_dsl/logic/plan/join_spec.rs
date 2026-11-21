@@ -105,7 +105,7 @@ fn numeric_call(b: &Body<'_>, t: TermRef<'_>) -> bool {
         && strings::functions::native_call(b.v.text(f)).is_some_and(|(_, _, k)| k == strings::functions::Kind::Number))
 }
 
-/// A test's patterns: one string, or a set `{a, b}` of strings (`strings::patterns`).
+/// A test's patterns: one string, or a set `{a, b}` of strings (as `preparation::text` reads one).
 fn patterns(b: &Body<'_>, t: TermRef<'_>) -> Option<Vec<String>> {
     match t {
         TermRef::Str(s) => Some(vec![b.v.text(s).to_owned()]),
@@ -233,6 +233,15 @@ impl<'a> Run<'a, '_> {
             } else {
                 b.digest_atom(d, b.head());
             }
+            // A recheck's spec binds its head first: not the spec of the same rule run from no binding.
+            d.u64(u64::from(b.head_bound()));
+            // And a maintain line's given variables (`Body::with_bound`): two lines bound by other variables have
+            // other specs.
+            let given = b.bound_before();
+            d.u64(given.len() as u64);
+            for v in given.iter() {
+                d.u64(v.index() as u64);
+            }
             d.u64(at.map_or(u64::MAX, |a| a as u64));
             match self.model.inputs.atoms {
                 Some(ops) => ops.iter().for_each(|&o| d.u64(o as u64)),
@@ -306,15 +315,16 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let atoms = self.model.inputs.atoms;
         let mut slots = Slots::default();
-        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`; a mode line's
-        // delta, `Body::with_bound`): slots before any item, which the engine fills from the candidate or the delta's
-        // row (`Line::Recheck`). A step reads them as bound, and a test of them can come first, as the planner orders
-        // it (Q208). Unregistered, such a test met an unbound variable and no spec was made, and an aggregate whose
-        // group only the head binds (`fanout(f, n) :- def(f, _), n = count : { uses(_, f) }`) fell back to the rule's
-        // own order, unpriced (0364 R7). A bare prefix has no head: a recheck's head binds nothing there.
-        let bound = if bare && b.head_bound() { VarSet::new() } else { b.bound_before() };
-        for v in bound.iter() {
-            slots.slot(Key::Var(v));
+        // What the body has bound before its first step (a recheck's head, `Body::with_head_bound`; a maintain line's
+        // given variables, `with_bound`): slots before any item, which the engine fills from the candidate or the delta
+        // (the executor's `pre`). A step then reads them as bound, and a test of them can come first, as the planner
+        // orders it (Q208). Unregistered, an aggregate whose group only the head binds (`fanout(f, n) :- def(f, _),
+        // n = count : { uses(_, f) }`) had no spec, and the recheck fell back to the rule's own order, unpriced (0364
+        // R7). A bare prefix of a recheck has no head to bind them.
+        if !(bare && b.head_bound()) {
+            for v in b.bound_before().iter() {
+                slots.slot(Key::Var(v));
+            }
         }
         // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's value is a
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
@@ -347,7 +357,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(l), c).map(str::to_owned)),
                             Lit::Agg { var, op: AggRef::Count | AggRef::Sum | AggRef::Product, .. } if var == n => Some("int".to_owned()),
                             // An extremum has its column's type (`v = min l : { line_of(f, l) }`).
-                            Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(o), atom: a } if var == n => b
+                            Lit::Agg { var, op: AggRef::Min | AggRef::Max | AggRef::Bounded { .. }, over: Some(o), atom: a } if var == n => b
                                 .args(s.at)
                                 .iter()
                                 .position(|x| x.var() == Some(o))
@@ -560,7 +570,7 @@ impl<'a> Run<'a, '_> {
                     let a = tok(b, x, &mut slots)?;
                     lines.push(JoinItem::Lt { a, b: tok(b, y, &mut slots)?, or_eq: !matches!(op, CmpOp::Lt | CmpOp::Gt) });
                 }
-                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max), over, atom: a } => {
+                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max | AggRef::Bounded { .. }), over, atom: a } => {
                     let rel = b.rel(a);
                     let mut args: Vec<TermRef<'_>> = b.args(s.at).to_vec();
                     // The over-variable belongs to the bag even if an outer step bound the same name.
@@ -606,18 +616,25 @@ impl<'a> Run<'a, '_> {
                         }
                     }
                     let out = var_tok(var, &mut slots);
+                    // A bounded aggregate's bound is bound before it (`Body::ready`): a key, as the atom's are.
+                    let bound = match op {
+                        AggRef::Bounded { bound, strict, .. } if slots.has(Key::Var(bound)) => Some((var_tok(bound, &mut slots), strict)),
+                        AggRef::Bounded { .. } => return None,
+                        _ => None,
+                    };
                     lines.push(match op {
                         AggRef::Count => JoinItem::Count { src, args: toks, out },
                         _ => JoinItem::Extreme {
                             op: match op {
                                 AggRef::Sum => Extreme::Sum,
-                                AggRef::Min => Extreme::Min,
+                                AggRef::Min | AggRef::Bounded { max: false, .. } => Extreme::Min,
                                 _ => Extreme::Max,
                             },
                             src,
                             args: toks,
                             col: value_col?,
                             out,
+                            bound,
                         },
                     });
                 }

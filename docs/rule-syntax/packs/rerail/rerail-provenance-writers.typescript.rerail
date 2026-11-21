@@ -1,0 +1,119 @@
+.policy "rerail-provenance-writers" revision 2
+.description "Leave licence records to their owners: write per-file provenance only through the shared writer, never write a project's licence record, and keep no second Not copied parser or copyleft list."
+.language typescript
+.mode steer
+.scope include "scripts/**/*.ts", "scripts/**/*.mts", "scripts/**/*.mjs", "scripts/**/*.js", "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.mjs", "conformance/**/*.js", "packs/*/upstream/**/*.mjs", "packs/*/upstream/**/*.js", "packs/*/upstream/**/*.ts"
+.scope exclude "**/test/**", "**/tests/**", "**/*.test.*", "**/__tests__/**", "**/fixtures/**", "**/publish/**", "**/node_modules/**", "scripts/pack-data/provenance.mjs", "scripts/s3/pack-fixtures.mjs", "scripts/samples/licences.ts", "scripts/upstream/bump.ts", "scripts/check/check-licenses.mjs"
+// The JSON's tree clause, over its TypeScript and JavaScript files (rerail-provenance-writers.rerail has its text
+// clauses, over every file): a call of a writer (write…, append…, update…, save…, put…, patch…, rewrite…, as a name
+// or a member) whose first argument is a project's licence record, licenses/<project>/UPSTREAM.md:
+//   writeFileSync("packs/vue/licenses/eslint-plugin-vue/UPSTREAM.md", text)   LICENCE_RECORD_WRITE (the path)
+//   writeFileSync(join(licensesDir, "UPSTREAM.md"), text)                     LICENCE_RECORD_WRITE (joined onto
+//                                                                              a name about licences)
+//   const dir = join(HERE, "../../licenses/x"); writeFileSync(join(dir, "UPSTREAM.md"), t)
+//                                                                              LICENCE_RECORD_WRITE (a name
+//                                                                              declared as a licenses folder)
+//   const record = join(dir, "licenses/x/UPSTREAM.md"); appendFileSync(record, t)
+//                                                                              LICENCE_RECORD_WRITE (a name
+//                                                                              declared as the record)
+//   readFileSync(join(licensesDir, "UPSTREAM.md"), "utf8")                    not reported (a read)
+// A name counts where some function around the call declares it anywhere inside, or a top-level const or let does,
+// as the JSON's `inside`/`has` say; the declaration need not be the one the name resolves to.
+
+.violation LICENCE_RECORD_WRITE(at: node) "Leave licenses/<project>/UPSTREAM.md hand-kept and describe copies through writeProvenance (Python: write_provenance); reading it, or writing the tool's own upstream/<tool>/UPSTREAM.md, is fine."
+LICENCE_RECORD_WRITE(c) :- writer(c, a), record_path(a).
+LICENCE_RECORD_WRITE(c) :- writer(c, a), record_join(a, x), child(x, d, 0), kind(d, "identifier"), node_text(d, n),
+    declared(a, n, v), licenses_value(v).
+LICENCE_RECORD_WRITE(c) :- writer(c, p), kind(p, "identifier"), node_text(p, n), declared(c, n, v), record_path(v).
+
+// writer(c, a): c calls a writer, and a is its first argument.
+.decl writer(c: node, a: node)
+writer(c, a) :- kind(c, "call_expression"), field(c, "function", f),
+    match("(?:[\\w$]+\\.)*(?:write|append|update|save|put|patch|rewrite)\\w*", f), field(c, "arguments", al), child(al, a, 0).
+
+// record_path(v): v names a licence record: its path written out, or joined from one, from a licenses folder, or
+// from a name about licences.
+.decl record_path(v: node)
+record_path(v) :- record_string(v).
+record_path(v) :- join_call(v, x), child(x, s, _), record_string(s).
+record_path(v) :- record_join(v, x), child(x, s, _), licenses_string(s).
+record_path(v) :- record_join(v, x), child(x, d, 0), kind(d, "identifier"), match("(?s:.*)(?i:licen[cs])(?s:.*)", d).
+// "…/licenses/<project>/UPSTREAM.md", as a string or template.
+.decl record_string(s: node)
+record_string(s) :- string_kind(s), match("(?:[\"'`]|(?s:.*)/)licenses/[^\\s\"'`]*/UPSTREAM\\.md[\"'`]", s).
+// A licenses folder: "licenses", "../../licenses/eslint-plugin-vue".
+.decl licenses_string(s: node)
+licenses_string(s) :- string_kind(s), match("[\"'`](?:[^\\s\"'`]*/)?licenses(?:/[^\\s\"'`]*)?[\"'`]", s).
+// join_call(v, x): v is join(…) or resolve(…), path.-qualified or not, with arguments x.
+.decl join_call(v: node, x: node)
+join_call(v, x) :- kind(v, "call_expression"), match("(?:path\\.)?(?:join|resolve)\\s*\\((?s:.*)", v), field(v, "arguments", x).
+// record_join(v, x): a join whose arguments x include the string "UPSTREAM.md".
+.decl record_join(v: node, x: node)
+record_join(v, x) :- join_call(v, x), child(x, s, _), kind(s, "string"), match("[\"'`](?:\\./)?UPSTREAM\\.md[\"'`]", s).
+.decl string_kind(s: node)
+string_kind(s) :- kind(s, "string").
+string_kind(s) :- kind(s, "template_string").
+// A licenses folder, or a value with one inside it.
+.decl licenses_value(v: node)
+licenses_value(v) :- licenses_string(v).
+licenses_value(v) :- has(v, s, string_kinds), licenses_string(s).
+.decl string_kinds(k: symbol)
+string_kinds("string"). string_kinds("template_string").
+
+// declared(n, x, v): a declarator of name x with value v is anywhere in a function around n, or is a top-level
+// `const`/`let`.
+.decl declared(n: node, x: symbol, v: node)
+declared(n, x, v) :- inside(n, f, function_kinds), has(f, d, "variable_declarator"), declarator(d, x, v).
+declared(n, x, v) :- inside(n, p, "program"), child(p, l, _), kind(l, "lexical_declaration"), child(l, d, _),
+    declarator(d, x, v).
+.decl declarator(d: node, x: symbol, v: node)
+declarator(d, x, v) :- kind(d, "variable_declarator"), field(d, "name", n), node_text(n, x), field(d, "value", v).
+.decl function_kinds(k: symbol)
+function_kinds("function_declaration"). function_kinds("function_expression"). function_kinds("arrow_function").
+function_kinds("method_definition"). function_kinds("generator_function_declaration").
+
+// The pack's example (packs/rerail/pack.json).
+.test a_record_write_is_reported exactly
+    .fixture "packs/vue/upstream/eslint-plugin-vue/generate.mjs" ```
+        function writeLicense(checkout, kept) {
+          const dir = join(HERE, "../../licenses/eslint-plugin-vue");
+          copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
+          writeFileSync(join(dir, "UPSTREAM.md"), table(kept));
+        }
+        ```
+    .expect LICENCE_RECORD_WRITE at "packs/vue/upstream/eslint-plugin-vue/generate.mjs":4
+.end
+
+.test other_record_writes_are_reported exactly
+    .fixture "scripts/upstream/record.ts" ```
+        const RECORD = join(root, "licenses/eslint-plugin-vue/UPSTREAM.md");
+        export function save(text: string) {
+          fs.writeFileSync("packs/vue/licenses/eslint-plugin-vue/UPSTREAM.md", text);
+          writeFileSync(path.join(licensesDir, "UPSTREAM.md"), text);
+          appendFileSync(RECORD, text);
+          updateRecord(resolve("licenses", project, "UPSTREAM.md"), text);
+        }
+        ```
+    .expect LICENCE_RECORD_WRITE at "scripts/upstream/record.ts":3
+    .expect LICENCE_RECORD_WRITE at "scripts/upstream/record.ts":4
+    .expect LICENCE_RECORD_WRITE at "scripts/upstream/record.ts":5
+    .expect LICENCE_RECORD_WRITE at "scripts/upstream/record.ts":6
+.end
+
+// The pack's passing example, reads, the tool's own record, and an owner the scope leaves out.
+.test reads_and_the_shared_writer_pass exactly
+    .fixture "packs/vue/upstream/eslint-plugin-vue/generate.mjs" ```
+        function writeLicenseAndProvenance(checkout, kept) {
+          const dir = join(HERE, "../../licenses/eslint-plugin-vue");
+          copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
+          writeProvenance({ pack: "vue", tool: "eslint-plugin-vue", entries: entriesOf(kept), commits: { "eslint-plugin-vue": UPSTREAM_COMMIT } });
+        }
+        ```
+    .fixture "scripts/upstream/read.ts" ```
+        const text = readFileSync(join(licensesDir, "UPSTREAM.md"), "utf8");
+        writeFileSync(join(upstreamDir, "UPSTREAM.md"), text);
+        ```
+    .fixture "scripts/upstream/bump.ts" ```
+        writeFileSync(join(licensesDir, "UPSTREAM.md"), text);
+        ```
+.end

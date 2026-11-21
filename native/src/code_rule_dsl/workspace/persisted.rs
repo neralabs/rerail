@@ -370,7 +370,7 @@ pub(super) fn restore_persisted_file(
             })
         })
         .collect::<Option<Vec<_>>>();
-    // The presence stored with the file's tape decides where it can (decision 0426 step 6), else the search index.
+    // The presence stored with the file's tape decides where it can (decision 0434 step 6), else the search index.
     let by_presence = presence_selects(store, source_id, grammar_id, file, code_rules);
     file.selector_skipped = by_presence.unwrap_or_else(|| lookups.is_some_and(|lookups| {
         !lookups.is_empty()
@@ -392,7 +392,7 @@ pub(super) fn restore_persisted_file(
     Ok(())
 }
 
-/// Whether the presence stored after the file's tape (decision 0426 §4, step 6), read in place in the tape's stored
+/// Whether the presence stored after the file's tape (decision 0434 §4, step 6), read in place in the tape's stored
 /// frame by the tape's read (`tape_has_kind`, the kernels' too), rules out every candidate clause: none of a clause's
 /// root kinds is in the tape, as the search index's `Absent` says. A tape with an error node (its kind `ERROR_CODE`'s
 /// bit) rules out none, as the index's syntax errors do not. `None` where the presence cannot tell and the search index
@@ -453,15 +453,7 @@ pub(super) fn grammar_id(language: GrammarDialect) -> i64 {
 /// that text parses to. The id keeps each its own row, never a primary's, while texts with the same
 /// omissions share one.
 pub(super) fn document_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
-    let fingerprint = if omissions.is_empty() {
-        0
-    } else {
-        let digest = HashKey::sha256(omissions)
-            .sha256_bytes()
-            .expect("a SHA-256 key");
-        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
-    };
-    ((fingerprint as i64) << 9) | (1 << 8) | grammar_id(dialect)
+    tape::derived_grammar_id(dialect, omissions)
 }
 
 /// The dialect of a stored tape's grammar id, a primary's (`grammar_id`) or a derived
@@ -690,89 +682,91 @@ pub(super) fn persist_files(
     };
     // Each file's payloads (tape bytes, encoded local results, blob alias) are
     // independent of every other file's, so they are built on the worker pool.
-    let prepared = paths
-        .par_iter()
-        .map(|path| {
-            let file = files
-                .get(path)
-                .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
-            let candidates = file
-                .candidates
-                .regex
-                .iter()
-                .chain(&file.candidates.ast)
-                .map(candidate)
-                .collect::<Vec<_>>();
-            let tape_bytes = {
-                #[cfg(feature = "code-rule-profile")]
-                let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
-                file.tape
-                    .as_ref()
-                    .map(|(_, image)| {
-                        Ok::<_, String>((
-                            image.primary.to_bytes()?,
-                            image
-                                .derived
-                                .iter()
-                                .map(DerivedBytes::of)
-                                .collect::<std::result::Result<Vec<_>, String>>()?,
-                        ))
+    let prepared = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        paths
+            .par_iter()
+            .map(|path| {
+                let file = files
+                    .get(path)
+                    .ok_or_else(|| invalid(format!("missing file for persistence: {path}")))?;
+                let candidates = file
+                    .candidates
+                    .regex
+                    .iter()
+                    .chain(&file.candidates.ast)
+                    .map(candidate)
+                    .collect::<Vec<_>>();
+                let tape_bytes = {
+                    #[cfg(feature = "code-rule-profile")]
+                    let _timer = profile::PhaseTimer::start(profile::Phase::TapeSerialize);
+                    file.tape
+                        .as_ref()
+                        .map(|(_, image)| {
+                            Ok::<_, String>((
+                                image.primary.to_bytes()?,
+                                image
+                                    .derived
+                                    .iter()
+                                    .map(DerivedBytes::of)
+                                    .collect::<std::result::Result<Vec<_>, String>>()?,
+                            ))
+                        })
+                        .transpose()
+                        .map_err(invalid)?
+                };
+                let local_result_ids = file
+                    .witnesses
+                    .keys()
+                    .chain(file.failures.keys())
+                    .chain(&file.candidates.regex)
+                    .chain(&file.candidates.ast)
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                let context = file_context(&file.input);
+                let stamped = CrossFileScheduler::stamped_context(file, context);
+                let mut local_results = local_result_ids
+                    .iter()
+                    .filter(|id| {
+                        !file.transient_failure
+                            && !file.restored_result_ids.contains(id)
+                            && !file.unstored.contains(id)
                     })
-                    .transpose()
-                    .map_err(invalid)?
-            };
-            let local_result_ids = file
-                .witnesses
-                .keys()
-                .chain(file.failures.keys())
-                .chain(&file.candidates.regex)
-                .chain(&file.candidates.ast)
-                .copied()
-                .collect::<BTreeSet<_>>();
-            let context = file_context(&file.input);
-            let stamped = CrossFileScheduler::stamped_context(file, context);
-            let mut local_results = local_result_ids
-                .iter()
-                .filter(|id| {
-                    !file.transient_failure
-                        && !file.restored_result_ids.contains(id)
-                        && !file.unstored.contains(id)
-                })
-                .filter_map(|id| {
-                    let context = if consumers.contains_key(id) {
-                        stamped?
-                    } else {
-                        context
-                    };
-                    Some((id, context))
-                })
-                .map(|(id, context)| {
-                    let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
-                    let bytes = encode_local_result(
-                        witnesses,
-                        file.failures.get(id).copied(),
-                        file.syntax.as_deref(),
-                    )?;
-                    Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
-                })
-                .collect::<Result<Vec<_>>>()?;
-            if !file.transient_failure {
-                local_results.extend(CrossFileScheduler::summary_publication(file)?);
-            }
-            let grammar_id = file_language(&file.input).map_or(0, grammar_id);
-            let aliases = clean_blob_alias(storage, file)
-                .into_iter()
-                .collect::<Vec<_>>();
-            Ok((
-                file,
-                candidates,
-                tape_bytes,
-                grammar_id,
-                aliases,
-                local_results,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
+                    .filter_map(|id| {
+                        let context = if consumers.contains_key(id) {
+                            stamped?
+                        } else {
+                            context
+                        };
+                        Some((id, context))
+                    })
+                    .map(|(id, context)| {
+                        let witnesses = file.witnesses.get(id).map(Vec::as_slice).unwrap_or(&[]);
+                        let bytes = encode_local_result(
+                            witnesses,
+                            file.failures.get(id).copied(),
+                            file.syntax.as_deref(),
+                        )?;
+                        Ok(LocalResultPublication { candidate: candidate(id), context, bytes })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if !file.transient_failure {
+                    local_results.extend(CrossFileScheduler::summary_publication(file)?);
+                }
+                let grammar_id = file_language(&file.input).map_or(0, grammar_id);
+                let aliases = clean_blob_alias(storage, file)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+                Ok((
+                    file,
+                    candidates,
+                    tape_bytes,
+                    grammar_id,
+                    aliases,
+                    local_results,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()
+    })?;
     // Each file's derived documents, borrowing the bytes built above and the texts its image holds.
     let documents = prepared
         .iter()
@@ -793,6 +787,7 @@ pub(super) fn persist_files(
                     tape: &bytes.tape,
                     source_map: &bytes.source_map,
                     host_errors: &bytes.host_errors,
+                    at: document.at,
                 })
                 .collect::<Vec<_>>()
         })

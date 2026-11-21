@@ -112,7 +112,7 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     // The job compiles on the caller's shared object, and marks its request in the caller's queue: a pool thread
     // holds no run.
     let (shared, held) = (crate::code_rule_dsl::logic::profile::shared_here(), std::sync::Arc::clone(&held));
-    rayon::spawn(move || {
+    crate::code_rule_dsl::logic::profile::cores_spawn(move || {
         let _in_run = crate::code_rule_dsl::logic::profile::within(shared);
         // A panic is a failed compilation, kept with its message for the plan's next batch, which stops the run
         // with it (`ready`): a job's own panic would end the process from the pool, away from the batch.

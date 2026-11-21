@@ -346,8 +346,10 @@ checked before code generation, and refused if:
 So a loop over single bytes cannot be generated, and neither can a call out to the
 host.
 
-**Still open.** Tier 2 on Metal. The words lower the same way (one block of code
-per word, a loop over the stream), but nothing generates it yet.
+**Still open.** Tier 2 on Metal. The preprocessing words run there (decision 0408): their
+Cranelift IR is printed as MSL (`clif_msl`), one TU a thread. They equal the interpreter on the
+corpus, but a thread runs about 9 µs a token, 400× a CPU core, so the device does not pay for a
+serial machine per input.
 
 ## 7. Checking generated code: the corpus
 
@@ -457,6 +459,10 @@ state S':  ',' -> leaf ...            ; S without its close
   comment there anyway.
 
 ## 9. The ladder: thirteen languages, one keyword to nested data with comments
+
+> **Since decision 0531 (2026-11-20)** the ladder is gone: only JSON's shipped forms are kept, in
+> `native/crates/json_parser/` (`json-rfc.bitlex`, `jsonc.bitlex`, with the token loop's `json.bitlex` and
+> `json-simdjson.bitlex`), checked by `ladder::check_ladder` as the steps were. This section is its history.
 
 The ladder is thirteen Bitlex files, in `native/crates/compiler/bitlex_ladder/`
 (the compiler crate's, with its tests). The languages are made

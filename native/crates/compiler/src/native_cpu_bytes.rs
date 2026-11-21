@@ -551,6 +551,7 @@ impl<'a> Bytewise<'a> {
                     Sym::Value(v, false) => v,
                     Sym::Value(v, true) => f.ins().bnot(v),
                     Sym::Slot(..) => unreachable!("a window's mask is a value"),
+                    Sym::Unmade => unreachable!("a window's mask is made"),
                 }
             } else {
                 self.short_x(f, at, x, d, p, &mut windows, &mut memo, &mut carry, heads)
@@ -589,10 +590,15 @@ impl<'a> Bytewise<'a> {
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
+    ///
+    /// Either way the word is its 16 lanes' bits: at one bit a lane (`SHORT_STRIDE` off NEON)
+    /// the 48 bits above them are no lane's, and a complement (a class's lane where the backend
+    /// has no bit test, `Sym`'s), a `not` or a `prev`'s shift sets them; a closer's first bit
+    /// found there would be past the window. Four bits a lane fill the word.
     #[allow(clippy::too_many_arguments)]
     fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value, stride: u32) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
-            return m;
+            return if 16 * stride < 64 { f.ins().band_imm(m, (1i64 << (16 * stride)) - 1) } else { m };
         }
         let rem = f.ins().isub(at.len, p);
         let zero = f.ins().iconst(types::I64, 0);
@@ -1359,6 +1365,7 @@ fn sym_value(f: &mut FunctionBuilder<'_>, s: Sym) -> Value {
         Sym::Value(v, false) => v,
         Sym::Value(v, true) => f.ins().bnot(v),
         Sym::Slot(..) => unreachable!("a window's mask is a value"),
+        Sym::Unmade => unreachable!("a window's mask is made"),
     }
 }
 
@@ -1607,7 +1614,7 @@ pub fn exact(native: &BlockNative, o: u16) -> Option<Needs> {
     exact_at(native, x).map(|n| n.shift(d))
 }
 
-fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
+pub(crate) fn exact_at(native: &BlockNative, x: usize) -> Option<Needs> {
     match native.insts[x] {
         BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => needs_at(native, x, &mut HashMap::new()),
         BlockInst::Or(a, b) => {
@@ -1853,6 +1860,7 @@ mod tests {
             extracts: Vec::new(),
             totals: Vec::new(),
             masks: Vec::new(),
+            newlines: None,
             delay: 0,
             output_delays: vec![0],
             groups: Vec::new(),
@@ -1911,6 +1919,7 @@ mod tests {
             extracts: Vec::new(),
             totals: Vec::new(),
             masks: Vec::new(),
+            newlines: None,
             delay: 0,
             output_delays: vec![0, 0],
             groups: Vec::new(),
@@ -1921,7 +1930,7 @@ mod tests {
         let space = crate::native_cpu_lanes::byte_set(&native, 0).expect("a class");
         let word = crate::native_cpu_lanes::byte_set(&native, 1).expect("a class");
         let mut rare = [0u64; 4];
-        for b in [b'"', b'#', b'/'].into_iter().chain(b'0'..=b'9').chain(0xc0..=0xff) {
+        for b in b"\"#/".iter().copied().chain(b'0'..=b'9').chain(0xc0..=0xff) {
             rare[usize::from(b >> 6)] |= 1 << (b & 63);
         }
         let need = Need { set: rare, care: std::array::from_fn(|k| !space[k]) };
@@ -2014,6 +2023,7 @@ mod tests {
             extracts: Vec::new(),
             totals: Vec::new(),
             masks: Vec::new(),
+            newlines: None,
             delay: 0,
             output_delays: vec![0; 4],
             groups: Vec::new(),
@@ -2119,6 +2129,9 @@ mod tests {
                         let nib = m >> (st * j) & ((1 << st) - 1);
                         assert!(nib == 0 || nib == (1 << st) - 1, "a lane's bits all alike");
                     }
+                }
+                if 16 * st < 64 {
+                    assert_eq!(m >> (16 * st), 0, "round {round}, output {o}: no bit past the window's 16 lanes");
                 }
                 assert_eq!(set, u64::from((!w).trailing_zeros().min(16)), "round {round}, output {o}: the lanes set");
                 assert_eq!((0..16).filter(|&j| lane(below, j) == 1).count(), (0..5).filter(|&j| w >> j & 1 == 1).count(), "the first five lanes");

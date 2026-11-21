@@ -31,6 +31,15 @@ function holdsGitEntry(directory: string): boolean {
   }
 }
 
+/** Whether `directory` may hold an entry called `name`: true when it does, or when the lstat cannot tell. */
+function holdsEntry(directory: string, name: string): boolean {
+  try {
+    return lstatSync(join(directory, name), { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 /** A `.git` entry as it was on disk when Git was asked about it. */
 interface GitEntry {
   /** The Git folder a `.git` file names; undefined for a `.git` folder, or a file that names none. */
@@ -136,7 +145,7 @@ export class CheckoutOwners {
   /**
    * The folders `#confirm` found holding a `.git` entry that Git did not take for a top level (one naming a Git folder
    * that is gone, or one Git is still making), told apart from those that held none, each with that entry as it was:
-   * `lookAgainAt` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
+   * `lookAgain` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
    * Git process, not one per write below it, and a worktree looked up before Git finished making it is found once Git
    * has. `#confirm` keeps it in step for every folder `#confirmed` holds.
    */
@@ -227,10 +236,11 @@ export class CheckoutOwners {
 
   /**
    * The submodules the checkout at `root` declares that are checked out: each `.gitmodules` path that its index holds
-   * as a gitlink and that Git confirms as a checkout top level. Physical roots.
+   * as a gitlink and that Git confirms as a checkout top level. Physical roots. A checkout with no `.gitmodules` entry
+   * declares none, which Git would answer by reading nothing, so Git is not started to say so.
    */
   declaredSubmodules(root: string): string[] {
-    if (!existsSync(join(root, ".gitmodules"))) return [];
+    if (!holdsEntry(root, ".gitmodules")) return [];
     const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
     if (configured.status !== 0) return [];
     const paths = new Set(configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1)));

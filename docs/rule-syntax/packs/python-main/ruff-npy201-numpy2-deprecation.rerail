@@ -1,5 +1,4 @@
 .policy "ruff-npy201-numpy2-deprecation" revision 1
-.guests off
 .description "Replace NumPy members that NumPy 2.0 removes from the main namespace with their supported replacements."
 .language python
 .mode steer

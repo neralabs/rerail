@@ -149,14 +149,17 @@ fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
     Ok(entries)
 }
 
+/// A directory entry's raw name and its mode.
+pub type RawEntryMode = (Vec<u8>, u16);
+
 fn sorted_entries(mut entries: Vec<RawTreeEntry>) -> Arc<[RawTreeEntry]> {
     entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
     entries.into()
 }
 
 pub fn raw_entry_name(hex: &str) -> Option<Vec<u8>> {
-    if hex.len() % 2 != 0 { return None; }
-    hex.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()).collect()
+    if !hex.len().is_multiple_of(2) { return None; }
+    hex.as_bytes().as_chunks::<2>().0.iter().map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()).collect()
 }
 
 #[derive(Debug)]
@@ -738,7 +741,7 @@ impl Snapshot {
     }
 
     /// List raw entry modes without opening any of their objects.
-    pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<(Vec<u8>, u16)>>> {
+    pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<RawEntryMode>>> {
         let directory = match self.view.source_entry(Path::new(path)) {
             Ok(Entry::Dir(id)) => id,
             Ok(Entry::File(_)) => return Err(io::Error::from(io::ErrorKind::NotADirectory)),
@@ -922,7 +925,10 @@ pub fn analysis_scope(path: &Path) -> Option<String> {
     view(path)?.scope.clone()
 }
 
-pub fn scan_files(root: &Path, reads: Option<&InventoryReads>) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
+/// A file of the inventory, by its path, with its grammar when one is known.
+pub type ScannedFile = (String, Option<String>);
+
+pub fn scan_files(root: &Path, reads: Option<&InventoryReads>) -> Option<Result<Vec<ScannedFile>, InventoryError>> {
     let v = view(root)?;
     let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
     Some(v.inventory(None, None, reads).map(|inventory| {

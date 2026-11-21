@@ -246,6 +246,7 @@ w('''  <section class="sect">
       <tr><td><code>.on input_error report CODE</code></td><td>Report a policy file that is missing or cannot be read, instead of reading it as empty.</td></tr>
       <tr><td><code>.budget V by code from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. It counts distinct findings. A ratchet on a metric (annotations, tests) is an ordinary rule comparing the metric with its ceiling.</td></tr>
       <tr><td><code>.scope report dirs "api"</code><br><code>.scope text "**/*.md"</code></td><td>Findings only land under these directories / read these files as text only (lines, no tree).</td></tr>
+      <tr><td><code>.scope tool_calls</code><br><code>.violation V(at: symbol) "…"</code></td><td>The policy reads a coding agent's tool calls, not files: <code>tool_call(c, tool)</code> and <code>tool_input(c, key, value)</code>, each call's string arguments. Its findings are at a call (<code>at</code> its id). A test gives calls with <code>.tool_call "Bash" `{"command": "…"}`</code> (see <code>tool-calls.md</code>).</td></tr>
       <tr><td><code>.input r(IO=json, filename="b.json", path="/counts")</code></td><td>Read a repository file: json, yaml, lines (<code>dir=</code> for a directory), file. A missing or malformed file gives an <code>input_error</code> row.</td></tr>
       <tr><td><code>.artifact "test_collection" inputs "**/*.py"</code><br><code>.input r(IO=json, artifact="test_collection")</code></td><td>Facts from a file a CI step wrote by running the repository's code, which Rerail never runs. A change to any input makes the file stale: its rules are then Unknown where they could report.</td></tr>
       <tr><td><code>.edit e(…)</code></td><td>An edit defined in Datalog, for fixes (see "Fixes").</td></tr>
@@ -650,23 +651,20 @@ edge2(v, t, l) :- known(v, t, l).
 ''', "Known answers and avoided nodes, as a rewrite of the edges"),
 ])
 
-sect("Code inside code (proposed)", [
-    "Code often holds other code: SQL in a Python string, expressions in a template, a type annotation written as a string. Today a rule reaches such text through <code>parsed(s, grammar, root)</code>, which the binary provides for a few grammars.",
-    "The proposal makes each one a guest document, declared by a library rule rather than built in. A guest has its own grammar, nodes, kinds and lines, so every rule of that language runs on it unchanged; relations tie its nodes back to the host. A policy that should see only real files says <code>.scope embedded false</code>.",
-    "A parsed tape would also become a value inside rules, so a fix can splice new code into a tree and print it. None of this is built yet.",
+sect("Code inside code", [
+    "Code often holds other code: SQL in a Python string, a script in an HTML page, a type annotation written as a string. A rule reaches such text through <code>parsed(s, grammar, root)</code>: the root of the code at node <code>s</code>, read in that grammar, whose kinds the rule then names in it.",
+    "A string a rule parses is a value: one tree per text and grammar, whichever strings hold it, parsed only because a rule asked. A program the file's grammar holds (an HTML page's scripts and styles, a Vue component's view, a Markdown file's inline text) is part of its file: its language declares it, it is read as the file is, and its nodes have the file's lines. A run reads another language's files for the programs they hold in its own only when it says <code>.embedded on</code>.",
 ], [
  ("rr", """
-// A library declares where guests are: here, the SQL a Python call passes to execute().
-embed(at, "sql", "program") :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"),
-    posarg(c, 0, at), str(at, _).
+// The SQL a Python call passes to execute(): asked for by the rule that reads it.
+sql_table(t) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"),
+    posarg(c, 0, s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, t).
 
-// Rules read guests like documents:
-//   guest(g, host, at, grammar)  document g is the text at `at` in document host, parsed as grammar
-//   doc_role(d, r)               "primary" (a file), "program" or "fragment" (a guest)
-//   host_node(n, h)              h is the innermost host node spanning guest node n
-//   root(d, n)                   d's root; for a fragment, the expression inside its wrapper
-// A SQL rule reports inside the string; host_node puts the finding on the Python line.
-""", "The proposed relations"),
+// A script in an HTML page: the page's program at its raw_text, at the page's lines.
+script_call(c, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p),
+    kind(c, "call_expression"), line(c, l).
+// host_node(n, h) gives the host node a guest node stands for.
+""", "Reaching code inside code"),
 ])
 
 w('''  <section class="sect">

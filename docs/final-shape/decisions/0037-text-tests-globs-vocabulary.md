@@ -25,7 +25,7 @@ This record proposes both. In short:
 
 ## What the text tests are (measured)
 
-The Pulling-it-all-together workstream has already rewritten the data-layer pack
+The PIAT workstream has already rewritten the data-layer pack
 (`391457bc2`, "Rewrite heavy data-layer rule shapes"):
 
 - Of the 112 clauses that searched file text, 108 are now syntax clauses. The other 4 test only
@@ -181,7 +181,7 @@ Anything else stays a named gap for a hand rewrite. It never guesses.
 
 - **A selective test drives the plan.** The engine starts from the few matching symbols and
   reads their postings: the value index.
-  - The AST-index spike's design index (§1 item 7) found the value index mandatory: 15.8 times
+  - The SQL index prototype's design index (§1 item 7) found the value index mandatory: 15.8 times
     faster literal seeks on SQLite.
   - Its text-candidate hierarchy (§4b) puts "exact token / any-of: vidx" first.
 - **Negation is a complement over the vocabulary,** not a per-row test.
@@ -204,7 +204,7 @@ That fits the gate's 1–2 s cold and milliseconds warm.
 
 ## Steps
 
-1. **Adopt the sibling's rewritten pack** as a recorded COPY from Pulling-it-all-together, then
+1. **Adopt the sibling's rewritten pack** as a recorded COPY from PIAT, then
    rerun the converter and the replay.
 2. **Add the text relations** `str`, `strprefix` and `comment`, and dotted text in `name`.
 3. **Syntax:** sets as patterns, `@glob` and `@iglob` on any text, `@word` and `@iword`. Teach the

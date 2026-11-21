@@ -16,7 +16,6 @@
 //! bytes for 64 tape nodes, in the batch's block beside the projection's other cells. `local`, `core`, `up` and `fielded` were up to 16 bytes a node.
 
 use super::cells::{Block, Cells, Desc};
-use super::id_reads;
 use rerail_clif::ids::{Numbering, Run};
 use std::sync::Arc;
 
@@ -131,10 +130,17 @@ impl Ranks {
         Ranks { first, groups, samples, count, desc }
     }
 
-    /// The descriptor's address, for the reads written once (`super::id_reads`).
+    /// The descriptor's address, for the reads in CLIF (the JIT's, the kernels').
     #[inline]
     pub fn desc(&self) -> *const u8 {
         self.desc.as_ptr().cast()
+    }
+
+    /// The descriptor, whose reads (`Numbering::is`, …) answer this index's and its granule table's points.
+    #[inline]
+    pub fn numbering(&self) -> &Numbering {
+        // SAFETY: this index's descriptor, in its block, which lives as long as the index.
+        unsafe { &*self.desc.as_ptr() }
     }
 
     /// The descriptor, for the granule table to fill its runs (before the projection is shared).
@@ -148,18 +154,18 @@ impl Ranks {
         self.count[item as usize]
     }
 
-    /// Whether tape node `x` is a numbered `item` (`num_is`, written once in CLIF).
+    /// Whether tape node `x` is a numbered `item` (`Numbering::is`; the CLIF's `num_is`).
     #[inline]
     pub fn is(&self, item: Item, x: u32) -> bool {
         // SAFETY: this index's descriptor, whose runs point at its cells.
-        unsafe { id_reads::num_is(self.desc(), item as u32, x) != 0 }
+        unsafe { self.numbering().is(item as u32, x) }
     }
 
     /// Numbered `item`s before tape node `x` (`num_rank`).
     #[inline]
     pub fn rank(&self, item: Item, x: u32) -> u32 {
         // SAFETY: as `is`.
-        unsafe { id_reads::num_rank(self.desc(), item as u32, x) }
+        unsafe { self.numbering().rank(item as u32, x) }
     }
 
     /// Tape node `x`'s number among the `item`s, if it is one.
@@ -172,8 +178,8 @@ impl Ranks {
     #[inline]
     pub fn select(&self, item: Item, r: u32) -> Option<u32> {
         // SAFETY: as `is`.
-        let x = unsafe { id_reads::num_select(self.desc(), item as u32, r) };
-        (x != u32::MAX).then_some(x)
+        let x = unsafe { self.numbering().select(item as u32, r) };
+        (x != rerail_clif::ids::NONE).then_some(x)
     }
 
     /// Every `item`, in order: `(number, tape node)`.

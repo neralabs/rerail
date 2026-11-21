@@ -1,5 +1,4 @@
 .policy "ruff-f704-yield-outside-function" revision 1
-.guests off
 .description "Use yield and await only inside function bodies; Python rejects them at module or class level, and yield inside a comprehension."
 .language python
 .mode steer

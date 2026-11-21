@@ -68,6 +68,8 @@ fn literal<'v>(v: &'v Version, l: crate::code_rule_dsl::logic::program_image::Li
                 AggRef::Sum => "sum",
                 AggRef::Product => "rr_product",
                 AggRef::Join { .. } => "join",
+                AggRef::Bounded { max: true, .. } => "max",
+                AggRef::Bounded { max: false, .. } => "min",
             };
             ("aggregate", Some(v.rel_name(atom.rel())), atom.neg(), Some(op.into()))
         }

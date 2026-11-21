@@ -192,7 +192,7 @@ pub(in crate::code_rule_dsl) fn read_record(store: &ContentStore, key: &[u8; 32]
         read.push(LibraryFile { path: PathBuf::from(path.as_str()), sha256 });
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
-    let Some(digest) = unhex(&digest) else { return Ok(None) };
+    let Some(digest) = unhex(digest) else { return Ok(None) };
     let mut resolutions = Vec::new();
     for row in facts.get(RESOLVES).into_iter().flatten() {
         let [Value::Str(path), Value::Str(target)] = row.as_slice() else { return Ok(None) };

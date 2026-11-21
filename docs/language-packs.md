@@ -58,6 +58,17 @@ Each language family has one adapter type, and every engine call site asks it in
 | `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 | `rr` | `rr` (`.rerail` rule files, the engine's own grammar `native:rr`) | none: all five `Refused`; rules match its kinds and text | none |
 | `json` | `json` | none: all five `Refused` (rules read its tree) | none |
+| `format` | `python-format`, `eslint-directive` (grammars of a string's value, which a `.rerail` rule reads with `parsed`) | none: all five `Refused` | none |
+| `java` | `java` | none yet: all five `not-supported-yet` | none |
+| `csharp` | `csharp` | none yet: all five `not-supported-yet` | none |
+| `html` | `html` | none yet: all five `not-supported-yet` | none |
+| `css` | `css` | none yet: all five `not-supported-yet` | none |
+| `markdown` | `markdown` (and `markdown-inline`, the content of its `inline` nodes) | none yet: all five `not-supported-yet` | none |
+| `kotlin` | `kotlin` | none yet: all five `not-supported-yet` | none |
+| `swift` | `swift` | none yet: all five `not-supported-yet` | none |
+| `scala` | `scala` | none yet: all five `not-supported-yet` | none |
+| `go` | `go` | none yet: all five `not-supported-yet` | none |
+| `c` | `c`, `cpp` (`.h` is C++) | none yet: all five `not-supported-yet` | none |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -77,8 +88,8 @@ Each language family has one adapter type, and every engine call site asks it in
 <details>
 <summary>How dispatch, refusals and embedding work</summary>
 
-- **Adapter files:** `Python` (`adapter/scope.rs`, `value.rs`, ...), `Rust` (`adapter/rust.rs`), `Vue`
-  (`adapter/vue.rs`), `Sql` (`adapter/sql.rs`), `Rr` (`adapter/rr.rs`) and `Json` (`adapter/json.rs`).
+- **Adapter files:** each family's type is in `adapter/<family>.rs` (`Python` in `adapter/python.rs`, `Ecma` in
+  `adapter/ecma.rs`, ...); the concern traits' shared code is in `adapter/scope.rs`, `value.rs` and the rest.
 - **`with_adapter!`** is the one exhaustive match on a family. It, `Family`, `GrammarDialect`, `Family::of` and
   `honours` are generated from the registry; no enum is edited by hand.
 - **Every other call site** asks the adapter. One that needs a concern's associated type calls a function generic over
@@ -267,8 +278,8 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 | `runsOn` | no | Dialect labels its rules run on, its own first; default its own. A `typescript` rule also runs on JavaScript files |
 | `capabilities` | yes | Per capability (`scope`, `value`, `arguments`, `calls`, `formatArgs`): `supported`, `refused` (no such thing or no plan; a rule using it is invalid) or `not-supported-yet` |
 | `suppressions` | yes | Linter suppression comments its files honour (`noqa`, `nosec`, `eslint`, `oxlint`, `biome`, `phpstan`, `psalm`, `phpcs`, `clippy`, `sqlfluff`) |
-| `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks. A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
-| `fragments` | no | Grammars of a part of one of its dialects, which `.rerail` rules name in `embed`, `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "expression" }` is a Python expression, parsed inside a written `( … )`. A name is unique among every dialect label and fragment ([decision 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md)) |
+| `embeds` | no | Embedded languages and how they are reached (`via`): Blade's PHP through the compiled view, Vue's script blocks, HTML's scripts and styles, Markdown's inline content (`dialects` names the embedded language's dialects an embedding gives: Markdown embeds its own `markdown-inline`). A file's embedded programs are made as it is read and are part of it (decision 0431 §4). A rule runs on the program with `ast.embedded: "<via>"` and reaches it from the file's tree with `embedded` ([DSL reference](code-rule-dsl-reference.html#embedded)) |
+| `fragments` | no | Grammars of a part of one of its dialects, which `.rerail` rules name in `sub_tape` and `parsed`: `{ "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 }` is a Python type, as it is read after `x:`; JavaScript's `jsx` starts at `jsx_element` and HTML's `html-element` at `element`. The dialect's hand-written parser reads the text from the node kind `start`, and the tape's root is that node. A fragment's tapes have a tag of their own, never a dialect's. A name is unique among every dialect label and fragment ([decisions 0082](final-shape/decisions/0082-embedded-grammar-names-sql-and-global-guests.md), [0466](final-shape/decisions/0466-a-fragment-is-parsed-from-a-node-kind-by-a-hand-written-parser.md)) |
 
 Each dialect has:
 

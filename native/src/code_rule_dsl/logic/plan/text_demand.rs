@@ -211,8 +211,8 @@ fn fold(columns: &[Vec<Kinds>], fixes: &[Fix]) -> Kinds {
 /// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
 /// are followed through the relations' columns to a fixpoint: a column of a derived relation holds the kinds its
 /// rules' head variables can have, each the intersection of what its body fixes (`kind(v, "K")`, a matcher atom's
-/// root, a column whose kinds are known), the union over its rules. An input's column is any kind. A positive
-/// `text(v, …)` then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
+/// root, a column whose kinds are known), the union over its rules. An input's column is any kind. A `text(v, …)`,
+/// positive or negated, then demands `v`'s kinds (`core_rr::TEXT_INLINE` holds below them only). Fixed by the same body only,
 /// `text(w, t)` over `classes(c, _), child(w, c, _), kind(w, "decorated_definition")` was demanded, but a rule reading
 /// `text(n, t)` of `nodes(n)` was not, and saw no text past the bound.
 pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
@@ -410,14 +410,14 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
         }
         any.then_some((kinds, fields))
     };
-    let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
+    let (mut kinds, mut any, mut negated_any) = (BTreeSet::new(), Vec::new(), 0);
     let mut read = Some(TextNodes::default());
     let mut wide: Option<String> = None;
     for (ri, &rule) in rules.iter().enumerate() {
         let head = head_of(rule);
         for (i, l) in rule.body().enumerate() {
             let Lit::Atom(text) = l.view() else { continue };
-            if text.neg() || v.rel_name(text.rel()) != "text" {
+            if v.rel_name(text.rel()) != "text" {
                 continue;
             }
             let Some(TermRef::Var(s)) = text.args().next() else {
@@ -453,14 +453,21 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                     },
                 }
             }
+            // A negated read demands as a positive one does: a node whose row is not made has no text to test, and its
+            // negation held whatever its text. A negation of a constant within the bound demands no long text (a longer
+            // text is not that constant, row or no row); one of a node no body fixes, every node's at any length
+            // (`negated_any`), since a twin cannot stand in for a negation.
             match fixed {
+                _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),
-                None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) || twinned(head, name) => {}
+                None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
+                None if text.neg() => negated_any += 1,
+                None if twinned(head, name) => {}
                 None => any.push((ri, i)),
             }
         }
     }
-    TextDemand { long: kinds, any, read, wide }
+    TextDemand { long: kinds, any, negated_any, read, wide }
 }
 
 /// The constraints on the node `$name` matches in a matcher's rule, read where its pattern sits.

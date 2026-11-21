@@ -10,7 +10,7 @@
 //!   rerail-engine run-rr | run-policies | check-rr | convert-rr ... (`tools::cli`)
 //!
 //! Every command takes `--memory-mb <n>` (the overall memory budget, 1 GB by default) and `--metal-mb <n>` (the Metal
-//! budget, on top of it: the overall budget by default, decision 0518); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
+//! budget, on top of it: the overall budget by default, decision 0549); `RERAIL_MEMORY_MB` and `RERAIL_METAL_MB` set them too.
 //!
 //! Runaways (decision 0462): a derived relation holds at most `RERAIL_WIDEST_ROWS` rows (50 M by default). Past it the
 //! run stops naming the relation's rules, or with `RERAIL_WIDEST=cut` keeps the rows so far, goes on, and exits 3.
@@ -25,11 +25,12 @@ fn main() -> ExitCode {
     }
     // Before any thread starts: a stop signal or `RERAIL_DEADLINE` dumps the run first (decision 0084).
     rerail_engine::tools::watch();
-    // Before any pool is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), this thread
-    // one of them.
-    rerail_engine::threads::configure(true);
+    // Before any block is made: the one block policy. The command's machine: its pool, of the most threads the
+    // process uses (`RERAIL_THREADS`), this thread one of them (decision 0442).
+    rerail_engine::threads::configure();
+    let machine = rerail_engine::threads::Machine::here();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let (out, incomplete) = rerail_engine::tools::cli(&args);
+    let (out, incomplete) = rerail_engine::tools::cli(&args, &machine);
     match out {
         Ok(text) => {
             print!("{text}");

@@ -117,9 +117,82 @@ pub struct Front {
     pub undone: Vec<String>,
     pub matchers: text::Matchers,
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
+    /// The relations the deferred joins pass gave a pair cache.
+    pub cached: Vec<String>,
 }
 
-/// `version` pruned to the rules its outputs read (`preparation::Prune`), before the run prepares the program.
+/// How the deferred joins pass (`product_demand::deferred`) runs for one prepared program. `RERAIL_DEFERRED_JOINS`:
+/// `auto` (the default) and `adaptive` share a frequently requested endpoint's work and admit small pair caches; `on`
+/// makes the static rewrites alone; `off` leaves the joins as written. On by default (decision 0488): an insurance
+/// against a join over-long for its readers' demand, at 0.27% more instructions on corpus0 x B-now (955.9 G against
+/// 953.3 G, the same findings). A run that loads (`world::wanted`) keeps them: a load hands exports back by location,
+/// which a new factor has none of.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Deferral {
+    pub on: bool,
+    pub adaptive: bool,
+    /// Whether pair caches may be admitted: off once a cache drew a document-backed answer into the cross-file part.
+    pub cache_pairs: bool,
+    /// The rounds of `ON_REQUEST` made eager before the pass, as `answers_where_documents_are` makes them: the
+    /// answers direct factor reads drew into the cross-file part, projected in their documents.
+    pub undone: BTreeSet<usize>,
+    /// The attribute each relation's pair cache was turned off for.
+    pub placement: std::collections::BTreeMap<String, String>,
+}
+
+impl Deferral {
+    /// The setting for a program, from `RERAIL_DEFERRED_JOINS`, and what the run's earlier tries changed (`Replans`).
+    pub fn of(loading_run: bool, key: &[u8; 32]) -> Deferral {
+        let mode = crate::code_rule_dsl::logic::profile::bound::<DeferredJoins>().0.map_or_else(|| std::env::var("RERAIL_DEFERRED_JOINS").unwrap_or_else(|_| "auto".into()), str::to_owned);
+        let on = !loading_run && matches!(mode.as_str(), "auto" | "on" | "adaptive");
+        let adaptive = mode != "on";
+        let base = Deferral { on, adaptive, cache_pairs: adaptive, ..Default::default() };
+        crate::code_rule_dsl::logic::profile::with_bound::<Replans, _>(|r| r.0.as_ref().and_then(|r| r.lock().get(key).cloned())).filter(|_| on).unwrap_or(base)
+    }
+
+    /// What the next try changes, when `rel`, answered by a function of its node's document, landed in the cross-file
+    /// part: the pair caches off (`cached` lists the relations that had one), else the round answering `rel` made
+    /// eager. None when neither is left to try.
+    pub fn after_placement(&self, rel: &str, cached: &[String]) -> Option<Deferral> {
+        use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
+        if !self.on {
+            return None;
+        }
+        let mut next = self.clone();
+        if self.cache_pairs && !cached.is_empty() {
+            next.cache_pairs = false;
+            next.placement.extend(cached.iter().map(|c| (c.clone(), rel.to_owned())));
+            crate::code_rule_dsl::logic::profile::decision("deferred join placement", || format!("{rel} needs the document; use direct factor reads"));
+            return Some(next);
+        }
+        let round = ON_REQUEST.iter().position(|round| round.iter().any(|a| a.rel == rel))?;
+        if !next.undone.insert(round) {
+            return None;
+        }
+        crate::code_rule_dsl::logic::profile::decision("deferred join placement", || format!("project {rel} in its source document before reading its factors"));
+        Some(next)
+    }
+
+    pub(super) fn settings(&self) -> Vec<u8> {
+        let mut k = vec![u8::from(self.adaptive), u8::from(self.cache_pairs)];
+        k.extend(self.undone.iter().map(|&r| r as u8 + 2));
+        for (rel, attribute) in &self.placement {
+            k.extend_from_slice(format!("\0{rel}={attribute}").as_bytes());
+        }
+        k
+    }
+}
+
+/// A caller's choice of `RERAIL_DEFERRED_JOINS`'s mode for its runs (a test's), over the variable's.
+#[derive(Clone, Default)]
+pub struct DeferredJoins(pub Option<&'static str>);
+
+/// The run's changed deferrals, by prepared program: a placement that failed is tried again with the next one
+/// (`Deferral::after_placement`). Bound by `corpus::run_observed` for its run.
+#[derive(Clone, Default)]
+pub struct Replans(pub Option<Arc<parking_lot::Mutex<std::collections::BTreeMap<[u8; 32], Deferral>>>>);
+
+/// `version` pruned to the rules its outputs read (`front::prune`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     let mut p = Pipeline::new("pruned", version);
     p.program(&mut prune::Prune::default());
@@ -130,13 +203,15 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
 /// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
-    front_of(version, dialect, last, true)
+/// `deferral`: how the deferred joins pass runs (decision 0488).
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, deferral, last, true)
 }
 
-/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
-/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
-pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
+/// `front`, with the node products bounded by their readers (`product_demand`), and the joins deferred to them
+/// (`product_demand::deferred`), where `whole`: a whole program's; a part's are bounded once the parts are linked
+/// (`parts::front`), where the products' readers are.
+pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, deferral: &Deferral, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
@@ -150,6 +225,23 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     p.program(&mut prune::Prune::default());
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
+    }
+    // Joins deferred to what their readers request (`product_demand::deferred`, decision 0488): the requested pairs or
+    // endpoints drive the producer, or the two factors meet in each reader. A part prepared alone lacks its readers.
+    if deferral.on && whole {
+        if !deferral.undone.is_empty() {
+            let undone = deferral.undone.clone();
+            p.made("rounds the deferral makes eager", 1, &deferral.settings(), |v| {
+                let mut v = Arc::clone(v);
+                for &round in &undone {
+                    let round = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST[round];
+                    v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| crate::code_rule_dsl::logic::rr::lower::undo_round(head, rules, round))?;
+                }
+                Ok((v, Vec::new()))
+            });
+            p.program(&mut prune::Prune::default());
+        }
+        p.program(&mut super::product_demand::deferred::DeferJoins::new(deferral));
     }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
@@ -179,12 +271,19 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
         crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{} counts made by rank over their asked and counted rows, not their pairs", ranks.found));
     }
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
+    let mut cached = Vec::new();
     for d in p.decisions() {
+        if d.what == crate::code_rule_dsl::logic::profile::author_joins::TOPIC
+            && let Ok(j) = serde_json::from_str::<crate::code_rule_dsl::logic::profile::author_joins::Join>(&d.detail)
+            && matches!(j.access, crate::code_rule_dsl::logic::profile::author_joins::Access::Factors { cache: Some(_) })
+        {
+            cached.push(j.relation);
+        }
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
     let run = p.done()?;
     let demand = own.outcome.map(|o| (own.listed, o));
-    Ok((run.output().clone(), Front { reaches: (reach.reaches, reach.throughs), demanded: negated.demanded, demand, undone: undo.undone, matchers, vocabulary }, run))
+    Ok((run.output().clone(), Front { reaches: (reach.reaches, reach.throughs), demanded: negated.demanded, demand, undone: undo.undone, matchers, vocabulary, cached }, run))
 }
 
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),

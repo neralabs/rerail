@@ -125,8 +125,8 @@ the two schemes and showed them wrongly (`slot.index`). Now:
 their own grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable
 as that node, which is now stable across edits elsewhere in the host. The flag left guests in preorder.
 
-**The bit widths, from data** (`definition_ids_census`, every source file of the data layer at `82f8be6eb0`, the
-landing app, and this repository):
+**The bit widths, from data** (`definition_ids_census`, every source file of the data layer at `82f8be6eb0`, an
+internal app, and this repository):
 
 | corpus | language | files | granules p50 / p99 / max | largest granule (nodes and tokens) | spilled |
 | --- | --- | ---: | --- | ---: | ---: |
@@ -363,7 +363,7 @@ Open: the name of `.global` (§3), against 0093's global facts. `.shared` says w
 
 ## What the prior work says
 
-- **ast-index-spike** (history index §2.16(d), D74): key by what a thing is a function of, never object identity.
+- **SQL index prototype** (history index §2.16(d), D74): key by what a thing is a function of, never object identity.
   *Agrees*: §2's symbol and content keys.
 - **Trap T2** (union-scoped sharing lost through scope inflation): *agrees* with §3, where each policy's rules read
   only its scope; it does not argue for narrowing the library.

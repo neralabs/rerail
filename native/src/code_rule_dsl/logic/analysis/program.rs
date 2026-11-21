@@ -211,14 +211,18 @@ fn scalar_inputs(v: &Version, r: RuleRef<'_>) -> Vec<scalars::Scalar> {
         if keys.is_empty() {
             keys.push(E::Integer(1));
         }
+        // A bounded aggregate's value depends on its probe's bound (decision 0511): no summary of the group alone.
+        if let AggRef::Bounded { bound, .. } = op {
+            predicates.push(E::Opaque(format!("bounded by {}", name(v, r, bound))));
+        }
         predicates.sort();
         result.push(scalars::Scalar {
             kind: match op {
                 AggRef::Count => Kind::Count,
                 AggRef::Sum => Kind::Sum,
                 AggRef::Product => Kind::Product,
-                AggRef::Min => Kind::Min,
-                AggRef::Max => Kind::Max,
+                AggRef::Min | AggRef::Bounded { max: false, .. } => Kind::Min,
+                AggRef::Max | AggRef::Bounded { max: true, .. } => Kind::Max,
                 AggRef::Join { .. } => Kind::OrderedJoin,
             },
             source: v.rel_name(atom.rel()).to_owned(),
@@ -298,15 +302,17 @@ impl ProgramAnalysis {
         }
         // Each rule's analyses alone, on the pool's threads.
         use rayon::prelude::*;
-        let rules: Vec<RuleAnalysis> = rules
-            .par_iter()
-            .map(|&r| RuleAnalysis {
-                head: head(r).to_owned(),
-                uniqueness: projection(program, r, &relation_keys).unique(),
-                scalars: scalars::analyze(scalar_inputs(program, r)),
-                contribution_storage: storage::analyze(program, r),
-            })
-            .collect();
+        let rules: Vec<RuleAnalysis> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            rules
+                .par_iter()
+                .map(|&r| RuleAnalysis {
+                    head: head(r).to_owned(),
+                    uniqueness: projection(program, r, &relation_keys).unique(),
+                    scalars: scalars::analyze(scalar_inputs(program, r)),
+                    contribution_storage: storage::analyze(program, r),
+                })
+                .collect()
+        });
         let scalar_storage = bags::analyze(rules.iter().enumerate().flat_map(|(rule, r)| {
             r.scalars.inputs.iter().cloned().enumerate().map(move |(scalar, input)| {
                 (bags::Site { rule, head: r.head.clone(), scalar }, input)

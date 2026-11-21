@@ -1,0 +1,79 @@
+.policy "rerail-ui-color-tokens" revision 2
+.description "Use Nera's design tokens for dashboard colours instead of raw colour values, and don't redefine a Nera token outside its generated sheet."
+.language css
+.mode steer
+.scope include "ui/**/*.css"
+.scope exclude "ui/tokens.generated.css"
+// The dashboard takes its colours from Nera's design tokens (ui/tokens.generated.css), or from page-local tokens
+// built from them in base.css; Nera's own token names are defined only in the generated sheet. Seven text
+// searches over each file, as the JSON's regex clauses, each reported at its colour or token:
+//   --steered: #D4700A;                                  UI_RAW_HEX_COLOUR
+//   background-image: url("data:…fill='%23D4700A'…")      UI_RAW_COLOUR_IN_DATA_URI
+//   --steered-subtle: rgba(212,112,10,.08);              UI_RAW_COLOUR_FUNCTION
+//   .alert { color: red; }                               UI_NAMED_COLOUR
+//   --card-shadow: 0 1px 2px rgba(212, 112, 10, .2);     UI_EFFECT_COLOUR (an effect token: black or white only)
+//   --primary: var(--steered);                           UI_NERA_TOKEN_REDEFINED
+//   style.setProperty("--primary", x)                    UI_NERA_TOKEN_SET (in scripts)
+//   --steer-fg: var(--warning-foreground);               not reported
+// The JSON's scope spans CSS, JavaScript and HTML: this is its CSS policy; rerail-ui-color-tokens.javascript and
+// .html are the others. The searches are rr/rerail-ui-colours's, the JSON's regexes copied exactly.
+
+#include "rr/rerail-ui-colours.rerail"
+
+.violation UI_RAW_HEX_COLOUR(at: span, c: symbol) "Use a Nera token or a base.css page-local token built from Nera tokens (var(), color-mix(); getComputedStyle in a canvas) for {c}. Leave it if it is an id, fragment or private field."
+UI_RAW_HEX_COLOUR(g, c) :- raw_hex(g), text(g, c).
+.violation UI_RAW_COLOUR_IN_DATA_URI(at: span) "A data: image can't read the page's tokens: draw this icon as inline SVG with currentColor, or as a mask-image over a background from a Nera token."
+UI_RAW_COLOUR_IN_DATA_URI(g) :- data_uri_hex(g).
+.violation UI_RAW_COLOUR_FUNCTION(at: span) "Replace this raw colour with a Nera token from tokens.generated.css, or a base.css page-local token built from them (var(), color-mix(); getComputedStyle in a canvas)."
+UI_RAW_COLOUR_FUNCTION(g) :- colour_function(g).
+.violation UI_NAMED_COLOUR(at: span, c: symbol) "Replace {c} with a Nera token from tokens.generated.css, or a base.css page-local token built from them (var(), color-mix(); getComputedStyle in a canvas)."
+UI_NAMED_COLOUR(g, c) :- named_colour(g), text(g, c).
+.violation UI_EFFECT_COLOUR(at: span) "Effect tokens hold only a black or white alpha; take this colour from a Nera token or a base.css page-local token built from Nera tokens."
+UI_EFFECT_COLOUR(g) :- effect_colour(g).
+.violation UI_NERA_TOKEN_REDEFINED(at: span, t: symbol) "{t} is Nera's and comes only from tokens.generated.css: add a page-local token with its own name in base.css's token block and use that. Fix a wrong Nera value in Nera."
+UI_NERA_TOKEN_REDEFINED(g, t) :- nera_token_defined(g), text(g, t).
+.violation UI_NERA_TOKEN_SET(at: span, t: symbol) "{t} is Nera's and comes only from tokens.generated.css: add a page-local token with its own name in base.css's token block and use that. Fix a wrong Nera value in Nera."
+UI_NERA_TOKEN_SET(g, t) :- nera_token_set(g), text(g, t).
+
+// The pack's example (packs/rerail/pack.json).
+.test raw_page_colours_are_reported exactly
+    .fixture "ui/css/base.css" ```
+        :root {
+          --steered: #D4700A;
+          --steered-subtle: rgba(212,112,10,.08);
+        }
+        ```
+    .expect UI_RAW_HEX_COLOUR at "ui/css/base.css":2
+    .expect UI_RAW_COLOUR_FUNCTION at "ui/css/base.css":3
+.end
+
+.test keywords_data_images_effects_and_nera_tokens_are_reported exactly
+    .fixture "ui/css/merge.css" ```
+        .alert { color: red; }
+        .icon { mask-image: url("data:image/svg+xml,<svg fill='%23D4700A'/>"); }
+        :root {
+          --card-shadow: 0 1px 2px rgba(212, 112, 10, .2);
+          --primary: var(--steered);
+        }
+        ```
+    .expect UI_NAMED_COLOUR at "ui/css/merge.css":1
+    .expect UI_RAW_COLOUR_IN_DATA_URI at "ui/css/merge.css":2
+    .expect UI_EFFECT_COLOUR at "ui/css/merge.css":4
+    .expect UI_NERA_TOKEN_REDEFINED at "ui/css/merge.css":5
+.end
+
+// The pack's passing example; a colour in a comment, an id selector, a black effect; the generated sheet.
+.test tokens_comments_and_the_generated_sheet_pass exactly
+    .fixture "ui/css/base.css" ```
+        :root {
+          --steer-fg: var(--warning-foreground);
+          --steer-bg: color-mix(in srgb, var(--warning) 10%, transparent);
+          /* was #D4700A */
+          --card-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+        }
+        #main-title { color: var(--primary-foreground); }
+        ```
+    .fixture "ui/tokens.generated.css" ```
+        :root { --primary: #0B57D0; }
+        ```
+.end

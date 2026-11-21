@@ -1,4 +1,4 @@
-//! The SQLite layout from ast-index-spike's tape_store.py: rec6 file rows and positional FTS.
+//! The SQLite layout from the SQL index prototype's tape_store.py: rec6 file rows and positional FTS.
 use crate::code_rule_dsl::{budget, language, tape::TapeDoc};
 use ast_grep_core::Doc;
 #[cfg(any(test, feature = "test-hooks"))]

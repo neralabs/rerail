@@ -13,7 +13,7 @@ use rerail_rr_syntax::tape::{self, FIRST_ANONYMOUS, KIND_NAMES};
 use std::collections::BTreeMap;
 
 fn corpus() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -136,7 +136,7 @@ fn gaps() -> Vec<Gap> {
     out
 }
 
-/// What the corpus cannot show, from the grammar (`21-named-only.bitlex`): a setting's arguments
+/// What the corpus cannot show, from the grammar (`22-test-blocks.bitlex`): a setting's arguments
 /// and a declaration's or a functor's modifiers may be any punctuation (`punctuation`,
 /// `setting_punctuation`), or none. So the gaps around them imply the empty word, and every
 /// punctuation but a delimiter is kept under those kinds.

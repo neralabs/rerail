@@ -499,6 +499,10 @@ impl<'v> Canon<'v> {
                         AggRef::Product => (3, false),
                         AggRef::Max => (4, false),
                         AggRef::Join { .. } => (5, false),
+                        AggRef::Bounded { max: false, strict: false, .. } => (6, false),
+                        AggRef::Bounded { max: false, strict: true, .. } => (7, false),
+                        AggRef::Bounded { max: true, strict: false, .. } => (8, false),
+                        AggRef::Bounded { max: true, strict: true, .. } => (9, false),
                     };
                     c.out.push(Tok::I(k));
                     if !count {
@@ -510,6 +514,10 @@ impl<'v> Canon<'v> {
                             c.out.push(Tok::V(s));
                         }
                         c.out.push(Tok::S(v.text(sep)));
+                    }
+                    if let Some(b) = op.bound() {
+                        let b = c.name(b);
+                        c.out.push(Tok::V(b));
                     }
                     c.atom(atom);
                 }
@@ -993,6 +1001,14 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
     Refined { cands, number, class, initial, shapes }
 }
 
+
+/// Relations equal up to their constants: how many, in how many groups, and a few
+/// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
+pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
+    let similar = congruence(v, f, true);
+    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
@@ -1077,7 +1093,7 @@ mod tests {
         let mut repeats = super::DropRepeated::default();
         p.program(&mut repeats);
         let out = p.current().unwrap().clone();
-        assert_eq!(repeats.0, 1);
+        assert_eq!((repeats.0, out.rules().count()), (1, 2));
         let want = image(false, vec![by(&["r1", "r3"]), by(&["r2"])]);
         assert_eq!(out.asked().get("q"), Some(&vec![BTreeSet::from(["r1".to_owned(), "r3".to_owned()]), BTreeSet::from(["r2".to_owned()])]), "the step's own record, by rule");
         assert!(crate::code_rule_dsl::logic::program_image::same_program(&want, &out), "{}", crate::code_rule_dsl::logic::program_image::differences(&want, &out));
@@ -1148,11 +1164,4 @@ mod tests {
         let heads = heads(&out);
         assert!(heads.iter().any(|h| h == "b") && !(heads.iter().any(|h| h == "a1") && heads.iter().any(|h| h == "a2")), "{}", out.show());
     }
-}
-
-/// Relations equal up to their constants: how many, in how many groups, and a few
-/// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
-pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
-    let similar = congruence(v, f, true);
-    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
 }

@@ -286,6 +286,17 @@ pub(crate) struct NamedC {
 /// The file includes nest to at most (clang's bound).
 pub const MAX_INCLUDE_DEPTH: usize = 200;
 
+thread_local! {
+    static HOST_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The words' runs on the host so far, on this thread: the interpreter's (`run`) and the
+/// compiled code's on the CPU (`run_native`). The device's path makes none (0408, L3): it
+/// lays a machine out (`prepare`) and reads it back (`complete`) only.
+pub fn host_runs() -> u64 {
+    HOST_RUNS.with(std::cell::Cell::get)
+}
+
 /// The device's rungs of `Bounds` (`Bounds::rung`), the last `Bounds::of`.
 pub const RUNGS: usize = 5;
 
@@ -755,7 +766,7 @@ pub(crate) const fn op_index(op: &[u8]) -> u8 {
     let mut i = 0;
     while i < OPS.len() {
         let o = OPS[i];
-        if o.len() == op.len() && (o.len() < 1 || o[0] == op[0]) && (o.len() < 2 || o[1] == op[1]) {
+        if o.len() == op.len() && (o.is_empty() || o[0] == op[0]) && (o.len() < 2 || o[1] == op[1]) {
             return i as u8;
         }
         i += 1;
@@ -1125,6 +1136,7 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// # Safety
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
+    HOST_RUNS.with(|n| n.set(n.get() + 1));
     let mut p = prepare(program, files, env, bounds, &mut |b: Buf| b.ptr as u64)?;
     // SAFETY: the caller's.
     let r = unsafe { code(&mut p.c) };
@@ -1153,6 +1165,8 @@ pub struct Prepared<'a> {
 impl Prepared<'_> {
     /// The context's bytes, to copy where the code runs.
     pub fn ctx_bytes(&self) -> &[u8] {
+        // The device lays contexts out by 8-byte slots (0408, L2).
+        const _: () = assert!(std::mem::size_of::<Ctx>().is_multiple_of(8));
         // SAFETY: `Ctx` is plain old data (`repr(C)`), read as bytes.
         unsafe { std::slice::from_raw_parts((&raw const self.c).cast::<u8>(), std::mem::size_of::<Ctx>()) }
     }
@@ -1220,7 +1234,7 @@ pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, 
     let features: Vec<FeatureC> = env
         .features
         .iter()
-        .map(|f| FeatureC { b: BUILTINS.iter().position(|b| b.0.as_bytes() == f.0).map_or(NONE, |i| i as u32), name: ro(place, &f.1) as *const u8, len: f.1.len() as u64, value: f.2 })
+        .map(|f| FeatureC { b: BUILTINS.iter().position(|b| b.0.as_bytes() == f.0).map_or(NONE, |i| i as u32), name: ro(place, f.1) as *const u8, len: f.1.len() as u64, value: f.2 })
         .collect();
     // Each vector's room reserved first, then placed.
     let rooms = [
@@ -1386,6 +1400,7 @@ pub unsafe fn complete(p: Prepared<'_>, r: u64, reasons: &[&'static str]) -> Res
 }
 
 pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+    HOST_RUNS.with(|n| n.set(n.get() + 1));
     let mut m = Machine::new(program, files, env, bounds)?;
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
@@ -1897,7 +1912,7 @@ impl<'a> Machine<'a> {
             (a, b) if op_like(a) && op_like(b) => {
                 let strings = &self.program.strings;
                 let cpp_ops: &[u16] = if self.env.cpp { &self.program.pp.cpp_ops } else { &[] };
-                self.program.pp.ops.iter().chain(cpp_ops).any(|&s| strings[usize::from(s)] == text).then(|| match text {
+                self.program.pp.ops.iter().chain(cpp_ops).any(|&s| strings[usize::from(s)] == text).then_some(match text {
                     b"#" | b"%:" => HASH,
                     b"##" | b"%:%:" => HASHHASH,
                     b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
@@ -2318,7 +2333,10 @@ impl<'a> Machine<'a> {
         let (at, hi) = self.line_end()?;
         let mut ex = std::mem::take(&mut self.ex);
         (ex.lo, ex.at, ex.hi, ex.err) = (at, at, hi, false);
-        (ex.vals.clear(), ex.ops.clear(), ex.mins.clear(), ex.live.clear());
+        ex.vals.clear();
+        ex.ops.clear();
+        ex.mins.clear();
+        ex.live.clear();
         ex.live.push(true);
         self.ex = ex;
         Ok(())
@@ -2450,7 +2468,9 @@ impl<'a> Machine<'a> {
                         b"||" => !l.is_true(),
                         _ => true,
                     };
-                (self.ex.ops.push(op), self.ex.mins.push(p + 1), self.ex.live.push(live));
+                self.ex.ops.push(op);
+                self.ex.mins.push(p + 1);
+                self.ex.live.push(live);
                 true
             }
             9 => {
@@ -3095,7 +3115,10 @@ impl<'a> Machine<'a> {
                     b"limit" => {
                         let mut ex = std::mem::take(&mut self.ex);
                         (ex.lo, ex.at, ex.hi, ex.err) = (v.arg.0, v.arg.0, v.arg.1, false);
-                        (ex.vals.clear(), ex.ops.clear(), ex.mins.clear(), ex.live.clear());
+                        ex.vals.clear();
+                        ex.ops.clear();
+                        ex.mins.clear();
+                        ex.live.clear();
                         ex.live.push(true);
                         self.ex = ex;
                         return Ok(Some(true));
@@ -3397,10 +3420,10 @@ impl<'a> Machine<'a> {
     }
 
     fn undef(&mut self) -> R<()> {
-        if let Some(n) = self.line_tok()?.filter(|t| t.kind == IDENT) {
-            if let Ok(i) = self.find(self.text(&n))? {
-                self.table[i].def = NONE;
-            }
+        if let Some(n) = self.line_tok()?.filter(|t| t.kind == IDENT)
+            && let Ok(i) = self.find(self.text(&n))?
+        {
+            self.table[i].def = NONE;
         }
         self.skip_line()
     }
@@ -3410,9 +3433,6 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 }
-
-/// A string literal's characters, its `\"` and `\\` unescaped (the lean pass's `destringize`):
-/// `None` where it is no string literal (a character constant, a raw string).
 
 #[cfg(test)]
 #[test]

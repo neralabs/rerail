@@ -11,8 +11,11 @@ fn main() {
     // The compiler makes the code: a change of it makes the build again (cargo reruns the
     // script when a build-dependency changes; this says so to every builder, Relax's too).
     println!("cargo:rerun-if-changed=../compiler/src");
+    // The generated Rust is NEON's (`clif_rust`): elsewhere the path is the JIT's code (`lib.rs`).
     #[cfg(feature = "generated")]
-    generate();
+    if std::env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|a| a == "aarch64") {
+        generate();
+    }
 }
 
 #[cfg(feature = "generated")]

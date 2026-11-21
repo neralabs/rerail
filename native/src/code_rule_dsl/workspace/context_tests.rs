@@ -3243,7 +3243,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     }
     for (path, clause, bytes) in &stored {
         // A result is the canonical (key-ordered) serialization of its JSON value.
-        let value = serde_json::from_slice::<Value>(&bytes).unwrap();
+        let value = serde_json::from_slice::<Value>(bytes).unwrap();
         assert_eq!(
             serde_json::to_vec(&value).unwrap(),
             *bytes,
@@ -4208,7 +4208,7 @@ fn selector_indexes_skip_only_error_free_tapes_that_cannot_match() {
     narrowed.close();
 }
 
-/// Decision 0426 §4, step 6: with no search index built, a stored file is skipped by the presence stored with its
+/// Decision 0434 §4, step 6: with no search index built, a stored file is skipped by the presence stored with its
 /// tape, read in place in the tape's frame (its bytes as they are): `plain.py` has no lambda and no error node;
 /// `broken.py`'s error node keeps it decoded, as the index's syntax errors do; the results are a fresh workspace's.
 #[test]

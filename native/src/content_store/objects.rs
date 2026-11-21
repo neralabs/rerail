@@ -9,8 +9,8 @@ use super::reclamation::{OBJECT_SOURCE, OBJECT_TAPE};
 use super::segments::Place;
 use super::segments::SegmentMaps;
 use super::{
-    CachedBytes, ContentStore, HASH_SHA256, HashKey, SourceId,
-    StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
+    CachedBytes, ContentStore, DocumentPayload, HASH_SHA256, HashKey, SourceId,
+    StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredProgram, StoredSourceObjects, TapeId,
     TapePayload,
 };
 #[allow(unused_imports)]
@@ -153,25 +153,94 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
-            "SELECT j.key, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id FROM json_each(?1) j JOIN tape_objects t \
+            "SELECT j.key, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id, t.programs FROM json_each(?1) j JOIN tape_objects t \
              ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
         )?;
-        type Row = (i64, i64, [i64; 3], i64);
+        type Row = (i64, i64, [i64; 3], (TapeId, i64));
         let rows: Vec<Row> = statement
             .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
-                Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?], row.get(5)?))
+                Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?], (TapeId(row.get(5)?), row.get(6)?)))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
-        if self.placed_again(rows.iter().map(|&(_, _, [seg, ..], tape)| (OBJECT_TAPE, tape, seg)))? {
+        if self.placed_again(rows.iter().map(|&(_, _, [seg, ..], (tape, _))| (OBJECT_TAPE, tape.0, seg)))? {
             return self.tape_frames_for(sources, grammar_id, grammar_version, tape_format_version);
         }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
-        for (at, raw_length, [seg, seg_at, seg_len], _) in rows {
+        let mut recorded: Vec<(usize, TapeId, i64)> = Vec::new();
+        for (at, raw_length, [seg, seg_at, seg_len], (tape, programs)) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out[at as usize] = Some(TapeFrame { raw_length, frame });
+                out[at as usize] = Some(TapeFrame { raw_length, frame, programs: None });
+                recorded.push((at as usize, tape, programs));
+            }
+        }
+        let mut frames: Vec<(TapeId, i64, &mut TapeFrame)> = Vec::with_capacity(recorded.len());
+        let mut slots: Vec<Option<&mut TapeFrame>> = out.iter_mut().map(Option::as_mut).collect();
+        for (at, tape, programs) in recorded {
+            if let Some(frame) = slots[at].take() {
+                frames.push((tape, programs, frame));
+            }
+        }
+        self.attach_programs(&mut frames)?;
+        Ok(out)
+    }
+
+    /// Gives each of `frames` (its tape's id and count of programs) the programs recorded with it (decision 0431
+    /// step 6): each its `file_documents` row, its text and its tape's frame, in ordinal order. A tape that records
+    /// none has an empty list; one whose programs are not known (-1: stored without them), or a program of which is
+    /// missing, has none (its file's programs are made again). One read for all, nothing written.
+    fn attach_programs(&self, frames: &mut [(TapeId, i64, &mut TapeFrame)]) -> StoreResult<()> {
+        let holding: Vec<TapeId> = frames.iter().filter(|(_, n, _)| *n > 0).map(|(t, _, _)| *t).collect();
+        let mut documents = self.file_documents_bulk(&holding)?;
+        let texts = self.get_sources_bulk(&documents.values().flatten().filter_map(|d| d.source).collect::<Vec<_>>())?;
+        let tapes = self.tape_frames_by_id(&documents.values().flatten().map(|d| d.tape).collect::<Vec<_>>())?;
+        for (tape, count, frame) in frames.iter_mut() {
+            if *count < 0 {
+                continue;
+            }
+            let rows = documents.remove(tape).unwrap_or_default();
+            if usize::try_from(*count).ok() != Some(rows.len()) {
+                continue;
+            }
+            let programs: Option<Vec<StoredProgram>> = rows
+                .into_iter()
+                .map(|document| {
+                    let text = Arc::clone(texts.get(&document.source?)?);
+                    let tape = tapes.get(&document.tape)?.clone();
+                    Some(StoredProgram { document, text, tape })
+                })
+                .collect();
+            frame.programs = programs.map(Into::into);
+        }
+        Ok(())
+    }
+
+    /// The frames of the tapes `ids` name; a tape whose segment is gone is left out.
+    fn tape_frames_by_id(&self, ids: &[TapeId]) -> StoreResult<HashMap<TapeId, TapeFrame>> {
+        let mut out = HashMap::new();
+        if ids.is_empty() {
+            return Ok(out);
+        }
+        let list = serde_json::to_string(&ids.iter().map(|t| t.0).collect::<Vec<_>>()).expect("integers");
+        let rows: Vec<(i64, i64, [i64; 3])> = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut statement = connection.prepare_cached(
+                "SELECT t.tape_id, t.raw_length, t.seg, t.seg_at, t.seg_len FROM json_each(?1) j JOIN tape_objects t ON t.tape_id=j.value",
+            )?;
+            statement
+                .query_map([list], |row| Ok((row.get(0)?, row.get(1)?, [row.get(2)?, row.get(3)?, row.get(4)?])))?
+                .collect::<Result<_, _>>()?
+        };
+        // An archived tape is placed back first (decision 0450 step 4), as every reader a warm run uses does.
+        if self.placed_again(rows.iter().map(|&(id, _, [seg, ..])| (OBJECT_TAPE, id, seg)))? {
+            return self.tape_frames_by_id(ids);
+        }
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        for (id, raw_length, [seg, seg_at, seg_len]) in rows {
+            if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
+                out.insert(TapeId(id), TapeFrame { raw_length, frame, programs: None });
             }
         }
         Ok(out)
@@ -187,11 +256,11 @@ impl ContentStore {
         let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut statement = connection.prepare_cached(
-            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id \
+            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.raw_length, t.seg, t.seg_at, t.seg_len, t.tape_id, t.programs \
              FROM json_each(?1) j JOIN tape_objects t ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4 \
              JOIN source_objects s ON s.source_id=t.source_id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
         )?;
-        type Row = (SourceId, HashKey, i64, [i64; 3], i64);
+        type Row = (SourceId, HashKey, i64, [i64; 3], (TapeId, i64));
         let rows: Vec<Row> = statement
             .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
                 Ok((
@@ -199,23 +268,27 @@ impl ContentStore {
                     HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] },
                     row.get(6)?,
                     [row.get(7)?, row.get(8)?, row.get(9)?],
-                    row.get(10)?,
+                    (TapeId(row.get(10)?), row.get(11)?),
                 ))
             })?
             .collect::<Result<_, _>>()?;
         drop(statement);
         drop(connection);
-        if self.placed_again(rows.iter().map(|&(_, _, _, [seg, ..], tape)| (OBJECT_TAPE, tape, seg)))? {
+        if self.placed_again(rows.iter().map(|&(_, _, _, [seg, ..], (tape, _))| (OBJECT_TAPE, tape.0, seg)))? {
             return self.tape_frames_with_hashes(sources, grammar_id, grammar_version, tape_format_version);
         }
         let mut maps = SegmentMaps::new(object_dir(&self.database_path));
         let mut out = Vec::new();
-        for (source, hash, raw_length, [seg, seg_at, seg_len], _) in rows {
+        let mut recorded: Vec<(TapeId, i64)> = Vec::new();
+        for (source, hash, raw_length, [seg, seg_at, seg_len], (tape, programs)) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out.push((source, hash, TapeFrame { raw_length, frame }));
+                out.push((source, hash, TapeFrame { raw_length, frame, programs: None }));
+                recorded.push((tape, programs));
             }
         }
+        let mut frames: Vec<(TapeId, i64, &mut TapeFrame)> = out.iter_mut().zip(recorded).map(|((_, _, frame), (tape, programs))| (tape, programs, frame)).collect();
+        self.attach_programs(&mut frames)?;
         Ok(out)
     }
 
@@ -255,7 +328,7 @@ impl ContentStore {
         for (source, hash, grammar, raw_length, [seg, seg_at, seg_len], _) in rows {
             // A tape whose segment is gone is a miss: parsed again.
             if let Some(frame) = row_frame(&mut maps, seg, seg_at, seg_len) {
-                out.push((source, hash, grammar, TapeFrame { raw_length, frame }));
+                out.push((source, hash, grammar, TapeFrame { raw_length, frame, programs: None }));
             }
         }
         Ok(out)
@@ -608,7 +681,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let mut placing = Placing::write(&self.database_path, &[tape])?;
+        let mut placing = Placing::write(&self.database_path, &[tape], self.connection.flush())?;
         // Retried under `retry_busy`, as `put_source` is.
         let (id, seg) = self.immediate_transaction(|transaction| {
             let seg = placing.number(transaction)?.expect("the tape, placed");
@@ -631,6 +704,39 @@ impl ContentStore {
         Ok(id)
     }
 
+    /// Records the programs of `source`'s tape in `grammar` (grammar id, version, tape format; decision 0431 step 6):
+    /// each a source and a tape of its own, placed as they are in one segment (`Placing`), and a `file_documents`
+    /// row, and the tape's count of them, in one transaction. A tape whose programs are recorded, or that is not
+    /// stored, is left as it is.
+    pub fn put_programs(&self, source: SourceId, grammar: (i64, i64, i64), documents: &[DocumentPayload<'_>]) -> StoreResult<()> {
+        self.require_write_capacity()?;
+        let (grammar_id, grammar_version, tape_format_version) = grammar;
+        let count = i64::try_from(documents.len()).map_err(|_| StoreError::Invalid("too many derived documents".to_owned()))?;
+        let entries: Vec<&[u8]> = documents.iter().flat_map(|d| [d.source, d.tape]).collect();
+        let mut placing = Placing::write(&self.database_path, &entries, self.connection.flush())?;
+        let seg = self.immediate_transaction(|transaction| {
+            let found: Option<(i64, i64)> = transaction
+                .prepare_cached("SELECT tape_id,programs FROM tape_objects WHERE source_id=?1 AND grammar_id=?2 AND grammar_version=?3 AND tape_format_version=?4")?
+                .query_row(params![source.0, grammar_id, grammar_version, tape_format_version], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            let Some((tape, programs)) = found else { return Ok(None) };
+            if programs >= 0 {
+                return Ok(None);
+            }
+            let created_generation = generation(transaction)?;
+            let seg = placing.number(transaction)?;
+            let places: Vec<(Place, Place)> = match seg {
+                Some(seg) => (0..documents.len()).map(|i| (placing.place(seg, 2 * i), placing.place(seg, 2 * i + 1))).collect(),
+                None => Vec::new(),
+            };
+            put_documents_tx(transaction, TapeId(tape), grammar_version, tape_format_version, documents, &places, created_generation)?;
+            transaction.prepare_cached("UPDATE tape_objects SET programs=?2 WHERE tape_id=?1")?.execute(params![tape, count])?;
+            Ok(seg)
+        })?;
+        placing.name(seg)?;
+        Ok(())
+    }
+
     /// [`Self::put_source_hashed`] and [`Self::put_tape`] in one transaction: the source (`canonical` its SHA-256),
     /// stored or found, and its tape, both as they are in one segment of their own. A source looked up earlier may have
     /// been collected since (a pass deletes a source no tape, pin or live manifest holds); in one transaction no pass
@@ -651,7 +757,7 @@ impl ContentStore {
             ));
         }
         let tape_identity = HashKey::tape_identity(canonical, tape);
-        let mut placing = Placing::write(&self.database_path, &[source, tape])?;
+        let mut placing = Placing::write(&self.database_path, &[source, tape], self.connection.flush())?;
         let (ids, seg) = self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
             let seg = placing.number(transaction)?.expect("the source and tape, placed");
@@ -725,7 +831,7 @@ impl ContentStore {
         let mut statement = connection.prepare_cached(
             "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
              SELECT d.tape_id,d.ordinal,d.parent_ordinal,d.role_id,d.via_id,d.document_tape_id,\
-             t.source_id,t.grammar_id,d.source_map,d.host_errors FROM requested r \
+             t.source_id,t.grammar_id,d.source_map,d.host_errors,d.at_start,d.at_end FROM requested r \
              JOIN file_documents d ON d.tape_id=r.id \
              LEFT JOIN tape_objects t ON t.tape_id=d.document_tape_id \
              ORDER BY d.tape_id,d.ordinal",
@@ -743,6 +849,10 @@ impl ContentStore {
                     grammar_id: row.get(7)?,
                     source_map: row.get(8)?,
                     host_errors: row.get(9)?,
+                    at: match (row.get::<_, Option<i64>>(10)?, row.get::<_, Option<i64>>(11)?) {
+                        (Some(start), Some(end)) => u32::try_from(start).ok().zip(u32::try_from(end).ok()),
+                        _ => None,
+                    },
                 },
             ))
         })?;
@@ -1069,13 +1179,28 @@ pub(super) fn put_tape_tx(
         place,
         created_generation,
     )?;
-    if tape.documents.len() != document_places.len() {
+    put_documents_tx(transaction, tape_id, tape.grammar_version, tape.tape_format_version, tape.documents, document_places, created_generation)?;
+    Ok(tape_id)
+}
+
+/// Stores the documents derived from tape `tape_id` (`file_documents`), each its source and tape, whose places
+/// `document_places` holds in order, numbered from 1.
+fn put_documents_tx(
+    transaction: &Connection,
+    tape_id: TapeId,
+    grammar_version: i64,
+    tape_format_version: i64,
+    documents: &[DocumentPayload<'_>],
+    document_places: &[(Place, Place)],
+    created_generation: i64,
+) -> StoreResult<()> {
+    if documents.len() != document_places.len() {
         return Err(StoreError::Invalid(
             "every derived document needs its places".to_owned(),
         ));
     }
     for (index, (document, &(source_place, tape_place))) in
-        tape.documents.iter().zip(document_places).enumerate()
+        documents.iter().zip(document_places).enumerate()
     {
         let document_source_hash = HashKey::sha256(document.source);
         let document_source = put_source_prepared_tx(
@@ -1091,8 +1216,8 @@ pub(super) fn put_tape_tx(
             document_source,
             TapePayload {
                 grammar_id: document.grammar_id,
-                grammar_version: tape.grammar_version,
-                tape_format_version: tape.tape_format_version,
+                grammar_version,
+                tape_format_version,
                 bytes: document.tape,
                 documents: &[],
             },
@@ -1103,8 +1228,8 @@ pub(super) fn put_tape_tx(
         )?;
         transaction
             .prepare_cached(
-                "INSERT INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(tape_id,ordinal) DO NOTHING",
+                "INSERT INTO file_documents(tape_id,ordinal,parent_ordinal,role_id,via_id,document_tape_id,source_map,host_errors,at_start,at_end) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(tape_id,ordinal) DO NOTHING",
             )?
             .execute(params![
                 tape_id.0,
@@ -1115,9 +1240,11 @@ pub(super) fn put_tape_tx(
                 document_tape.0,
                 document.source_map,
                 document.host_errors,
+                document.at.map(|(start, _)| i64::from(start)),
+                document.at.map(|(_, end)| i64::from(end)),
             ])?;
     }
-    Ok(tape_id)
+    Ok(())
 }
 
 /// A tape of `raw_length` bytes at `place` (a segment's entry), as a source is (`put_source_prepared_tx`).
@@ -1196,9 +1323,22 @@ pub(super) fn source_id_by_hash(
 pub struct TapeFrame {
     raw_length: i64,
     frame: ObjectFrame,
+    /// A file's tape: the programs recorded with it (decision 0431 step 6); `None` where not known.
+    programs: Option<Arc<[StoredProgram]>>,
 }
 
 impl TapeFrame {
+    /// A tape of `raw_length` bytes in `frame` (`document_places`: a place its documents' table keeps), its programs
+    /// not known there.
+    pub(super) fn new(raw_length: i64, frame: ObjectFrame) -> Self {
+        Self { raw_length, frame, programs: None }
+    }
+
+    /// A file's tape: the programs recorded with it (decision 0431 step 6); `None` where not known.
+    pub fn programs(&self) -> Option<&[StoredProgram]> {
+        self.programs.as_deref()
+    }
+
     /// The tape's stored bytes, read in place in its segment.
     pub fn in_place(&self) -> &[u8] {
         self.frame.segment().bytes()

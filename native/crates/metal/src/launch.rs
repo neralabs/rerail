@@ -1,7 +1,6 @@
-//! Charge every compute dispatch before encoding it. Refuse submission after exhaustion.
+//! Charge every compute dispatch before encoding it. Refuse submission after exhaustion. The engine's commands
+//! (`crate::lane`, on every backend) charge each launch here as it is asked for and check the budget at their commit.
 use crate::Error;
-use metal::foreign_types::ForeignTypeRef;
-use metal::{BufferRef, CommandBufferRef, ComputeCommandEncoderRef, MTLSize};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -26,7 +25,6 @@ pub struct DispatchRecord {
     pub completed: bool,
     pub buffers: Vec<(usize, u64)>,
     pub application_buffer_bytes: usize,
-    pub private_buffer_bytes: usize,
     pub peak_application_buffer_bytes: usize,
 }
 
@@ -36,7 +34,6 @@ struct Evaluation {
     records: Vec<DispatchRecord>,
     commands: HashMap<usize, u64>,
     next_command: u64,
-    bindings: HashMap<(usize, usize), Vec<(usize, u64)>>,
     peak_application_buffer_bytes: usize,
 }
 
@@ -107,59 +104,29 @@ pub fn check_submission() -> Result<(), Error> {
     })
 }
 
-pub fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
-    check_submission()?;
-    command.commit();
-    mark_command(command, false);
-    Ok(())
-}
-
-/// Releases a command buffer whose submission `commit_checked` refused: it still holds a place in its queue (a queue
-/// holds 64) until it completes, so it is committed and waited for. Its dispatches were refused when encoded
-/// (`checked_dispatch_thread_groups`), and its results are not read.
-pub fn release_refused(command: &CommandBufferRef) {
-    command.commit();
-    command.wait_until_completed();
-}
-
-/// A completed command buffer's time on the GPU, in seconds (`GPUEndTime - GPUStartTime`).
-pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
-    unsafe extern "C" {
-        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
-        fn objc_msgSend();
-    }
-    // SAFETY: `GPUStartTime` and `GPUEndTime` take no arguments and return a CFTimeInterval (a double).
-    let send: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> f64 =
-        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
-    let object = command.as_ptr().cast::<std::ffi::c_void>().cast_const();
-    let (start, end) = unsafe { (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr()))) };
-    (end - start).max(0.0)
-}
-
-/// The host clock Metal's command-buffer times are in (`CACurrentMediaTime`: mach absolute time), in seconds.
+/// The host clock Metal's command-buffer times are in (mach absolute time on macOS), in seconds: `rerail_accel`'s.
 pub fn host_seconds() -> f64 {
-    #[repr(C)]
-    struct Timebase {
-        numer: u32,
-        denom: u32,
-    }
-    unsafe extern "C" {
-        fn mach_timebase_info(info: *mut Timebase) -> i32;
-        fn mach_absolute_time() -> u64;
-    }
-    static RATIO: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
-        let mut info = Timebase { numer: 0, denom: 0 };
-        // SAFETY: fills the struct.
-        unsafe { mach_timebase_info(&mut info) };
-        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
-    });
-    // SAFETY: no arguments.
-    (unsafe { mach_absolute_time() }) as f64 * *RATIO
+    rerail_accel::gpu::join::host_clock()
 }
 
-/// A completed command buffer's host-clock times, in seconds: `kernelStartTime` (the system began scheduling
-/// it), `GPUStartTime`, `GPUEndTime`.
-pub fn command_times(command: &CommandBufferRef) -> [f64; 3] {
+/// A completed command's host-clock times, in seconds: `kernelStartTime` (the system began scheduling it),
+/// `GPUStartTime`, `GPUEndTime`. Metal's command buffers have them; elsewhere zero.
+pub fn command_times(event: &rerail_device::device::ComputeEvent) -> [f64; 3] {
+    #[cfg(target_os = "macos")]
+    {
+        event.metal().map_or([0.0; 3], metal_command_times)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = event;
+        [0.0; 3]
+    }
+}
+
+/// `command_times` of a Metal command buffer.
+#[cfg(target_os = "macos")]
+fn metal_command_times(command: &metal::CommandBufferRef) -> [f64; 3] {
+    use metal::foreign_types::ForeignTypeRef;
     unsafe extern "C" {
         fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
         fn objc_msgSend();
@@ -175,21 +142,6 @@ pub fn command_times(command: &CommandBufferRef) -> [f64; 3] {
             send(object, sel_registerName(c"GPUEndTime".as_ptr())),
         ]
     }
-}
-
-pub fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
-    command.wait_until_completed();
-    if command.status() != metal::MTLCommandBufferStatus::Completed {
-        // Said once a run, as the joins' are: a failure the GPU reports is otherwise a bare `BackendFailure`.
-        rerail_accel::gpu::join::say_failure(command);
-        return Err(Error::BackendFailure);
-    }
-    mark_command(command, true);
-    Ok(())
-}
-
-fn mark_command(command: &CommandBufferRef, completed: bool) {
-    mark(command.as_ptr() as usize, completed);
 }
 
 /// Marks the dispatches of the command known by `pointer` (a Metal command buffer's address, or a device-layer
@@ -210,26 +162,10 @@ pub(crate) fn mark(pointer: usize, completed: bool) {
                 }
                 if completed {
                     evaluation.commands.remove(&pointer);
-                    evaluation
-                        .bindings
-                        .retain(|(owner, _), _| *owner != pointer);
                 }
             }
         }
     });
-}
-
-fn record_attempt(
-    command: &CommandBufferRef,
-    encoder: &ComputeCommandEncoderRef,
-    grid: MTLSize,
-    group: MTLSize,
-    indirect: bool,
-) -> bool {
-    let bound = EVALUATION.with_borrow(|slot| {
-        slot.as_ref().and_then(|e| e.borrow_mut().bindings.remove(&(command.as_ptr() as usize, encoder.as_ptr() as usize)))
-    });
-    attempt(command.as_ptr() as usize, encoder.label(), [grid.width, grid.height, grid.depth], [group.width, group.height, group.depth], indirect, bound.unwrap_or_default())
 }
 
 /// Charges one dispatch of the command known by `pointer` to the evaluation's budget and records it: false past
@@ -247,7 +183,7 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
             id
         };
         let encoded = evaluation.budget.reserve();
-        let (application_buffer_bytes, private_buffer_bytes) = crate::runtime::buffer_usage();
+        let application_buffer_bytes = crate::runtime::reserved();
         evaluation.peak_application_buffer_bytes = evaluation
             .peak_application_buffer_bytes
             .max(application_buffer_bytes);
@@ -263,74 +199,10 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
             completed: false,
             buffers,
             application_buffer_bytes,
-            private_buffer_bytes,
             peak_application_buffer_bytes,
         });
         encoded
     })
-}
-
-pub trait CheckedComputeEncoder {
-    fn checked_set_buffers(&self, command: &CommandBufferRef, buffers: &[&BufferRef]);
-    fn checked_dispatch_threads(&self, command: &CommandBufferRef, grid: MTLSize, group: MTLSize);
-    fn checked_dispatch_thread_groups(
-        &self,
-        command: &CommandBufferRef,
-        grid: MTLSize,
-        group: MTLSize,
-    );
-    fn checked_dispatch_thread_groups_indirect(
-        &self,
-        command: &CommandBufferRef,
-        buffer: &BufferRef,
-        offset: u64,
-        group: MTLSize,
-    );
-}
-
-impl CheckedComputeEncoder for ComputeCommandEncoderRef {
-    fn checked_set_buffers(&self, command: &CommandBufferRef, buffers: &[&BufferRef]) {
-        for (index, buffer) in buffers.iter().enumerate() {
-            self.set_buffer(index as u64, Some(buffer), 0);
-        }
-        EVALUATION.with_borrow(|slot| {
-            if let Some(evaluation) = slot {
-                evaluation.borrow_mut().bindings.insert(
-                    (command.as_ptr() as usize, self.as_ptr() as usize),
-                    buffers
-                        .iter()
-                        .map(|buffer| (buffer.as_ptr() as usize, buffer.length()))
-                        .collect(),
-                );
-            }
-        });
-    }
-    fn checked_dispatch_threads(&self, command: &CommandBufferRef, grid: MTLSize, group: MTLSize) {
-        if record_attempt(command, self, grid, group, false) {
-            self.dispatch_threads(grid, group);
-        }
-    }
-    fn checked_dispatch_thread_groups(
-        &self,
-        command: &CommandBufferRef,
-        grid: MTLSize,
-        group: MTLSize,
-    ) {
-        if record_attempt(command, self, grid, group, false) {
-            self.dispatch_thread_groups(grid, group);
-        }
-    }
-    fn checked_dispatch_thread_groups_indirect(
-        &self,
-        command: &CommandBufferRef,
-        buffer: &BufferRef,
-        offset: u64,
-        group: MTLSize,
-    ) {
-        if record_attempt(command, self, MTLSize::new(0, 0, 0), group, true) {
-            self.dispatch_thread_groups_indirect(buffer, offset, group);
-        }
-    }
 }
 
 #[cfg(test)]
@@ -375,94 +247,56 @@ mod tests {
         assert_eq!(check_submission(), Err(Error::BackendFailure));
     }
 
+    /// A UKL kernel that counts its runs, and one that sets its word: launched by the engine's commands
+    /// (`crate::lane`), on the process's device.
+    const MARK: &str = "#include <ukl/backend.h>\nDEFINE_KERNEL2(guard, launch_guard_mark, RWBUFFER, uint32_t, count, \"[1]\", GID0, uint32_t, i, ) { if (i == 0u) ukl_atomic_add(count, 1u); }\n";
+    const ZERO: &str = "#include <ukl/backend.h>\nDEFINE_KERNEL2(guard, launch_guard_zero, RWBUFFER, uint32_t, count, \"[1]\", GID0, uint32_t, i, ) { if (i == 0u) count[0] = 1u; }\n";
+
+    fn word(b: &crate::lane::Buffer) -> u32 {
+        // SAFETY: a buffer of at least one u32 the device is done with (its command waited for).
+        unsafe { b.contents().cast::<u32>().read() }
+    }
+
     #[test]
     fn gpu_launch_guard_counts_all_dispatch_apis_and_refuses_submission() {
-        use crate::runtime::{
-            MappedBuffer, evaluation_scope, pipeline_named,
-        };
-        let _scope = evaluation_scope();
-        let device = metal::Device::system_default().unwrap();
-        let pipeline = pipeline_named(
-            "#include <metal_stdlib>\nusing namespace metal; kernel void launch_guard_mark(device atomic_uint* count [[buffer(0)]]) { atomic_fetch_add_explicit(count, 1u, memory_order_relaxed); }",
-            "launch_guard_mark",
-        ).unwrap();
-        let count = MappedBuffer::zeroed::<u32>(&device, 1).unwrap();
-        let indirect = MappedBuffer::from_slice(&device, &[1_u32, 1, 1]).unwrap();
-        let queue = device.new_command_queue();
-        // Separate command buffers and nested scopes must share the same budget.
+        let Ok(device) = crate::lane::device() else { return };
+        let _scope = crate::runtime::evaluation_scope();
+        let kernel = crate::lane::kernel(MARK, "launch_guard_mark", None);
+        let count = crate::lane::buffer_of(device, &[0u32]);
+        let indirect = crate::lane::buffer_of(device, &[1u32, 1, 1]);
+        // Separate commands and nested scopes share the same budget; each form of launch is charged.
         for command_index in 0..KERNEL_LAUNCH_LIMIT.div_ceil(9) {
             let _nested = LaunchScope::enter();
-            let command = queue.new_command_buffer();
-            let encoder = command.new_compute_command_encoder();
-            encoder.set_label("launch_guard_probe");
-            encoder.set_compute_pipeline_state(&pipeline);
-            encoder.set_buffer(0, Some(&count.buffer), 0);
+            let mut command = crate::lane::Command::new("launch_guard_probe");
             for launch in 0..(KERNEL_LAUNCH_LIMIT - command_index * 9).min(9) {
+                let l = command.launch(&kernel, "launch_guard_probe").buffer("count", &count);
                 match (command_index * 9 + launch) % 3 {
-                    0 => encoder.checked_dispatch_threads(
-                        command,
-                        MTLSize::new(1, 1, 1),
-                        MTLSize::new(1, 1, 1),
-                    ),
-                    1 => encoder.checked_dispatch_thread_groups(
-                        command,
-                        MTLSize::new(1, 1, 1),
-                        MTLSize::new(1, 1, 1),
-                    ),
-                    _ => encoder.checked_dispatch_thread_groups_indirect(
-                        command,
-                        &indirect.buffer,
-                        0,
-                        MTLSize::new(1, 1, 1),
-                    ),
+                    0 => l.threads(1, 1),
+                    1 => l.groups([1, 1, 1], [1, 1, 1]),
+                    _ => l.indirect(&indirect, 0, [1, 1, 1], [1, 1, 1]),
                 }
             }
-            encoder.end_encoding();
-            commit_checked(command).unwrap();
-            wait_checked(command).unwrap();
-            assert_eq!(command.status(), metal::MTLCommandBufferStatus::Completed);
+            command.run().unwrap();
         }
-        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, KERNEL_LAUNCH_LIMIT as u32);
-        let command = queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_label("launch_guard_probe");
-        encoder.set_compute_pipeline_state(&pipeline);
-        encoder.set_buffer(0, Some(&count.buffer), 0);
-        encoder.checked_dispatch_threads(command, MTLSize::new(1, 1, 1), MTLSize::new(1, 1, 1));
-        encoder.end_encoding();
-        assert_eq!(commit_checked(command), Err(Error::BackendLaunchLimit));
-        assert_eq!(command.status(), metal::MTLCommandBufferStatus::NotEnqueued);
-        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, KERNEL_LAUNCH_LIMIT as u32);
+        assert_eq!(word(&count), KERNEL_LAUNCH_LIMIT as u32);
+        let mut command = crate::lane::Command::new("launch_guard_probe");
+        command.launch(&kernel, "launch_guard_probe").buffer("count", &count).threads(1, 1);
+        assert_eq!(command.len(), 0, "the launch past the budget is not held");
+        assert_eq!(command.commit().err(), Some(Error::BackendLaunchLimit));
+        assert_eq!(word(&count), KERNEL_LAUNCH_LIMIT as u32);
     }
 
     #[test]
     fn an_over_budget_command_does_not_run_its_allowed_prefix() {
-        use crate::runtime::{
-            MappedBuffer, evaluation_scope, pipeline_named,
-        };
-        let _scope = evaluation_scope();
-        let device = metal::Device::system_default().unwrap();
-        let pipeline = pipeline_named(
-            "#include <metal_stdlib>\nusing namespace metal; kernel void launch_guard_zero(device uint* count [[buffer(0)]]) { count[0] = 1u; }",
-            "launch_guard_zero",
-        ).unwrap();
-        let count = MappedBuffer::zeroed::<u32>(&device, 1).unwrap();
-        let queue = device.new_command_queue();
-        let command = queue.new_command_buffer();
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_label("launch_guard_probe");
-        encoder.set_compute_pipeline_state(&pipeline);
-        encoder.set_buffer(0, Some(&count.buffer), 0);
+        let Ok(device) = crate::lane::device() else { return };
+        let _scope = crate::runtime::evaluation_scope();
+        let kernel = crate::lane::kernel(ZERO, "launch_guard_zero", None);
+        let count = crate::lane::buffer_of(device, &[0u32]);
+        let mut command = crate::lane::Command::new("launch_guard_probe");
         for _ in 0..=KERNEL_LAUNCH_LIMIT {
-            encoder.checked_dispatch_thread_groups(
-                command,
-                MTLSize::new(1, 1, 1),
-                MTLSize::new(1, 1, 1),
-            );
+            command.launch(&kernel, "launch_guard_probe").buffer("count", &count).groups([1, 1, 1], [1, 1, 1]);
         }
-        encoder.end_encoding();
-        assert_eq!(commit_checked(command), Err(Error::BackendLaunchLimit));
-        assert_eq!(command.status(), metal::MTLCommandBufferStatus::NotEnqueued);
-        assert_eq!(unsafe { count.buffer.contents().cast::<u32>().read() }, 0);
+        assert_eq!(command.commit().err(), Some(Error::BackendLaunchLimit));
+        assert_eq!(word(&count), 0);
     }
 }

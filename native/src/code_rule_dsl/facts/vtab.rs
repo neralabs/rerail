@@ -51,42 +51,47 @@ pub trait RowCells: Send+Sync {
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
 /// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct DeviceView<'a> {
     pub block: &'a rerail_blocks::Block,
     pub root: usize,
     pub view: u32,
     pub rows: usize,
     /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub in_place: Option<ViewInPlace>,
+    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
+    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
-/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address (the device layer's, as
+/// the stages bind them), and what keeps them. Made where the process's device is Metal: the directory is of Metal's
+/// addresses (`device_chunk::views_in_place`).
 /// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
 /// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
-    pub buffers: Vec<metal::Buffer>,
-    pub cache: Option<metal::Buffer>,
+    pub buffers: Vec<rerail_device::device::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
     pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
 /// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
     pub kinds: Arc<[i64]>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
@@ -165,6 +170,14 @@ pub trait Source: Send + Sync {
             }
         }
     }
+    /// The rows whose `column` holds one of `keys`, each with its values of `columns`, in row order, until `each`
+    /// returns false; `false` (nothing given) where the source has no such read. A view of a batch's documents walks
+    /// the documents the keys name, reading each row's own column and the other columns of the rows kept alone:
+    /// the walk carries a node's depth and place, where a lookup a key computes them again (a semi-join's rows,
+    /// decision 0458).
+    fn for_rows_keyed(&self, _column: usize, _keys: &rustc_hash::FxHashSet<i64>, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        false
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
@@ -214,6 +227,17 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
+    /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
+    /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
+    /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
+    fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None
@@ -234,19 +258,19 @@ pub trait Source: Send + Sync {
     }
     /// A `has` axis the device reads off the tape (decision 0353 step 5): a stage probes it by one column, each
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn has_walk(&self) -> Option<HasWalk> {
         None
     }
     /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
     /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
-    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index (on every
-    /// target), and a host join holds in place (`setfix`, every platform). `None`: the device copies them
+    /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
+    /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
     /// (`device_view`, `row_at`).
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
@@ -868,8 +892,6 @@ static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
 pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
-
-/// The tables registered on each connection that no statement has resolved yet (`register`).
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).

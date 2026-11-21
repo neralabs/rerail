@@ -149,7 +149,7 @@ impl Tm {
 }
 
 /// A term of `v`'s rule `r` to write as it is, under `v`'s ids (`program_image::t_of`, with no borrow).
-fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
+fn own(r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -157,7 +157,7 @@ fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Branded(b) => T::Branded(b),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(r, a)).collect()),
     }
 }
 
@@ -221,7 +221,7 @@ fn same_term(x: TermRef<'_>, y: TermRef<'_>) -> bool {
         (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
         (TermRef::Int(a), TermRef::Int(b)) => a == b,
         (TermRef::Str(a), TermRef::Str(b)) => a == b,
-        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(a, b)| same_term(a, b)),
+        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.count() == ys.count() && xs.zip(ys).all(|(a, b)| same_term(a, b)),
         _ => false,
     }
 }
@@ -245,10 +245,11 @@ fn lit_slots(l: LitRef<'_>) -> BTreeSet<Slot> {
             term_slots(l, &mut out);
             term_slots(r, &mut out);
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             atom.args().for_each(|t| term_slots(t, &mut out));
             out.insert(var);
             out.extend(over);
+            out.extend(op.bound());
         }
         Lit::Nearest { n, a, .. } => {
             out.insert(n);
@@ -306,7 +307,7 @@ impl Rewrite for Subst {
         }
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
-            TermRef::Call(f, mut args) if Some(f) == self.doc && args.clone().count() == 1 => match args.next() {
+            TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
                 Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
                 Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
                 _ => None,
@@ -545,7 +546,7 @@ impl ProgramPass for GroundRules {
             let value = |t: TermRef<'_>| -> Option<Value> {
                 match t {
                     TermRef::Var(s) => binds.get(&s).cloned(),
-                    TermRef::Call(fa, mut args) if v.text(fa) == "cat" && args.clone().count() == 2 => {
+                    TermRef::Call(fa, mut args) if v.text(fa) == "cat" && args.count() == 2 => {
                         let part = |t: TermRef<'_>| match t {
                             TermRef::Var(s) => binds.get(&s).cloned(),
                             _ => Value::of(v, t),
@@ -808,7 +809,7 @@ impl RulePass for ExistenceAsReads {
             w = match *b {
                 B::Own(l) => w.lit(v, r, l),
                 B::Read(a, neg) => {
-                    let args: Vec<T<'static>> = a.args().map(|t| own(v, r, t)).collect();
+                    let args: Vec<T<'static>> = a.args().map(|t| own(r, t)).collect();
                     w.atom_with(a.rel(), &args, neg, a.gated())
                 }
             };
@@ -1301,15 +1302,16 @@ impl ProgramPass for InlineFilters {
         if bodies.is_empty() {
             return Ok(());
         }
-        let mut fresh = 0usize;
         let mut out: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = Vec::new();
-        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = v
+        // Each rule with how many inlinings made it: a definition's variables are renamed apart by that count
+        // (`_f<k>`), the rule's own: their names follow neither the program's order of rules nor its definitions'.
+        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>, usize)> = v
             .rules()
             .filter(|r| !bodies.contains_key(v.rel_name(r.head().rel())))
-            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect()))
+            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect(), 0))
             .collect();
         work.reverse();
-        while let Some((rule, body)) = work.pop() {
+        while let Some((rule, body, depth)) = work.pop() {
             let at = body.iter().position(|x| matches!(x, FLit::Placed(p) if matches!(p.lit.view(), Lit::Atom(a) if !a.neg() && bodies.contains_key(rel_of(a)))));
             let Some(at) = at else {
                 out.push((rule, body));
@@ -1317,8 +1319,8 @@ impl ProgramPass for InlineFilters {
             };
             let FLit::Placed(read_p) = body[at].clone() else { unreachable!("a read") };
             let Lit::Atom(read) = read_p.lit.view() else { unreachable!("a read") };
+            let fresh = depth + 1;
             for &def in &bodies[rel_of(read)] {
-                fresh += 1;
                 // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
                 // an equality.
                 let mut local: BTreeSet<Slot> = head_slots(def);
@@ -1345,7 +1347,7 @@ impl ProgramPass for InlineFilters {
                 }
                 let mut c = body.clone();
                 c.splice(at..=at, inlined);
-                work.push((rule, c));
+                work.push((rule, c, fresh));
             }
         }
         let input = w.input().clone();
@@ -1361,7 +1363,7 @@ impl ProgramPass for InlineFilters {
                 wr = match x {
                     FLit::Placed(p) => write_placed(&input, wr, p),
                     FLit::Eq { reader, l, r: rt } => {
-                        let lt = own_t(&input, *reader, *l);
+                        let lt = self::own(*reader, *l);
                         let rt = rt.write(wr.builder());
                         wr.cmp(lt, CmpOp::Eq, rt)
                     }
@@ -1378,16 +1380,12 @@ impl ProgramPass for InlineFilters {
     }
 }
 
-fn own_t(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
-    own(v, r, t)
-}
-
 // ---- each rule alone ----
 
 /// The parts of a concatenation (`@concat`), in order: variables and constant texts only.
 fn concat_parts(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> Option<Vec<Tm>> {
     match t {
-        TermRef::Call(f, mut args) if v.text(f) == "concat" && args.clone().count() == 2 => {
+        TermRef::Call(f, mut args) if v.text(f) == "concat" && args.count() == 2 => {
             let (a, b) = (args.next()?, args.next()?);
             let mut parts = concat_parts(v, r, a)?;
             parts.extend(concat_parts(v, r, b)?);
@@ -1471,7 +1469,7 @@ impl RulePass for CatVariables {
             let mut changed = false;
             let mut side = |t: TermRef<'_>| -> Tm {
                 match t {
-                    TermRef::Call(f, args) if v.text(f) == "cat" && args.clone().count() == 2 => Tm::Call(
+                    TermRef::Call(f, args) if v.text(f) == "cat" && args.count() == 2 => Tm::Call(
                         "cat".into(),
                         args.map(|x| match x {
                             TermRef::Int(_) | TermRef::Str(_) => {
@@ -1531,12 +1529,13 @@ impl RulePass for FoldConstants {
         let mut named = head_slots(r);
         for l in r.body() {
             match l.view() {
-                Lit::Agg { var, over, .. } => {
+                Lit::Agg { var, op, over, .. } => {
                     // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
                     // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
                     // chunk (`typing::file_local`'s split); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
                     named.insert(var);
                     named.extend(over);
+                    named.extend(op.bound());
                 }
                 Lit::Nearest { .. } | Lit::Ast { .. } => named.extend(lit_slots(l)),
                 Lit::Cmp { l: a, r: b, .. } => {
@@ -1584,7 +1583,7 @@ impl RulePass for FoldConstants {
         self.0 += gone.len();
         let mut rw = Subst { drop: gone, doc: v.find("doc"), ..Default::default() };
         for (s, c) in &to {
-            rw.to.insert(*s, own(v, r, *c));
+            rw.to.insert(*s, own(r, *c));
             if let TermRef::Int(n) = c {
                 rw.ints.insert(*s, *n);
             }
@@ -1794,7 +1793,7 @@ impl RulePass for MergeKeyed {
                     _ => w.lit(v, r, *l),
                 },
                 B::Merged(a, args) => {
-                    let ts: Vec<T<'static>> = args.iter().map(|&t| renamed_t(v, r, t, &|s| find(&ren, s))).collect();
+                    let ts: Vec<T<'static>> = args.iter().map(|&t| renamed_t(r, t, &|s| find(&ren, s))).collect();
                     w.atom_with(a.rel(), &ts, a.neg(), a.gated())
                 }
             };
@@ -1809,11 +1808,11 @@ fn keyed_rel(v: &Version, a: AtomRef<'_>) -> Option<usize> {
 }
 
 /// Term `t` of rule `r` to write, each variable as `to` maps it.
-fn renamed_t(v: &Version, r: RuleRef<'_>, t: TermRef<'_>, to: &dyn Fn(Slot) -> Slot) -> T<'static> {
+fn renamed_t(r: RuleRef<'_>, t: TermRef<'_>, to: &dyn Fn(Slot) -> Slot) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(to(s))),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| renamed_t(v, r, a, to)).collect()),
-        t => own(v, r, t),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| renamed_t(r, a, to)).collect()),
+        t => own(r, t),
     }
 }
 
@@ -1851,11 +1850,14 @@ fn occurrences(r: RuleRef<'_>) -> HashMap<Slot, usize> {
                 term(l, &mut n);
                 term(rt, &mut n);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 atom.args().for_each(|t| term(t, &mut n));
                 *n.entry(var).or_default() += 1;
                 if let Some(o) = over {
                     *n.entry(o).or_default() += 1;
+                }
+                if let Some(b) = op.bound() {
+                    *n.entry(b).or_default() += 1;
                 }
             }
             Lit::Nearest { n: x, a, .. } => {
@@ -2098,7 +2100,7 @@ impl ProgramPass for FunctionKeys {
                         let col = |s: Slot| aargs.iter().position(|t| matches!(t, TermRef::Var(y) if *y == s));
                         let shape = Tm::Call(
                             fname.to_owned(),
-                            args.clone()
+                            args
                                 .map(|t| match t {
                                     TermRef::Var(s) => col(s).map_or_else(|| Tm::of(v, r, t), |i| Tm::Var(format!("c{i}"))),
                                     t => Tm::of(v, r, t),
@@ -2144,7 +2146,7 @@ impl ProgramPass for FunctionKeys {
                 wr = match (keyed.get(&l.node()), l.view()) {
                     (Some((name, x)), Lit::Atom(a)) => {
                         let mut args = vec![T::VarAtom(r.var(*x))];
-                        args.extend(a.args().map(|t| own(&input, r, t)));
+                        args.extend(a.args().map(|t| own(r, t)));
                         let rel = wr.builder().rel(name);
                         wr.atom_with(rel, &args, a.neg(), a.gated())
                     }
@@ -2346,7 +2348,7 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
         .collect();
     let vars: Vec<BTreeSet<Slot>> = body.iter().map(item_slots).collect();
     let n = body.len();
-    for (_, &d) in &docs {
+    for &d in docs.values() {
         // Parts: literals joined by a shared variable other than `$d`.
         let mut part: Vec<usize> = (0..n).collect();
         fn root(part: &mut [usize], i: usize) -> usize {
@@ -2601,7 +2603,7 @@ impl ProgramPass for ClimbsAsAxes {
                 let tname = input.text(base.var(t)).to_owned();
                 match step {
                     None => {
-                        let args: Vec<T<'static>> = base.head().args().map(|x| own(&input, *base, x)).collect();
+                        let args: Vec<T<'static>> = base.head().args().map(|x| own(*base, x)).collect();
                         let mut wr = b.rule().head(rel, &args);
                         for l in base.body() {
                             wr = wr.lit(&input, *base, l);
@@ -2739,21 +2741,11 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// Whether column `c` of derived relation `rel` holds a location.
-///
-/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
-/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
-/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
-/// rules make. The rows the readers see are the same: the column decides nothing they test.
-/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
-/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
-/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
-/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
-/// base locations): declared a node, or filled by every rule from a node column, or a document column, of a base
-/// relation it reads. A location through another derived relation's number column is not seen (none is projected
-/// today: such a column holds a document key only where it is filled from one). `rules` are `rel`'s, by
-/// its head (`ProjectAll` indexes them once: a scan of every rule for each relation and column was quadratic in the
-/// program).
+/// Whether column `c` of derived relation `rel` holds a location, as the split takes one (`file_local::split`'s base
+/// locations): declared a node, or filled by every rule from a node column, or a document column, of a base relation
+/// it reads. A location through another derived relation's number column is not seen (none is projected today: such
+/// a column holds a document key only where it is filled from one). `rules` are `rel`'s, by its head (`ProjectAll`
+/// indexes them once: a scan of every rule for each relation and column was quadratic in the program).
 fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
@@ -2775,11 +2767,13 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
 /// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
 /// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
-fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rel: &str) -> bool {
-    by_head.get(rel).into_iter().flatten().all(|r| {
+/// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
+fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    rules.iter().all(|r| {
+        let rel = v.rel_name(r.head().rel());
         r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
             let name = v.rel_name(a.rel());
-            name == rel || by_head.get(name).is_none_or(|rules| (0..a.args().count()).any(|c| location_column(v, f, name, rules, c)))
+            name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
         })
     })
 }
@@ -2814,6 +2808,15 @@ fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
     read
 }
 
+/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
+/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
+/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
+/// rules make. The rows the readers see are the same: the column decides nothing they test.
+/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
+/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
+/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
+/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
+///
 /// One round of `project_unread_columns`: each relation projected on the columns its readers read (and a location),
 /// where that drops one, all in one rewrite of the program. Within a round one relation's projection decides nothing
 /// of another's: the columns read are the round's (`columns_read`), and a projection drops only arguments no reader
@@ -2849,7 +2852,7 @@ impl ProgramPass for ProjectAll {
             // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
             // is enough: the first, when no column read is one.
             if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
-                && file_local_reads(v, &f, &by_head, rel)
+                && file_local_reads(v, &f, &by_head, rules)
                 && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
@@ -3129,10 +3132,10 @@ impl ProgramPass for CpythonFunctors {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let v = cx.v();
         let functor = |f: AtomId| CPYTHON_FUNCTORS.iter().find(|(g, _)| *g == v.text(f)).map(|&(_, rel)| rel);
-        fn calls(v: &Version, t: TermRef<'_>, functor: &dyn Fn(AtomId) -> Option<&'static str>) -> bool {
-            matches!(t, TermRef::Call(f, args) if functor(f).is_some() || args.clone().any(|a| calls(v, a, functor)))
+        fn calls(t: TermRef<'_>, functor: &dyn Fn(AtomId) -> Option<&'static str>) -> bool {
+            matches!(t, TermRef::Call(f, args) if functor(f).is_some() || args.clone().any(|a| calls(a, functor)))
         }
-        let any = v.rules().any(|r| std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(v, t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(v, l, &functor) || calls(v, rt, &functor))));
+        let any = v.rules().any(|r| std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(l, &functor) || calls(rt, &functor))));
         if !any {
             return Ok(());
         }
@@ -3161,7 +3164,7 @@ impl ProgramPass for CpythonFunctors {
         let mut used: BTreeSet<&str> = BTreeSet::new();
         let b = w.derive()?;
         for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(&input, t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(&input, l, &functor) || calls(&input, rt, &functor)));
+            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(l, &functor) || calls(rt, &functor)));
             if !touches {
                 b.keep(&input, r);
                 continue;
@@ -3175,7 +3178,7 @@ impl ProgramPass for CpythonFunctors {
                         let x = lift(&input, r, x, &functor, &mut bound);
                         body.push(Out::Made(Made::Cmp { l: x, op, r: lift(&input, r, y, &functor, &mut bound) }));
                     }
-                    Lit::Agg { atom, .. } if atom.args().any(|t| calls(&input, t, &functor)) => {
+                    Lit::Agg { atom, .. } if atom.args().any(|t| calls(t, &functor)) => {
                         return Err(format!("@py_unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", input.rel_name(atom.rel())));
                     }
                     _ => body.push(Out::Own(l)),

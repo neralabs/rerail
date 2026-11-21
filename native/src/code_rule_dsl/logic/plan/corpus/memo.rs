@@ -35,29 +35,65 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
     rel.starts_with("own:")
 }
 
-/// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
-/// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
-/// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
-/// running the slice. Not an output: they are no relation of the file-local part.
-pub(super) const GUESTS: &str = "guests:";
+/// An entry's `outputs` key of the requests its chunk's fixpoint answered with tape values at a string of its file,
+/// or of a value it asked for (decision 0431 §8: `rr_embed_req`'s string node and grammar, `@parse`'s and `@splice`'s
+/// requests, `Answered`), in the order answered. A chunk that reads the entry makes its values in the corpus batch
+/// from them, as the fixpoint admitted them (`Guests::admit`, `Guests::admit_value`): each tape found by its text among
+/// the root's last runs' and its source named in the manifest (0431 R6), as the run that parsed it named it. A chunk of
+/// partial hits whose cone sees guests admits them before its run, as far as the cone sees them (a cone reading a
+/// relation hiding widened to annotations, `FoldOwn`, asks none itself): no entry keeps a base relation's rows
+/// (decision 0458 step 4), so they are made again. Not an output.
+pub(super) const VALUES: &str = "values:";
 
-/// An entry's `outputs` key for round `round`'s lines of slice relation `rel`.
-pub(super) fn guest_key(round: usize, rel: &str) -> String {
-    format!("{GUESTS}{round}:{rel}")
+/// A request the fixpoint answered with a tape value (`VALUES`): a string asked as a grammar's (`rr_embed_req`), or
+/// a value `@parse` or `@splice` asked for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Answered {
+    /// The string at node `at`, parsed as `grammar`.
+    Embed { at: i64, grammar: String },
+    /// `@parse`'s or `@splice`'s request.
+    Value(super::guests::Request),
 }
 
-/// The round and slice relation of a `guest_key`, `None` for an output's key.
-pub(super) fn guest_round(key: &str) -> Option<(usize, &str)> {
-    let (round, rel) = key.strip_prefix(GUESTS)?.split_once(':')?;
-    Some((round.parse().ok()?, rel))
-}
+impl Answered {
+    /// The node it was asked at: the files that own its document keep it.
+    pub(super) fn at(&self) -> i64 {
+        match self {
+            Self::Embed { at, .. } | Self::Value(super::guests::Request::Parse { at, .. }) => *at,
+            Self::Value(super::guests::Request::Splice { node, .. }) => *node,
+        }
+    }
 
-/// Whether `a` and `b` hold the same guests' requests (`GUESTS`).
-pub(super) fn same_guests(a: &Entry, b: &Entry) -> bool {
-    let of = |e: &Entry| -> Vec<(String, Vec<Vec<String>>)> {
-        e.outputs.iter().filter(|(k, _)| k.starts_with(GUESTS)).map(|(k, (_, r))| (k.clone(), r.shown())).filter(|(_, l)| !l.is_empty()).collect()
-    };
-    of(a) == of(b)
+    /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
+    /// grammar and a text, a grammar, or the tape spliced in).
+    pub(super) fn rows() -> super::super::output::Rows {
+        use super::super::output::col;
+        super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
+    }
+
+    /// Its row of `rows`.
+    pub(super) fn push(&self, rows: &mut super::super::output::Rows) {
+        use super::super::output::Cell;
+        let (kind, a, b) = match self {
+            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
+            Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
+        };
+        rows.push(&[Cell::Int(kind), Cell::Int(self.at()), Cell::Text(a), Cell::Text(b)]);
+    }
+
+    /// The requests `rows` hold (`push`'s), in order.
+    pub(super) fn read(rows: &super::super::output::Rows) -> Vec<Self> {
+        use super::super::output::Cell;
+        (0..rows.len())
+            .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
+                (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// The words `identity` is held by in `COVERED`.
@@ -364,6 +400,23 @@ pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>)
         hash.update(path.as_bytes());
         hash.update(b"\0");
         hash.update(module.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.finalize().into()
+}
+
+/// `digest` with the folders whose Python files no regular package holds folded in (`corpus::package_root_modules`,
+/// core.rerail's `unpackaged`): a file's `unpackaged` row follows from its folder, which an `__init__.py` added or removed
+/// changes. A file added to such a folder changes nothing. None leaves the digest as it was.
+pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
+    if folders.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-unpackaged/v1\0");
+    hash.update(digest);
+    for folder in folders {
+        hash.update(folder.as_bytes());
         hash.update(b"\0");
     }
     hash.finalize().into()

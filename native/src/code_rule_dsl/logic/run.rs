@@ -39,6 +39,13 @@ impl super::profile::RunOwn for Run {
     }
 }
 
+/// Its values drop with its shared object on the thread, wherever its last handle drops (`RunValues::end_in`).
+impl Drop for Run {
+    fn drop(&mut self) {
+        self.values.end_in(&self.shared);
+    }
+}
+
 impl Run {
     fn new(settings: width::Settings, shared: Arc<super::profile::Shared>) -> Run {
         Run { width: width::Width::new(settings), ended: AtomicBool::new(false), values: Default::default(), shared }

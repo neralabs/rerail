@@ -60,8 +60,10 @@ fn path() -> Option<PathBuf> {
 /// This machine, as its samples are keyed: the architecture, its cores, and its GPU.
 pub fn machine() -> String {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    // The process's device, whatever its backend (decision 0440 step C): a run on OpenCL or the CPU's backend keys
+    // its samples apart from the GPU's. accel's device lane is macOS's until step E.
     #[cfg(target_os = "macos")]
-    let gpu = rerail_accel::gpu::shared::get().map(|s| s.device.name().to_owned()).unwrap_or_default();
+    let gpu = rerail_accel::gpu::shared::layer().map(|l| l.device.name()).unwrap_or_default();
     #[cfg(not(target_os = "macos"))]
     let gpu = String::new();
     format!("{} {cores} cores {gpu}", std::env::consts::ARCH).trim().to_owned()
@@ -451,11 +453,15 @@ const TRAINING_THREADS: usize = 2;
 /// phases once `stop` says so (a run began, under upkeep): whether it was.
 #[cfg(target_os = "macos")]
 fn fit(path: &PathBuf, samples: &[rerail_accel::score::Sample], upkeep: bool, stop: &(dyn Fn() -> bool + Sync)) -> bool {
+        // Its threads hold the caller's object, as the engine's threads do (decision 0442): the model is the machine's.
+        let starter = crate::code_rule_dsl::logic::profile::shared_here();
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(TRAINING_THREADS)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
             .start_handler(move |_| {
                 rerail_prof::code_rule_dsl::logic::profile::engine_thread();
+                // Held for the thread's life: the pool's threads end with it.
+                std::mem::forget(rerail_prof::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&starter)));
                 if upkeep {
                     rerail_accel::upkeep::lower_this_thread();
                 } else {

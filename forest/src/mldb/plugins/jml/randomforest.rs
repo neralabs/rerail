@@ -853,7 +853,7 @@ impl<'o, 'a> FeatureSamplingTrainerPartition<'o, 'a> {
             let new_leaves = split_and_recurse_partitioned(device_depth as i32, o.tree_max_depth as i32, &mut tree, None, data.num_active_buckets, &data.bucket_numbers, &features, &data.active_features_in, &decoded_rows, &partitions, &w_all, &indexes, o.fs)?;
             leaves.1.extend(new_leaves);
         }
-        tree.root = extract_tree(0, o.tree_max_depth as i32, &mut tree, PartitionIndex::root(), &leaves.0, &leaves.1, o.features, o.fs)?;
+        tree.root = extract_tree(0, &mut tree, PartitionIndex::root(), &leaves.0, &leaves.1, o.features, o.fs)?;
         Ok((tree, device_depth))
     }
 }
@@ -1065,7 +1065,7 @@ pub fn tree_from_splits(tree_depth_info: &TreeDepthInfo, all_partition_splits: &
     assert_eq!(tree_depth_info.depth + 1, max_depth);
     let mut tree = Tree::new();
     let (all_splits, leaves) = finished_leaves(&mut tree, &all_partition_splits[..tree_depth_info.num_finished_partitions as usize]);
-    tree.root = extract_tree(0, max_depth as i32, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
+    tree.root = extract_tree(0, &mut tree, PartitionIndex::root(), &all_splits, &leaves, features, fs)?;
     Ok(tree)
 }
 
@@ -1158,7 +1158,7 @@ impl PartitionData {
         let mut keep = Vec::new();
         for i in 0..n {
             let w = weight_of(i);
-            if !(w >= 0.0) || !w.is_finite() {
+            if !w.is_finite() || w < 0.0 {
                 return Err(format!("row {i}: weight {w}"));
             }
             if w != 0.0 {
@@ -1207,18 +1207,20 @@ impl PartitionData {
 
         // The active features' buckets over the kept rows, each encoded on its own (in parallel), then in one block.
         use rayon::prelude::*;
-        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = self.features.par_iter().map(|f| {
-            if !f.active {
-                return None;
-            }
-            let mut s = MemorySerializer;
-            let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
-            for &i in &keep {
-                bl.write(f.buckets.get(self.rows.get_example_num(i)));
-            }
-            let frozen = bl.freeze(&mut s);
-            Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
-        }).collect();
+        let lists: Vec<Option<(Vec<u32>, i32, i32)>> = rerail_context::on_cores(|| {
+            self.features.par_iter().map(|f| {
+                if !f.active {
+                    return None;
+                }
+                let mut s = MemorySerializer;
+                let mut bl = WritableBucketList::new(num_non_zero, f.buckets.num_buckets as u32, &mut s);
+                for &i in &keep {
+                    bl.write(f.buckets.get(self.rows.get_example_num(i)));
+                }
+                let frozen = bl.freeze(&mut s);
+                Some((frozen.storage.data().to_vec(), frozen.entry_bits, frozen.num_buckets))
+            }).collect()
+        });
         let words: usize = lists.iter().flatten().map(|l| l.0.len()).sum();
         let mut block = serializer.allocate_writable_t::<u32>(words.max(1), 4096 /* page aligned */);
         let mut spans = Vec::new();
@@ -1377,18 +1379,20 @@ impl PartitionData {
             return trainer.train_partitioned(feature_vector_sampling, debug_name, features_active).map_err(|e| format!("Error training partition {debug_name}: {e}"));
         }
         use rayon::prelude::*;
-        features_active.par_iter().enumerate().map(|(i, af)| {
-            let mut my_data = self.clone();
-            for f in my_data.features.iter_mut() {
-                f.active = false;
-            }
-            for &f in af {
-                my_data.features[f as usize].active = true;
-            }
-            let mut tree = Tree::new();
-            tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
-            Ok(tree)
-        }).collect()
+        rerail_context::on_cores(|| {
+            features_active.par_iter().enumerate().map(|(i, af)| {
+                let mut my_data = self.clone();
+                for f in my_data.features.iter_mut() {
+                    f.active = false;
+                }
+                for &f in af {
+                    my_data.features[f as usize].active = true;
+                }
+                let mut tree = Tree::new();
+                tree.root = my_data.train(feature_vector_sampling, i as i32, debug_name, 0, max_depth, &mut tree, training_scheme).map_err(|e| format!("Error training tree {i}: {e}"))?;
+                Ok(tree)
+            }).collect()
+        })
     }
 }
 
@@ -1431,7 +1435,7 @@ pub(crate) mod tests {
             let buckets = BucketList { storage: FrozenMemoryRegionT::new(raw), entry_bits, num_buckets: nb as i32, num_entries: nr as usize };
             let mut bucket_descriptions = crate::bucket::BucketDescriptions::default();
             bucket_descriptions.initialize_from(false, (0..nb).map(|v| v as f64).collect(), vec![], nb as i32).unwrap();
-            let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions, ..Default::default() });
+            let info = fs.add_column(ColumnInfo { column_name: format!("f{f}"), info: if ordinal { FeatureType::Real } else { FeatureType::Categorical }, index: -1, distinct_values: nb as i32, buckets: buckets.clone(), bucket_descriptions });
             features.push(Feature { active: true, ordinal, subsets: false, info: Some(info), buckets });
         }
         PartitionData { fs: Arc::new(fs), rows, bucket_memory, features }

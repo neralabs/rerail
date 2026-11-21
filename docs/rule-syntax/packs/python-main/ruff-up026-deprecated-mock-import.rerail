@@ -1,5 +1,4 @@
 .policy "ruff-up026-deprecated-mock-import" revision 1
-.guests off
 .description "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3."
 .language python
 .mode steer

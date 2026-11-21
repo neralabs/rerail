@@ -1,7 +1,7 @@
 //! The Neural Engine lane against the reference, its writer against coremltools', and its refusals.
 //!
 //! Shapes are kept small enough to compile in well under a second each, yet above [`super::MIN_FLOPS`], so that Core
-//! ML may place them on the Neural Engine; whether it does is the chip's planner's (the M3's cutoff is higher, Q290),
+//! ML may place them on the Neural Engine; whether it does is the chip's planner's (the M3's cutoff is higher, Q294),
 //! and a test of random shapes allows the placement check's refusals. The timing tests at the real workloads' sizes are ignored; run each alone:
 //! `cargo test -p rerail-accel --no-default-features --features ane ane::tests::time_w1 -- --ignored --nocapture`.
 
@@ -176,7 +176,7 @@ fn exact_random_shapes() {
         }
     }
     // Where Core ML runs a model is the chip's planner's choice, and its CPU cutoff differs by generation: on the
-    // M3 a constant of 0.46e9 operations (over `MIN_FLOPS`) goes to the CPU (Q290). A constant it places off the
+    // M3 a constant of 0.46e9 operations (over `MIN_FLOPS`) goes to the CPU (Q294). A constant it places off the
     // Neural Engine is refused by the placement check, so no launch is placed here to fail; every other is exact.
     let mut refs: Vec<&Kernel> = Vec::new();
     for k in &ks {

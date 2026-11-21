@@ -4,7 +4,7 @@
 //! each reader's connected positive context. When that context would itself form a product, require keys from
 //! the reader's callers first. Reject a product with a reader that cannot supply a connected demand.
 
-use crate::code_rule_dsl::logic::front::{FEW, Fan, LatticeDecl, LayoutFact, Native, Value};
+use crate::code_rule_dsl::logic::front::{LatticeDecl, Native, Value};
 use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
@@ -13,6 +13,7 @@ use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit, R
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+pub(super) mod deferred;
 mod nullable;
 mod upstream;
 
@@ -29,9 +30,11 @@ pub(super) struct Fields {
     pub(super) lattice: BTreeMap<String, LatticeDecl>,
     pub(super) qualifiers: BTreeMap<String, BTreeSet<String>>,
     pub(super) gates: Vec<(String, crate::code_rule_dsl::logic::front::ast::Gate)>,
-    /// Each relation's declared shape (`.layout`, decision 0361): its keys and fan-outs bound a product's side.
-    pub(super) layouts: BTreeMap<String, Vec<LayoutFact>>,
+    pub(super) layouts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::LayoutFact>>,
 }
+
+/// The prefix of the pair relations a deferred join's reader reads (decision 0488).
+pub(in crate::code_rule_dsl::logic::plan) const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
 impl Fields {
     fn of(v: &Version) -> Fields {
@@ -191,9 +194,10 @@ fn may_have_products(version: &Version) -> bool {
                     vars(l, &mut group);
                     vars(r, &mut group);
                 }
-                Lit::Agg { var, over, atom, .. } => {
+                Lit::Agg { var, op, over, atom } => {
                     group.insert(var);
                     group.extend(over);
+                    group.extend(op.bound());
                     atom.args().for_each(|term| vars(term, &mut group));
                 }
                 Lit::Nearest { n, a, .. } => group.extend([n, a]),
@@ -232,44 +236,12 @@ impl ProgramPass for BoundProducts {
         if matches!(self, Self::Whole) && !may_have_products(version) {
             return Ok(());
         }
-        use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
         let mut program = Program::of(version);
         let rewritten = rewrite(&mut program, true)?;
         if rewritten.products.is_empty() {
             return Ok(());
         }
-        let made = program.v();
-        let builder = w.on()?;
-        // The fields the rewrite changed, through the fields API (decision 0276 §3): the demand relations'
-        // declarations and qualifiers, and the facts it adds.
-        for rel in F::declared_names(made) {
-            let cols = F::columns_of(made, &rel).unwrap_or_default();
-            if F::columns_of(version, &rel).as_ref() != Some(&cols) {
-                let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                builder.fields().declare(&rel, &pairs);
-            }
-        }
-        let qualifiers = F::qualifiers(made);
-        if qualifiers != F::qualifiers(version) {
-            builder.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
-        }
-        for rel in F::fact_names(made) {
-            let rows = F::fact_rows(made, &rel);
-            if !F::states_facts(version, &rel) || F::fact_rows(version, &rel) != rows {
-                builder.fields().set_facts(&rel, &rows);
-            }
-        }
-        // Each rule a step rewrote replaces its input's rule, its source recorded; the rules the steps added follow.
-        for r in made.rules() {
-            match r.source() {
-                Some(id) if version.rule(id).is_some_and(|was| was.hash() == r.hash()) => {}
-                Some(id) => {
-                    builder.remove(id);
-                    builder.copy_from(made, r, id);
-                }
-                None => drop(builder.copy(made, r)),
-            }
-        }
+        publish(version, program.v(), w)?;
         crate::code_rule_dsl::logic::profile::decision("node Cartesian products", || {
             format!("restricted to connected reader demands: {}", rewritten.products.into_iter().collect::<Vec<_>>().join(", "))
         });
@@ -280,6 +252,66 @@ impl ProgramPass for BoundProducts {
         }
         Ok(())
     }
+}
+
+/// `made`, a derivation of `version` by the steps (`Program`), published as an edit of it: the fields the steps
+/// changed, through the fields API (decision 0276 §3): declarations made and dropped, qualifiers, nullary relations,
+/// facts. A rule kept as it was stays; each other input rule is replaced by what was made from it (its source
+/// recorded), or removed where nothing was; the rules the steps added follow.
+fn publish(version: &Version, made: &Version, w: &mut ProgramW<'_>) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::program_image::fields::FieldsMut as _;
+    let builder = w.on()?;
+    for rel in F::declared_names(made) {
+        let cols = F::columns_of(made, &rel).unwrap_or_default();
+        if F::columns_of(version, &rel).as_ref() != Some(&cols) {
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            builder.fields().declare(&rel, &pairs);
+        }
+    }
+    for rel in F::declared_names(version) {
+        if F::columns_of(made, &rel).is_none() {
+            builder.fields().undeclare(&rel);
+        }
+    }
+    let qualifiers = F::qualifiers(made);
+    if qualifiers != F::qualifiers(version) {
+        builder.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
+    }
+    let (was, now) = (version.nullary_names()?, made.nullary_names()?);
+    let added: Vec<&String> = now.difference(&was).collect();
+    if !added.is_empty() {
+        builder.fields().add_nullary(&added);
+    }
+    for rel in F::fact_names(made) {
+        let rows = F::fact_rows(made, &rel);
+        if !F::states_facts(version, &rel) || F::fact_rows(version, &rel) != rows {
+            builder.fields().set_facts(&rel, &rows);
+        }
+    }
+    let mut from: BTreeMap<RuleId, Vec<RuleRef<'_>>> = BTreeMap::new();
+    let mut added = Vec::new();
+    for r in made.rules() {
+        match r.source().filter(|id| version.rule(*id).is_some()) {
+            Some(id) => from.entry(id).or_default().push(r),
+            None => added.push(r),
+        }
+    }
+    for was in version.rules() {
+        match from.get(&was.id()).map(Vec::as_slice) {
+            Some([r]) if r.hash() == was.hash() => {}
+            Some(rules) => {
+                builder.remove(was.id());
+                for r in rules {
+                    builder.copy_from(made, *r, was.id());
+                }
+            }
+            None => builder.remove(was.id()),
+        }
+    }
+    for r in added {
+        builder.copy(made, r);
+    }
+    Ok(())
 }
 
 /// The parts of a rule's body that share variables (`connect`): their variables, and whether one reads the corpus.
@@ -357,14 +389,13 @@ fn value(v: &Version, t: TermRef<'_>) -> Value {
     }
 }
 
-/// The variables of `rule` that hold few values whatever the corpus, so that a node among them is no side of a
-/// product. Two ways fix one, either enough:
-/// - constants: a variable set to a constant (`$c = "x"`), or bound only by lookups on constants: every positive atom
-///   that reads it reads no other variable and no wildcard, and at least one does (`qv("builtins.object", "cls", $c)`,
-///   356f1b516, `calls.rerail`);
-/// - a declared shape: a variable reached from fixed ones (and constants) through a relation's declared key or
-///   few-row fan-out (`.layout qv fanout(q, k -> v, few)`, decision 0361), which follows a chain of reads.
+/// The variables of `rule` that hold few values whatever the corpus: set to a constant, bound only by lookups on
+/// constants, or reached from constants (and such variables) through a relation's declared key or few-row fan-out
+/// (`.layout`, decision 0361). A node variable fixed so is no side of a product: `qv("builtins.object", "cls", c)`
+/// gives the few class nodes of one name, and a rule pairing them with every reference to `object` is as large as
+/// the references (Q249).
 fn fixed_vars(rule: RuleRef<'_>, program: &Program<'_>) -> BTreeSet<Slot> {
+    use crate::code_rule_dsl::logic::front::{FEW, Fan, LayoutFact};
     let v = program.v();
     let mut fixed: BTreeSet<Slot> = rule
         .body()
@@ -373,24 +404,28 @@ fn fixed_vars(rule: RuleRef<'_>, program: &Program<'_>) -> BTreeSet<Slot> {
             _ => None,
         })
         .collect();
+    // A variable bound only by lookups on constants (`qv("builtins.object", "cls", $c)`): every positive atom that
+    // reads it reads no other variable and no wildcard, and at least one does. Fixed as `$c = constant` is: a
+    // product of it is one side times that lookup's rows (356f1b516, `calls.rerail`).
     let positive: Vec<AtomRef<'_>> = rule.body().filter_map(|l| match l.view() {
         Lit::Atom(a) if !a.neg() => Some(a),
         _ => None,
     }).collect();
     let constant = |t: TermRef<'_>| plain(t) && !matches!(t, TermRef::Var(_));
     for a in &positive {
-        let Some(x) = a.args().find_map(|t| match t {
+        let Some(v) = a.args().find_map(|t| match t {
             TermRef::Var(x) => Some(x),
             _ => None,
         }) else {
             continue;
         };
-        let lookup = |a: &AtomRef<'_>| a.args().all(|t| matches!(t, TermRef::Var(y) if y == x) || constant(t)) && a.args().any(constant);
-        let reads = |a: &&AtomRef<'_>| a.args().any(|t| matches!(t, TermRef::Var(y) if y == x));
+        let lookup = |a: &AtomRef<'_>| a.args().all(|t| matches!(t, TermRef::Var(x) if x == v) || constant(t)) && a.args().any(constant);
+        let reads = |a: &&AtomRef<'_>| a.args().any(|t| matches!(t, TermRef::Var(x) if x == v));
         if lookup(a) && positive.iter().filter(reads).all(lookup) {
-            fixed.insert(x);
+            fixed.insert(v);
         }
     }
+    // Reached through a declared key or a few-row fan-out, to a fixed point.
     loop {
         let before = fixed.len();
         for a in &positive {
@@ -452,19 +487,8 @@ fn disconnected_nodes(rule: RuleRef<'_>, program: &Program<'_>, varies: &BTreeSe
 }
 
 fn refusal(relation: &str, reason: impl std::fmt::Display) -> String {
-    format!("unbounded node Cartesian product in `{relation}`: {reason}")
-}
-
-/// A refusal `e` of the products `products` makes, with the rules that make them (a relation demanded for one may be
-/// far from it) and the two ways to bound a side (`fixed_vars`).
-fn named(program: &Program<'_>, products: &BTreeSet<String>, e: String) -> String {
-    let varies = corpus_relations(program);
-    let v = program.v();
-    let rules: Vec<String> = v.rules().filter(|r| products.contains(program.head_rel(*r)) && disconnected_nodes(*r, program, &varies)).map(|r| v.show_rule(r)).collect();
-    format!(
-        "{e}; the products: {}. A side is bounded where its node is fixed by constants (`$c = \"x\"`, or a lookup on constants alone: `named(\"builtins.object\", \"cls\", $c)`) or reached from fixed values through a declared key or few-row fan-out (`.layout named fanout(q, k -> v, few)`)",
-        rules.join("; ")
-    )
+    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(relation, None);
+    format!("unbounded node Cartesian product in `{source}`: {reason}")
 }
 
 /// The connected parts of `rule`'s body a demand may read: its positive atoms of no demanded relation and no computed
@@ -511,12 +535,12 @@ fn check_target(program: &Program<'_>, rel: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The terms of `a`'s arguments in rule `r` of `v`, those at `cols` (all of them: `None`).
-fn args_at<'v>(v: &'v Version, r: RuleRef<'v>, a: AtomRef<'v>, cols: Option<&[usize]>) -> Vec<T<'v>> {
+/// The terms of `a`'s arguments in rule `r`, those at `cols` (all of them: `None`).
+fn args_at<'v>(r: RuleRef<'v>, a: AtomRef<'v>, cols: Option<&[usize]>) -> Vec<T<'v>> {
     let args: Vec<TermRef<'_>> = a.args().collect();
     match cols {
-        Some(cols) => cols.iter().map(|&c| t_of(v, r, args[c])).collect(),
-        None => args.into_iter().map(|t| t_of(v, r, t)).collect(),
+        Some(cols) => cols.iter().map(|&c| t_of(r, args[c])).collect(),
+        None => args.into_iter().map(|t| t_of(r, t)).collect(),
     }
 }
 
@@ -536,33 +560,44 @@ fn write_demand(v: &Version, r: RuleRef<'_>, b: &mut Builder<'_>, rel: &str, hea
 
 /// Guard the products before splitting the program by document or planning its joins.
 pub(super) fn rewrite(program: &mut Program<'_>, narrow_readers: bool) -> Result<Rewritten, String> {
+    let varies = corpus_relations(program);
     let products: BTreeSet<String> = {
-        let varies = corpus_relations(program);
         let v = program.v();
         v.rules()
             .filter(|rule| program.columns(program.head_rel(*rule)).is_some() && disconnected_nodes(*rule, program, &varies))
             .map(|rule| program.head_rel(rule).to_owned())
             .collect()
     };
+    // A refusal names the rules that make the products: a relation demanded for one may be far from it.
+    let named = |e: String| -> String {
+        let v = program.v();
+        let rules: Vec<String> = v.rules().filter(|r| products.contains(program.head_rel(*r)) && disconnected_nodes(*r, program, &varies)).map(|r| v.show_rule(r)).collect();
+        format!("{e}; the products: {}", rules.join("; "))
+    };
     if narrow_readers && !products.is_empty() {
         let mut strict = program.clone();
-        let products = rewrite_products(&mut strict, products.clone()).map_err(|e| named(program, &products, e))?;
+        let products = rewrite_products(&mut strict, products.clone()).map_err(named)?;
         let mut trial = program.clone();
         let mut readers = upstream::start(&mut trial, &products)?;
-        if !readers.is_empty() {
-            if let Ok(products) = rewrite_products(&mut trial, products.clone()) {
+        if !readers.is_empty()
+            && let Ok(products) = rewrite_products(&mut trial, products.clone()) {
                 upstream::propagate(&mut trial, &products, &mut readers)?;
                 let order_witnesses = upstream::restore_order_witnesses(&mut trial, &readers)?;
                 let present_witnesses = nullable::restore(&mut trial)?;
                 *program = trial;
                 return Ok(Rewritten { products, readers, order_witnesses, present_witnesses });
             }
-        }
         *program = strict;
         return Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0, present_witnesses: 0 });
     }
+    let refused = products.clone();
+    let named = |e: String| -> String {
+        let v = program.v();
+        let rules: Vec<String> = v.rules().filter(|r| refused.contains(program.head_rel(*r)) && disconnected_nodes(*r, program, &varies)).map(|r| v.show_rule(r)).collect();
+        format!("{e}; the products: {}", rules.join("; "))
+    };
     let mut changed = program.clone();
-    let products = rewrite_products(&mut changed, products.clone()).map_err(|e| named(program, &products, e))?;
+    let products = rewrite_products(&mut changed, products).map_err(named)?;
     *program = changed;
     Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0, present_witnesses: 0 })
 }
@@ -606,7 +641,11 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
             let available = contexts(program, reader, own.then(|| guard_vars.clone()), &demanded);
             for (i, a, is_atom) in reads {
                 let rel = v.rel_name(a.rel());
-                let from_reader = || format!("the read in `{head_rel}` has no connected demand");
+                let from_reader = || {
+                    let source = crate::code_rule_dsl::logic::profile::author_joins::source_name(head_rel, Some(rel));
+                    let columns = program.columns(rel).unwrap_or_default().into_iter().map(|(name, _)| name).collect::<Vec<_>>().join(", ");
+                    format!("the read in `{source}` has no connected demand for ({columns})")
+                };
                 if !is_atom || a.gated() || !a.args().all(plain) {
                     return Err(refusal(rel, from_reader()));
                 }
@@ -643,7 +682,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     return Ok(false);
                 }
                 // The product's rule reads its demand first.
-                let (name, guard) = (format!("{PREFIX}{rel}"), args_at(v, r, r.head(), None));
+                let (name, guard) = (format!("{PREFIX}{rel}"), args_at(r, r.head(), None));
                 let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
                 for l in r.body() {
                     rb = rb.lit(v, r, l);
@@ -662,7 +701,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     let a = r.body().nth(*i).and_then(|l| l.atom()).expect("the read");
                     let rel = format!("{PREFIX}{}", v.rel_name(a.rel()));
                     let guard_rel = format!("{PREFIX}{}", v.rel_name(r.head().rel()));
-                    let (head, guard) = (args_at(v, r, a, None), args_at(v, r, r.head(), None));
+                    let (head, guard) = (args_at(r, a, None), args_at(r, r.head(), None));
                     write_demand(v, r, b, &rel, &head, (&guard_rel, &guard), parts)?;
                 }
                 for (rel, rows) in &facts {
@@ -742,36 +781,34 @@ mod tests {
         let v = parse(&format!("{LOOKUP}\npair(x, y) :- a(x), named(_, \"cls\", y).\n")).unwrap();
         let error = rewrite(&mut Program::of(&v), true).err().unwrap();
         assert!(error.contains("unbounded node Cartesian product in `pair`"), "{error}");
+        assert!(error.contains("the products: pair("), "{error}");
     }
 
-    /// A node reached from fixed values through declared few-row fan-outs is no side of a product (Q249, decision
-    /// 0361): `c` is fixed by a constant, `m` only through `named`'s fan-out (its lookup reads `c`, so it is no lookup
-    /// on constants alone) and `y` through `member`'s. Without the fan-outs the same rule is a product, and its refusal
-    /// names its rule and both ways to bound a side.
+    /// Q249: a node reached from constants through declared few-row fan-outs (a lookup on a fixed variable, not on
+    /// constants alone) is no side of a product; without the fan-outs the same rule is one, and its refusal names it.
     #[test]
-    fn a_node_a_few_row_fanout_reaches_from_fixed_values_makes_no_product() {
+    fn a_node_a_few_row_fanout_reaches_from_constants_makes_no_product() {
         let text = |layout: &str| {
             format!(
                 "
                 .decl a(n: node)
+                .decl b(q: symbol, m: symbol)
                 .decl named(q: symbol, k: symbol, v: node)
-                .decl member(m: node, n: node)
-                .input a, named, member
+                .input a, b, named
                 {layout}
                 .decl out(x: node, y: node)
                 .output out
-                out(x, y) :- a(x), c = \"builtins.object\", named(c, \"cls\", m), member(m, y).
+                out(x, y) :- a(x), b(\"k\", m), named(m, \"cls\", y).
             "
             )
         };
-        let v = parse(&text(".layout named fanout(q, k -> v, few)\n.layout member fanout(m -> n, few)")).unwrap();
+        let v = parse(&text(".layout b fanout(q -> m, few)\n.layout named fanout(q, k -> v, few)")).unwrap();
         let mut program = Program::of(&v);
         assert!(rewrite(&mut program, true).unwrap().products.is_empty());
-        assert!(!program.changed(), "kept as written");
+        assert_eq!(program.v().show(), v.show());
         let v = parse(&text("")).unwrap();
         let error = rewrite(&mut Program::of(&v), true).err().unwrap();
         assert!(error.contains("unbounded node Cartesian product in `out`") && error.contains("the products: out("), "{error}");
-        assert!(error.contains("constants") && error.contains(".layout"), "both ways to bound a side: {error}");
     }
 
     #[test]

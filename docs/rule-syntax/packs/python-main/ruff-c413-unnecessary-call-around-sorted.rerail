@@ -1,5 +1,4 @@
 .policy "ruff-c413-unnecessary-call-around-sorted" revision 1
-.guests off
 .description "Remove a list or reversed call wrapped around sorted; sorted already returns a new list and can sort in reverse order itself."
 .language python
 .mode steer

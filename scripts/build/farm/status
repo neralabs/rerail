@@ -30,7 +30,8 @@ def main(argv):
     else:
         print(f"configuration: {path}" if path else
               f"configuration: none ({os.path.join(farm.CONFIG, 'farm.json')} missing): no hosts, everything runs here")
-        print(f"limits: {cfg['min_free_gb']} GB free (the farm frees its data under it; used down to {cfg['floor_free_gb']}), {cfg['max_rtt_ms']} ms round trip, {cfg['min_mbps']} MB/s")
+        print(f"limits: {cfg['min_free_gb']} GB free (the farm frees its data under it; used down to {cfg['floor_free_gb']}); "
+              "a slow link or round trip only orders the hosts, it never refuses one")
         sock = socket.socket(socket.AF_UNIX)
         try:
             sock.connect(farm.state("mirror.sock"))

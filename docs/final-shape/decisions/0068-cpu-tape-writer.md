@@ -17,7 +17,7 @@ masks (one bit per byte) --> starts and ends, a word at a time --> nodes in preo
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the mldb tape row (O(1) navigation from precomputed sizes over the
+- **SQL index prototype indexes:** the mldb tape row (O(1) navigation from precomputed sizes over the
   source buffer) and the spike's `TAPE_AST_GREP_RECONSTRUCTION`. **Agree:** the size column is
   the structure, and no parent or child table is written.
 - **Lessons ledger #1** (one row per node is fatal; the tape is the truth). **Agrees:** the

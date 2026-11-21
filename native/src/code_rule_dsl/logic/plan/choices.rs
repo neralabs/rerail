@@ -61,7 +61,7 @@ pub(super) struct Chosen {
 /// the same rules in another order takes the same choices, which derive the same rows.
 pub fn key(p: &super::body::Placed) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.plan-choices/v2\0");
+    hash.update(b"rerail.plan-choices/v3\0");
     hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     for switch in ["RERAIL_INLINE", "RERAIL_INLINE_ONLY", "RERAIL_OBSERVED_STEPS"] {
         hash.update(b"\0");
@@ -69,12 +69,18 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
     }
     // A finding's message template is beside the program, not of it (decision 0225 §3): its edit plans nothing again.
     // The settings are one `.about` relation of the version's digest (a sum of its fact relations' hashes): its hash
-    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings.
+    // is taken out and the settings other than `.message` put in, so the key reads no rule and a few settings. The
+    // program's own row (`program`, one constant) is taken out too: a version holds it once it states any about row
+    // (`Builder::set_about_rows`), so a program whose only about row is a message held it and one with none did not,
+    // and the two keyed apart. Every other about row holds it, so it says nothing of its own.
     use crate::code_rule_dsl::logic::program_image::Cell;
     let v = &p.v;
-    let settings = v.about_facts().into_iter().find(|f| v.text(f.name()) == "setting");
+    let about = v.about_facts();
+    let named = |name: &str| about.iter().find(|f| v.text(f.name()) == name);
+    let settings = named("setting");
+    let own = named("program").map_or(0, |f| f.hash());
     hash.update(b"\0program\0");
-    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).to_le_bytes());
+    hash.update(p.digest().wrapping_sub(settings.map_or(0, |f| f.hash())).wrapping_sub(own).to_le_bytes());
     for row in settings.into_iter().flat_map(|f| f.rows()) {
         let cells: Vec<Cell> = row.collect();
         let text = |c: &Cell| match *c { Cell::Int(i) => i.to_string(), Cell::Str(a) => v.text(a).to_owned(), Cell::Branded(b) => b.to_string() };
@@ -180,9 +186,13 @@ impl Drop for Durable {
 pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
-    // write holds is in memory already.
-    if let Some(c) = kept().0.lock().expect("the kept choices").get(key) {
-        return holds(c.nodes, nodes).then(|| c.clone());
+    // write holds is in memory already. A chunk's are its view's (Q314).
+    let held = match super::chunk_choices() {
+        Some(c) => c.own.lock().iter().rev().find(|(k, _)| k == key).map(|(_, c)| c.clone()).or_else(|| c.at.get(key).cloned()),
+        None => kept().0.lock().expect("the kept choices").get(key).cloned(),
+    };
+    if let Some(c) = held {
+        return holds(c.nodes, nodes).then_some(c);
     }
     // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
     // 0.07 s of an edit's).
@@ -190,12 +200,66 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
         let (_, _, entries, images) = &**d.0.as_ref()?;
         entries.get(&path(key)).and_then(|entry| decode_chosen(images, entry))
     })?;
-    keep(*key, found.clone());
+    match super::chunk_choices() {
+        // What the store held is the same for every chunk: kept in the chunk's view, not written again at filing.
+        Some(c) => c.take(*key, found.clone(), false),
+        None => keep(*key, found.clone()),
+    }
     holds(found.nodes, nodes).then_some(found)
 }
 
-/// Keeps the choices made for program `key`, in this process and in the store.
+/// The choices a chunk reads and makes (Q314): the process's as filed when it began, and its own, filed into the
+/// process's and the store in the chunks' order (`file`). Before, the first chunk to plan a program, by the clock,
+/// chose its inlining and demand for every chunk after (one hogql run in three inlined differently).
+pub(super) struct ChunkChoices {
+    at: Arc<HashMap<[u8; 32], Chosen>>,
+    own: parking_lot::Mutex<Vec<([u8; 32], Chosen)>>,
+    /// What it took since it last handed them on (`made_in`), and whether it made them (to keep in the store).
+    out: parking_lot::Mutex<Vec<([u8; 32], Chosen, bool)>>,
+}
+
+/// The process's choices now, for a chunk to begin from.
+pub(super) fn snapshot() -> Arc<HashMap<[u8; 32], Chosen>> {
+    Arc::new(kept().0.lock().expect("the kept choices").clone())
+}
+
+pub(super) fn chunk_choices(at: &Arc<HashMap<[u8; 32], Chosen>>) -> Arc<ChunkChoices> {
+    Arc::new(ChunkChoices { at: Arc::clone(at), own: Default::default(), out: Default::default() })
+}
+
+/// What a chunk chose (with whether it was made there), for its filing.
+pub(super) fn made_in(c: &ChunkChoices) -> Vec<([u8; 32], Chosen, bool)> {
+    std::mem::take(&mut *c.out.lock())
+}
+
+impl ChunkChoices {
+    fn take(&self, key: [u8; 32], chosen: Chosen, made: bool) {
+        self.own.lock().push((key, chosen.clone()));
+        self.out.lock().push((key, chosen, made));
+    }
+}
+
+/// Files a chunk's choices into the process's, in the order it made them; those it made, into the store too.
+pub(super) fn file(made: Vec<([u8; 32], Chosen, bool)>) {
+    for (key, chosen, here) in made {
+        if here {
+            remember_now(key, chosen);
+        } else {
+            keep(key, chosen);
+        }
+    }
+}
+
+/// Keeps the choices made for program `key`, in this process and in the store; in a chunk, at its filing.
 pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
+    if let Some(c) = super::chunk_choices() {
+        c.take(key, chosen, true);
+        return;
+    }
+    remember_now(key, chosen);
+}
+
+fn remember_now(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     crate::code_rule_dsl::logic::profile::with_bound(|d: &DurableSide| {
         if let Some((store, prepared, _, _)) = d.0.as_deref() {

@@ -57,7 +57,7 @@ fn tracking_index(repo: &Repo) -> Option<(gix::index::File, String)> {
     let mut digest = sha2::Sha256::new();
     for entry in file.entries() {
         let path = entry.path(&file);
-        digest.update(&(path.len() as u64).to_le_bytes());
+        digest.update((path.len() as u64).to_le_bytes());
         digest.update(path.as_bytes());
     }
     Some((file, crate::content_store::observe::hex(&digest.finalize().into())))
@@ -238,6 +238,8 @@ pub mod tests {
 
     #[test]
     fn commits_and_paths_are_answered_from_the_object_store() {
+        // A run of its own (decision 0442): the root is the run's (`GitState`), and outside a run each read is fresh.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
         let dir = std::env::temp_dir().join(format!("rerail-git-fn-{}", std::process::id()));
         let root = dir.join("sub");
         std::fs::create_dir_all(root.join("docs")).unwrap();

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { data, ui } from "../../ui/state.js";
-import { filterRanked, historyEmpty, historyRuleId, rankedRules } from "../../ui/history-model.js";
+import { filterRanked, historyEmpty, historyRuleId, outcomesOf, rankedRules } from "../../ui/history-model.js";
 import { parseRoute } from "../../ui/routes.js";
 
-const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
+const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 };
 const fired = (distinctViolations: number, extra: object = {}) => ({ ...NONE, distinctViolations, audits: 1, ...extra });
 
 const storedRule = (id: string, title: string, enabled = true) => ({
@@ -38,7 +38,7 @@ describe("History's rule list", () => {
     data.rules = new Map([["a", storedRule("a", "Alpha")]]);
     data.activity = { a: fired(3, { measured: false }), gone: fired(1) };
 
-    expect(rankedRules()).toEqual([{ id: "gone", title: "gone", origin: "No longer in this repo", count: 1 }]);
+    expect(rankedRules()).toEqual([{ id: "gone", title: "gone", origin: "No longer in this repo", count: 1, declined: 0 }]);
   });
 
   it("follows the range: the counts are the range's activity answer", () => {
@@ -58,6 +58,26 @@ describe("History's rule list", () => {
     expect(rankedRules("logged").map(r => [r.id, r.count])).toEqual([["a", 5], ["b", 1]]);
     ui.histOutcome = "logged";
     expect(rankedRules().map(r => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("counts each violation in one outcome: a declined one under Declined, never under Steered or Log only", () => {
+    data.rules = new Map([["a", storedRule("a", "Alpha")], ["b", storedRule("b", "Beta")], ["c", storedRule("c", "Gamma")]]);
+    data.activity = { a: fired(6, { loggedViolations: 1, declinedViolations: 2 }), b: fired(3, { declinedViolations: 3 }), c: fired(2) };
+
+    expect(outcomesOf("a")).toEqual({ all: 6, logged: 1, steered: 3, declined: 2 });
+    expect(outcomesOf("b")).toEqual({ all: 3, logged: 0, steered: 0, declined: 3 });
+    expect(rankedRules("declined").map(r => [r.id, r.count])).toEqual([["b", 3], ["a", 2]]);
+    expect(rankedRules("steered").map(r => [r.id, r.count])).toEqual([["a", 3], ["c", 2]]);
+    // Whatever the chip, each row says how many of the rule's violations were declined.
+    expect(rankedRules("all").map(r => [r.id, r.declined])).toEqual([["a", 2], ["b", 3], ["c", 0]]);
+  });
+
+  it("counts a declined violation another audit recorded on Log as declined, never also as Log only", () => {
+    data.activity = { a: fired(4, { loggedViolations: 3, declinedViolations: 2, declinedLoggedViolations: 1 }), old: { ...fired(2), declinedViolations: undefined } };
+
+    expect(outcomesOf("a")).toEqual({ all: 4, logged: 2, steered: 0, declined: 2 });
+    expect(outcomesOf("old")).toEqual({ all: 2, logged: 0, steered: 2, declined: 0 });
+    expect(outcomesOf("missing")).toEqual({ all: 0, logged: 0, steered: 0, declined: 0 });
   });
 });
 

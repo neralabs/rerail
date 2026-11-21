@@ -9,7 +9,7 @@ import {
   UNLISTED_BRANCHES_PROBLEM,
   type DetectContext,
 } from "../../../src/runtime/merge-assist/conflict-detect.js";
-import { readConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
+import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -32,6 +32,13 @@ vi.mock("../../../src/runtime/merge-assist/github.js", async () => ({
   ...await vi.importActual<typeof import("../../../src/runtime/merge-assist/github.js")>("../../../src/runtime/merge-assist/github.js"),
   PULL_REQUEST_LIMIT: 1,
 }));
+
+// A test can stop a pass's reads right after its store has committed.
+vi.mock("../../../src/runtime/merge-assist/conflict-store.js", { spy: true });
+const { GitReads } = await vi.importActual<typeof import("../../../src/engine/git.js")>("../../../src/engine/git.js");
+const { writeConflicts: actualWriteConflicts } = await vi.importActual<typeof import("../../../src/runtime/merge-assist/conflict-store.js")>(
+  "../../../src/runtime/merge-assist/conflict-store.js",
+);
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
 withExperiments("MERGE_ASSIST");
@@ -57,7 +64,7 @@ function committedDaysAgo(checkout: string, days: number): void {
   execFileSync("git", ["commit", "-q", "--amend", "--no-edit"], {
     cwd: checkout,
     env: {
-      ...process.env, GIT_COMMITTER_NAME: "Tim Belanger", GIT_COMMITTER_EMAIL: "tim@example.com", GIT_COMMITTER_DATE: new Date(Date.now() - days * DAY).toISOString(),
+      ...process.env, GIT_COMMITTER_NAME: "Alex Kim", GIT_COMMITTER_EMAIL: "alex@example.com", GIT_COMMITTER_DATE: new Date(Date.now() - days * DAY).toISOString(),
       GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null",
     },
   });
@@ -100,34 +107,50 @@ describe("a detection pass", { timeout: 30_000 }, () => {
     expect(open(ws)).toEqual(["origin/remote-only"]);
   });
 
+  it("answers what it stored when the owner of its Git reads stops them once its store has committed", async () => {
+    const { ws, context } = await enabled();
+    commit(ws.worktree("jdoe-orders"), THEIR_ORDERS, "Version the orders path");
+    const owner = new GitReads();
+    vi.mocked(writeConflicts).mockImplementationOnce((...args) => {
+      actualWriteConflicts(...args);
+      void owner.stop();
+    });
+
+    const detected = await detectConflicts({ ...context([]), reads: owner });
+
+    expect(owner.stopped).toBe(true);
+    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jdoe-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders"]);
+  });
+
   it("keeps the open branch conflicts, and says why, when Git cannot list the branches", async () => {
     const { ws, context } = await enabled();
-    commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    commit(ws.worktree("jdoe-orders"), THEIR_ORDERS, "Version the orders path");
     expect((await detectConflicts(context([])))?.problems).toEqual([]);
-    expect(open(ws)).toEqual(["jbarnes-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders"]);
 
     reads.use = async (root, args, options) =>
       (args[0] === "for-each-ref" && args.some(arg => arg.startsWith("--no-merged=")) ? undefined : await reads.real(root, args, options));
     const detected = await detectConflicts(context([]));
 
     expect(detected?.problems).toEqual([UNLISTED_BRANCHES_PROBLEM]);
-    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jbarnes-orders"]);
-    expect(open(ws)).toEqual(["jbarnes-orders"]);
+    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jdoe-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders"]);
   });
 
   it("compares the other refs when one cannot be read, keeping that one's open conflicts and saying why", async () => {
     const { ws, context } = await enabled();
-    commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    commit(ws.worktree("jdoe-orders"), THEIR_ORDERS, "Version the orders path");
     const unreadable = commit(ws.worktree("kchen-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v3/orders\");\n" }, "Move orders");
     await detectConflicts(context([]));
-    expect(open(ws)).toEqual(["jbarnes-orders", "kchen-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders", "kchen-orders"]);
 
     // Git fails to diff that ref (as at the 512 MiB or 60 s bound).
     reads.use = async (root, args, options) => (args.includes(unreadable) && args.includes("diff") ? undefined : await reads.real(root, args, options));
     const detected = await detectConflicts(context([]));
 
     expect(detected?.problems).toEqual([expect.stringMatching(/^Could not compare kchen-orders: git diff \S+ \S+ failed in /u)]);
-    expect(open(ws)).toEqual(["jbarnes-orders", "kchen-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders", "kchen-orders"]);
   });
 
   it("compares only the most recently committed remote-tracking branches while pull requests are unread, and says so", async () => {
@@ -166,9 +189,9 @@ describe("a detection pass", { timeout: 30_000 }, () => {
     writeFiles(ws.repo, { "src/api/orders.ts": "export const orders = () => client.get(\"/orders?page=1\");\n" });
     git(ws.repo, "commit", "-q", "--amend", "-am", "orders, second take");
     // Another person's fork, with a branch of the same name that was never this branch.
-    const theirs = commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    const theirs = commit(ws.worktree("jdoe-orders"), THEIR_ORDERS, "Version the orders path");
 
-    await detectConflicts(context([forkPull(5, "tbelanger", pushed), forkPull(6, "jbarnes", theirs)]));
+    await detectConflicts(context([forkPull(5, "akim", pushed), forkPull(6, "jdoe", theirs)]));
     expect(open(ws)).toEqual(["refs/pull/6/head"]);
   });
 
@@ -177,22 +200,22 @@ describe("a detection pass", { timeout: 30_000 }, () => {
     // A head this branch never pointed at (pushed from another clone, or its reflog expired), in the person's fork.
     const elsewhere = commit(ws.worktree("other-clone"), THEIR_ORDERS, "Version the orders path");
 
-    await detectConflicts(context([forkPull(5, "TBelanger", elsewhere)]));
+    await detectConflicts(context([forkPull(5, "AKim", elsewhere)]));
     expect(open(ws)).toEqual(["refs/pull/5/head"]);
-    await detectConflicts(context([forkPull(5, "TBelanger", elsewhere)], "tbelanger"));
+    await detectConflicts(context([forkPull(5, "AKim", elsewhere)], "akim"));
     expect(open(ws)).toEqual(["other-clone"]);
   });
 
   it("keeps the open conflicts, and says so, when there is no base branch to compare with", async () => {
     const { ws, context } = await enabled();
-    commit(ws.worktree("jbarnes-orders"), THEIR_ORDERS, "Version the orders path");
+    commit(ws.worktree("jdoe-orders"), THEIR_ORDERS, "Version the orders path");
     await detectConflicts(context([]));
-    expect(open(ws)).toEqual(["jbarnes-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders"]);
 
     git(ws.repo, "branch", "-m", "main", "trunk");
     const detected = await detectConflicts(context([]));
     expect(detected?.problems).toEqual([NO_BASE_PROBLEM, UNCOMPARED_KEPT_PROBLEM]);
-    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jbarnes-orders"]);
-    expect(open(ws)).toEqual(["jbarnes-orders"]);
+    expect(detected?.after.map(entry => entry.conflict.theirs.ref)).toEqual(["jdoe-orders"]);
+    expect(open(ws)).toEqual(["jdoe-orders"]);
   });
 });

@@ -422,6 +422,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };
@@ -2112,7 +2113,10 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
 
 /// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2548,7 +2552,10 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             "refused {source:?}"
         );
     }
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2655,11 +2662,16 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
         "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
         "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
         "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
+        // A number past simdjson's range with an exponent's `+`: refused by simdjson, read by the Bitlex parser.
+        "[1e+21, -9223372036854778000]", "{\"a\": 1e+21, \"b\": [12345678901234567890123]}",
     ]
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))
     .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let mut work = vec![root];
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -2901,7 +2913,10 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
     use crate::code_rule_dsl::transducer::packed::json_parser as jp;
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -3082,7 +3097,10 @@ fn lean_rr_tape_is_the_engines_image() {
         rerail_tape_format::CHECKPOINT_STRIDE
     );
     let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -5746,6 +5764,7 @@ fn blade_programs_agree(source: &str) -> Option<bool> {
         text: program.text.clone(),
         segments: program.segments.clone(),
         host_errors: program.host_errors.clone(),
+        at: program.at.clone(),
     };
     let ours =
         DerivedImage::encode(Via::CompiledView, program, 0, &host, source, &|| false).unwrap();
@@ -7501,6 +7520,7 @@ fn every_tape_format_reads_the_document_as_restored() {
 /// there answers every node question as the same tape read from a buffer of its own, in each format.
 #[test]
 fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
+    format_15();
     use super::formats::Format;
     use rerail_tape_format::tape::{Tape, children};
     let source: String = (0..400).map(|i| format!("x{i} = f(a, {i})\n")).collect();
@@ -7522,8 +7542,8 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
         // `in_format` keeps a tape held in another format as it is (a document's tape is format 16 now): the
         // placed tape is in the format its bytes were stored in.
         assert_eq!(placed.format(), own.format(), "held as stored");
-        #[cfg(target_os = "macos")]
-        assert_eq!(placed.placed(), rerail_metal::METAL_DEVICE.is_some(), "{format:?}: in a slab's room where there is a device");
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        assert_eq!(placed.placed(), crate::code_rule_dsl::tape::placed::device().is_some(), "{format:?}: in a slab's room where there is a device");
         assert_eq!(placed.to_bytes().unwrap(), bytes, "{format:?}: the bytes as stored");
         let text = Arc::new(source.clone());
         let (own, placed) = (super::formats::DocTape::new(Arc::new(own), Arc::clone(&text)), super::formats::DocTape::new(Arc::new(placed), text));
@@ -7672,6 +7692,8 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    // Not on MSVC, which builds none of simdjson's C++.
+    #[cfg(not(all(windows, target_env = "msvc")))]
     use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
@@ -7683,7 +7705,7 @@ fn the_lean_parsers_write_each_format_directly() {
     let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
     let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
     // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
-    // (decision 0426 §2) holds a small part of the tape. `{i}` is the item's number.
+    // (decision 0434 §2) holds a small part of the tape. `{i}` is the item's number.
     let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
@@ -7701,8 +7723,10 @@ fn the_lean_parsers_write_each_format_directly() {
         (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
         (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
-        // simdjson's kernel (decision 0426): strict JSON, and JSONC with its comments and a trailing comma.
+        // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma.
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
+        #[cfg(not(all(windows, target_env = "msvc")))]
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();
@@ -7759,7 +7783,7 @@ fn the_lean_parsers_write_each_format_directly() {
     eprintln!("written directly: {direct:?}");
 }
 
-/// Decision 0426 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
+/// Decision 0434 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
 /// 16's ops as it walks (`formats::TreeOps`), never format 15's nodes. The tape is the bytes format 15's image
 /// converts to: supertypes, contextual aliases, extras and error nodes among its codes.
 #[test]
@@ -7805,11 +7829,11 @@ fn the_cursor_walk_writes_each_format_directly() {
     eprintln!("written directly: {direct:?}");
 }
 
-/// Decision 0426, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
+/// Decision 0434, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
 /// through their `Sink`, tree-sitter's cursor walk, Blade's Forte tree, the format strings' trees and the embedded
 /// programs' documents through `TapeImage::walked`): a file's documents are never format 15's first, converted
 /// (`formats::converted`). JSON's simdjson kernels give their walk's events to the ops; tier 2 writes format 15
-/// until its words call them (0426 step 3).
+/// until its words call them (0434 step 3).
 #[test]
 fn no_intermediate_tape() {
     use super::formats::{Format, as_run, converted};
@@ -7904,7 +7928,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             assert_eq!(view.nodes, n);
             for i in 0..n {
                 let at = |what: &str| format!("{what} of {i} ({format:?}, {lang:?})");
-                let code = codes[reads.one("tape_number", tape, &view, i as usize) as usize];
+                let code = codes[reads.one("tape_number", tape, view, i as usize) as usize];
                 assert_eq!(
                     (code.kind, code.field, code.flags),
                     (
@@ -7917,52 +7941,52 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
                 );
                 let end = doc.transducer_descendants(i).end;
                 assert_eq!(
-                    reads.one("tape_end_of", tape, &view, i as usize),
+                    reads.one("tape_end_of", tape, view, i as usize),
                     end,
                     "{}",
                     at("subtree")
                 );
                 let span = doc.transducer_span(i);
                 assert_eq!(
-                    reads.one("tape_start", tape, &view, i as usize) as usize,
+                    reads.one("tape_start", tape, view, i as usize) as usize,
                     span.start,
                     "{}",
                     at("start")
                 );
                 assert_eq!(
-                    reads.one("tape_end", tape, &view, i as usize) as usize,
+                    reads.one("tape_end", tape, view, i as usize) as usize,
                     span.end,
                     "{}",
                     at("end")
                 );
                 assert_eq!(
-                    reads.one("tape_parent", tape, &view, i as usize),
+                    reads.one("tape_parent", tape, view, i as usize),
                     none(doc.transducer_parent(i)),
                     "{}",
                     at("parent")
                 );
                 assert_eq!(
-                    reads.one("tape_next", tape, &view, i as usize),
+                    reads.one("tape_next", tape, view, i as usize),
                     none(doc.transducer_next_sibling(i, false)),
                     "{}",
                     at("next")
                 );
                 let kids = doc.transducer_children(i).collect::<Vec<_>>();
                 assert_eq!(
-                    reads.one("tape_child_count", tape, &view, i as usize) as usize,
+                    reads.one("tape_child_count", tape, view, i as usize) as usize,
                     kids.len(),
                     "{}",
                     at("children")
                 );
                 assert_eq!(
-                    reads.one("tape_first_child", tape, &view, i as usize),
+                    reads.one("tape_first_child", tape, view, i as usize),
                     none(kids.first().copied()),
                     "{}",
                     at("first child")
                 );
                 for (k, &kid) in kids.iter().enumerate().take(8) {
                     assert_eq!(
-                        reads.two("tape_child", tape, &view, i as usize, k as u32),
+                        reads.two("tape_child", tape, view, i as usize, k as u32),
                         kid,
                         "{}",
                         at("a child")
@@ -7973,13 +7997,16 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
     }
 }
 
+/// A grammar's encoder of a text, stopped where its callback says: its tape, or why it refused the text.
+type Encode<E> = fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>;
+
 /// `dialect`'s tapes from its lean parser (`encode`) are tree-sitter's, byte for byte, on `sources`;
 /// each of `invalid` (a text tree-sitter reads with an error) the lean parser refuses. And the product
 /// reads the dialect with the lean parser: a file's image through the engine's parse is the lean
 /// parser's; a file it refuses goes to tree-sitter.
 fn lean_tapes_are_tree_sitters<E: std::fmt::Debug>(
     dialect: GrammarDialect,
-    encode: fn(&Grammar, &str, &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, E>,
+    encode: Encode<E>,
     sources: &[&str],
     invalid: &[&str],
 ) {
@@ -8118,4 +8145,150 @@ fn a_node_reached_without_its_parent_reads_the_kept_parents() {
             "transducer parent of {index}"
         );
     }
+}
+
+
+/// Decision 0466 R2 against tree-sitter: a `type` fragment's tape is tree-sitter-python's `type` node of the same text
+/// written after `x: ` (positions less the prefix's bytes, its field gone), unions too, where the lean parser
+/// refuses such a file and tree-sitter reads it.
+#[test]
+fn a_type_fragment_is_tree_sitters_written_annotation() {
+    use crate::code_rule_dsl::tape::python_lean;
+    use rerail_tape_format::tape::Tape as _;
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
+    // A tape's nodes from `root` on, in either format: depth, kind, field, flags, classes and span, the span less
+    // `shift`, the root's field left out.
+    let plain = |image: &TapeImage, root: usize, shift: u64| -> String {
+        let t = image.tape();
+        let end = t.subtree_end(root);
+        let mut open: Vec<usize> = Vec::new();
+        let mut out = String::new();
+        for i in root..end {
+            while open.last().is_some_and(|&e| e <= i) {
+                open.pop();
+            }
+            let e = t.table().entry(t.code(i));
+            let field = if i == root || e.field == 0 { String::new() } else { format!(" {}:", grammar.field_name(e.field).unwrap_or("?")) };
+            let classes: Vec<&str> = e.classes.iter().map(|&c| grammar.kind_name(c).unwrap_or("?")).collect();
+            out.push_str(&format!("{}{}{field} {} {classes:?} [{}..{}]\n", "  ".repeat(open.len()), grammar.kind_name(e.kind).unwrap_or("?"), e.flags, t.start(i) - shift, t.end(i) - shift));
+            open.push(t.subtree_end(i));
+        }
+        out
+    };
+    for text in ["int", "List[int]", "Dict[str, List[int]]", "a.b.C", "Optional['A']", "Callable[[int], str]", "int | None", "List[int] | None", "Optional[A] | B[C]", "Literal[1, 'a']", "*Ts", "x: y"] {
+        let ours = python_lean::encode_from(&grammar, text, "type", &|| false).unwrap_or_else(|e| panic!("{text:?}: {e:?}")).unwrap();
+        let src = format!("x: {text}\n");
+        let tree = parser.parse(&src, None).unwrap();
+        assert!(!tree.root_node().has_error(), "{src:?}");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, &src, &|| false).unwrap().primary;
+        let t = theirs.tape();
+        let at = (0..t.len()).find(|&i| grammar.kind_name(t.table().entry(t.code(i)).kind) == Some("type")).expect("the annotation's type");
+        assert_eq!(plain(&ours, 0, 0), plain(&theirs, at, 3), "{text:?}");
+        assert_eq!(ours.tape().subtree_end(0), ours.tape().len(), "{text:?}: one root");
+    }
+}
+
+/// Decision 0466 R4: every fragment the registry declares starts at a node kind its dialect's hand-written parser
+/// parses from (`TreeParser::starts`): no fragment is left to tree-sitter, which has one start rule.
+#[test]
+fn every_fragment_starts_where_its_parser_starts() {
+    for &(name, dialect, start, _) in crate::code_rule_dsl::language::fragments() {
+        if !dialect.built() {
+            continue;
+        }
+        assert!(super::starts(dialect).contains(&start), "fragment {name}: {dialect:?}'s hand-written parser does not start at `{start}` (it starts at {:?})", super::starts(dialect));
+    }
+}
+
+/// Decision 0466 R1 through the router: a JSX fragment's tape is one `jsx_element` over its text, read by the lean
+/// parser; a text it refuses is one `ERROR` over it less blanks (no tree made up); TypeScript starts at no element.
+#[test]
+fn a_fragment_is_parsed_from_its_start_by_its_parser() {
+    use rerail_tape_format::tape::Tape as _;
+    let js = Grammar::new(GrammarDialect::JavaScript).unwrap();
+    let root = |image: &FileImage| {
+        let t = image.primary.tape();
+        assert_eq!(t.subtree_end(0), t.len(), "one root");
+        let e = t.table().entry(t.code(0));
+        (if e.flags & CODE_ERROR != 0 { "ERROR" } else { js.kind_name(e.kind).unwrap() }, t.start(0), t.end(0))
+    };
+    let image = TapeImage::parse_from(&js, " <a>{b}</a> ", "jsx_element", &|| false).unwrap().unwrap();
+    assert_eq!(root(&image), ("jsx_element", 1, 11));
+    let image = TapeImage::parse_from(&js, " <a>{b} ", "jsx_element", &|| false).unwrap().unwrap();
+    assert_eq!(root(&image), ("ERROR", 1, 7));
+    let ts = Grammar::new(GrammarDialect::TypeScript).unwrap();
+    assert!(TapeImage::parse_from(&ts, "<a></a>", "jsx_element", &|| false).is_none());
+    let py = Grammar::new(GrammarDialect::Python).unwrap();
+    assert!(TapeImage::parse_from(&py, "int", "expression", &|| false).is_none(), "a start no parser lists");
+}
+
+/// Decision 0466 R1 for HTML: an element alone is one `element` over its text, with no `document`, `html` or `body`.
+#[test]
+fn an_html_fragment_is_one_element() {
+    use rerail_tape_format::tape::Tape as _;
+    let html = Grammar::new(GrammarDialect::Html).unwrap();
+    let image = TapeImage::parse_from(&html, "\n<li>a <b>c</b></li>\n", "element", &|| false).unwrap().unwrap();
+    let t = image.primary.tape();
+    assert_eq!(t.subtree_end(0), t.len(), "one root");
+    assert_eq!((html.kind_name(t.table().entry(t.code(0)).kind), t.start(0), t.end(0)), (Some("element"), 1, 20));
+}
+
+/// A file of a dialect that embeds others is read by its lean parser, and its programs are built over that tape
+/// (`parse_own`): an HTML file's scripts and styles. Before, every lean parser left such a file to tree-sitter, so
+/// declaring HTML's embeds (decision 0431 step 3a) sent every HTML file there.
+#[test]
+fn a_file_that_embeds_code_is_read_by_its_lean_parser() {
+    let html = Grammar::new(GrammarDialect::Html).unwrap();
+    let parser = tree_parser(GrammarDialect::Html).expect("HTML's parser");
+    let source = "<p>a</p>\n<script>let x = 1;</script>\n<style>p { color: red }</style>\n";
+    let image = parse_own(parser, &html, source, &|| false).expect("the lean parser reads it").unwrap();
+    assert_eq!(image.derived.len(), 2, "a program per script and style");
+    let routed = TapeImage::parse(&html, source, &|| false).unwrap().unwrap();
+    assert_eq!(routed.derived.len(), 2);
+    assert!(routed.primary.to_bytes().unwrap() == image.primary.to_bytes().unwrap(), "the router reads it the same way");
+}
+
+
+fn call_argument_programs(source: &str) -> Vec<(String, usize)> {
+    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let doc = TapeDoc::restore(std::sync::Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    crate::code_rule_dsl::embed::Embedder::build_in_doc(&crate::code_rule_dsl::embed::call_argument::CallArgument, &doc, &|| false).into_iter().map(|p| (p.text.clone(), p.segments.bounds(0..1).start)).collect()
+}
+
+/// Decision 0470 R2, R3: a string at a declared place is a program over its content, at its bytes; the callee is
+/// matched as the file resolves it.
+#[test]
+fn call_argument_a_string_at_a_place_is_a_program_at_its_bytes() {
+    let src = "from markupsafe import Markup as M\nimport markupsafe\nx = M(\"<b>a</b>\")\ny = markupsafe.Markup('<i>b</i>')\n";
+    assert_eq!(call_argument_programs(src), [("<b>a</b>".to_owned(), 60), ("<i>b</i>".to_owned(), 94)]);
+    let src = "from django.utils.html import format_html\nformat_html('<a href=\"{}\">{}</a>', '<p>not</p>')\n";
+    assert_eq!(call_argument_programs(src).iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["<a href=\"{}\">{}</a>"], "argument 0 only");
+    let src = "from django.utils.safestring import mark_safe\nmark_safe(\"<p>\" \"x</p>\")\n";
+    assert_eq!(call_argument_programs(src).iter().map(|p| p.0.as_str()).collect::<Vec<_>>(), ["<p>x</p>"], "a concatenation is one program");
+}
+
+/// R3: a name the file binds otherwise, or never imports, is not the place's callee.
+#[test]
+fn call_argument_a_callee_the_file_does_not_import_is_no_place() {
+    for src in [
+        "def Markup(s): return s\nMarkup('<b>a</b>')\n",
+        "Markup('<b>a</b>')\n",
+        "from other import Markup\nMarkup('<b>a</b>')\n",
+        "from markupsafe import Markup\nMarkup = str\nMarkup('<b>a</b>')\n",
+    ] {
+        assert_eq!(call_argument_programs(src), [], "{src:?}");
+    }
+}
+
+/// R4: only a plain string is a program.
+#[test]
+fn call_argument_only_a_plain_string_is_a_program() {
+    for arg in ["f\"<b>{x}</b>\"", "b\"<b>x</b>\"", "name", "\"<b>\\n</b>\"", "\"<b>\" + x", "*args"] {
+        let src = format!("from markupsafe import Markup\nMarkup({arg})\n");
+        assert_eq!(call_argument_programs(&src), [], "{arg}");
+    }
+    assert_eq!(call_argument_programs("from markupsafe import Markup\nMarkup(r\"<b>\\d</b>\")\n").len(), 1, "a raw string's bytes are its value");
 }

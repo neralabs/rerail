@@ -230,12 +230,14 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     } else {
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
-        jobs.into_par_iter()
-            .map_init(BTreeMap::new, |grammars, job| {
-                let _in = carry.enter("evaluate job");
-                work(job, grammars)
-            })
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            jobs.into_par_iter()
+                .map_init(BTreeMap::new, |grammars, job| {
+                    let _in = carry.enter("evaluate job");
+                    work(job, grammars)
+                })
+                .collect()
+        })
     })
 }
 
@@ -348,7 +350,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
     } else {
         // Each job in the run under way here (a pool thread that takes one holds none: decision 0442).
         let carry = crate::code_rule_dsl::logic::profile::carry();
-        (|| {
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
             jobs.into_par_iter()
                 .zip(storage_times.into_par_iter())
                 .map_init(BTreeMap::new, |grammars, job| {
@@ -356,7 +358,7 @@ pub(super) fn run_jobs(jobs: &mut Vec<Job>, context: &JobContext<'_>) -> Result<
                     work(job, grammars)
                 })
                 .collect()
-        })()
+        })
     })
 }
 
@@ -1040,7 +1042,7 @@ fn clause_matchers(code_rule: &CompiledCodeRule, clause: usize) -> &[GrammarMatc
 /// which clauses run around them; its anchor index selects the roots; its scope tables join the
 /// file's, which hold every document's. Marks in `settled` the slots that ran to an answer.
 #[allow(clippy::too_many_arguments)]
-/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0426 §4): a clause none of
+/// Whether the document may hold a root of `grammar`'s clause, by its presence (decision 0434 §4): a clause none of
 /// whose root kinds the document has matches nothing in it, and no anchor index is built for it.
 fn admits_presence(doc: &tape::TapeDoc, grammar: &GrammarMatcher) -> bool {
     let admits = grammar.anchors.root_kinds().is_none_or(|kinds| kinds.iter().any(|&kind| doc.may_have_kind(kind)));
@@ -1378,7 +1380,7 @@ fn encode_own_image(
     let parse_started = Instant::now();
     #[cfg(any(test, feature = "test-hooks"))]
     pause_at_test_phase("native-tree", &file.input.source);
-    let parsed = parser.parse(grammar, &file.input.source, interrupted);
+    let parsed = tape::parse_own(parser, grammar, &file.input.source, interrupted);
     #[cfg(feature = "code-rule-profile")]
     drop(parse_timer);
     metrics.ast_parse_nanoseconds += parse_started.elapsed().as_nanos() as u64;

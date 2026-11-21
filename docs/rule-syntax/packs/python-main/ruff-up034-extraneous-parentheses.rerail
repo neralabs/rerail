@@ -1,5 +1,4 @@
 .policy "ruff-up034-extraneous-parentheses" revision 1
-.guests off
 .description "Remove redundant doubled parentheses around an expression; one pair is enough."
 .language python
 .mode steer

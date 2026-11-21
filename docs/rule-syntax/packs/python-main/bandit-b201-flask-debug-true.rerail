@@ -1,5 +1,4 @@
 .policy "bandit-b201-flask-debug-true" revision 1
-.guests off
 .description "Don't run a Flask app with debug enabled; the interactive debugger lets anyone who can reach it execute arbitrary code."
 .language python
 .mode steer

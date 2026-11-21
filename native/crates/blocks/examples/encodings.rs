@@ -7,7 +7,8 @@
 //! ```
 
 use rerail_blocks::block::{Block, kind};
-#[cfg(target_os = "macos")]
+// The device's columns (macOS and Linux, decision 0440 step C) are its only readers.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_blocks::col;
 use rerail_blocks::packed;
 use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
@@ -142,111 +143,128 @@ fn main() {
     println!("in place: {} bytes ({:.1} B/row); packed: {} bytes ({:.1} B/row, index {} B); cols {:?}", in_place, in_place as f64 / st.live as f64, ps.bytes, ps.bytes as f64 / st.live as f64, ps.index_bytes, ps.cols);
     println!("{}", m.lines.join("\n"));
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     gpu();
 }
 
-/// A column of 64M values under 2^18 on the GPU: 4 bytes a value plain, 18 bits packed. A scan reads every value
-/// once; a gather reads 16M values at scattered positions.
-#[cfg(target_os = "macos")]
-fn gpu() {
-    use metal::*;
-    const SRC: &str = r#"
-#include <metal_stdlib>
-using namespace metal;
+/// The kernels, in UKL, on the process's device (`RERAIL_GPU` chooses its backend; decision 0440 step C). `BITS` and
+/// `PB` are compiled in, each value a program of its own (`program_with`'s defines).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const SRC: &str = r#"
+#include <ukl/backend.h>
+#include <ukl/simd.h>
+#ifndef BITS
+#define BITS 1u
+#endif
+#ifndef PB
+#define PB 1u
+#endif
+// A thread's lane in its SIMD group, and its group in a threadgroup of 256 (`TG`).
+#define TG 256u
+#define LANE (lid % UKL_SIMD_WIDTH)
+#define SGS (TG / UKL_SIMD_WIDTH)
+// Signed values min'd and max'd as unsigned ones: their order with the sign bit flipped.
+UKL_INLINE uint32_t ord(int32_t x) { return (uint32_t)x ^ 0x80000000u; }
+UKL_INLINE int32_t unord(uint32_t x) { return (int32_t)(x ^ 0x80000000u); }
+UKL_INLINE uint32_t umin(uint32_t a, uint32_t b) { return a < b ? a : b; }
+UKL_INLINE uint32_t umax(uint32_t a, uint32_t b) { return a > b ? a : b; }
+
+// Every kernel's parameters: a column of `n` values, and what each kernel reads of the rest.
+typedef struct P { uint32_t n; uint32_t bits; uint32_t t; uint32_t lo; uint32_t v0; uint32_t sh; uint32_t sl; uint32_t rmin; uint32_t rbits; uint32_t m; uint32_t pad0; uint32_t pad1; } P;
+UKL_REFLECT_STRUCT(P, n, bits, t, lo, v0, sh, sl, rmin, rbits, m, pad0, pad1)
+
 // 32-bit operations only (the GPU emulates 64-bit shifts): the packed 64-bit words read as pairs of 32-bit
 // words, the same bit stream on a little-endian machine. `bits` < 32.
-inline uint unpack(device const uint* w, uint i, uint bits) {
-    uint bit = i * bits;
-    uint k = bit >> 5, sh = bit & 31u;
-    uint lo = w[k] >> sh;
-    uint hi = sh == 0u ? 0u : (w[k + 1u] << (32u - sh));
+UKL_INLINE uint32_t unpack(UKL_GLOBAL const uint32_t* w, uint32_t i, uint32_t bits) {
+    uint32_t bit = i * bits;
+    uint32_t k = bit >> 5, sh = bit & 31u;
+    uint32_t lo = w[k] >> sh;
+    uint32_t hi = sh == 0u ? 0u : (w[k + 1u] << (32u - sh));
     return (lo | hi) & ((1u << bits) - 1u);
 }
-kernel void scan_plain(device const uint* v [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       uint i [[thread_position_in_grid]]) {
-    uint s = 0u, t = n / 16u;
-    for (uint r = 0u; r < 16u; r++) s += v[i + r * t];
-    s = simd_sum(s);
-    if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
+DEFINE_KERNEL2(enc, scan_plain, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, out, "[1]", ARGS, P, a, ,
+               GID0, uint32_t, i, , LID0, uint32_t, lid, )
+{
+    uint32_t s = 0u, t = a.n / 16u;
+    for (uint32_t r = 0u; r < 16u; r++) s += v[i + r * t];
+    s = ukl_sg_sum(s __UKL_ARGS);
+    if (LANE == 0u) ukl_atomic_add(out, s);
 }
-kernel void scan_packed(device const uint* w [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
-                        constant uint& bits [[buffer(3)]], uint i [[thread_position_in_grid]]) {
-    uint s = 0u, t = n / 16u;
-    for (uint r = 0u; r < 16u; r++) s += unpack(w, i + r * t, bits);
-    s = simd_sum(s);
-    if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
+DEFINE_KERNEL2(enc, scan_packed, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, out, "[1]", ARGS, P, a, ,
+               GID0, uint32_t, i, , LID0, uint32_t, lid, )
+{
+    uint32_t s = 0u, t = a.n / 16u;
+    for (uint32_t r = 0u; r < 16u; r++) s += unpack(v, i + r * t, a.bits);
+    s = ukl_sg_sum(s __UKL_ARGS);
+    if (LANE == 0u) ukl_atomic_add(out, s);
 }
 // `BITS` compiled in: a thread decodes a group of 32 values, which is exactly BITS aligned 32-bit words, each
 // loaded once; the shifts are constants after unrolling. Group g's words are interleaved across threads
-// (word k of group g at k * groups + g), so a simdgroup's loads are coalesced.
-constant uint BITS [[function_constant(0)]];
-kernel void scan_group(device const uint* w [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       uint g [[thread_position_in_grid]]) {
-    uint groups = n / 32u;
-    uint s = 0u, mask = (1u << BITS) - 1u;
-    uint cur = w[g], k = 1u, have = 32u;
-    #pragma unroll
-    for (uint v = 0u; v < 32u; v++) {
-        uint x;
+// (word k of group g at k * groups + g), so a SIMD group's loads are coalesced.
+DEFINE_KERNEL2(enc, scan_group, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, out, "[1]", ARGS, P, a, ,
+               GID0, uint32_t, g, , LID0, uint32_t, lid, )
+{
+    uint32_t groups = a.n / 32u;
+    uint32_t s = 0u, mask = (1u << BITS) - 1u;
+    uint32_t cur = v[g], k = 1u, have = 32u;
+    for (uint32_t r = 0u; r < 32u; r++) {
+        uint32_t x;
         if (have >= BITS) { x = cur & mask; cur = have == BITS ? 0u : cur >> BITS; have -= BITS; }
-        else { uint nx = w[k * groups + g]; k++; x = (cur | (nx << have)) & mask; cur = have == 0u ? nx >> BITS : nx >> (BITS - have); have += 32u - BITS; }
+        else { uint32_t nx = v[k * groups + g]; k++; x = (cur | (nx << have)) & mask; cur = have == 0u ? nx >> BITS : nx >> (BITS - have); have += 32u - BITS; }
         s += x;
     }
-    s = simd_sum(s);
-    if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
+    s = ukl_sg_sum(s __UKL_ARGS);
+    if (LANE == 0u) ukl_atomic_add(out, s);
 }
-// Packing (frame of reference): the column's minimum and maximum first, then each thread packs one group of 32
-// values, `PB` bits each (compiled in), into exactly PB words: no word is shared between threads, so no atomics.
-kernel void minmax(device const uint* v [[buffer(0)]], device atomic_uint* mm [[buffer(1)]], constant uint& n [[buffer(2)]],
-                   uint i [[thread_position_in_grid]], uint t [[threads_per_grid]]) {
-    uint lo = 0xFFFFFFFFu, hi = 0u;
-    for (uint j = i; j < n; j += t) { uint x = v[j]; lo = min(lo, x); hi = max(hi, x); }
-    lo = simd_min(lo);
-    hi = simd_max(hi);
-    if (simd_is_first()) { atomic_fetch_min_explicit(&mm[0], lo, memory_order_relaxed); atomic_fetch_max_explicit(&mm[1], hi, memory_order_relaxed); }
+// Packing (frame of reference): the column's minimum and maximum first (`t` threads in the grid), then each
+// thread packs one group of 32 values, `PB` bits each (compiled in), into exactly PB words: no word is shared
+// between threads, so no atomics.
+DEFINE_KERNEL2(enc, minmax, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, mm, "[2]", ARGS, P, a, ,
+               GID0, uint32_t, i, , LID0, uint32_t, lid, )
+{
+    uint32_t lo = 0xFFFFFFFFu, hi = 0u;
+    for (uint32_t j = i; j < a.n; j += a.t) { uint32_t x = v[j]; lo = umin(lo, x); hi = umax(hi, x); }
+    lo = ukl_sg_min(lo __UKL_ARGS);
+    hi = ukl_sg_max(hi __UKL_ARGS);
+    if (LANE == 0u) { ukl_atomic_min(&mm[0], lo); ukl_atomic_max(&mm[1], hi); }
 }
-constant uint PB [[function_constant(1)]];
 // One group's 32 values into PB words at `o`, word k at o[k * stride].
-inline void pack_group(device const uint* v, uint base, uint n, uint lo, device uint* o, uint stride) {
-    uint cur = 0u, have = 0u, k = 0u;
-    #pragma unroll
-    for (uint r = 0u; r < 32u; r++) {
-        uint j = base + r;
-        uint x = (j < n ? v[j] : lo) - lo;
+UKL_INLINE void pack_group(UKL_GLOBAL const uint32_t* v, uint32_t base, uint32_t n, uint32_t lo, UKL_GLOBAL uint32_t* o, uint32_t stride) {
+    uint32_t cur = 0u, have = 0u, k = 0u;
+    for (uint32_t r = 0u; r < 32u; r++) {
+        uint32_t j = base + r;
+        uint32_t x = (j < n ? v[j] : lo) - lo;
         cur |= x << have;
         have += PB;
         if (have >= 32u) { o[k * stride] = cur; k++; have -= 32u; cur = have == 0u ? 0u : x >> (PB - have); }
     }
 }
 // The CPU's layout: group g's words at g * PB (the same bit stream as 64-bit words).
-kernel void pack_seq(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
-                     constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]]) {
-    pack_group(v, g * 32u, n, lo, w + g * PB, 1u);
+DEFINE_KERNEL2(enc, pack_seq, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, w, "[n]", ARGS, P, a, , GID0, uint32_t, g, )
+{
+    pack_group(v, g * 32u, a.n, a.lo, w + g * PB, 1u);
 }
-// The scan's layout: word k of group g at k * groups + g, so a simdgroup's stores are coalesced.
-kernel void pack_inter(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]], uint groups [[threads_per_grid]]) {
-    pack_group(v, g * 32u, n, lo, w + g, groups);
+// The scan's layout: word k of group g at k * groups + g (`t`: the groups), so a SIMD group's stores are coalesced.
+DEFINE_KERNEL2(enc, pack_inter, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, w, "[n]", ARGS, P, a, , GID0, uint32_t, g, )
+{
+    pack_group(v, g * 32u, a.n, a.lo, w + g, a.t);
 }
 // Loads coalesced through threadgroup memory: 64 threads load their 64 groups (8 KB, rows padded to 33 words so
 // a thread's reads fall in distinct banks), then each packs its own.
-kernel void pack_tg(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
-                    constant uint& lo [[buffer(3)]], uint g [[thread_position_in_grid]], uint l [[thread_position_in_threadgroup]],
-                    uint tg [[threadgroup_position_in_grid]]) {
-    threadgroup uint vals[64 * 33];
-    uint base = tg * 64u * 32u;
-    for (uint r = 0u; r < 32u; r++) {
-        uint j = base + r * 64u + l;
-        uint q = r * 64u + l;
-        vals[(q >> 5) * 33u + (q & 31u)] = j < n ? v[j] : lo;
+DEFINE_KERNEL2(enc, pack_tg, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, w, "[n]", ARGS, P, a, ,
+               SHARED, uint32_t, vals, 2112, GID0, uint32_t, g, , LID0, uint32_t, l, , TGID0, uint32_t, tg, )
+{
+    uint32_t base = tg * 64u * 32u;
+    for (uint32_t r = 0u; r < 32u; r++) {
+        uint32_t j = base + r * 64u + l;
+        uint32_t q = r * 64u + l;
+        vals[(q >> 5) * 33u + (q & 31u)] = j < a.n ? v[j] : a.lo;
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint cur = 0u, have = 0u, k = 0u;
-    device uint* o = w + g * PB;
-    #pragma unroll
-    for (uint r = 0u; r < 32u; r++) {
-        uint x = vals[l * 33u + r] - lo;
+    ukl_tg_barrier();
+    uint32_t cur = 0u, have = 0u, k = 0u;
+    UKL_GLOBAL uint32_t* o = w + g * PB;
+    for (uint32_t r = 0u; r < 32u; r++) {
+        uint32_t x = vals[l * 33u + r] - a.lo;
         cur |= x << have;
         have += PB;
         if (have >= 32u) { o[k] = cur; k++; have -= 32u; cur = have == 0u ? 0u : x >> (PB - have); }
@@ -256,54 +274,53 @@ kernel void pack_tg(device const uint* v [[buffer(0)]], device uint* w [[buffer(
 // `v0 + floor(j * slope / 2^16)`, as the CPU's. Every residual is within the column's range of 0 (the line runs
 // between the first and last values), so when the range is under 2^31 the line and the residuals are exact modulo
 // 2^32. `slope` comes as its high (signed) and low 32 bits: j * slope / 2^16 is j * sh * 2^16 plus j * sl / 2^16,
-// the latter from the 64-bit product's two halves (`mulhi`).
-inline uint line_at(uint j, uint v0, int sh, uint sl) {
-    uint plo = j * sl, phi = mulhi(j, sl);
-    return v0 + ((j * (uint)sh) << 16) + ((phi << 16) | (plo >> 16));
+// the latter from the 64-bit product's two halves.
+UKL_INLINE uint32_t line_at(uint32_t j, uint32_t v0, uint32_t sh, uint32_t sl) {
+    uint64_t p = (uint64_t)j * sl;
+    uint32_t plo = (uint32_t)p, phi = (uint32_t)(p >> 32);
+    return v0 + ((j * sh) << 16) + ((phi << 16) | (plo >> 16));
 }
 // The statistics a choice needs, in one read, as threadgroup partials the host folds: the range, the runs that
-// start (a value unlike the one before it), and the residuals' range.
-kernel void stats(device const uint* v [[buffer(0)]], device int* part [[buffer(1)]], constant uint& n [[buffer(2)]],
-                  constant uint& v0 [[buffer(3)]], constant int& sh [[buffer(4)]], constant uint& sl [[buffer(5)]],
-                  uint i [[thread_position_in_grid]], uint t [[threads_per_grid]], uint l [[thread_position_in_threadgroup]],
-                  uint tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    uint lo = 0xFFFFFFFFu, hi = 0u, runs = 0u;
-    int rlo = 0x7FFFFFFF, rhi = -0x7FFFFFFF;
-    for (uint j = i; j < n; j += t) {
-        uint x = v[j];
-        lo = min(lo, x);
-        hi = max(hi, x);
+// start (a value unlike the one before it), and the residuals' range. `t` threads in the grid.
+DEFINE_KERNEL2(enc, stats, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, int32_t, part, "[groups * 5]", ARGS, P, a, ,
+               SHARED, uint32_t, s, 1280, GID0, uint32_t, i, , LID0, uint32_t, lid, , TGID0, uint32_t, tg, )
+{
+    uint32_t lo = 0xFFFFFFFFu, hi = 0u, runs = 0u;
+    int32_t rlo = 0x7FFFFFFF, rhi = -0x7FFFFFFF;
+    for (uint32_t j = i; j < a.n; j += a.t) {
+        uint32_t x = v[j];
+        lo = umin(lo, x);
+        hi = umax(hi, x);
         runs += (j == 0u || x != v[j - 1u]) ? 1u : 0u;
-        int d = (int)(x - line_at(j, v0, sh, sl));
-        rlo = min(rlo, d);
-        rhi = max(rhi, d);
+        int32_t d = (int32_t)(x - line_at(j, a.v0, a.sh, a.sl));
+        rlo = d < rlo ? d : rlo;
+        rhi = d > rhi ? d : rhi;
     }
-    lo = simd_min(lo);
-    hi = simd_max(hi);
-    runs = simd_sum(runs);
-    rlo = simd_min(rlo);
-    rhi = simd_max(rhi);
-    threadgroup int s[8 * 5];
-    if (simd_is_first()) { s[sg * 5u] = (int)lo; s[sg * 5u + 1u] = (int)hi; s[sg * 5u + 2u] = (int)runs; s[sg * 5u + 3u] = rlo; s[sg * 5u + 4u] = rhi; }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (l == 0u) {
-        for (uint k = 1u; k < 8u; k++) {
-            lo = min(lo, (uint)s[k * 5u]); hi = max(hi, (uint)s[k * 5u + 1u]); runs += (uint)s[k * 5u + 2u];
-            rlo = min(rlo, s[k * 5u + 3u]); rhi = max(rhi, s[k * 5u + 4u]);
+    lo = ukl_sg_min(lo __UKL_ARGS);
+    hi = ukl_sg_max(hi __UKL_ARGS);
+    runs = ukl_sg_sum(runs __UKL_ARGS);
+    rlo = unord(ukl_sg_min(ord(rlo) __UKL_ARGS));
+    rhi = unord(ukl_sg_max(ord(rhi) __UKL_ARGS));
+    uint32_t sg = lid / UKL_SIMD_WIDTH;
+    if (LANE == 0u) { s[sg * 5u] = lo; s[sg * 5u + 1u] = hi; s[sg * 5u + 2u] = runs; s[sg * 5u + 3u] = (uint32_t)rlo; s[sg * 5u + 4u] = (uint32_t)rhi; }
+    ukl_tg_barrier();
+    if (lid == 0u) {
+        for (uint32_t k = 1u; k < SGS; k++) {
+            lo = umin(lo, s[k * 5u]); hi = umax(hi, s[k * 5u + 1u]); runs += s[k * 5u + 2u];
+            int32_t c = (int32_t)s[k * 5u + 3u], d = (int32_t)s[k * 5u + 4u];
+            rlo = c < rlo ? c : rlo; rhi = d > rhi ? d : rhi;
         }
-        part[tg * 5u] = (int)lo; part[tg * 5u + 1u] = (int)hi; part[tg * 5u + 2u] = (int)runs; part[tg * 5u + 3u] = rlo; part[tg * 5u + 4u] = rhi;
+        part[tg * 5u] = (int32_t)lo; part[tg * 5u + 1u] = (int32_t)hi; part[tg * 5u + 2u] = (int32_t)runs; part[tg * 5u + 3u] = rlo; part[tg * 5u + 4u] = rhi;
     }
 }
 // LINE: each thread packs one group of 32 residuals (less their minimum) into PB words, as PACK's groups.
-kernel void pack_line(device const uint* v [[buffer(0)]], device uint* w [[buffer(1)]], constant uint& n [[buffer(2)]],
-                      constant uint& v0 [[buffer(3)]], constant int& sh [[buffer(4)]], constant uint& sl [[buffer(5)]],
-                      constant int& rmin [[buffer(6)]], uint g [[thread_position_in_grid]]) {
-    uint cur = 0u, have = 0u, k = 0u;
-    device uint* o = w + g * PB;
-    #pragma unroll
-    for (uint r = 0u; r < 32u; r++) {
-        uint j = g * 32u + r;
-        uint x = j < n ? v[j] - line_at(j, v0, sh, sl) - (uint)rmin : 0u;
+DEFINE_KERNEL2(enc, pack_line, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, w, "[n]", ARGS, P, a, , GID0, uint32_t, g, )
+{
+    uint32_t cur = 0u, have = 0u, k = 0u;
+    UKL_GLOBAL uint32_t* o = w + g * PB;
+    for (uint32_t r = 0u; r < 32u; r++) {
+        uint32_t j = g * 32u + r;
+        uint32_t x = j < a.n ? v[j] - line_at(j, a.v0, a.sh, a.sl) - a.rmin : 0u;
         cur |= x << have;
         have += PB;
         if (have >= 32u) { o[k] = cur; k++; have -= 32u; cur = have == 0u ? 0u : x >> (PB - have); }
@@ -311,121 +328,202 @@ kernel void pack_line(device const uint* v [[buffer(0)]], device uint* w [[buffe
 }
 // RUNS, three steps. A thread takes a group of 32 values and a threadgroup 256 groups (8,192 values).
 // 1. The runs that start in each threadgroup's values.
-inline uint starts_in(device const uint* v, uint g, uint n) {
-    uint c = 0u;
-    for (uint r = 0u; r < 32u; r++) { uint j = g * 32u + r; c += (j < n && (j == 0u || v[j] != v[j - 1u])) ? 1u : 0u; }
+UKL_INLINE uint32_t starts_in(UKL_GLOBAL const uint32_t* v, uint32_t g, uint32_t n) {
+    uint32_t c = 0u;
+    for (uint32_t r = 0u; r < 32u; r++) { uint32_t j = g * 32u + r; c += (j < n && (j == 0u || v[j] != v[j - 1u])) ? 1u : 0u; }
     return c;
 }
-kernel void run_counts(device const uint* v [[buffer(0)]], device uint* counts [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       uint g [[thread_position_in_grid]], uint l [[thread_position_in_threadgroup]],
-                       uint tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    uint c = simd_sum(starts_in(v, g, n));
-    threadgroup uint s[8];
-    if (simd_is_first()) s[sg] = c;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    if (l == 0u) { uint t = 0u; for (uint k = 0u; k < 8u; k++) t += s[k]; counts[tg] = t; }
+DEFINE_KERNEL2(enc, run_counts, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, counts, "[m]", ARGS, P, a, ,
+               SHARED, uint32_t, s, 256, GID0, uint32_t, g, , LID0, uint32_t, lid, , TGID0, uint32_t, tg, )
+{
+    uint32_t c = ukl_sg_sum(starts_in(v, g, a.n) __UKL_ARGS);
+    if (LANE == 0u) s[lid / UKL_SIMD_WIDTH] = c;
+    ukl_tg_barrier();
+    if (lid == 0u) { uint32_t t = 0u; for (uint32_t k = 0u; k < SGS; k++) t += s[k]; counts[tg] = t; }
 }
-// 2. Their exclusive prefix sum, by one threadgroup of 1,024 threads, each over `per` consecutive counts.
-kernel void scan_counts(device uint* counts [[buffer(0)]], constant uint& m [[buffer(1)]], uint l [[thread_position_in_threadgroup]],
-                        uint sg [[simdgroup_index_in_threadgroup]]) {
-    uint per = (m + 1023u) / 1024u, from = l * per;
-    uint mine = 0u;
-    for (uint k = from; k < min(from + per, m); k++) mine += counts[k];
-    uint before = simd_prefix_exclusive_sum(mine);
-    threadgroup uint s[32];
-    if (l % 32u == 31u) s[sg] = before + mine;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint k = 0u; k < sg; k++) before += s[k];
-    for (uint k = from; k < min(from + per, m); k++) { uint c = counts[k]; counts[k] = before; before += c; }
+// 2. Their exclusive prefix sum, by one threadgroup of 256 threads, each over `per` consecutive counts.
+DEFINE_KERNEL2(enc, scan_counts, RWBUFFER, uint32_t, counts, "[m]", ARGS, P, a, ,
+               SHARED, uint32_t, s, 256, LID0, uint32_t, lid, )
+{
+    uint32_t m = a.m, per = (m + TG - 1u) / TG, from = lid * per, to = umin(from + per, m);
+    uint32_t mine = 0u;
+    for (uint32_t k = from; k < to; k++) mine += counts[k];
+    uint32_t before = ukl_sg_exclusive_sum(mine, LANE __UKL_ARGS);
+    uint32_t sg = lid / UKL_SIMD_WIDTH;
+    if (LANE == UKL_SIMD_WIDTH - 1u) s[sg] = before + mine;
+    ukl_tg_barrier();
+    for (uint32_t k = 0u; k < sg; k++) before += s[k];
+    for (uint32_t k = from; k < to; k++) { uint32_t c = counts[k]; counts[k] = before; before += c; }
 }
 // Bits `x` (under 2^bits, bits < 32) at bit `at` of words a thread may share with its neighbours: ORed atomically.
-inline void put(device atomic_uint* w, ulong at, uint x, uint bits) {
-    uint k = (uint)(at >> 5), sh = (uint)(at & 31u);
-    atomic_fetch_or_explicit(&w[k], x << sh, memory_order_relaxed);
-    if (sh + bits > 32u) atomic_fetch_or_explicit(&w[k + 1u], x >> (32u - sh), memory_order_relaxed);
+UKL_INLINE void put(UKL_GLOBAL uint32_t* w, uint64_t at, uint32_t x, uint32_t bits) {
+    uint32_t k = (uint32_t)(at >> 5), sh = (uint32_t)(at & 31u);
+    ukl_atomic_or(&w[k], x << sh);
+    if (sh + bits > 32u) ukl_atomic_or(&w[k + 1u], x >> (32u - sh));
 }
 // 3. Each thread finds its first run (its threadgroup's offset, and the runs of the groups before it in the
 // threadgroup), then writes each run that starts in its group: the value less the minimum, and the position.
-kernel void run_write(device const uint* v [[buffer(0)]], device const uint* offs [[buffer(1)]], device atomic_uint* data [[buffer(2)]],
-                      device atomic_uint* runs [[buffer(3)]], constant uint& n [[buffer(4)]], constant uint& lo [[buffer(5)]],
-                      constant uint& bits [[buffer(6)]], constant uint& rbits [[buffer(7)]],
-                      uint g [[thread_position_in_grid]], uint l [[thread_position_in_threadgroup]],
-                      uint tg [[threadgroup_position_in_grid]], uint sg [[simdgroup_index_in_threadgroup]]) {
-    uint c = starts_in(v, g, n);
-    uint r = simd_prefix_exclusive_sum(c);
-    threadgroup uint s[8];
-    if (l % 32u == 31u) s[sg] = r + c;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint k = 0u; k < sg; k++) r += s[k];
+DEFINE_KERNEL2(enc, run_write, ROBUFFER, uint32_t, v, "[n]", ROBUFFER, uint32_t, offs, "[m]", RWBUFFER, uint32_t, data, "[words]",
+               RWBUFFER, uint32_t, runs, "[words]", ARGS, P, a, , SHARED, uint32_t, s, 256,
+               GID0, uint32_t, g, , LID0, uint32_t, lid, , TGID0, uint32_t, tg, )
+{
+    uint32_t c = starts_in(v, g, a.n);
+    uint32_t r = ukl_sg_exclusive_sum(c, LANE __UKL_ARGS);
+    uint32_t sg = lid / UKL_SIMD_WIDTH;
+    if (LANE == UKL_SIMD_WIDTH - 1u) s[sg] = r + c;
+    ukl_tg_barrier();
+    for (uint32_t k = 0u; k < sg; k++) r += s[k];
     r += offs[tg];
-    for (uint q = 0u; q < 32u; q++) {
-        uint j = g * 32u + q;
-        if (j < n && (j == 0u || v[j] != v[j - 1u])) {
-            put(data, (ulong)r * bits, v[j] - lo, bits);
-            put(runs, (ulong)r * rbits, j, rbits);
+    for (uint32_t q = 0u; q < 32u; q++) {
+        uint32_t j = g * 32u + q;
+        if (j < a.n && (j == 0u || v[j] != v[j - 1u])) {
+            put(data, (uint64_t)r * a.bits, v[j] - a.lo, a.bits);
+            put(runs, (uint64_t)r * a.rbits, j, a.rbits);
             r++;
         }
     }
 }
-inline uint at(uint i, uint n) { return (i * 2654435761u) % n; }
-kernel void gather_plain(device const uint* v [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
-                         uint i [[thread_position_in_grid]]) {
-    uint s = v[at(i, n)];
-    s = simd_sum(s);
-    if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
+UKL_INLINE uint32_t at(uint32_t i, uint32_t n) { return (i * 2654435761u) % n; }
+DEFINE_KERNEL2(enc, gather_plain, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, out, "[1]", ARGS, P, a, ,
+               GID0, uint32_t, i, , LID0, uint32_t, lid, )
+{
+    uint32_t s = ukl_sg_sum(v[at(i, a.n)] __UKL_ARGS);
+    if (LANE == 0u) ukl_atomic_add(out, s);
 }
-kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint* out [[buffer(1)]], constant uint& n [[buffer(2)]],
-                          constant uint& bits [[buffer(3)]], uint i [[thread_position_in_grid]]) {
-    uint s = unpack(w, at(i, n), bits);
-    s = simd_sum(s);
-    if (simd_is_first()) atomic_fetch_add_explicit(out, s, memory_order_relaxed);
+DEFINE_KERNEL2(enc, gather_packed, ROBUFFER, uint32_t, v, "[n]", RWBUFFER, uint32_t, out, "[1]", ARGS, P, a, ,
+               GID0, uint32_t, i, , LID0, uint32_t, lid, )
+{
+    uint32_t s = ukl_sg_sum(unpack(v, at(i, a.n), a.bits) __UKL_ARGS);
+    if (LANE == 0u) ukl_atomic_add(out, s);
 }
 "#;
-    let device = Device::system_default().expect("a Metal device");
-    let lib = device.new_library_with_source(SRC, &CompileOptions::new()).unwrap();
-    let pipe = |n: &str| device.new_compute_pipeline_state_with_function(&lib.get_function(n, None).unwrap()).unwrap();
-    let pipe_bits = |n: &str, bits: u32| {
-        let fc = FunctionConstantValues::new();
-        fc.set_constant_value_at_index((&raw const bits).cast(), MTLDataType::UInt, 0);
-        device.new_compute_pipeline_state_with_function(&lib.get_function(n, Some(fc)).unwrap()).unwrap()
-    };
-    let queue = device.new_command_queue();
-    let n: u32 = 64 << 20;
+
+/// Every kernel's parameters (the source's `P`).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct P {
+    n: u32,
+    bits: u32,
+    t: u32,
+    lo: u32,
+    v0: u32,
+    sh: u32,
+    sl: u32,
+    rmin: u32,
+    rbits: u32,
+    m: u32,
+    pad0: u32,
+    pad1: u32,
+}
+// SAFETY: `#[repr(C)]` u32s.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+unsafe impl rerail_gpu::Pod for P {}
+
+/// The device the kernels run on, and their programs by their compiled-in widths.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct Dev {
+    shared: &'static rerail_gpu::shared::Shared,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+type Buf = rerail_device::device::Buffer;
+/// A kernel's launch: the kernel, its buffers by name, its parameters, its threadgroups and their size.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+type Launch<'a> = (&'a rerail_gpu::device::ComputeFunction, &'a [(&'a str, &'a Buf)], P, u64, u64);
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Dev {
+    /// The kernel `name`, `BITS` and `PB` compiled in where given.
+    fn kernel(&self, name: &str, bits: Option<u32>, pb: Option<u32>) -> &'static rerail_gpu::device::ComputeFunction {
+        let (b, p) = (bits.map(|v| format!("{v}u")), pb.map(|v| format!("{v}u")));
+        let defines: Vec<(&str, &str)> = [("BITS", b.as_deref()), ("PB", p.as_deref())].into_iter().filter_map(|(k, v)| v.map(|v| (k, v))).collect();
+        let program = rerail_gpu::kernels::program_with("encodings.uglykl", SRC, &defines).unwrap_or_else(|e| panic!("the kernels compile: {e}"));
+        program.function(name).unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    /// Runs each of `launches` in order, in one submission, and waits.
+    fn submit(&self, launches: &[Launch<'_>]) {
+        let mut q = rerail_gpu::device::ComputeQueue::new(&self.shared.queue);
+        for &(f, bufs, p, groups, local) in launches {
+            let mut l = rerail_gpu::kernels::launch(&q, f).value("a", &p);
+            for &(name, b) in bufs {
+                l = l.buffer(name, b);
+            }
+            l.run(&[groups], &[local]).unwrap_or_else(|e| panic!("{e}"));
+        }
+        q.flush().await_().unwrap();
+    }
+
+    /// The best of 6 runs of `before` (on the host, untimed) then `launches`, in ms.
+    fn best(&self, before: &dyn Fn(), launches: &[Launch<'_>]) -> f64 {
+        let mut b = f64::MAX;
+        for _ in 0..6 {
+            before();
+            let t = Instant::now();
+            self.submit(launches);
+            b = b.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        b
+    }
+}
+
+/// The device half's columns divided by 2^`ENCODINGS_GPU_SHIFT` (default 0): for a slow device (the CPU's) or a
+/// quick look; at most 6, so a threadgroup's 8,192 values divide every column.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn shift() -> u32 {
+    std::env::var("ENCODINGS_GPU_SHIFT").ok().and_then(|v| v.parse().ok()).unwrap_or(0u32).min(6)
+}
+
+/// A count as the lab prints it: in M, or in K under a million.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn count(k: u64) -> String {
+    if k >= 1 << 20 { format!("{}M", k >> 20) } else { format!("{}K", k >> 10) }
+}
+
+/// A buffer of `k` u32s.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn words(k: u64) -> Buf {
+    rerail_gpu::kernels::alloc::<u32>(k as usize).unwrap()
+}
+
+/// Sets the first u32s of `b`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn set(b: &Buf, v: &[u32]) {
+    // SAFETY: the buffer's host view, at least `v.len()` u32s, no command running.
+    unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), b.contents().cast::<u32>(), v.len()) };
+}
+
+/// Zeroes the first `k` u32s of `b`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn zero(b: &Buf, k: u64) {
+    // SAFETY: the buffer's host view, at least `k` u32s, no command running.
+    unsafe { std::ptr::write_bytes(b.contents().cast::<u32>(), 0, k as usize) };
+}
+
+/// A column of 64M values under 2^18 on the GPU: 4 bytes a value plain, 18 bits packed. A scan reads every value
+/// once; a gather reads 16M values at scattered positions.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn gpu() {
+    let dev = Dev { shared: rerail_gpu::shared::get().expect("a device") };
+    let read = |b: &Buf, k: usize| -> Vec<u32> { rerail_gpu::kernels::read(b, k) };
+    let n: u32 = (64 << 20) >> shift();
     let vals: Vec<i64> = (0..n as u64).map(|i| ((i * 2654435761) % (1 << 18)) as i64).collect();
     let e = col::encode(&vals);
     assert_eq!(e.tag, col::PACK);
     let plain: Vec<u32> = vals.iter().map(|&x| x as u32).collect();
     drop(vals);
-    let opts = MTLResourceOptions::StorageModeShared;
-    let bp = device.new_buffer_with_data(plain.as_ptr().cast(), (plain.len() * 4) as u64, opts);
-    let bk = device.new_buffer_with_data(e.data.as_ptr().cast(), (e.data.len() * 8) as u64, opts);
-    let out = device.new_buffer(4, opts);
-    let run = |p: &ComputePipelineState, buf: &Buffer, threads: u64, bits: Option<u32>| -> (f64, u32) {
-        let mut best = f64::MAX;
-        let mut sum = 0;
-        for _ in 0..6 {
-            unsafe { *(out.contents() as *mut u32) = 0 };
-            let cmd = queue.new_command_buffer();
-            let enc = cmd.new_compute_command_encoder();
-            enc.set_compute_pipeline_state(p);
-            enc.set_buffer(0, Some(buf), 0);
-            enc.set_buffer(1, Some(&out), 0);
-            enc.set_bytes(2, 4, (&raw const n).cast());
-            if let Some(b) = bits {
-                enc.set_bytes(3, 4, (&raw const b).cast());
-            }
-            enc.dispatch_threads(MTLSize::new(threads, 1, 1), MTLSize::new(256, 1, 1));
-            enc.end_encoding();
-            let t = Instant::now();
-            cmd.commit();
-            cmd.wait_until_completed();
-            best = best.min(t.elapsed().as_secs_f64() * 1e3);
-            sum = unsafe { *(out.contents() as *const u32) };
-        }
-        (best, sum)
+    let bp = rerail_gpu::kernels::buffer_of(&plain).unwrap();
+    let bk = rerail_gpu::kernels::buffer_of(&e.data).unwrap();
+    let out = words(1);
+    let p = P { n, bits: e.bits, ..Default::default() };
+    // A reduction into `out`: (best ms, the sum).
+    let reduce = |k: &rerail_gpu::device::ComputeFunction, buf: &Buf, threads: u64| -> (f64, u32) {
+        let ms = dev.best(&|| zero(&out, 1), &[(k, &[("v", buf), ("out", &out)], p, threads / 256, 256)]);
+        (ms, read(&out, 1)[0])
     };
-    let (sp, a) = run(&pipe("scan_plain"), &bp, n as u64 / 16, None);
-    let (sk, b) = run(&pipe("scan_packed"), &bk, n as u64 / 16, Some(e.bits));
+    let (sp, a) = reduce(dev.kernel("scan_plain", None, None), &bp, n as u64 / 16);
+    let (sk, b) = reduce(dev.kernel("scan_packed", None, None), &bk, n as u64 / 16);
     assert_eq!(a, b, "the packed scan sums the same");
     // The grouped layout: group g's 32 values in BITS words, word k at k * groups + g.
     let groups = n as usize / 32;
@@ -437,70 +535,33 @@ kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint
             inter[k * groups + g] = words32[g * bits + k];
         }
     }
-    let bg = device.new_buffer_with_data(inter.as_ptr().cast(), (inter.len() * 4) as u64, opts);
-    let (sg, c) = run(&pipe_bits("scan_group", e.bits), &bg, groups as u64, None);
+    let bg = rerail_gpu::kernels::buffer_of(&inter).unwrap();
+    let (sg, c) = reduce(dev.kernel("scan_group", Some(e.bits), None), &bg, groups as u64);
     assert_eq!(a, c, "the grouped scan sums the same");
-    let g = 16u64 << 20;
-    let (gp, a) = run(&pipe("gather_plain"), &bp, g, None);
-    let (gk, b) = run(&pipe("gather_packed"), &bk, g, Some(e.bits));
+    let g = (16u64 << 20) >> shift();
+    let (gp, a) = reduce(dev.kernel("gather_plain", None, None), &bp, g);
+    let (gk, b) = reduce(dev.kernel("gather_packed", None, None), &bk, g);
     assert_eq!(a, b, "the packed gather sums the same");
     // Packing on the GPU against the CPU's, the same column: the bit stream must be the CPU's, word for word.
-    let pipe_pb = |name: &str, bits: u32| {
-        let fc = FunctionConstantValues::new();
-        fc.set_constant_value_at_index((&raw const bits).cast(), MTLDataType::UInt, 1);
-        device.new_compute_pipeline_state_with_function(&lib.get_function(name, Some(fc)).unwrap()).unwrap()
-    };
-    let mm = device.new_buffer(8, opts);
-    let mmp = pipe("minmax");
-    let time = |f: &dyn Fn(&ComputeCommandEncoderRef)| -> f64 {
-        let mut best = f64::MAX;
-        for _ in 0..6 {
-            let cmd = queue.new_command_buffer();
-            let enc = cmd.new_compute_command_encoder();
-            f(enc);
-            enc.end_encoding();
-            let t = Instant::now();
-            cmd.commit();
-            cmd.wait_until_completed();
-            best = best.min(t.elapsed().as_secs_f64() * 1e3);
-        }
-        best
-    };
-    let t_mm = time(&|enc| {
-        unsafe { *(mm.contents() as *mut [u32; 2]) = [u32::MAX, 0] };
-        enc.set_compute_pipeline_state(&mmp);
-        enc.set_buffer(0, Some(&bp), 0);
-        enc.set_buffer(1, Some(&mm), 0);
-        enc.set_bytes(2, 4, (&raw const n).cast());
-        enc.dispatch_threads(MTLSize::new(1 << 20, 1, 1), MTLSize::new(256, 1, 1));
-    });
-    let [lo, hi] = unsafe { *(mm.contents() as *const [u32; 2]) };
+    let mm = words(2);
+    let mt = (1u64 << 20) >> shift();
+    let t_mm = dev.best(&|| set(&mm, &[u32::MAX, 0]), &[(dev.kernel("minmax", None, None), &[("v", &bp), ("mm", &mm)], P { t: mt as u32, ..p }, mt / 256, 256)]);
+    let [lo, hi] = [read(&mm, 2)[0], read(&mm, 2)[1]];
     let pbits = 32 - (hi - lo).leading_zeros();
     assert_eq!((lo as i64, pbits), (e.base, e.bits), "the GPU's range is the CPU's");
     let groups = (n as u64).div_ceil(32);
-    let out_seq = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
-    let out_inter = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
-    let out_tg = device.new_buffer(groups * pbits as u64 * 4 + 8, opts);
-    let packing = |name: &str, out: &Buffer, tgs: u64| {
-        let p = pipe_pb(name, pbits);
-        time(&|enc| {
-            enc.set_compute_pipeline_state(&p);
-            enc.set_buffer(0, Some(&bp), 0);
-            enc.set_buffer(1, Some(out), 0);
-            enc.set_bytes(2, 4, (&raw const n).cast());
-            enc.set_bytes(3, 4, (&raw const lo).cast());
-            enc.dispatch_threads(MTLSize::new(groups, 1, 1), MTLSize::new(tgs, 1, 1));
-        })
+    let (out_seq, out_inter, out_tg) = (words(groups * pbits as u64 + 2), words(groups * pbits as u64 + 2), words(groups * pbits as u64 + 2));
+    let packing = |name: &str, out: &Buf, local: u64| {
+        let k = dev.kernel(name, None, Some(pbits));
+        dev.best(&|| (), &[(k, &[("v", &bp), ("w", out)], P { lo, t: groups as u32, ..p }, groups / local, local)])
     };
     let t_seq = packing("pack_seq", &out_seq, 256);
     let t_inter = packing("pack_inter", &out_inter, 256);
     let t_tg = packing("pack_tg", &out_tg, 64);
-    let seq: &[u32] = unsafe { std::slice::from_raw_parts(out_seq.contents().cast(), groups as usize * bits) };
+    let seq = read(&out_seq, groups as usize * bits);
     assert_eq!(seq, &words32[..groups as usize * bits], "the GPU packs the CPU's bit stream");
-    let tgw: &[u32] = unsafe { std::slice::from_raw_parts(out_tg.contents().cast(), groups as usize * bits) };
-    assert_eq!(tgw, seq, "through threadgroup memory, the same");
-    let iw: &[u32] = unsafe { std::slice::from_raw_parts(out_inter.contents().cast(), groups as usize * bits) };
-    assert_eq!(iw, &inter[..], "the interleaved layout is the scan's");
+    assert_eq!(read(&out_tg, groups as usize * bits), seq, "through threadgroup memory, the same");
+    assert_eq!(read(&out_inter, groups as usize * bits), inter, "the interleaved layout is the scan's");
     // The CPU: the range and the packing of the same values (`choose` + `write`, as packing a column), on one
     // thread and on all of them (pieces of 64K values in parallel).
     let vals: Vec<i64> = plain.iter().map(|&x| x as i64).collect();
@@ -526,13 +587,14 @@ kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint
     let cpu1 = cpu(Some(&one));
     let cpun = cpu(None);
     let gbs = |bytes: usize, ms: f64| bytes as f64 / ms / 1e6;
-    println!("GPU, 64M values under 2^18 (best of 6, warm, buffers kept):");
-    println!("  scan   plain  {:>8} MB {:>7.2} ms  {:>6.1} GB/s", plain.len() * 4 >> 20, sp, gbs(plain.len() * 4, sp));
-    println!("  scan   packed {:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes ({} bits)", e.data.len() * 8 >> 20, sk, gbs(e.data.len() * 8, sk), e.bits);
-    println!("  scan   grouped{:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes (bits compiled in, 32 a thread)", inter.len() * 4 >> 20, sg, gbs(inter.len() * 4, sg));
-    println!("  gather plain  16M reads {:>7.2} ms", gp);
-    println!("  gather packed 16M reads {:>7.2} ms", gk);
-    println!("packing 64M values ({} MB in, {} MB out, {} bits):", plain.len() * 4 >> 20, seq.len() * 4 >> 20, pbits);
+    let mib = |bytes: usize| bytes >> 20;
+    println!("GPU, {} values under 2^18 (best of 6, warm, buffers kept):", count(n as u64));
+    println!("  scan   plain  {:>8} MB {:>7.2} ms  {:>6.1} GB/s", mib(plain.len() * 4), sp, gbs(plain.len() * 4, sp));
+    println!("  scan   packed {:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes ({} bits)", mib(e.data.len() * 8), sk, gbs(e.data.len() * 8, sk), e.bits);
+    println!("  scan   grouped{:>8} MB {:>7.2} ms  {:>6.1} GB/s of packed bytes (bits compiled in, 32 a thread)", mib(inter.len() * 4), sg, gbs(inter.len() * 4, sg));
+    println!("  gather plain  {} reads {:>7.2} ms", count(g), gp);
+    println!("  gather packed {} reads {:>7.2} ms", count(g), gk);
+    println!("packing {} values ({} MB in, {} MB out, {} bits):", count(n as u64), mib(plain.len() * 4), mib(seq.len() * 4), pbits);
     println!("  GPU min/max                  {:>7.2} ms", t_mm);
     println!("  GPU pack, CPU layout         {:>7.2} ms  {:>6.1} GB/s read+written", t_seq, gbs(plain.len() * 4 + seq.len() * 4, t_seq));
     println!("  GPU pack, interleaved        {:>7.2} ms  {:>6.1} GB/s", t_inter, gbs(plain.len() * 4 + seq.len() * 4, t_inter));
@@ -541,15 +603,14 @@ kernel void gather_packed(device const uint* w [[buffer(0)]], device atomic_uint
         println!("  CPU choose + write, {:<11} {:>7.2} + {:>6.2} ms  ({} insn, {:.1} a value)", what, c, w, insn, insn as f64 / vals.len() as f64);
     }
     drop((vals, plain));
-    runs_and_line(&device, &queue, &lib, &one);
+    runs_and_line(&dev, &one);
 }
 
 /// RUNS and LINE packed on the GPU, each against the CPU's encoder word for word: the choice's statistics (range,
 /// runs, the line's residuals) as threadgroup partials folded on the host, then the writes.
-#[cfg(target_os = "macos")]
-fn runs_and_line(device: &metal::Device, queue: &metal::CommandQueue, lib: &metal::Library, one: &rayon::ThreadPool) {
-    use metal::*;
-    let n: u32 = 32 << 20;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn runs_and_line(dev: &Dev, one: &rayon::ThreadPool) {
+    let n: u32 = (32 << 20) >> shift();
     let mut x = 0x2545_F491_4F6C_DD1Du64;
     let mut rnd = move || {
         x ^= x << 13;
@@ -567,40 +628,10 @@ fn runs_and_line(device: &metal::Device, queue: &metal::CommandQueue, lib: &meta
     }
     // Ids in canonical order: three a row and a little noise, so LINE wins.
     let line_col: Vec<u32> = (0..n).map(|i| 50_000 + i * 3 + (rnd() % 5) as u32).collect();
-    let opts = MTLResourceOptions::StorageModeShared;
-    let pipe = |name: &str, pb: Option<u32>| {
-        let f = match pb {
-            Some(b) => {
-                let fc = FunctionConstantValues::new();
-                fc.set_constant_value_at_index((&raw const b).cast(), MTLDataType::UInt, 1);
-                lib.get_function(name, Some(fc)).unwrap()
-            }
-            None => lib.get_function(name, None).unwrap(),
-        };
-        device.new_compute_pipeline_state_with_function(&f).unwrap()
-    };
-    let best = |f: &dyn Fn(&CommandBufferRef)| -> f64 {
-        let mut b = f64::MAX;
-        for _ in 0..6 {
-            let cmd = queue.new_command_buffer();
-            f(cmd);
-            let t = Instant::now();
-            cmd.commit();
-            cmd.wait_until_completed();
-            b = b.min(t.elapsed().as_secs_f64() * 1e3);
-        }
-        b
-    };
-    let set = |enc: &ComputeCommandEncoderRef, i: u64, x: &dyn std::any::Any| {
-        if let Some(v) = x.downcast_ref::<u32>() {
-            enc.set_bytes(i, 4, (v as *const u32).cast());
-        } else if let Some(v) = x.downcast_ref::<i64>() {
-            enc.set_bytes(i, 8, (v as *const i64).cast());
-        }
-    };
-    let (threads, tgs) = (1u64 << 20, 256u64);
-    let stats_p = pipe("stats", None);
-    println!("RUNS and LINE on the GPU, 32M values (best of 6, warm):");
+    let read = |b: &Buf, k: usize| -> Vec<u32> { rerail_gpu::kernels::read(b, k) };
+    let (threads, tgs) = ((1u64 << 20) >> shift(), 256u64);
+    let stats_k = dev.kernel("stats", None, None);
+    println!("RUNS and LINE on the GPU, {} values (best of 6, warm):", count(n as u64));
     for (what, col) in [("runs", &runs_col), ("line", &line_col)] {
         let vals: Vec<i64> = col.iter().map(|&x| x as i64).collect();
         let want = col::encode(&vals);
@@ -613,27 +644,17 @@ fn runs_and_line(device: &metal::Device, queue: &metal::CommandQueue, lib: &meta
         col::encode(&vals);
         let cpun = t.elapsed().as_secs_f64() * 1e3;
         drop(vals);
-        let bv = device.new_buffer_with_data(col.as_ptr().cast(), n as u64 * 4, opts);
+        let bv = rerail_gpu::kernels::buffer_of(col).unwrap();
         // The choice in one read: the range, the runs and the line's residuals, folded from threadgroup partials.
         let parts = (threads / tgs) as usize;
-        let part = device.new_buffer(parts as u64 * 20, opts);
+        let part = words(parts as u64 * 5);
         let (v0, vn) = (col[0], col[n as usize - 1]);
         let slope = (((vn as i128 - v0 as i128) << 16) / (n as i128 - 1)) as i64;
         let (sh, sl) = ((slope >> 32) as i32, slope as u32);
-        let t_stats = best(&|cmd| {
-            let enc = cmd.new_compute_command_encoder();
-            enc.set_compute_pipeline_state(&stats_p);
-            enc.set_buffer(0, Some(&bv), 0);
-            enc.set_buffer(1, Some(&part), 0);
-            set(enc, 2, &n);
-            set(enc, 3, &v0);
-            set(enc, 4, &(sh as u32));
-            set(enc, 5, &sl);
-            enc.dispatch_threads(MTLSize::new(threads, 1, 1), MTLSize::new(tgs, 1, 1));
-            enc.end_encoding();
-        });
-        let p: &[i32] = unsafe { std::slice::from_raw_parts(part.contents().cast(), parts * 5) };
-        let (lo, hi, nruns, rlo, rhi) = p.chunks(5).fold((u32::MAX, 0u32, 0u64, i32::MAX, i32::MIN), |(a, b, r, c, d), q| {
+        let p = P { n, v0, sh: sh as u32, sl, t: threads as u32, ..Default::default() };
+        let t_stats = dev.best(&|| (), &[(stats_k, &[("v", &bv), ("part", &part)], p, threads / tgs, tgs)]);
+        let q: Vec<i32> = read(&part, parts * 5).into_iter().map(|w| w as i32).collect();
+        let (lo, hi, nruns, rlo, rhi) = q.chunks(5).fold((u32::MAX, 0u32, 0u64, i32::MAX, i32::MIN), |(a, b, r, c, d), q| {
             (a.min(q[0] as u32), b.max(q[1] as u32), r + q[2] as u64, c.min(q[3]), d.max(q[4]))
         });
         // The residuals are exact when the range is under 2^31; past it, LINE is not tried here.
@@ -641,9 +662,9 @@ fn runs_and_line(device: &metal::Device, queue: &metal::CommandQueue, lib: &meta
         let (rlo, rhi) = (rlo as i64, rhi as i64);
         // The same choice as the CPU's, by exact size.
         let bits_for = |r: u64| 64 - r.leading_zeros();
-        let words = |k: u64, b: u32| (k * b as u64).div_ceil(64) + 1;
+        let size = |k: u64, b: u32| (k * b as u64).div_ceil(64) + 1;
         let (bits, rbits, lbits) = (bits_for((hi - lo) as u64), bits_for(n as u64), bits_for((rhi - rlo) as u64));
-        let sizes = [words(n as u64, bits), words(nruns, bits) + words(nruns, rbits), if line_ok { words(n as u64, lbits) } else { u64::MAX }];
+        let sizes = [size(n as u64, bits), size(nruns, bits) + size(nruns, rbits), if line_ok { size(n as u64, lbits) } else { u64::MAX }];
         let tag = if sizes[1] <= sizes[0].min(sizes[2]) { col::RUNS } else if sizes[2] < sizes[0] { col::LINE } else { col::PACK };
         assert_eq!(tag, want.tag, "{what}: the GPU chooses as the CPU does");
         let t_write;
@@ -651,65 +672,30 @@ fn runs_and_line(device: &metal::Device, queue: &metal::CommandQueue, lib: &meta
         if tag == col::RUNS {
             assert_eq!((lo as i64, bits, rbits, nruns as u32), (want.base, want.bits, want.rbits, want.nruns), "{what}: the choice");
             let m = (n as u64).div_ceil(32 * tgs);
-            let offs = device.new_buffer(m * 4, opts);
+            let offs = words(m);
             let (dw, rw) = ((nruns * bits as u64).div_ceil(32) + 2, (nruns * rbits as u64).div_ceil(32) + 2);
-            let (bd, br) = (device.new_buffer(dw * 4, opts), device.new_buffer(rw * 4, opts));
-            let (cp, sp, wp) = (pipe("run_counts", None), pipe("scan_counts", None), pipe("run_write", None));
-            let m32 = m as u32;
-            t_write = best(&|cmd| {
-                let blit = cmd.new_blit_command_encoder();
-                blit.fill_buffer(&bd, NSRange::new(0, dw * 4), 0);
-                blit.fill_buffer(&br, NSRange::new(0, rw * 4), 0);
-                blit.end_encoding();
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&cp);
-                enc.set_buffer(0, Some(&bv), 0);
-                enc.set_buffer(1, Some(&offs), 0);
-                set(enc, 2, &n);
-                enc.dispatch_threads(MTLSize::new(m * tgs, 1, 1), MTLSize::new(tgs, 1, 1));
-                enc.end_encoding();
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&sp);
-                enc.set_buffer(0, Some(&offs), 0);
-                set(enc, 1, &m32);
-                enc.dispatch_threads(MTLSize::new(1024, 1, 1), MTLSize::new(1024, 1, 1));
-                enc.end_encoding();
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&wp);
-                enc.set_buffer(0, Some(&bv), 0);
-                enc.set_buffer(1, Some(&offs), 0);
-                enc.set_buffer(2, Some(&bd), 0);
-                enc.set_buffer(3, Some(&br), 0);
-                set(enc, 4, &n);
-                set(enc, 5, &lo);
-                set(enc, 6, &bits);
-                set(enc, 7, &rbits);
-                enc.dispatch_threads(MTLSize::new(m * tgs, 1, 1), MTLSize::new(tgs, 1, 1));
-                enc.end_encoding();
-            });
-            let read = |b: &Buffer, k: u64| unsafe { std::slice::from_raw_parts(b.contents().cast::<u32>(), k as usize) }.to_vec();
-            got = (read(&bd, (nruns * bits as u64).div_ceil(32)), read(&br, (nruns * rbits as u64).div_ceil(32)));
+            let (bd, br) = (words(dw), words(rw));
+            let (ck, sk, wk) = (dev.kernel("run_counts", None, None), dev.kernel("scan_counts", None, None), dev.kernel("run_write", None, None));
+            let p = P { n, lo, bits, rbits, m: m as u32, ..Default::default() };
+            // The run words are ORed in: zeroed before each run (on the host, untimed).
+            t_write = dev.best(&|| {
+                zero(&bd, dw);
+                zero(&br, rw);
+            }, &[
+                (ck, &[("v", &bv), ("counts", &offs)], p, m, tgs),
+                (sk, &[("counts", &offs)], p, 1, tgs),
+                (wk, &[("v", &bv), ("offs", &offs), ("data", &bd), ("runs", &br)], p, m, tgs),
+            ]);
+            got = (read(&bd, (nruns * bits as u64).div_ceil(32) as usize), read(&br, (nruns * rbits as u64).div_ceil(32) as usize));
         } else {
             assert_eq!(tag, col::LINE);
             assert_eq!((v0 as i64, slope, rlo, lbits), (want.base, want.slope, want.rmin, want.bits), "{what}: the choice");
             let groups = (n as u64).div_ceil(32);
-            let bd = device.new_buffer(groups * lbits as u64 * 4 + 8, opts);
-            let lp = pipe("pack_line", Some(lbits));
-            t_write = best(&|cmd| {
-                let enc = cmd.new_compute_command_encoder();
-                enc.set_compute_pipeline_state(&lp);
-                enc.set_buffer(0, Some(&bv), 0);
-                enc.set_buffer(1, Some(&bd), 0);
-                set(enc, 2, &n);
-                set(enc, 3, &v0);
-                set(enc, 4, &(sh as u32));
-                set(enc, 5, &sl);
-                set(enc, 6, &(rlo as i32 as u32));
-                enc.dispatch_threads(MTLSize::new(groups, 1, 1), MTLSize::new(tgs, 1, 1));
-                enc.end_encoding();
-            });
+            let bd = words(groups * lbits as u64 + 2);
+            let lk = dev.kernel("pack_line", None, Some(lbits));
+            t_write = dev.best(&|| (), &[(lk, &[("v", &bv), ("w", &bd)], P { rmin: rlo as i32 as u32, ..p }, groups / tgs, tgs)]);
             let k = (n as u64 * lbits as u64).div_ceil(32) as usize;
-            got = (unsafe { std::slice::from_raw_parts(bd.contents().cast::<u32>(), k) }.to_vec(), Vec::new());
+            got = (read(&bd, k), Vec::new());
         }
         let as32 = |w: &[u64], k: usize| -> Vec<u32> { unsafe { std::slice::from_raw_parts(w.as_ptr().cast::<u32>(), k) }.to_vec() };
         assert_eq!(got.0, as32(&want.data, got.0.len()), "{what}: the GPU's words are the CPU's");

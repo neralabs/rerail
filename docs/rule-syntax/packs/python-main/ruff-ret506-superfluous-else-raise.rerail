@@ -1,5 +1,4 @@
 .policy "ruff-ret506-superfluous-else-raise" revision 1
-.guests off
 .description "Remove the else or elif after an if branch that raises, and dedent its code; the branch already leaves the function."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-air001-airflow-variable-name-task-id-mismatch" revision 1
-.guests off
 .description "Name each Airflow operator variable after the task id it creates, so the Dag code reads the same as the task graph it builds."
 .language python
 .mode steer

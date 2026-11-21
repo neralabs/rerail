@@ -29,7 +29,6 @@ export const target = "100%";
 /** Exemption `kept-records`: a directory and why its file names stay as they are. */
 const KEPT_RECORDS = new Map([
   ["docs/final-shape/notes/", "a note's scripts are named after the note (`0096-regret.py`), which cites them"],
-  ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record, kept as it ran"],
   ["docs/rule-syntax/data-layer/", "each rule's generator is named after the rule (`gen-<rule>.py`), which the rule's header cites"],
   ["docs/rule-syntax/packs/", "each rule's generator and check are named after the rule (`gen-<rule-id>.py`, `check-<rule-id>.py`), which the rule's header cites"],
   ["docs/rule-syntax/site/", "the explorer's vendored WASI shim (@bjorn3/browser_wasi_shim 0.4.2) keeps upstream's file names, and the bench's script is cited by its name"],

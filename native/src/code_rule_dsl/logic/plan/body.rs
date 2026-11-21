@@ -99,11 +99,14 @@ pub fn lit_vars(l: LitRef<'_>) -> VarSet {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             if let Some(o) = over {
                 out.insert(o);
+            }
+            if let Some(b) = op.bound() {
+                out.insert(b);
             }
             out
         }
@@ -264,15 +267,30 @@ impl<'v> Body<'v> {
     /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads.
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
-            let rel = self.rel(a);
-            !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
-        }))
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
+                        head.strip_prefix("rr_pair_cache_")
+                            .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+            })
+        })
     }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0488), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS).is_some_and(|p| p == head))
+        }))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
@@ -436,6 +454,9 @@ impl<'v> Body<'v> {
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|b| need.remove(b));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound)
             }
             Lit::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
@@ -569,6 +590,11 @@ impl<'v> Body<'v> {
                     AggRef::Max => d.u64(2),
                     AggRef::Sum => d.u64(3),
                     AggRef::Product => d.u64(5),
+                    AggRef::Bounded { max, bound, strict } => {
+                        d.u64(6);
+                        d.u64(u64::from(max) | u64::from(strict) << 1);
+                        d.str(self.var(bound));
+                    }
                 }
                 d.str(over.map_or("\u{0}", |o| self.var(o)));
                 self.digest_atom(d, atom);
@@ -685,7 +711,7 @@ pub fn pass<T, E>(site: &'static str, span: &'static str, p: &Placed, f: impl Fn
 pub struct Placed {
     pub v: Arc<Version>,
     ids: Option<Arc<[RuleId]>>,
-    /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
+    /// Whether `v` holds the program's other fields too (`Placed::whole`), not its rules alone.
     pub whole: bool,
     /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
     pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
@@ -702,7 +728,7 @@ impl Placed {
     pub fn normalized(&self, apart: bool) -> Result<Normalized> {
         use super::super::program_image::passes;
         #[cfg(any(test, feature = "test-hooks"))]
-        NORMALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::run_counts().normalized.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if !self.whole || self.ids.is_some() {
             return Err(Error::Plan("the program has no image: its run reads it from its version".into()));
         }
@@ -736,14 +762,14 @@ impl Placed {
     /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
-        let d = match &self.ids {
+        
+        match &self.ids {
             None => self.v.digest(),
             Some(ids) => {
                 let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
-        };
-        d
+        }
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {
@@ -784,10 +810,6 @@ impl Placed {
 
 /// A program's version as `plan::run` normalizes it (`Placed::normalized`): the version, the relations given a
 /// presence column, and the pairs `(rel, rel__stated)` whose stated facts were moved apart.
-/// Tests: the programs normalized so far in this process (`Placed::normalized`).
-#[cfg(any(test, feature = "test-hooks"))]
-pub static NORMALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 pub struct Normalized {
     pub placed: Placed,
     pub sentinels: std::collections::BTreeSet<String>,

@@ -649,6 +649,25 @@ fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::
 pub mod tests {
     use super::{Keeper, memo};
 
+    /// A semi-join's counts (`SemijoinCounts`) are `measured`'s statistics of the rows counted, each node's row once
+    /// though two chunks (a guest's document in each) read it: every column, the node's a key.
+    #[test]
+    fn a_semijoins_counts_are_the_measure_of_its_rows_each_node_once() {
+        // `node(d, n, kind)`-like rows over three documents, kinds repeating within and across them.
+        let rows: Vec<[i64; 3]> = (0..3i64).flat_map(|d| (0..7i64).map(move |i| [d, d << 32 | i, (i * d + i / 2) % 4])).collect();
+        let mut counts = super::SemijoinCounts::default();
+        for r in rows.iter().chain(rows.iter().take(9)) {
+            counts.row(r[1], 1, r);
+        }
+        let names: Vec<String> = ["d", "n", "kind"].iter().map(|s| (*s).to_owned()).collect();
+        let columns: Vec<Option<Vec<i64>>> = (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+        let source = crate::code_rule_dsl::logic::native::setfix::columns_source(names.clone(), columns);
+        let measured = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref());
+        assert_eq!(counts.statistics(&["d", "n", "kind"], &names), Some(measured));
+        // A first column other than the rows' document column is refused: the documents are read off it.
+        assert_eq!(counts.statistics(&["n", "d", "kind"], &names), None);
+    }
+
     /// A keeper read back from its blob counts the same files the same way: an edit patches it as it would the one
     /// that wrote it, and only stored contents are kept.
     #[test]
@@ -717,5 +736,62 @@ pub mod tests {
         assert_eq!(carried, scratch.end(&|_, _, _| None).unwrap());
         assert_eq!(carried["e"].rows(), 20);
         assert_eq!(carried["r"].rows(), 40);
+    }
+}
+
+/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold, the chunks' and the
+/// hits' (read off the corpus batch by a walk of their documents, `Source::for_rows_keyed`). They are the rows the
+/// cross part looks up (decision 0458 binds the whole view, but the cross part reads it only at those nodes), so the
+/// cross part's statistics of the relation are theirs, and the view's other rows are never computed to measure it.
+/// A node's row is counted once, though it is read twice. Exact: each value's count, and its count in each document
+/// (the first column's high half, as `syntax::measured` reads it).
+#[derive(Default)]
+pub(super) struct SemijoinCounts {
+    nodes: rustc_hash::FxHashSet<i64>,
+    /// The node's column: every counted row's own node, so a key with no counts.
+    node: Option<usize>,
+    all: Vec<rustc_hash::FxHashMap<i64, i64>>,
+    by_doc: Vec<rustc_hash::FxHashMap<(i64, i64), i64>>,
+}
+
+impl SemijoinCounts {
+    /// Node `node`'s row, its columns in `input_columns` order with the node at `at`: counted unless counted already.
+    pub(super) fn row(&mut self, node: i64, at: usize, row: &[i64]) {
+        if !self.nodes.insert(node) {
+            return;
+        }
+        self.node = Some(at);
+        if self.all.len() < row.len() {
+            self.all.resize_with(row.len(), Default::default);
+            self.by_doc.resize_with(row.len(), Default::default);
+        }
+        let d = row[0] >> 32;
+        for (c, &v) in row.iter().enumerate().filter(|&(c, _)| c != at) {
+            *self.all[c].entry(v).or_default() += 1;
+            *self.by_doc[c].entry((v, d)).or_default() += 1;
+        }
+    }
+
+    /// The statistics (`syntax::statistics`' rows) of the columns `names`, each named in `input` (the rows' columns):
+    /// `None` if one is not, or the rows' document column is not `names`' first.
+    pub(super) fn statistics(&self, input: &[&str], names: &[String]) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        if names.first().map(String::as_str) != input.first().copied() {
+            return None;
+        }
+        let rows = self.nodes.len() as i64;
+        names
+            .iter()
+            .map(|name| {
+                let c = input.iter().position(|i| i == name)?;
+                Some(match (self.all.get(c).filter(|_| self.node != Some(c)), self.by_doc.get(c)) {
+                    (Some(all), Some(by_doc)) => {
+                        let (ndv, sq, sqd) = (all.len() as i64, all.values().map(|n| n * n).sum(), by_doc.values().map(|n| n * n).sum());
+                        // A key column (every value once) reads as `measured`'s does.
+                        if ndv == rows { (name.clone(), rows, rows, rows, rows) } else { (name.clone(), rows, ndv, sq, sqd) }
+                    }
+                    _ => (name.clone(), rows, rows, rows, rows),
+                })
+            })
+            .collect()
     }
 }

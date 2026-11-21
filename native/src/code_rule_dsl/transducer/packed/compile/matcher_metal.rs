@@ -103,11 +103,11 @@ fn metal<'a>(
     // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
     // the label is not known before the command buffer runs, so the rule names the kinds the label
     // can have (`Labels::bound`); the walk's anchor, which reads the label (its first test), keeps
-    // the walks to the label's members (decision 0365, 0424). They are a rule over each document's
+    // the walks to the label's members (decision 0365, 0459). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
-    // A demand's set (`Domain::Within`, decision 0425) is not a rule over codes: the rule names its kinds, and the
+    // A demand's set (`Domain::Within`, decision 0460) is not a rule over codes: the rule names its kinds, and the
     // pass's anchor holds the set (`demands`, by the roots it keys, read below).
     let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
     let mut demands = HashMap::<usize, compile_sets::Set>::new();
@@ -139,7 +139,7 @@ fn metal<'a>(
         Ok(match clause.labels.def(id) {
             Label::Fact(fact, labels) => {
                 let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-                // Where each active file's findings are in the fact block, which the device reads in place (Q317).
+                // Where each active file's findings are in the fact block, which the device reads in place (Q289).
                 let found = tapes
                     .iter()
                     .enumerate()
@@ -425,51 +425,70 @@ fn apart<'a>(
         if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
-        let plan = Plan {
-            labels,
-            counts,
-            patterns: patterns.clone(),
-            steps: std::mem::take(&mut segment.0),
-            chains: std::mem::take(&mut segment.1),
-            // The labels so far, none before the first run (`Plan::initial`).
-            initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
-            rows: Some(&rows),
-            buffers: Some(&kept),
-            roots: if last { roots } else { None },
-            w_cost,
-        };
-        crate::code_rule_dsl::prof::release();
-        let before = crate::code_rule_dsl::prof::footprint_mb();
-        mark("plan");
-        let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
-        if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-            let _ = tikv_jemalloc_ctl::epoch::advance();
-            eprintln!(
-                "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
-                crate::code_rule_dsl::prof::footprint_mb(),
-                crate::code_rule_dsl::prof::max_footprint_mb(),
-                tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
-                tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
-                crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
-            );
-            if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
-                eprintln!("RUN holding, pid {}", std::process::id());
-                while !std::path::Path::new(&path).exists() {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+        // The segment's steps as runs, in order (a stack, the next on top). A run past its evaluation's launches
+        // (`label_passes`: its plan's bound, or its submission's where a group did not fuse) with more than one step
+        // is two runs, of its halves: the first's labels start the second, as a host sweep's do. A step's launches
+        // do not shrink with the files, so splitting the wave's tapes alone could not make it fit.
+        let mut pieces = vec![(std::mem::take(&mut segment.0), std::mem::take(&mut segment.1))];
+        while let Some((steps, chains)) = pieces.pop() {
+            let plan = Plan {
+                labels,
+                counts,
+                patterns: patterns.clone(),
+                steps,
+                chains,
+                // The labels so far, none before the first run (`Plan::initial`).
+                initial: std::cell::Cell::new(Some(std::mem::take(&mut outcome.labels)).filter(|labels| !labels.is_empty())),
+                rows: Some(&rows),
+                buffers: Some(&kept),
+                roots: if last && pieces.is_empty() { roots } else { None },
+                w_cost,
+            };
+            crate::code_rule_dsl::prof::release();
+            let before = crate::code_rule_dsl::prof::footprint_mb();
+            mark("plan");
+            let ran = match crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes)) {
+                Err(Error::BackendLaunchLimit) if plan.steps.len() > 1 => {
+                    crate::code_rule_dsl::prof::count("labels.launch_split", 1);
+                    // A refused run leaves its starting labels in the plan (`Plan::initial`).
+                    outcome.labels = plan.initial.take().unwrap_or_default();
+                    let (mut steps, mut chains) = (plan.steps, plan.chains);
+                    let half = steps.len() / 2;
+                    pieces.push((steps.split_off(half), chains.split_off(half)));
+                    pieces.push((steps, chains));
+                    continue;
+                }
+                ran => ran?,
+            };
+            if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
+                let _ = tikv_jemalloc_ctl::epoch::advance();
+                eprintln!(
+                    "FOOTPRINT run: {before} -> {} MB (high-water {} MB); heap live {} MB, resident {} MB; Metal {} MB",
+                    crate::code_rule_dsl::prof::footprint_mb(),
+                    crate::code_rule_dsl::prof::max_footprint_mb(),
+                    tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20,
+                    tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20,
+                    crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
+                );
+                if let Some(path) = std::env::var_os("RERAIL_HOLD_RUN") {
+                    eprintln!("RUN holding, pid {}", std::process::id());
+                    while !std::path::Path::new(&path).exists() {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
                 }
             }
+            crate::code_rule_dsl::prof::peak("3b.gpu");
+            outcome.labels = ran.labels;
+            if !ran.records.is_empty() {
+                outcome.records = ran.records;
+            }
+            outcome.command_buffers += ran.command_buffers;
+            outcome.dispatches += ran.dispatches;
+            outcome.unfinished.extend(ran.unfinished);
+            outcome.replanned += ran.replanned;
+            outcome.rounds = outcome.rounds.max(ran.rounds);
+            (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         }
-        crate::code_rule_dsl::prof::peak("3b.gpu");
-        outcome.labels = ran.labels;
-        if !ran.records.is_empty() {
-            outcome.records = ran.records;
-        }
-        outcome.command_buffers += ran.command_buffers;
-        outcome.dispatches += ran.dispatches;
-        outcome.unfinished.extend(ran.unfinished);
-        outcome.replanned += ran.replanned;
-        outcome.rounds = outcome.rounds.max(ran.rounds);
-        (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
     };
     for ((step, chain), (recursive, levels)) in steps.into_iter().zip(chains).zip(&host) {
@@ -505,37 +524,39 @@ fn apart<'a>(
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
         let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
-        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
-            let levels = levels
-                .iter()
-                .map(|level| {
-                    level
-                        .iter()
-                        .copied()
-                        .filter(|&(clause, _)| {
-                            clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-            if levels.iter().any(|level| !level.is_empty()) {
-                // The text rows the GPU runs evaluated over every file, sliced to this one.
-                let base = bases[at];
-                let texts = |walk: &Micro, program: &Program| {
-                    (0..walk.texts.len())
-                        .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
-                        .collect::<Option<Vec<_>>>()
-                };
-                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
-                // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
-                let index = compile_sets::Index::default();
-                if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
-                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+        let given = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
+                let levels = levels
+                    .iter()
+                    .map(|level| {
+                        level
+                            .iter()
+                            .copied()
+                            .filter(|&(clause, _)| {
+                                clauses.iter().position(|c| std::ptr::eq(*c, clause)).is_some_and(|clause| active[clause][at])
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                if levels.iter().any(|level| !level.is_empty()) {
+                    // The text rows the GPU runs evaluated over every file, sliced to this one.
+                    let base = bases[at];
+                    let texts = |walk: &Micro, program: &Program| {
+                        (0..walk.texts.len())
+                            .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
+                            .collect::<Option<Vec<_>>>()
+                    };
+                    // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                    // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                    let index = compile_sets::Index::default();
+                    if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
+                        return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                    }
                 }
-            }
-            Ok::<_, Error>(Vec::new())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, Error>(Vec::new())
+            })
+            .collect::<Result<Vec<_>, _>>()
+        })?;
         outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();

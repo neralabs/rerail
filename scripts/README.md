@@ -83,7 +83,7 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   run-policies`. The benchmark is three slices per pack, always all three, candidate against main on the same pinned
   cores under the same memory and time caps, the side order alternating: A, all rules × all files (per corpus: its
   fixtures and the real-code corpus `corpora.json` pins, `--runs` times cold then warm); B, one rule × all files (per
-  corpus, the empty rule set and every rule main ships that the candidate ships, each alone, `--rule-runs` cold runs per
+  corpus, the empty rule set and every rule main ships that the candidate has, each alone, `--rule-runs` cold runs per
   side on a fresh store); C, all rules × one file (the largest, the median and a 5th-percentile file by bytes among the
   pack's source extensions in its real-code corpus, `--file-runs` times cold then warm). The bar (`verdict.ts`), per
   pack and slice: every figure at most 1.15 times main's median (A and C: wall, CPU and peak RSS, cold and warm; B: each
@@ -93,8 +93,14 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   C: each file's the same set); every run main completes completed; every rule main ships runnable. Anything over the
   bar runs `--confirm` (3) more repetitions per side (a figure passing them is noisy: reported, not counted), and every
   failing item names the phase that moved (load, compile, evaluate, store or startup). A pack whose runs lack a slice is
-  INCOMPLETE and never passes; a run narrowed by `--packs` or `--corpus` is PARTIAL, never PASS; the `.rerail` rewrites
-  measure slice A only, so they are INCOMPLETE at best. A pack's caps can be raised for
+  INCOMPLETE and never passes; a run narrowed by `--packs` or `--corpus` is PARTIAL, never PASS. The `.rerail` rewrites
+  (`--candidates ships,rr`) are measured and judged in all three slices too: a rule's translation is every `.rerail` of
+  `docs/rule-syntax/packs/<pack>/` whose `.policy` names the rule id, run together; in B each rule alone through
+  `run-policies`, its time its net wall (its cold wall less the median of an empty policy's, run-policies reporting no
+  phases) against main's compile + evaluate, its fixed cost the empty policy's cold wall. Their verdict on a pack counts
+  toward the exit status only where the candidate's `docs/rule-syntax/packs/<pack>/equivalence.json`
+  (`rerail.translation-equivalence/v1`, the translation suite's) says `equivalent: true`; on any other pack it is
+  reported only and never fails the run. A pack's caps can be raised for
   both sides (`--pack-cap python=56G,14400`); a `.rerail` pack run that does not complete records how far it got and then
   runs in fixed chunks (`--rr-chunk`), whose summed figures the report labels chunked; each `.rerail` run records whether
   its policies ran combined or alone. `prepare` exports the baseline (a
@@ -113,7 +119,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   `fanout` (`fanout.ts`) runs the whole bar from the Mac over Linux hosts (`--hosts build-1,build-2`): prepare, plan
   (slice A by repetition, B by chunks of rules, C by file, no unit longer than about four minutes, longest first onto
   the least loaded host), sync with rsync over the remote shell (`ssh`, or another command taking `<host> <command>`
-  through `--ssh` or `SHIPBAR_SSH`), build both sides once on the first host and copy the engines to the others, then
+  through `--ssh` or `SHIPBAR_SSH`), build both sides once on the first host (with `--candidates ships,rr`, the
+  candidate's `rerail-engine` too, each unit then timing every candidate) and copy the engines to the others, then
   on each host one `host` process started with `setsid nohup`, with a `work` process per 4-core set
   (`--workers 0-3/4-7/8-11/12-15`, each claiming units by an atomic mkdir, stores in `/dev/shm`), confirmation on the
   same host, and the hosts' runs pulled and merged into one report. The Mac only starts and polls (`--poll`); each
@@ -125,5 +132,18 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   edit sequence in three shapes (`waits-steps.ts`). `waits-model.ts` judges them (distributions by the bootstrap CI of
   the p50 and p95 ratio, single waits by the median, absolute limits from `waits.json`) into the report's `waits`
   section, ids `wait/<W>/<scenario>`.
+- `ship/translations.ts`: the translation suite (`npm run translations:check -- --pack <pack> | --packs a,b | --all`;
+  the decisions in `translations-model.ts`): for each pack with `.rerail` translations, whether each rule's translation
+  (every `docs/rule-syntax/packs/<pack>/*.rerail` whose `.policy` names the rule) reports the same findings as its
+  JSON original (through `product-run.ts`), compared per rule as sets of (rule, path, line, code), with the column where
+  both sides give one, on the pack's examples, its recorded fixtures and its real-code corpora (`corpora.json`
+  `translations[<pack>]`, else the benchmark's `packs[<pack>]`; a git corpus is exported and checked against its pin,
+  `translations.ts pin <corpus>` pins one). A tool-call rule is compared on its examples as tool calls instead: the
+  original through the runtime's matcher, the translation through `run-policies --tool-calls`, a finding the call.
+  Each rule is `same`, `different` (counts and samples per corpus), `untranslated` or `failed` (the engine's
+  message); `--out` gets each pack's JSON. A pack's
+  `equivalence.json` declares its differences; one declaring `equivalent: true` fails the run when the run disagrees
+  (docs/rule-syntax/packs/CONVENTIONS.md, "Checking against the original"); `--write-differences` rewrites the lists.
+  CI's `translations` job runs it for the `rerail` pack.
 - `upstream/`: the upstream release check (`releases.ts`, `npm run upstream:releases`) and the pin bump (`bump.ts`,
   `npm run upstream:bump`) the upstream workflows run (docs/upstream.md).

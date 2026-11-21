@@ -1,5 +1,4 @@
 .policy "ruff-f707-default-except-not-last" revision 2
-.guests off
 .description "Put a bare except handler last in its try statement; Python rejects any handler after it."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-up029-unnecessary-builtin-import" revision 1
-.guests off
 .description "Remove imports of Python 3 builtins from compatibility shims such as builtins, six and io; the names are already available without importing."
 .language python
 .mode steer

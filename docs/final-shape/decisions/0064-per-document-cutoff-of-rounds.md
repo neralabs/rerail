@@ -145,7 +145,7 @@ decision 4's unit.
 ## Prior work consulted
 
 - **03 §13:** "early cutoff on interface digests". This record takes the digest down to the document.
-- **ast-index-spike, design index §20** (incremental maintenance): splice what changed rather than rewrite. The
+- **SQL index prototype, design index §20** (incremental maintenance): splice what changed rather than rewrite. The
   spike never built update or delete (R L1716-1812). The spike is per-file indexing, with no cross-file
   fixpoint, so it offers no prior form for this.
 - **History index, ledger row 7:** sharing pays only for measured coincidence. Hence step 1 measures how often a

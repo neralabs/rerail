@@ -14,17 +14,17 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 fn gate() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("../gate/data-layer")
 }
 
 /// The data-layer pack's rule files, which are pack test data (`packs/data-layer/upstream/lint/`, not in git): fetched
 /// by `npm run fixtures:pull`, or the test fails saying so.
 fn pack() -> PathBuf {
     let relative = "packs/data-layer/upstream/lint/authored/packs/data-layer";
-    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("..").join(relative);
+    let path = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("..").join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's \
@@ -471,7 +471,7 @@ struct Census {
 
 fn derive() -> Census {
     let dir = pack().join("candidates/rules");
-    // The 60 rules of Pulling-it-all-together's rewrite (`candidates/rules-ast`); the 10 candidates copied later
+    // The 60 rules of PIAT's rewrite (`candidates/rules-ast`); the 10 candidates copied later
     // from Data-layer-rule-expressivity (`require_each` and other new forms) are outside the census (O72).
     let converted = pack().join("candidates/rules-ast");
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)

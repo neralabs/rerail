@@ -324,7 +324,7 @@ Test: `a_forked_processs_unnamed_atoms_queue_no_write` (store).
 
 - 0049 (the lease), 0104 (no SQL inside the waves), 0111 (atoms found by key), 0146 (the memo), 0160 (provisional
   ids and the translation it called for).
-- ast-index-spike indexes: interned ids were process-local, with no shared store to map against.
+- SQL index prototype indexes: interned ids were process-local, with no shared store to map against.
 
 ## A support relation's kind columns are not atoms (2026-11-15)
 

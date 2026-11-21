@@ -1,5 +1,4 @@
 .policy "bandit-b303-md5" revision 1
-.guests off
 .description "Avoid MD2, MD4, MD5, and SHA1 hashes from PyCrypto, PyCryptodome, or cryptography; they are broken for security, so use SHA-256 or a password hash."
 .language python
 .mode steer

@@ -49,7 +49,7 @@ pub(in crate::code_rule_dsl) fn space(root: &Path) -> [u8; 32] {
 /// The fact space of a part of the run over `root` (`cross`, `cone`: the cone of requests answered in the fixpoint).
 pub(in crate::code_rule_dsl) fn part_space(root: &Path, part: &str) -> [u8; 32] {
     let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| root.canonicalize().ok()).unwrap_or_else(|| root.to_path_buf());
+        .or_else(|| dunce::canonicalize(root).ok()).unwrap_or_else(|| root.to_path_buf());
     let mut h = Sha256::new();
     h.update(format!("rerail.space/v1\0{part}\0").as_bytes());
     h.update(root.to_string_lossy().as_bytes());
@@ -420,7 +420,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
         // The inputs it was derived from, each with its digest: one not digested this run leaves it unkept.
-        let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
+        let Some(reads) = part.cones.get(rel).and_then(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()) else { continue };
         let n = held.rows();
         // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
         // its content (decision 0212), read where its rows lie (`retain::held_digest`).

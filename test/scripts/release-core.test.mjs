@@ -12,9 +12,9 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
-import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, releaseChannel } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -481,12 +481,36 @@ describe("compareVersions and nextTrails", () => {
   });
 });
 
-describe("previewRefusal", () => {
-  it("refuses a preview older than latest, and allows a newer one or one for a package with no latest", () => {
-    expect(previewRefusal("0.1.0-next.5", "next", "0.1.0")).toBe("0.1.0-next.5 is older than latest 0.1.0: a next preview must not trail latest");
-    expect(previewRefusal("0.0.9-beta.1", "beta", "0.1.0")).toBe("0.0.9-beta.1 is older than latest 0.1.0: a beta preview must not trail latest");
-    expect(previewRefusal("0.1.1-next.1", "next", "0.1.0")).toBeNull();
-    expect(previewRefusal("0.1.0-next.1", "next", undefined)).toBeNull();
+describe("releaseChannel", () => {
+  it("publishes a plain version to next, where it waits to be promoted, and a preview to its own channel", () => {
+    expect(releaseChannel("v0.2.0", "0.2.0")).toEqual({ version: "0.2.0", channel: "next" });
+    expect(releaseChannel("v0.2.0-next.1", "0.2.0-next.1")).toEqual({ version: "0.2.0-next.1", channel: "next" });
+    expect(releaseChannel("v0.2.0-beta.1", "0.2.0-beta.1")).toEqual({ version: "0.2.0-beta.1", channel: "beta" });
+  });
+
+  it("refuses a tag that is no release tag, or that disagrees with package.json", () => {
+    expect(() => releaseChannel("v0.2", "0.2.0")).toThrow(/is not vX\.Y\.Z/u);
+    expect(() => releaseChannel("v0.2.0-rc.1", "0.2.0-rc.1")).toThrow(/is not vX\.Y\.Z/u);
+    expect(() => releaseChannel("v0.2.0", "0.1.9")).toThrow(/does not match v0\.2\.0/u);
+  });
+});
+
+describe("publishRefusal", () => {
+  it("refuses a version older than latest, which its channel must not trail", () => {
+    expect(publishRefusal("0.1.0-next.5", "next", { latest: "0.1.0" })).toBe("0.1.0-next.5 is older than latest 0.1.0: a release on next must not trail latest");
+    expect(publishRefusal("0.0.9-beta.1", "beta", { latest: "0.1.0" })).toBe("0.0.9-beta.1 is older than latest 0.1.0: a release on beta must not trail latest");
+  });
+
+  it("refuses a version older than next on next, which would move next back, as a re-run of an older release would", () => {
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.2.1" })).toBe("0.2.0 is older than next 0.2.1: publishing it under next would move next back");
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.3.0-next.1" })).toMatch(/older than next 0\.3\.0-next\.1/u);
+  });
+
+  it("allows a newer version, the same version again, a beta whatever next holds, and a package with no dist-tags", () => {
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.1.9" })).toBeNull();
+    expect(publishRefusal("0.2.0", "next", { latest: "0.1.9", next: "0.2.0" })).toBeNull();
+    expect(publishRefusal("0.2.0-beta.1", "beta", { latest: "0.1.9", next: "0.3.0" })).toBeNull();
+    expect(publishRefusal("0.1.0", "next", {})).toBeNull();
   });
 });
 
@@ -515,23 +539,28 @@ afterEach(() => {
 
 describe("coreFloor", () => {
   const java = LANGUAGE_SINCE.get("java");
+  const stored = RULE_KEY_SINCE.get("stored");
 
   it("is undefined for a pack every core loads", () => {
-    expect(coreFloor([], ["python", "typescript", "vue"])).toBeUndefined();
-    expect(coreFloor([], [])).toBeUndefined();
+    expect(coreFloor([], ["python", "typescript", "vue"], [])).toBeUndefined();
+    expect(coreFloor([], [], [])).toBeUndefined();
   });
 
   it("is the release that first reads heldOff for a pack holding a rule off", () => {
-    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"])).toBe(HELD_OFF_SINCE);
+    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"], [])).toBe(HELD_OFF_SINCE);
   });
 
   it("is the release that first reads the language for a pack with a rule in one added since", () => {
-    expect(coreFloor([], ["python", "java"])).toBe(java);
+    expect(coreFloor([], ["python", "java"], [])).toBe(java);
   });
 
-  it("is the newest of them for a pack with both", () => {
-    const newest = [HELD_OFF_SINCE, java].sort().at(-1);
-    expect(coreFloor(["held"], ["java"])).toBe(newest);
+  it("is the release that first reads the key for a pack whose ast rule uses one added since", () => {
+    expect(coreFloor([], ["python"], ["stored"])).toBe(stored);
+  });
+
+  it("is the newest of them for a pack with several", () => {
+    expect(coreFloor(["held"], ["java"], [])).toBe([HELD_OFF_SINCE, java].sort(semver.compare).at(-1));
+    expect(coreFloor(["held"], ["java"], ["stored"])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
   });
 });
 
@@ -612,5 +641,70 @@ describe("shippedLanguages", () => {
   it("names none for a pack without rules, and skips a document that is not JSON", () => {
     expect(shippedLanguages(pack({ "pack.json": "{}" }))).toEqual([]);
     expect(shippedLanguages(pack({ "rules/broken.json": "{", "rules/a.json": JSON.stringify({ language: "php" }) }))).toEqual(["php"]);
+  });
+});
+
+describe("shippedRuleKeys", () => {
+  function pack(documents) {
+    const directory = mkdtempSync(join(tmpdir(), "core-range-"));
+    coreRangeDirectories.push(directory);
+    for (const [path, document] of Object.entries(documents)) {
+      mkdirSync(join(directory, path, ".."), { recursive: true });
+      writeFileSync(join(directory, path), typeof document === "string" ? document : JSON.stringify(document));
+    }
+    return directory;
+  }
+  const query = (rule, utils) => ({ clauses: [{ forbid: { ast: { language: "python", rule, ...(utils === undefined ? {} : { utils }) } } }] });
+
+  it("names a stored beside a regex and a filePath text condition, wherever the ast rule sits, once each and sorted", () => {
+    const directory = pack({
+      "rules/a.json": query({ kind: "tuple", has: { stopBy: "end", regex: "^,$", stored: "the tape keeps the comma" } }),
+      "rules/nested/b.json": query({ all: [{ kind: "call" }, { any: [{ filePath: { notRegex: "^tests/" } }] }] }),
+      "rules/c.json": { clauses: [{ define: { language: "python", utils: { comma: { regex: "^,$", stored: "kept" } } } }] },
+      "candidates/rules/d.json": query({ kind: "tuple", filePath: { regex: "^a/" } }),
+    });
+    expect(shippedRuleKeys(directory)).toEqual(["filePath", "stored"]);
+  });
+
+  // react-hooks-error-boundaries defines a utility named `stored`, which every core reads: it holds no core back.
+  it("names none for a utility named like a key, whatever its rule", () => {
+    const directory = pack({
+      "rules/a.json": query({ matches: "stored" }, { stored: { any: [{ kind: "assignment" }] }, filePath: { regex: "^x$" } }),
+      "rules/b.json": { clauses: [{ define: { language: "python", utils: { stored: { kind: "assignment" }, filePath: { regex: "^x$" } } } }] },
+    });
+    expect(shippedRuleKeys(directory)).toEqual([]);
+  });
+
+  it("still reads the rule a utility named like a key holds", () => {
+    expect(shippedRuleKeys(pack({ "rules/a.json": query({ matches: "utils" }, { utils: { regex: "^,$", stored: "kept" } }) }))).toEqual(["stored"]);
+  });
+
+  it("names none for a key in a shape the engine does not read it in", () => {
+    const directory = pack({
+      "rules/a.json": query({ kind: "tuple", stored: "no regex beside it" }),
+      "rules/b.json": query({ regex: "^,$", stored: { why: "not a string" } }),
+      "rules/c.json": query({ kind: "call", filePath: "^a/" }),
+      "rules/d.json": query({ kind: "call", filePath: {} }),
+      "rules/e.json": query({ kind: "call", filePath: { regex: "^a/", kind: "x" } }),
+    });
+    expect(shippedRuleKeys(directory)).toEqual([]);
+  });
+
+  it("names none for a pack without rules, and skips a document that is not JSON", () => {
+    expect(shippedRuleKeys(pack({ "pack.json": "{}" }))).toEqual([]);
+    expect(shippedRuleKeys(pack({ "rules/broken.json": "{", "rules/a.json": query({ regex: "^,$", stored: "kept" }) }))).toEqual(["stored"]);
+  });
+
+  // An older core refuses an ast rule key it does not know and drops the whole pack: a key added to the engine after
+  // 0.1.5 fails here until RULE_KEY_SINCE names the release that first reads it.
+  it("names the release that first reads each ast rule key added after 0.1.5", () => {
+    const readSince015 = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "calls", "embedded", "host", "importTarget"];
+    const source = readFileSync(join(ROOT, "native/src/code_rule_dsl/compile/ast_rule.rs"), "utf8");
+    // The first list is the product's; the second, under cfg(test), adds a test-only key.
+    const list = /const AST_RULE_KEYS: &\[&str\] = &\[([^\]]*)\];/u.exec(source);
+    expect(list).not.toBeNull();
+    const keys = [...list[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+    expect(keys).toEqual(expect.arrayContaining(readSince015));
+    expect([...RULE_KEY_SINCE.keys()].toSorted()).toEqual(keys.filter((key) => !readSince015.includes(key)).toSorted());
   });
 });

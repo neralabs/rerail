@@ -49,7 +49,7 @@ fn the_profile_accounts_for_every_threads_cpu() {
     {
         let _s = profile::span(|| "xthreads".into());
         use rayon::prelude::*;
-        (0..64).into_par_iter().for_each(|_| burn(0.005));
+        crate::code_rule_dsl::logic::profile::on_cores(|| (0..64).into_par_iter().for_each(|_| burn(0.005)));
     }
     // The helper's CPU is all taken before the account (a wall-time wait fell short at load 90: 0.05 s of 0.15).
     done.recv().unwrap();

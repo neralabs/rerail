@@ -369,7 +369,7 @@ mod tests {
         let target = |r: u32| ((r % 8) * 12 + (r * 37) % 13) as f32 / 100.0;
         let mut s = MemorySerializer;
         let nr = 1000u32;
-        let label = |r: u32| r % 8 >= 3 || r % 13 == 0;
+        let label = |r: u32| r % 8 >= 3 || r.is_multiple_of(13);
         let feature_nb = [8u32, 3, 50];
         let bucket_of = |f: usize, r: u32| match f {
             0 => r % 8,

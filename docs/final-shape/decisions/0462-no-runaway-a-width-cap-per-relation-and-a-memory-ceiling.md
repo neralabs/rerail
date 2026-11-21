@@ -5,10 +5,10 @@ Status: accepted (2026-11-18; the user: "find a way to make it impossible for ru
 ## Intro
 
 A rule whose head is huge fills memory until the machine gives out. Ruff's SLF001 as written ran past 56 GB on
-1,644 PostHog files (0473). Runaways like this had crashed the development machine twice, so every run there went
+1,644 PostHog files (0461). Runaways like this had crashed the development machine twice, so every run there went
 through an outside watchdog.
 
-Replanning (0203 §3a) cannot help: no join order shrinks a head. 0473 bounds the one shape we know (a node
+Replanning (0203 §3a) cannot help: no join order shrinks a head. 0461 bounds the one shape we know (a node
 product), but other rules can still blow up. The engine itself has to refuse to grow without limit, and say
 which rule was growing.
 

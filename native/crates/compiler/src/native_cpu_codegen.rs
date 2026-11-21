@@ -55,7 +55,7 @@ pub fn options() -> std::sync::Arc<Options> {
 /// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`.
 pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
     let flags: &[(&str, &str)] = if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
-    cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
+    cranelift_jit::JITBuilder::with_flags(&rerail_clif::jit::flags(flags), cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
 /// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm
@@ -192,8 +192,8 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }
     }
-    // On the one pool (decision 0100 §2), a share a thread of it.
-    let threads = rayon::current_num_threads().min(items.len()).max(1);
+    // On the machine's pool (decisions 0100 §2, 0442), a share a thread of it.
+    let threads = rerail_context::cores_threads().min(items.len()).max(1);
     let isa = module.isa();
     // The largest first, dealt round the threads.
     let mut order: Vec<usize> = (0..items.len()).collect();
@@ -208,20 +208,22 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     let times = rerail_context::local::<ParallelTimes>();
     let done: Vec<Result<Vec<(usize, FuncId, Context)>, String>> = {
         use rayon::prelude::*;
-        shares
-            .into_par_iter()
-            .map(|share| {
-                let mut out = Vec::with_capacity(share.len());
-                for (i, id, mut c) in share {
-                    c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
-                    out.push((i, id, c));
-                }
-                if let Ok(mut t) = times.0.lock() {
-                    t.add(&cranelift_codegen::timing::take_current());
-                }
-                Ok(out)
-            })
-            .collect()
+        rerail_context::on_cores(|| {
+            shares
+                .into_par_iter()
+                .map(|share| {
+                    let mut out = Vec::with_capacity(share.len());
+                    for (i, id, mut c) in share {
+                        c.compile(isa, &mut Default::default()).map_err(|e| format!("{:?}", e.inner))?;
+                        out.push((i, id, c));
+                    }
+                    if let Ok(mut t) = times.0.lock() {
+                        t.add(&cranelift_codegen::timing::take_current());
+                    }
+                    Ok(out)
+                })
+                .collect()
+        })
     };
     let mut compiled: Vec<Option<(FuncId, Context)>> = (0..order.len()).map(|_| None).collect();
     for share in done {

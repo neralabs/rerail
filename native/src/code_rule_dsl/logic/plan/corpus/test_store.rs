@@ -132,7 +132,7 @@ fn make(path: &Path) {
 /// what a test's first run would do before it reads its own files.
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-    let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
+    let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
     let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
@@ -191,7 +191,7 @@ impl Drop for Store {
 /// The files under `dir` this process holds open, each named once a descriptor (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
 pub fn held_under(dir: &Path) -> Vec<String> {
-    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
     let prefix = format!("{}/", dir.display());
     (0..8192)
         .filter_map(|fd| {
@@ -242,7 +242,7 @@ pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run
     // runs read the named store.
     let mine = super::TEST_TAPE_CACHE
         .with(|p| p.borrow().clone())
-        .or_else(|| handed())
+        .or_else(handed)
         .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }
@@ -276,9 +276,11 @@ pub(super) fn own() -> Option<PathBuf> {
     Some(OWN.with(|own| own.get_or_init(copy).path.clone()))
 }
 
-/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads).
+/// Whether `path` is the store of the test on this thread (its own, not one shared with other threads), or the one a
+/// job was handed by its test (`carried`): the same test's store, whose observer goes with it (`Store`'s drop forgets
+/// the store's one observer; a job's own would hold its files open past the test).
 pub(super) fn is_own(path: &Path) -> bool {
-    OWN.with(|own| own.get().is_some_and(|s| s.path == path))
+    OWN.with(|own| own.get().is_some_and(|s| s.path == path)) || handed().is_some_and(|h| h == path)
 }
 
 /// Removes the directories of test processes that have exited.

@@ -1,0 +1,279 @@
+// The gpu lane's relational kernels (decision 0098 §5, 0095 §3), in UKL (decision 0440 step C): the bit product,
+// the count table and the closure. The scans, the histogram and the zero fill are the UKL library's
+// (`rerail_gpu::library`, a queue's fill).
+//
+// Every 1-D kernel runs threadgroups of 256 threads; the host dispatches whole threadgroups and each kernel checks
+// its bounds. Every loop's trip count follows from its inputs.
+
+#include <ukl/backend.h>
+#include <ukl/simd.h>
+
+// Threads a threadgroup of the 1-D kernels.
+#define REL_TG 256u
+// Counters in a threadgroup table (count table): 8 KB of u32.
+#define REL_TABLE 2048u
+
+typedef struct BitProductArgs { uint32_t n; uint32_t m; uint32_t kw; uint32_t mode; uint32_t mw; } BitProductArgs;
+UKL_REFLECT_STRUCT(BitProductArgs, n, m, kw, mode, mw)
+
+// Bit product: C[i][j] = popcount(A_i & B_j) over rows of `kw` u64 words (the spikes' W1/W5 bit gram).
+//
+// One threadgroup per 64x64 output tile, 16 x 16 threads, 4x4 outputs per thread; 8 words of each side staged per
+// step (2 x 4.2 KB of threadgroup memory). The grid is (column tiles, row tiles).
+//
+// mode 0: every count, into C (n x m, row-major).
+// mode 1: only whether count >= min[j], as bits of `mask` (n rows of `mw` u32 words, bit j of a row in word j / 32).
+//         A tile's 64 columns are exactly two mask words of each of its rows, so the tile gathers them in threadgroup
+//         memory (512 B) and writes them whole: no device atomics, and no zero fill beforehand.
+DEFINE_KERNEL2(relational, bp_tile,
+               ROBUFFER, uint64_t, A,     "[n * kw]",
+               ROBUFFER, uint64_t, B,     "[m * kw]",
+               RWBUFFER, uint32_t, C,     "[n * m]",
+               RWBUFFER, uint32_t, mask,  "[n * mw]",
+               ROBUFFER, uint32_t, minv,  "[m]",
+               ARGS,     BitProductArgs, args, ,
+               SHARED,   uint64_t, As,    520,
+               SHARED,   uint64_t, Bs,    520,
+               SHARED,   uint32_t, tmask, 128,
+               TGID0,    uint32_t, tgx,   ,
+               TGID1,    uint32_t, tgy,   ,
+               LID0,     uint32_t, tpx,   ,
+               LID1,     uint32_t, tpy,   )
+{
+  const uint32_t t = tpy * 16u + tpx;
+  const uint32_t row0 = tgy * 64u, col0 = tgx * 64u;
+  if (t < 128u) ukl_atomic_store_local(&tmask[t], 0u);
+  ukl_tg_barrier();  // zeroed before any thread ORs (kw = 0 has no other barrier)
+  uint32_t acc[4][4];
+  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] = 0u;
+  const uint32_t lr = t / 4u, lw = (t % 4u) * 2u;
+  for (uint32_t k0 = 0u; k0 < args.kw; k0 += 8u) {
+    for (uint32_t q = 0u; q < 2u; q++) {
+      uint32_t gk = k0 + lw + q;
+      uint32_t ga = row0 + lr, gb = col0 + lr;
+      As[(lw + q) * 65u + lr] = (ga < args.n && gk < args.kw) ? A[(uint64_t)ga * args.kw + gk] : (uint64_t)0;
+      Bs[(lw + q) * 65u + lr] = (gb < args.m && gk < args.kw) ? B[(uint64_t)gb * args.kw + gk] : (uint64_t)0;
+    }
+    ukl_tg_barrier();
+    for (uint32_t w = 0u; w < 8u; w++) {
+      uint64_t a[4], b[4];
+      for (uint32_t r = 0u; r < 4u; r++) a[r] = As[w * 65u + tpy + 16u * r];
+      for (uint32_t c = 0u; c < 4u; c++) b[c] = Bs[w * 65u + tpx + 16u * c];
+      for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] += ukl_popcount64(a[r] & b[c]);
+    }
+    ukl_tg_barrier();
+  }
+  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) {
+    uint32_t lrow = tpy + 16u * r, lcol = tpx + 16u * c;
+    uint32_t i = row0 + lrow, j = col0 + lcol;
+    if (i < args.n && j < args.m) {
+      if (args.mode == 0u) {
+        C[(uint64_t)i * args.m + j] = acc[r][c];
+      } else if (acc[r][c] >= minv[j]) {
+        ukl_atomic_add_local(&tmask[lrow * 2u + lcol / 32u], 1u << (lcol % 32u));  // one thread a bit: an add is the OR
+      }
+    }
+  }
+  if (args.mode == 1u) {
+    ukl_tg_barrier();
+    if (t < 128u) {
+      uint32_t i = row0 + t / 2u, w = col0 / 32u + t % 2u;
+      if (i < args.n && w < args.mw) mask[(uint64_t)i * args.mw + w] = ukl_atomic_load_local(&tmask[t]);
+    }
+  }
+}
+
+typedef struct ScatterArgs { uint32_t cap; uint32_t mw; uint32_t nw; } ScatterArgs;
+UKL_REFLECT_STRUCT(ScatterArgs, cap, mw, nw)
+
+// The thresholded pairs: mask word `w` writes its set bits as (row, column) at its scanned offset `ex[w]`.
+// Words are row-major and bits ascend, so the pairs come out in (i, j) order. Writes past `cap` are dropped (the
+// host sees the total and runs this pass again into a buffer of the exact size).
+DEFINE_KERNEL2(relational, bp_scatter,
+               ROBUFFER, uint32_t, mask,  "[nw]",
+               ROBUFFER, uint32_t, ex,    "[nw + 1]",
+               RWBUFFER, uint32_t, pairs, "[2 * cap]",
+               ARGS,     ScatterArgs, args, ,
+               GID0,     uint32_t, w,     )
+{
+  if (w >= args.nw) return;
+  uint32_t x = mask[w];
+  uint32_t o = ex[w];
+  uint32_t i = w / args.mw, j0 = (w % args.mw) * 32u;
+  for (uint32_t k = 0u; k < 32u && x != 0u; k++) {
+    uint32_t b = ukl_ctz32(x);
+    x &= x - 1u;
+    if (o < args.cap) { pairs[2u * o] = i; pairs[2u * o + 1u] = j0 + b; }
+    o++;
+  }
+}
+
+// The largest of `col[a..b]` (0 when empty), through the threadgroup. Every thread must call it.
+UKL_INLINE uint32_t tg_max(UKL_GLOBAL const uint16_t* col, uint32_t a, uint32_t b, UKL_LOCAL uint32_t* scratch, uint32_t t __UKL_PARAMS)
+{
+  uint32_t m = 0u;
+  for (uint32_t e = a + t; e < b; e += REL_TG) m = ukl_max(m, (uint32_t)col[e]);
+  m = ukl_sg_max(m __UKL_ARGS);
+  if (t % UKL_SIMD_WIDTH == 0u) scratch[t / UKL_SIMD_WIDTH] = m;
+  ukl_tg_barrier();
+  uint32_t r = 0u;
+  for (uint32_t i = 0u; i < REL_TG / UKL_SIMD_WIDTH; i++) r = ukl_max(r, scratch[i]);
+  ukl_tg_barrier();
+  return r;
+}
+
+// Per left row of partition p, the right rows of p with its code. Every left row is written exactly once: in the
+// pass of its code's window, or with 0 when its code is above the partition's right codes.
+DEFINE_KERNEL2(relational, ct_count,
+               ROBUFFER, uint16_t, left,    "[loff[parts]]",
+               ROBUFFER, uint16_t, right,   "[roff[parts]]",
+               ROBUFFER, uint32_t, loff,    "[parts + 1]",
+               ROBUFFER, uint32_t, roff,    "[parts + 1]",
+               RWBUFFER, uint32_t, counts,  "[loff[parts]]",
+               SHARED,   uint32_t, T,       REL_TABLE,
+               SHARED,   uint32_t, scratch, REL_TG / UKL_SIMD_WIDTH,
+               TGID0,    uint32_t, p,       ,
+               LID0,     uint32_t, t,       )
+{
+  const uint32_t l0 = loff[p], l1 = loff[p + 1u], r0 = roff[p], r1 = roff[p + 1u];
+  if (l0 == l1) return;  // uniform across the threadgroup
+  const uint32_t windows = r1 > r0 ? tg_max(right, r0, r1, scratch, t __UKL_ARGS) / REL_TABLE + 1u : 0u;
+  for (uint32_t e = l0 + t; e < l1; e += REL_TG) if ((uint32_t)left[e] / REL_TABLE >= windows) counts[e] = 0u;
+  for (uint32_t w = 0u; w < windows; w++) {
+    const uint32_t base = w * REL_TABLE;
+    for (uint32_t i = t; i < REL_TABLE; i += REL_TG) ukl_atomic_store_local(&T[i], 0u);
+    ukl_tg_barrier();
+    for (uint32_t e = r0 + t; e < r1; e += REL_TG) {
+      uint32_t c = (uint32_t)right[e] - base;
+      if (c < REL_TABLE) ukl_atomic_add_local(&T[c], 1u);
+    }
+    ukl_tg_barrier();
+    for (uint32_t e = l0 + t; e < l1; e += REL_TG) {
+      uint32_t c = (uint32_t)left[e] - base;
+      if (c < REL_TABLE) counts[e] = ukl_atomic_load_local(&T[c]);
+    }
+    ukl_tg_barrier();
+  }
+}
+
+typedef struct CapArgs { uint32_t cap; } CapArgs;
+UKL_REFLECT_STRUCT(CapArgs, cap)
+
+// The pairs: each left row with matches walks its partition's right rows in order and writes the equal ones at its
+// scanned offset `ex[li]`. So pairs are in left order, then right order, as the reference's. The right codes are
+// staged through threadgroup memory, REL_TABLE at a time (4 KB). Writes past `cap` are dropped (the host reruns
+// the pass into a buffer of the exact size).
+DEFINE_KERNEL2(relational, ct_scatter,
+               ROBUFFER, uint16_t, left,   "[loff[parts]]",
+               ROBUFFER, uint16_t, right,  "[roff[parts]]",
+               ROBUFFER, uint32_t, loff,   "[parts + 1]",
+               ROBUFFER, uint32_t, roff,   "[parts + 1]",
+               ROBUFFER, uint32_t, counts, "[loff[parts]]",
+               ROBUFFER, uint32_t, ex,     "[loff[parts] + 1]",
+               RWBUFFER, uint32_t, pairs,  "[2 * cap]",
+               ARGS,     CapArgs,  args,   ,
+               SHARED,   uint16_t, R,      REL_TABLE,
+               SHARED,   uint32_t, any,    1,
+               TGID0,    uint32_t, p,      ,
+               LID0,     uint32_t, t,      )
+{
+  const uint32_t l0 = loff[p], l1 = loff[p + 1u], r0 = roff[p], r1 = roff[p + 1u];
+  if (l0 == l1 || r0 == r1) return;  // uniform: no pairs
+  for (uint32_t lb = l0; lb < l1; lb += REL_TG) {  // the same trip count for every thread
+    const uint32_t li = lb + t;
+    const uint32_t want = li < l1 ? counts[li] : 0u;
+    if (t == 0u) ukl_atomic_store_local(&any[0], 0u);
+    ukl_tg_barrier();
+    if (ukl_sg_ballot(want != 0u __UKL_ARGS) != 0u && t % UKL_SIMD_WIDTH == 0u) ukl_atomic_store_local(&any[0], 1u);
+    ukl_tg_barrier();
+    const bool skip = ukl_atomic_load_local(&any[0]) == 0u;
+    ukl_tg_barrier();  // every thread has read `any` before the next round resets it
+    if (skip) continue;  // uniform
+    const uint16_t c = li < l1 ? left[li] : (uint16_t)0;
+    uint32_t o = want != 0u ? ex[li] : 0u, got = 0u;
+    for (uint32_t rb = r0; rb < r1; rb += REL_TABLE) {
+      const uint32_t len = ukl_min(REL_TABLE, r1 - rb);
+      ukl_tg_barrier();
+      for (uint32_t i = t; i < len; i += REL_TG) R[i] = right[rb + i];
+      ukl_tg_barrier();
+      if (got < want) {
+        for (uint32_t i = 0u; i < len; i++) {
+          if (R[i] == c) {
+            if (o < args.cap) { pairs[2u * o] = li; pairs[2u * o + 1u] = rb + i; }
+            o++;
+            got++;
+          }
+        }
+      }
+    }
+  }
+}
+
+typedef struct ClosureArgs { uint32_t n; uint32_t words; } ClosureArgs;
+UKL_REFLECT_STRUCT(ClosureArgs, n, words)
+
+// Closure over the condensed graph (the spikes' W3 (b), level by level). The host finds the components (Tarjan's,
+// as the reference does), their DAG as a CSR of successor components, and each component's level (1 + the
+// highest level of its successors). On the device, R holds one bit row per component, `words` u64 words wide:
+//
+// 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
+//    every successor in another component (device atomics on u32 halves: the result is the same in any order);
+// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
+// 3. cl_gather: node v's row is its component's.
+DEFINE_KERNEL2(relational, cl_init,
+               ROBUFFER, uint32_t, off,    "[n + 1]",
+               ROBUFFER, uint32_t, dst,    "[off[n]]",
+               ROBUFFER, uint32_t, comp,   "[n]",
+               ROBUFFER, uint32_t, cyclic, "[components]",
+               RWBUFFER, uint32_t, R,      "[components * words * 2]",
+               ARGS,     ClosureArgs, args, ,
+               GID0,     uint32_t, v,      )
+{
+  if (v >= args.n) return;
+  const uint32_t c = comp[v];
+  UKL_GLOBAL uint32_t* row = R + (uint64_t)c * args.words * 2u;
+  if (cyclic[c] != 0u) ukl_atomic_or(&row[v / 32u], 1u << (v % 32u));
+  for (uint32_t e = off[v]; e < off[v + 1u]; e++) {
+    const uint32_t w = dst[e];
+    if (comp[w] != c) ukl_atomic_or(&row[w / 32u], 1u << (w % 32u));
+  }
+}
+
+typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
+UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
+
+// One SIMD group per component of the level; lanes stride over the row's words.
+DEFINE_KERNEL2(relational, cl_level,
+               RWBUFFER, uint64_t, R,     "[components * words]",
+               ROBUFFER, uint32_t, order, "[components]",
+               ROBUFFER, uint32_t, soff,  "[components + 1]",
+               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
+               ARGS,     LevelArgs, args, ,
+               TGID0,    uint32_t, tg,    ,
+               LID0,     uint32_t, lid,   ,
+               LSZ0,     uint32_t, lsz,   )
+{
+  const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
+  const uint32_t idx = args.lo + tg * nsg + sg;
+  if (idx >= args.hi) return;
+  const uint32_t c = order[idx];
+  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
+  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
+  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
+    uint64_t acc = row[w];
+    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
+    row[w] = acc;
+  }
+}
+
+DEFINE_KERNEL2(relational, cl_gather,
+               ROBUFFER, uint64_t, R,    "[components * words]",
+               ROBUFFER, uint32_t, comp, "[n]",
+               RWBUFFER, uint64_t, out,  "[n * words]",
+               ARGS,     ClosureArgs, args, ,
+               GID0,     uint32_t, i,    )
+{
+  if (i >= args.n * args.words) return;
+  const uint32_t v = i / args.words, w = i % args.words;
+  out[i] = R[(uint64_t)comp[v] * args.words + w];
+}

@@ -1,6 +1,8 @@
-//! A test's plans as one dense automaton table, for the device's text tests (`metal_join`'s `text_verdicts`).
+//! A test's plans as one dense automaton table, for the device's text tests (`metal_join`'s `row_text`, its
+//! `ROW_VERDICT` and `ROW_TEST` ops).
 //!
-//! The device answers a text test once per distinct term, a SIMD group per term, by composing each byte's
+//! The device answers a text test once per symbol not yet in the verdict cache (decision 0478 step 2d), and once
+//! per row for a made text, a SIMD group per text, by composing each byte's
 //! transition function over a chunk of 32 bytes at a time (decision 0038's chunked matching). So it needs the plans
 //! as one deterministic automaton with few states (each a byte, at most 255), whose final state alone says whether
 //! any plan matched anywhere: a match state is made absorbing (every byte, and the end of the text, keep it), and
@@ -17,32 +19,40 @@ use regex_automata::util::start;
 use regex_automata::{Anchored, MatchKind};
 use regex_syntax::hir::Hir;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
 
 /// The most states a table holds (a state is a byte in the device's scratch).
 pub const MAX_STATES: usize = 255;
 
-/// A dense automaton: `bytes` is the byte classes (256), then `next` (`states` rows of `classes`), then the
-/// end-of-text transition per state, then whether each state accepts (all bytes).
-#[derive(Debug)]
+/// A dense automaton: its bytes (`bytes()`, in the automata block, decision 0478 step 2c) are the byte classes
+/// (256), then `next` (`states` rows of `classes`), then the end-of-text transition per state, then whether each state
+/// accepts (all bytes).
+#[derive(Clone, Copy, Debug)]
 pub struct Table {
     pub states: u32,
     pub classes: u32,
     pub start: u32,
-    pub bytes: Vec<u8>,
+    /// Where the automata block holds it.
+    pub automaton: super::automata::Automaton,
 }
 
 impl Table {
+    /// Its bytes, where the automata block holds them.
+    pub fn bytes(&self) -> super::automata::Bytes {
+        self.automaton.bytes()
+    }
+
     /// Whether `text` matches: the CPU's walk of the same table (tests only; the device walks it in chunks).
     #[cfg(test)]
     pub fn is_match(&self, text: &[u8]) -> bool {
         let (s, c) = (self.states as usize, self.classes as usize);
-        let next = &self.bytes[256..256 + s * c];
-        let eoi = &self.bytes[256 + s * c..256 + s * c + s];
-        let accept = &self.bytes[256 + s * c + s..];
+        let bytes = self.bytes();
+        let next = &bytes[256..256 + s * c];
+        let eoi = &bytes[256 + s * c..256 + s * c + s];
+        let accept = &bytes[256 + s * c + s..];
         let mut state = self.start as usize;
         for &b in text {
-            state = next[state * c + self.bytes[b as usize] as usize] as usize;
+            state = next[state * c + bytes[b as usize] as usize] as usize;
         }
         accept[eoi[state] as usize] != 0
     }
@@ -62,21 +72,26 @@ fn hir(plan: &Plan) -> Option<Hir> {
     })
 }
 
-/// The table of `plans` (any of them matching), made once per set of plans.
-pub fn table(plans: &[Arc<Lowered>]) -> Result<Arc<Table>, String> {
-    #[derive(Default)]
-    struct TextTables(Mutex<HashMap<String, Result<Arc<Table>, String>>>);
-    let key = plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
-    let held_ = crate::code_rule_dsl::logic::profile::shared::<TextTables>();
-    if let Some(t) = held_.0.lock().expect("tables").get(&key) {
-        return t.clone();
-    }
-    let made = build(plans).map(Arc::new);
-    crate::code_rule_dsl::logic::profile::shared::<TextTables>().0.lock().expect("tables").insert(key, made.clone());
-    made
+/// The plans' key: the text layer's canonical keys, in order.
+fn plans_key(plans: &[Arc<Lowered>]) -> String {
+    plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",")
 }
 
-fn build(plans: &[Arc<Lowered>]) -> Result<Table, String> {
+/// The id of the test of `plans` (any of them matching), for its verdicts in the rolling cache (decision 0478 step
+/// 2d): the same for the CPU's matcher of those plans and the device's table of them. Nothing is built for it.
+pub fn test_id(plans: &[Arc<Lowered>]) -> Option<u32> {
+    super::automata::id(&format!("test:{}", plans_key(plans)))
+}
+
+/// The table of `plans` (any of them matching), made once per set of plans into the automata block.
+pub fn table(plans: &[Arc<Lowered>]) -> Result<Arc<Table>, String> {
+    let key = format!("table:{}", plans_key(plans));
+    let a = super::automata::get_or_make(&key, || build(plans).map(|(bytes, [states, classes, start])| (bytes, [states, classes, start, 0])))?;
+    Ok(Arc::new(Table { states: a.words[0], classes: a.words[1], start: a.words[2], automaton: a }))
+}
+
+/// The table's bytes and its states, classes and start.
+fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
     let hirs = plans.iter().map(|p| hir(&p.plan).ok_or_else(|| "a backtracking pattern".to_owned())).collect::<Result<Vec<_>, _>>()?;
     let hirs = if hirs.is_empty() { vec![Hir::fail()] } else { hirs };
     let nfa = thompson::Compiler::new()
@@ -147,7 +162,7 @@ fn build(plans: &[Arc<Lowered>]) -> Result<Table, String> {
     }
     bytes.extend(eoi.iter().map(|&e| e as u8));
     bytes.extend(accept.iter().map(|&a| u8::from(a)));
-    Ok(Table { states: n as u32, classes: nc as u32, start: 0, bytes })
+    Ok((bytes, [n as u32, nc as u32, 0]))
 }
 
 /// A regex's automata for `replace_all` on the device (`metal_join`'s `text_replace`, decision 0038's chunked
@@ -158,9 +173,10 @@ fn build(plans: &[Arc<Lowered>]) -> Result<Table, String> {
 /// text's end, start elsewhere, dead; the two tables' offsets), then each table as `Table`'s: byte classes, the
 /// transitions, the end-of-text transition per state, whether each state is a match (a byte late: a match state after
 /// byte k is a match ending, or in reverse starting, at k).
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Replacer {
-    pub bytes: Vec<u8>,
+    /// Where the automata block holds its bytes (decision 0478 step 2c).
+    pub automaton: super::automata::Automaton,
     /// The larger table's states: a SIMD group's scratch holds two rows of them per lane.
     pub states: u32,
 }
@@ -169,15 +185,8 @@ pub struct Replacer {
 /// pattern that may match the empty text (Rust's rules for empty matches are not the device's), a look other than the
 /// text's start and end, an automaton past `MAX_STATES`.
 pub fn replacer(pattern: &str) -> Result<Arc<Replacer>, String> {
-    #[derive(Default)]
-    struct Replacers(Mutex<HashMap<String, Result<Arc<Replacer>, String>>>);
-    let held_ = crate::code_rule_dsl::logic::profile::shared::<Replacers>();
-    if let Some(r) = held_.0.lock().expect("replacers").get(pattern) {
-        return r.clone();
-    }
-    let made = build_replacer(pattern).map(Arc::new);
-    crate::code_rule_dsl::logic::profile::shared::<Replacers>().0.lock().expect("replacers").insert(pattern.to_owned(), made.clone());
-    made
+    let a = super::automata::get_or_make(&format!("replace:{pattern}"), || build_replacer(pattern).map(|(bytes, states)| (bytes, [states, 0, 0, 0])))?;
+    Ok(Arc::new(Replacer { automaton: a, states: a.words[0] }))
 }
 
 /// One direction's automaton as a dense table: its starts (at the text's edge, elsewhere), dead state and bytes.
@@ -241,7 +250,8 @@ fn dense_table(dfa: &dense::DFA<Vec<u32>>, anchored: Anchored) -> Result<(u32, u
     Ok((n as u32, columns.len() as u32, 0, mid as u32, dead as u32, bytes))
 }
 
-fn build_replacer(pattern: &str) -> Result<Replacer, String> {
+/// The replacement automata's bytes, and the larger table's states.
+fn build_replacer(pattern: &str) -> Result<(Vec<u8>, u32), String> {
     use regex_syntax::hir::{Look, LookSet};
     let hir = regex_syntax::ParserBuilder::new().build().parse(pattern).map_err(|e| format!("its regex: {e}"))?;
     let props = hir.properties();
@@ -275,7 +285,7 @@ fn build_replacer(pattern: &str) -> Result<Replacer, String> {
     }
     bytes.extend(ft);
     bytes.extend(rt);
-    Ok(Replacer { bytes, states: fs.max(rs) })
+    Ok((bytes, fs.max(rs)))
 }
 
 impl Replacer {
@@ -283,15 +293,16 @@ impl Replacer {
     /// time (tests only; the device composes 32 bytes' transitions at once).
     #[cfg(test)]
     pub fn replace(&self, text: &str, with: &str) -> String {
-        let w = |i: usize| u32::from_le_bytes(self.bytes[4 * i..4 * i + 4].try_into().unwrap()) as usize;
+        let bytes = self.automaton.bytes();
+        let w = |i: usize| u32::from_le_bytes(bytes[4 * i..4 * i + 4].try_into().unwrap()) as usize;
         struct Dir<'a> { t: &'a [u8], s: usize, c: usize, edge: usize, mid: usize, dead: usize }
         impl Dir<'_> {
             fn next(&self, q: usize, b: u8) -> usize { self.t[256 + q * self.c + self.t[b as usize] as usize] as usize }
             fn eoi(&self, q: usize) -> usize { self.t[256 + self.s * self.c + q] as usize }
             fn accept(&self, q: usize) -> bool { self.t[256 + self.s * self.c + self.s + q] != 0 }
         }
-        let f = Dir { t: &self.bytes[w(10)..w(11)], s: w(0), c: w(1), edge: w(2), mid: w(3), dead: w(4) };
-        let r = Dir { t: &self.bytes[w(11)..], s: w(5), c: w(6), edge: w(7), mid: w(8), dead: w(9) };
+        let f = Dir { t: &bytes[w(10)..w(11)], s: w(0), c: w(1), edge: w(2), mid: w(3), dead: w(4) };
+        let r = Dir { t: &bytes[w(11)..], s: w(5), c: w(6), edge: w(7), mid: w(8), dead: w(9) };
         let t = text.as_bytes();
         let n = t.len();
         let (mut out, mut pos) = (Vec::new(), 0);

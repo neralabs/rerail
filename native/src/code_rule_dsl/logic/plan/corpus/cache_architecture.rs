@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The non-test Rust files under `dir`.
@@ -41,11 +41,6 @@ const NOT_CACHES: &[&str] = &[
     "guest_keys", "observed_changes",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
-    // Each guest's key by its identity (decision 0391): an interning, as `strings` and `hashes` are.
-    "guest_keys",
-    // The paths the observer's own journal saw change since a generation (decision 0399 step 1): a record of what
-    // happened, which nothing recomputes.
-    "observed_changes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "tree_pages_pending", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
     "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",

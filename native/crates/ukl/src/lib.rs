@@ -32,48 +32,7 @@ use std::collections::HashMap;
 /// The root the carried headers are found under; no file system path starts so.
 const ROOT: &str = "/<ukl>";
 
-/// The shims and UKL's common headers, at their paths under `forest/src/`.
-const HEADERS: &[(&str, &str)] = &[
-    ("mldb/block/ukl/ukl", include_str!("../../../../forest/src/mldb/block/ukl/ukl")),
-    ("mldb/block/ukl/ukl_shim.h", include_str!("../../../../forest/src/mldb/block/ukl/ukl_shim.h")),
-    ("mldb/block/ukl/ukl_macros.h", include_str!("../../../../forest/src/mldb/block/ukl/ukl_macros.h")),
-    ("mldb/block/ukl/ukl_auto_macros.h", include_str!("../../../../forest/src/mldb/block/ukl/ukl_auto_macros.h")),
-    ("mldb/builtin/metal/ukl/ukl_metal_shim.h", include_str!("../../../../forest/src/mldb/builtin/metal/ukl/ukl_metal_shim.h")),
-    ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../../../../forest/src/mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
-    ("mldb/builtin/cpu/ukl/ukl_cpu_shim.h", include_str!("../../../../forest/src/mldb/builtin/cpu/ukl/ukl_cpu_shim.h")),
-    ("mldb/builtin/opencl/ukl/ukl_opencl_shim.h", include_str!("../../../../forest/src/mldb/builtin/opencl/ukl/ukl_opencl_shim.h")),
-];
-
-/// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
-/// includes. Their tests are `rerail-gpu`'s (`library_tests`), on each device.
-pub const LIBRARY: &[(&str, &str)] = &[
-    ("ukl/backend.h", include_str!("../lib/ukl/backend.h")),
-    ("ukl/bits.h", include_str!("../lib/ukl/bits.h")),
-    ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
-    ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
-    ("ukl/group.h", include_str!("../lib/ukl/group.h")),
-    // A body over a type (decision 0440 §3.5): its header includes it once per type, with its parameters defined.
-    ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
-    ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
-    ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
-    ("ukl/lz4.h", include_str!("../lib/ukl/lz4.h")),
-    ("ukl/scan.h", include_str!("../lib/ukl/scan.h")),
-    ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),
-    ("ukl/histogram.h", include_str!("../lib/ukl/histogram.h")),
-    ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
-    ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
-    ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
-    ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
-    // The reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here so
-    // that every kernel finds them as it finds the rest of the library (`rerail-clif`'s tests write them again).
-    ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
-    ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
-    ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
-    ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
-    ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
-    // The tape's writer's ops (decision 0426 §6, R15), from the same CLIF as the host's (`rerail_clif::writer`).
-    ("ukl/reads/writer.h", include_str!("../lib/ukl/reads/writer.h")),
-];
+include!("carried.rs");
 
 /// The Metal front end's own headers, which it includes in every source itself: empty when a source that names them
 /// (a hand-written MSL kernel that takes the library's headers) is preprocessed ahead of it.
@@ -82,15 +41,12 @@ const METAL_OWN: &[&str] = &["metal_stdlib", "metal_atomic"];
 /// A fingerprint of everything a kernel can include from here (the shims and the library): a kernel's text names its
 /// headers, not their contents, so a store of compiled kernels keys a kernel by its text and this.
 pub fn fingerprint() -> u64 {
-    // FNV-1a over each carried file's name and text.
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for (name, text) in HEADERS.iter().chain(LIBRARY) {
-        for b in name.bytes().chain([0]).chain(text.bytes()).chain([0]) {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
+    FINGERPRINT
 }
+
+// `FINGERPRINT`: `fingerprint`, computed by the build script over `carried.rs`'s files. Hashing their 1.2 MB at each
+// kernel's lookup took 17 ms in a debug build: every Metal launch of the block tests paid it once or twice.
+include!(concat!(env!("OUT_DIR"), "/fingerprint.rs"));
 
 /// Whether `text` takes UKL's library (`#include <ukl/...>` or `<ukl>`), so it must be preprocessed before its
 /// backend's compiler sees it.

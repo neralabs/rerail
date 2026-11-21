@@ -14,11 +14,12 @@
 // Rules must not treat a missing call_target as "calls nothing" when call_open holds.
 //
 // What the program covers: LEGB lookup and imports (relative ones of any depth), later unconditional bindings
-// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns, others
-// unknown), classes and inheritance (method lookup in C3 order, constructors to `__new__` and `__init__`, a
-// metaclass's `__call__`, instances to `__call__`), late-bound self/cls, `super()`, and functions flowing through
-// assignments, returns and a returned parameter. Data flow through containers, getattr/setattr and attributes set
-// outside classes give call_open, never a wrong target.
+// shadowing earlier ones, decorators (transparent ones, workspace decorators through their returns; a def under
+// decorators imported from outside the run, such as `@contextmanager` or `@lru_cache`, is a call's target and the call
+// is open; a `…property` and others unknown), classes and inheritance (method lookup in C3 order, constructors to
+// `__new__` and `__init__`, a metaclass's `__call__`, instances to `__call__`), late-bound self/cls, `super()`, and
+// functions flowing through assignments, returns and a returned parameter. Data flow through containers,
+// getattr/setattr and attributes set outside classes give call_open, never a wrong target.
 //
 // Interface: call_target, call_open, calls, calls_open, reach, owner, and the syntax helpers call, callee,
 // call_arg, posarg, dexpr, awaited.
@@ -75,3 +76,183 @@ dexpr(f, e) :- kind(dd, "decorated_definition"), field(dd, "definition", f), chi
 // awaited(c): call c is the operand of `await` (`await fetch()`), so a coroutine it returns is consumed.
 .decl awaited(c: node)
 awaited(c) :- kind(c, "call"), child(w, c, 0), kind(w, "await").
+
+// ---- tests ---------------------------------------------------------------------------------------------------------
+// A call of a def under decorators: by the call's line, the line of each def it targets, and whether it is open.
+.fixtures decorated
+    .fixture "app/defs.py" ```
+        import functools
+        from contextlib import contextmanager
+        from retrylib import retry, traced
+
+
+        @contextmanager
+        def held():
+            yield 1
+
+
+        @functools.lru_cache(maxsize=None)
+        def cached():
+            return 1
+
+
+        def mine(f):
+            @functools.wraps(f)
+            def w(*args):
+                return f(*args)
+
+            return w
+
+
+        @mine
+        def wrapped():
+            return 2
+
+
+        @retry(3)
+        @traced
+        def stacked():
+            return 3
+
+
+        class Box:
+            @staticmethod
+            def make():
+                return Box()
+
+            @functools.cached_property
+            def size(self):
+                return 1
+
+
+        def use():
+            with held():
+                pass
+            cached()
+            wrapped()
+            stacked()
+            Box.make()
+            Box().size()
+        ```
+    .fixture "app/__init__.py" ```
+        # package
+        ```
+    .fixture "app/compat.py" ```
+        import functools
+
+
+        def cache(f):
+            @functools.wraps(f)
+            def w(*args):
+                return f(*args)
+
+            return w
+        ```
+    .fixture "app/both.py" ```
+        try:
+            from fastlib import cache
+        except ImportError:
+            from .compat import cache
+
+
+        @cache
+        def computed():
+            return 1
+
+
+        def use():
+            computed()
+        ```
+    .fixture "app/diamond.py" ```
+        import functools
+
+
+        class A:
+            @functools.lru_cache(maxsize=None)
+            def who(self):
+                return "A"
+
+
+        class B(A):
+            pass
+
+
+        class C(A):
+            def who(self):
+                return "C"
+
+
+        class D(B, C):
+            pass
+
+
+        def use():
+            D().who()
+        ```
+.end
+
+// A decorator imported from outside the run: the call targets the def and is open.
+.test an_outside_decorator_keeps_the_def_as_the_target uses decorated
+    .decl target_at(l: number, f: number)
+    target_at(l, f) :- call_target(c, d), line(c, l), line(d, f).
+    .decl open_at(l: number)
+    open_at(l) :- call_open(c), line(c, l).
+    .expect target_at(46, 7)
+    .expect open_at(46)
+    .expect target_at(48, 12)
+    .expect open_at(48)
+.end
+
+// A decorator of the run: the call targets the wrapper it returns, as before, and is not open.
+.test a_decorator_of_the_run_gives_its_wrapper uses decorated
+    .decl target_at(l: number, f: number)
+    target_at(l, f) :- call_target(c, d), line(c, l), line(d, f).
+    .decl open_at(l: number)
+    open_at(l) :- call_open(c), line(c, l).
+    .expect target_at(49, 18)
+    .expect no target_at(49, 25)
+    .expect no open_at(49)
+.end
+
+// Two outside decorators stacked: the def is the target, and the call is open.
+.test stacked_outside_decorators_keep_the_def_as_the_target uses decorated
+    .decl target_at(l: number, f: number)
+    target_at(l, f) :- call_target(c, d), line(c, l), line(d, f).
+    .decl open_at(l: number)
+    open_at(l) :- call_open(c), line(c, l).
+    .expect target_at(50, 31)
+    .expect open_at(50)
+.end
+
+// A decorator the program already handles is unchanged: `@staticmethod` is transparent, so the call is definite. An
+// outside `…property` replaces the def by a value its call does not run: open, no target.
+.test a_handled_decorator_and_a_property_are_unchanged uses decorated
+    .decl target_at(l: number, f: number)
+    target_at(l, f) :- call_target(c, d), line(c, l), line(d, f).
+    .decl open_at(l: number)
+    open_at(l) :- call_open(c), line(c, l).
+    .decl targeted(l: number)
+    targeted(l) :- target_at(l, _).
+    .expect target_at(51, 37)
+    .expect no open_at(51)
+    .expect no targeted(52)
+    .expect open_at(52)
+.end
+
+// A decorator imported from outside the run and from a module of the run (`except ImportError: from .compat import
+// cache`) may be the run's: the call targets its wrapper (`w`, app/compat.py:6), not the def.
+.test a_decorator_the_run_also_defines_gives_its_wrapper uses decorated
+    .decl both_target(l: number, f: number)
+    both_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/both.py", _), line(c, l), line(d, f).
+    .expect both_target(13, 6)
+    .expect no both_target(13, 8)
+.end
+
+// A method under an outside decorator is resolved in C3 order: in the diamond D(B, C) over A, `D().who()` runs
+// C.who (line 15), never A's `@lru_cache` who (line 6), which C overrides.
+.test an_outside_decorated_method_follows_the_method_order uses decorated
+    .decl diamond_target(l: number, f: number)
+    diamond_target(l, f) :- call_target(c, d), docof(c, k), doc(k, "app/diamond.py", _), line(c, l), line(d, f).
+    .expect diamond_target(24, 15)
+    .expect no diamond_target(24, 6)
+.end

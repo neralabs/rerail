@@ -1,5 +1,4 @@
 .policy "ruff-f702-continue-outside-loop" revision 1
-.guests off
 .description "Keep continue inside a for or while loop body; outside one (including a loop's else block) it is a Python syntax error."
 .language python
 .mode steer

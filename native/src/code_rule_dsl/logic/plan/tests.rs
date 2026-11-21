@@ -128,7 +128,7 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
 fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
     use super::super::native::width;
     let facts: String = (1..=100).map(|i| format!("l({i}).\nr({i}).\n")).collect();
-    let p = parse(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
+    let p = parse_version(&format!(".decl l(x:number)\n.decl r(x:number)\n{facts}.decl pairs(x:number,y:number)\npairs(x, y) :- l(x), r(y).\n.output pairs\n")).unwrap();
     let run = || {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -151,7 +151,7 @@ fn a_relation_past_the_width_cap_stops_the_run_or_is_cut() {
         (cut, own.finish().expect("the test's run is the outermost"))
     };
     let report = record.width.incomplete();
-    let error = stopped.err().expect("a relation past the cap stops the run").to_string();
+    let error = stopped.expect_err("a relation past the cap stops the run").to_string();
     assert!(error.contains("`pairs` reached 1000 rows") && error.contains("l(") && error.contains("r("), "the error names the relation and its rule: {error}");
     let out = cut.expect("cut, the run goes on");
     let kept = out.shown()["pairs"].len();
@@ -288,8 +288,17 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
 /// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
 /// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
 /// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+/// The probes' counts are the process's (`lazy_probes_counted`), read by difference around the run: in a process of
+/// the test's own (`test_support::alone`), since another test's run plans probes it left before the run began, and in
+/// the shared process `planned` grew past `left` within the run's window.
 #[test]
 fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::logic::plan::tests::a_probe_is_planned_when_its_delta_first_has_rows_child");
+}
+
+#[test]
+#[ignore = "child process of a_probe_is_planned_when_its_delta_first_has_rows"]
+fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
     let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
                .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
                .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
@@ -299,8 +308,8 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
     let p = parse_version(src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
-        // The counts are the run's (decision 0442): the test holds the run they are read in, which the run joins.
-        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        // The probes' counts are the run's (decision 0442): one run holds them.
+        let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let _plans = KeepPlans::start(None);
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
@@ -315,7 +324,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
             // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            // find). The process is the test's own, so the counts moved by this run's alone.
             let (left, planned) = (after.0 - before.0, after.1 - before.1);
             assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
             assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
@@ -330,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -2466,7 +2475,10 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
                 model.stats.fan.insert((rel, c), (rows / n).max(1.0));
             }
         }
-        model.stats.memo.insert("doc_role".into(), HashMap::from([(("r".into(), Constant::Int(7)), fragments)]));
+        // Under the column's name as the model reads it (`Model::col`: `c1`, `doc_role` being no input), so that the
+        // count is the one the search prices.
+        let role = model.col("doc_role", 1);
+        model.stats.memo.insert("doc_role".into(), HashMap::from([((role, Constant::Int(7)), fragments)]));
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
@@ -2579,8 +2591,8 @@ fn bare_model(p: &Arc<Version>) -> Model {
 /// `(order shown, work)` of `p`'s first rule.
 fn priced_first_rule(model: &Model, p: &Arc<Version>) -> (Vec<String>, f64) {
     let r = 0usize;
-    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
-    (order.iter().map(|s| lit_at(&p, r, s.at)).collect(), work)
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(p, r), None).unwrap();
+    (order.iter().map(|s| lit_at(p, r, s.at)).collect(), work)
 }
 
 /// Work queue Q240: past the step that binds the head's last variable the walk needs one witness, and the search
@@ -2628,6 +2640,25 @@ fn within_read_from_its_container_is_priced_by_subtree_size() {
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order, ["c($t)", "within($n, $t)"]);
     assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
+}
+
+/// t50 step 4: `within(n, b)` read from a part of a node of known kind (`field($g, "body", $b)` of a function) is
+/// priced at that kind's size: the part's subtree is at most its parent's. As a node with children it was a few nodes,
+/// and `rf_in` enumerated every function's body from it before checking the read's own function.
+#[test]
+fn within_read_from_a_part_is_priced_by_its_parents_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"body\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    // 10 functions of 400 nodes, 2,000 nodes of 3: a node with children is about 5 nodes.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_010.0;
+    assert!(model.stats.subtree_fan().is_some_and(|f| f < 6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // The body's descendants, each function's: 10 × 400, not 10 × 5.
+    assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
 }
 
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
@@ -2777,7 +2808,7 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new(),counts:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3085,6 +3116,35 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
 }
 
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0488) bounds its producer as a demand does (Q59): an
+/// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
+/// requested calls; an unrestricted atom may not.
+#[test]
+fn a_deferred_joins_producer_may_be_led_by_a_constant_restricted_atom() {
+    let program = |body: &str| parse(&format!(
+        ".decl x(v: number)\n.decl rr_deferred_pairs_x(v: number)\n.decl k(n: number, c: number)\n.decl col(n: number, c: number)\n\
+         rr_deferred_pairs_x(1). k(1, 7). col(1, 2).\n\
+         x(v) :- rr_deferred_pairs_x(v), {body}.\n.output x\n"
+    )).unwrap();
+    let lead = |body: &str| {
+        let p = program(body);
+        let db = Connection::open_in_memory().unwrap();
+        let mut stats = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
+        stats.card.insert("rr_deferred_pairs_x", 5_000_000.0);
+        stats.card.insert("k", 10.0);
+        stats.card.insert("col", 10.0);
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        inputs.given = Some(stats);
+        let model = make_plan(&body::Placed::whole(p.clone()), &db, inputs).unwrap();
+        let (order, _, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        let rule = p.rules().next().unwrap();
+        rule.body().nth(order[0].at).and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned()).unwrap()
+    };
+    assert_eq!(lead("k(v, 7)"), "k", "led by the restricted atom");
+    assert_eq!(lead("col(v, c)"), "rr_deferred_pairs_x", "an unrestricted atom does not lead");
+}
+
 /// A demanded relation's rule (decision 0048's split: `x` computed for `demand_x`'s keys) is driven by its demand,
 /// whatever the statistics say (Q59): the guard is structural. Priced here as the outlier run saw it (the demand
 /// large, a scan of `col` small), the search still starts from `demand_x`, and a kept order that does not is not
@@ -3294,7 +3354,7 @@ fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
 /// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
 /// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too. A rule
 /// that tests a constant on a column a `values` fact answers (`kind2(p, "x")`) is not either: the fact gives the
-/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q338).
+/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q297).
 #[test]
 fn a_rule_over_shaped_relations_is_planned_with_the_program() {
     let p = prepared_program();
@@ -3331,7 +3391,7 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     let mut given = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
     for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
         given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
-        given.card.insert(rel.to_owned(), 1_000.0);
+        given.card.insert(rel, 1_000.0);
     }
     inputs.given = Some(given);
     // Atomized inputs, as a corpus run's: their indexes are the vtabs' (no SQL schema read).
@@ -3366,6 +3426,64 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert_ne!(got.0, odd, "searched, not the order prepared");
 }
 
+/// Decision 0361 step 6: a probe's rows past `BROKEN_BY` times what its relation's fan-out lets a probe return break
+/// the fact. The run notes it once, the model's shapes leave the relation out (and every relation whose facts were
+/// inferred from it), as a later model's do, and a prepared plan reading it is not taken. Rows within it break nothing,
+/// nor a few probes.
+#[test]
+fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let p = prepared_program();
+    let placed = body::Placed::whole(p.clone());
+    let f = placed.fields().unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    let mut given = Stats::empty_of(&f);
+    for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
+        given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
+        given.card.insert(rel, 1_000.0);
+    }
+    inputs.given = Some(given);
+    inputs.atoms = Some([0; 3]);
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
+    let b = placed.body(k);
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // `o(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, "x")`, run as kind2(p, "x"), child2 (`p` bound: `few`, at
+    // most 16 a probe), kind2(c, k) (`c` bound: its key).
+    let order = [Step { at: 2, mode: None }, Step { at: 0, mode: None }, Step { at: 1, mode: None }];
+    let line = crate::code_rule_dsl::logic::plan::line_key(&b, None);
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared([(line, prepared::PreparedPlan { order: order.to_vec(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![] })].into_iter().collect()));
+    assert_eq!(model.plan_rule(f, &b, None).unwrap().0, order.to_vec(), "taken as prepared");
+    assert!(prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    // 10 children a parent: within `few`. 200 a parent, over 40 parents: too few probes to tell.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 1_000), (1_000, 1_000)]));
+    assert!(!model.layout_broken(&b, &order, &[(0, 40), (40, 8_000), (8_000, 8_000)]));
+    assert!(model.stats.shapes.0.contains_key("child2"));
+    // 200 a parent over 100 parents: past 8 times 16.
+    assert!(model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    let broken = shapes::run_broken().facts();
+    assert_eq!(broken.len(), 1, "{broken:?}");
+    assert!(broken["child2"].contains("fanout"), "{broken:?}");
+    assert!(!model.stats.shapes.0.contains_key("child2") && model.stats.shapes.left_out("child2"));
+    assert!(model.stats.shapes.0.contains_key("kind2"), "kind2's facts hold");
+    for (rel, from) in &model.stats.shapes.1 {
+        if from.contains("child2") {
+            assert!(model.stats.shapes.left_out(rel), "{rel}'s facts were inferred from child2's");
+        }
+    }
+    // A later model of the run leaves it out too; a prepared plan reading it is not taken.
+    assert!(shapes::Shapes::for_run(shapes::Shapes::of_version(&placed.v)).left_out("child2"));
+    let taken = || prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
+    let before = taken();
+    model.plan_rule(f, &b, None).unwrap();
+    assert_eq!(taken(), before, "searched, not taken as prepared");
+    // Left out, it is not checked again: noted once.
+    assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
+    assert_eq!(shapes::run_broken().facts().len(), 1);
+}
+
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
 #[test]
 fn prepared_plans_are_stored_with_the_image_and_read_back() {
@@ -3397,7 +3515,7 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     .unwrap();
     // The test's run holds the policy run (it joins it), so the plans counted taken are this run's alone.
     let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let taken = prepared::run_counts().taken.load(std::sync::atomic::Ordering::Relaxed);
     drop(run);
     let _ = std::fs::remove_dir_all(&root);
@@ -3420,6 +3538,91 @@ fn a_version_with_no_prepared_plan_is_read_back() {
     let by: prepared::ByVersion = [([7u8; 32], std::sync::Arc::new(prepared::Prepared::default()))].into_iter().collect();
     let back = prepared::of_store_rows(&prepared::store_rows(&by));
     assert_eq!(back.get(&[7u8; 32]).map(|p| p.0.len()), Some(0), "kept, with no plan");
+}
+
+/// Decision 0361 step 6, end to end: a policy's derived relation declares `fanout(a -> b, one)`, and its rows break it
+/// (a module's statements, 40 of them, under each module; recursive, so it is not inlined into its reader). The run
+/// reads the executors' counts, finds the fact broken, plans the relation from statistics from then on, and goes on:
+/// its findings are what the rules say.
+#[test]
+fn a_run_finds_a_fanout_its_rows_break_and_finds_the_same() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-fanout");
+    std::fs::create_dir_all(&root).unwrap();
+    let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
+    std::fs::write(root.join("a.py"), &statements).unwrap();
+    std::fs::write(root.join("b.py"), &statements).unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
+    let policy = root.with_extension("policy.rerail");
+    std::fs::write(
+        &policy,
+        ".language python\n\
+         .decl under(a: node, b: node)\n.layout under fanout(a -> b, one)\n\
+         under(m, n) :- kind(m, \"module\"), child(m, n, _).\n\
+         under(m, n) :- under(m, b), kind(b, \"block\"), child(b, n, _).\n\
+         .violation hit(at: node) code \"X1\" \"a call statement beside another\"\n\
+         hit(n) :- kind(x, \"expression_statement\"), child(m, x, _), under(m, n), kind(n, \"expression_statement\"), n != x.\n",
+    )
+    .unwrap();
+    // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
+    // The probes checked against a fact: none means no line priced by it was counted.
+    let checked = shapes::run_broken().1.load(std::sync::atomic::Ordering::Relaxed);
+    drop(run);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    let want: Vec<(String, i64)> = ["a.py", "b.py"].iter().flat_map(|f| (1..=40).map(move |l| (f.to_string(), l))).collect();
+    assert_eq!(hits, want, "{report:#}");
+    assert_eq!(broken, 1, "the run found `under`'s fan-out broken ({checked} probes checked against a fact)");
+}
+
+/// Decision 0361 step 6, a key checked where the rows are written: `under` declares `key(a)`, and a module has 40
+/// statements under it. Its reader probes it by `b` alone, so no probe's counts cover the key: the rows' writer finds
+/// the second row of a key, the run plans `under` from statistics from then on, and its findings are the rules'.
+#[test]
+fn a_run_finds_a_key_its_rows_break_where_they_are_written() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("broken-key");
+    std::fs::create_dir_all(&root).unwrap();
+    let statements: String = (0..40).map(|k| format!("f{k}()\n")).collect();
+    std::fs::write(root.join("a.py"), &statements).unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\n").unwrap();
+    let policy = root.with_extension("policy.rerail");
+    std::fs::write(
+        &policy,
+        ".language python\n\
+         .decl under(a: node, b: node)\n.layout under key(a)\n\
+         under(m, n) :- kind(m, \"module\"), child(m, n, _).\n\
+         under(m, n) :- under(m, b), kind(b, \"block\"), child(b, n, _).\n\
+         .violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
+         hit(n) :- kind(n, \"expression_statement\"), under(m, n), kind(m, \"module\").\n",
+    )
+    .unwrap();
+    // The test's run holds the policy run (it joins it), so the facts counted broken are this run's alone.
+    let run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let broken = shapes::run_broken().facts().len();
+    drop(run);
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    let mut want: Vec<(String, i64)> = (1..=40).map(|l| ("a.py".to_owned(), l)).collect();
+    want.push(("c.py".to_owned(), 1));
+    assert_eq!(hits, want, "{report:#}");
+    assert_eq!(broken, 1, "the rows' writer found `under`'s key broken");
 }
 
 /// Q228: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
@@ -3451,36 +3654,6 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
 }
 
-/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
-/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
-/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
-/// base rules' times a nominal depth (`anc`, with no fact declared). `o`, testing a constant on `kind2`'s `values`
-/// column, is planned at run time, and its rows still size it.
-#[test]
-fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
-    let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
-                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
-                   .decl part(x: number, y: number)\n.input part\n\
-                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
-                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
-                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
-                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
-                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
-                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n").unwrap();
-    let v = p;
-    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
-    let prep = prepared::Prepared::of_version(&v);
-    let line = |head: &str, nth: usize, first: Option<usize>| {
-        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
-        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
-    };
-    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
-    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
-    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
-    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
-    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
-}
-
 /// A probe whose new variable later comparisons bound reads a range (`setfix::ranges`), and past the head's variables
 /// a step passes on one witness a binding (`setfix::tail`). A zero count's helper, `h(a, b, p) :- ctx(a, b, p),
 /// line(p, l, _), !at(p, l), l > a, l < b` (`bounded-composed-graph-paths`' `rr_agg15`; 91 files: 25,425 pairs, 6,027
@@ -3488,7 +3661,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
 /// pair reads its lines between its ends and stops at the first.
 #[test]
 fn a_probe_bounded_by_comparisons_reads_a_range() {
-    let p = parse_version(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
+    let p = parse(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
     let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
@@ -3507,10 +3680,120 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
     let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
     let b = body::nth(&p, r);
-    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
     assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
     // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
     assert!(work < 5e6, "a range a pair: {work}");
+}
+
+/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
+/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
+/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
+/// base rules' times a nominal depth (`anc`, with no fact declared). `o`, testing a constant on `kind2`'s `values`
+/// column, is planned at run time, and its rows still size it.
+#[test]
+fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
+    // Off by default (Q290): turned on here, as a measurement turns it on.
+    let _on = rerail_prof::code_rule_dsl::logic::profile::bind(prepared::DerivedEstimates(Some(true)));
+    let text = ".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
+                   .decl part(x: number, y: number)\n.input part\n\
+                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
+                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
+                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
+                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
+                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n";
+    let v = parse(text).unwrap();
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
+    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
+    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
+    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
+    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
+    // By default no derived relation is sized by an estimate: the recursion `anc`, which no fact sizes, is not, and `z`,
+    // which reads it, is not prepared. `o`'s rule, over the inputs, tests a constant on `kind2`'s `values` column, so it
+    // is planned at run time (0361, Q297), and `r` is prepared, as `o`'s facts (inferred from its rule) size it.
+    // (Another program: a version of the same digest holds the prepared plans made above.)
+    drop(_on);
+    let v = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant a `values` fact answers: planned at run time");
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
+    assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
+}
+
+/// Decision 0488: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
+/// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
+#[test]
+fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl out(x:number,w:number)\nout(x,w) :- a(x,y), b(y,z), c(z,w).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "c", "out"].into_iter().map(str::to_owned).collect();
+    let work = |keys: Option<(Keys, Keys)>| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, rows, ndv, fan) in [("a", 10_000.0, [10_000.0, 1_000.0], [1.0, 10.0]), ("b", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0]), ("c", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0])] {
+            model.stats.card.insert(rel, rows);
+            for (c, (ndv, fan)) in ndv.into_iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        if let Some((a, b)) = keys {
+            model.stats.keys.insert(("a", 1), a);
+            model.stats.keys.insert(("b", 0), b);
+        }
+        let ((_, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        work
+    };
+    let containment = work(None);
+    let same = work(Some((Keys::of(0..1_000), Keys::of(0..1_000))));
+    let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
+    assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
+    assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
+/// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
+#[test]
+fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
+    use crate::code_rule_dsl::logic::join_size::JoinCounts;
+    let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl out(x:number,z:number)\nout(x,z) :- a(x,y), b(y,z).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "out"].into_iter().map(str::to_owned).collect();
+    // `a.y`: 1,000 rows of each of 5 keys and 5,000 of one each; `b.y`: 100 of each of the 5, and 500 others.
+    let ay: Vec<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
+    let by: Vec<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
+    let joined = 5.0 * 1_000.0 * 100.0;
+    let last = |counts: bool| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, ys, y) in [("a", &ay, 1), ("b", &by, 0)] {
+            let c = JoinCounts::of(ys.iter().copied());
+            model.stats.card.insert(rel, c.rows);
+            model.ndv.insert((rel, y), 5.0 + (ys.len() / 2) as f64);
+            model.stats.fan.insert((rel, y), c.f2 / c.rows);
+            model.ndv.insert((rel, 1 - y), c.rows);
+            model.stats.fan.insert((rel, 1 - y), 1.0);
+            if counts {
+                model.stats.counts.insert((rel, y), std::sync::Arc::new(c));
+            }
+        }
+        *model.plan_rule_step_rows(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap().1.last().unwrap()
+    };
+    let (with, without) = (last(true), last(false));
+    assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
+    eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
 }
 
 /// Past a bound head the search passes on one witness a binding only for a step joined by a bound variable, as the

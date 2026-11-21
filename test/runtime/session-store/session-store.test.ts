@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { type EncodingOption, mkdirSync, type PathLike, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createConversationRulesExtension } from "../../../src/hosts/omp/index.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import {
@@ -237,6 +237,39 @@ describe("SQLite session persistence", () => {
     expect(stored.join("\n")).not.toContain(secret);
     const sessionFolder = createHash("sha256").update(session.sessionId).digest("hex");
     expect(await readFile(join(storageRoot, sessionFolder, "events.jsonl"), "utf8")).not.toContain(secret);
+  });
+
+  it("stores a call that names a web URL without looking its host and path up on another machine", async () => {
+    const root = await temporaryDirectory();
+    const databasePath = defaultRerailDatabasePath();
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, embedder: testEmbedder });
+    const session = { host: "claude-code" as const, sessionId: "url-session", cwd: root };
+    // 192.0.2.1 is a documentation address (RFC 5737). `//net/192.0.2.1/api/v1`, cut from the URL at its `:`, names the
+    // share `\\net\192.0.2.1\api\v1` on Windows, whose lookup opens a connection to the host `net`, and on Linux and
+    // macOS a path under the automount root `/net`, which an automounter may mount from 192.0.2.1. Each such lookup is
+    // recorded and refused here, not made, so the test reaches no host.
+    const lookUp = realpathSync.native;
+    const shares: string[] = [];
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
+      if (!/^(?:\\\\[^.?\\]|\/net\/)/u.test(String(path))) return lookUp(path, options);
+      shares.push(String(path));
+      throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+    });
+    const command = "curl -s https://net/192.0.2.1/api/v1 | jq .";
+    await runtime.ingest({ kind: "session-start", eventId: "start", session });
+    await runtime.ingest({ kind: "call", eventId: "url-call", toolCallId: "url", sessionId: session.sessionId, toolName: "Bash", input: { command } });
+    await runtime.ingest({ kind: "result", eventId: "url-result", toolCallId: "url", sessionId: session.sessionId, toolName: "Bash", output: "{\"ok\":true}" });
+    await runtime.dispose();
+
+    expect(shares).toEqual([]);
+    const database = new Database(databasePath, { readonly: true });
+    const read = database.prepare("SELECT payload_json FROM events WHERE event_id = ?").pluck();
+    expect(JSON.parse(String(read.get("url-call")))).toMatchObject({ input: { command } });
+    expect(JSON.parse(String(read.get("url-result")))).toMatchObject({ output: "{\"ok\":true}" });
+    database.close();
   });
 
   it("preserves circular and BigInt call payloads across the native daemon boundary", async () => {

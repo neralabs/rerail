@@ -9,6 +9,7 @@
 //! | `.decl r(k: t; v: sym) merge @f widen 8` | `.lattice f<symbol> { Lub -> @f }` and `.decl r(k: t, v: f<>) widen 8` |
 //! | `.demand a, b`                           | `.pragma "magic-transform" "a, b"`                         |
 //! | `.kindset k = "a" \| "b"`                | `.decl k(kind: symbol)` and `k("a"). k("b").`              |
+//! | `.layout r fanout(q -> v, few)`          | the same                                                   |
 //! | `@prefix($s, "_")`, `!@prefix(…)`        | `prefix("_", s)`, `!prefix("_", s)` (pattern first)        |
 //! | `@glob($s, {"a", "b"})`                  | `(glob("a", s) ; glob("b", s))`                            |
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |
@@ -545,23 +546,23 @@ impl Translator<'_> {
                 let text = self.braces()?;
                 self.out.push_str(&format!(".policy {text}"));
             }
-            // `.layout r form(…)` (decision 0361) is `.rerail` already: its text as written, to its closing paren.
+            // `.layout r fanout(…)` (decision 0361's declared shapes) is `.rerail` already: its group as written.
             "layout" => {
+                let name = self.id()?;
                 let start = self.toks.get(self.i).map_or(self.src.len(), |t| t.1);
-                let mut depth = 0usize;
-                loop {
-                    match self.peek().clone() {
+                self.id()?;
+                self.p("(")?;
+                let mut depth = 1;
+                while depth > 0 {
+                    match self.peek() {
                         Tok::P("(") => depth += 1,
-                        Tok::P(")") if depth == 1 => break,
-                        Tok::P(")") => depth = depth.saturating_sub(1),
-                        Tok::Eof => return self.fail("a layout's closing paren"),
+                        Tok::P(")") => depth -= 1,
+                        Tok::Eof => return self.fail("a layout's closing parenthesis"),
                         _ => {}
                     }
                     self.i += 1;
                 }
-                let end = self.toks[self.i].2;
-                self.i += 1;
-                self.out.push_str(&format!(".layout {}", &self.src[start..end]));
+                self.out.push_str(&format!(".layout {name} {}", &self.src[start..self.toks[self.i - 1].2]));
             }
             _ => return self.fail("a directive"),
         }

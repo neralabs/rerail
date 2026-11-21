@@ -509,7 +509,7 @@ pub mod heap {
             *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
         v
     }
 
@@ -559,46 +559,49 @@ pub mod heap {
             if !on() {
                 return None;
             }
-            let mut t = TABLE.load(Relaxed);
-            if t.is_null() {
-                #[cfg(unix)]
-                {
-                    let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
-                    let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-                    if p == libc::MAP_FAILED {
-                        STATE.store(1, Relaxed);
-                        return None;
-                    }
-                    let p = p.cast::<AtomicUsize>();
-                    t = match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
-                        Ok(_) => p,
-                        Err(other) => {
-                            unsafe { libc::munmap(p.cast(), len) };
-                            other
-                        }
-                    };
-                }
-                #[cfg(not(unix))]
+            let t = TABLE.load(Relaxed);
+            let t = if t.is_null() { made()? } else { t };
+            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+        }
+
+        /// The table, mapped by the first thread to ask (another's, where two race); `None` where it cannot be.
+        #[cfg(unix)]
+        fn made() -> Option<*mut AtomicUsize> {
+            let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+            if p == libc::MAP_FAILED {
+                STATE.store(1, Relaxed);
                 return None;
             }
-            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+            let p = p.cast::<AtomicUsize>();
+            Some(match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
+                Ok(_) => p,
+                Err(other) => {
+                    unsafe { libc::munmap(p.cast(), len) };
+                    other
+                }
+            })
+        }
+        #[cfg(not(unix))]
+        fn made() -> Option<*mut AtomicUsize> {
+            None
         }
 
         #[inline(never)]
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            let got = walk();
+            let got = frames();
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
         }
 
-        /// The return addresses of the frames calling `record`, outermost last, by the frame pointers' chain; none
-        /// where the chain is not read (only aarch64 macOS's is).
+        /// The calling frames' return addresses, innermost first, by the frame pointers' chain. Inlined, so the
+        /// frames are `record`'s caller's (`SKIP` drops the profiler's own).
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         #[inline(always)]
-        fn walk() -> [usize; DEPTH + SKIP] {
+        fn frames() -> [usize; DEPTH + SKIP] {
             let mut got = [0usize; DEPTH + SKIP];
             let mut fp: usize;
             unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
@@ -606,7 +609,7 @@ pub mod heap {
             for slot in got.iter_mut() {
                 // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
                 // caller's record is higher, and a walk out of the stack stops.
-                if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
+                if fp == 0 || !fp.is_multiple_of(8) || fp < start || fp > start + (64 << 20) {
                     break;
                 }
                 let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
@@ -619,9 +622,10 @@ pub mod heap {
             got
         }
 
+        /// Elsewhere no walk: no frames.
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        fn walk() -> [usize; DEPTH + SKIP] {
-            [0usize; DEPTH + SKIP]
+        fn frames() -> [usize; DEPTH + SKIP] {
+            [0; DEPTH + SKIP]
         }
 
         pub(super) fn of(at: usize) -> Option<Vec<usize>> {

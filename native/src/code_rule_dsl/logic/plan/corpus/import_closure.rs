@@ -3,35 +3,39 @@
 //! relation has these rules added (`corpus.rs`, `reads_components`): a lookup by name kept to what the reader
 //! imports. They were the cross-file memo's (decision 0076); the memo is removed and they stay (decision 0450 §3).
 use super::{Error, Result};
-use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
-use crate::code_rule_dsl::logic::program_image::{Builder, RuleRef, Version};
+use crate::code_rule_dsl::logic::program_image::{Builder, Version};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// `components.rerail`, read as a version (its includes with it).
+/// `components.rerail`, parsed.
 fn parsed() -> Result<Arc<Version>> {
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rerail");
     crate::code_rule_dsl::logic::rr::parse_file_version(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))
 }
 
-/// Adds `components.rerail` to the program's version: the rules `taken` gives, and the natives, declarations,
-/// qualifiers, facts and inputs they need that the program lacks, its rules copied from its image, each one the
-/// program does not hold already. A program that declares a base relation itself keeps its own declaration, and what
-/// it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099). A view the program held as an input it did not read
+/// The relations an image's rule reads: each atom's (and an aggregate's).
+fn reads(image: &Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> Vec<String> {
+    r.reads().map(|a| image.rel_name(a.rel()).to_owned()).collect()
+}
+
+/// Adds `components.rerail` to the program's version: the rules `taken` gives, copied from its image, each one the
+/// program does not hold already, and what they need of its declarations, natives, qualifiers, facts and inputs.
+/// Core's relations and rules are the engine's, taken once. A view the program held as an input it did not read
 /// (`kind`, core.rerail's) is a rule now: no longer an input, as its lowering would have made it.
 pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     use crate::code_rule_dsl::logic::program_facts::Field;
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let image = parsed()?;
-    let rules = taken(&image, |rel| v.columns_of(rel), |rel| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()));
+    let want = taken(&image, |rel| v.columns_of(rel), |rel| v.rel(rel).is_some_and(|r| v.heads(r).next().is_some()));
+    let head = |r: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>| image.rel_name(r.head().rel()).to_owned();
     let mut needed: BTreeSet<String> = BTreeSet::new();
-    for r in &rules {
-        needed.insert(image.rel_name(r.head().rel()).to_owned());
-        needed.extend(r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()));
+    for r in image.rules().filter(|r| want.contains(&head(r))) {
+        needed.insert(head(&r));
+        needed.extend(reads(&image, r));
     }
     let mut b = Builder::on(v);
+    b.fields().retain_inputs(|i| !want.contains(i) || i.starts_with("rr_cx_"));
     // The fields first: a copied rule's relations are declared.
-    let views: BTreeSet<String> = rules.iter().map(|r| image.rel_name(r.head().rel()).to_owned()).filter(|h| !h.starts_with("rr_cx_")).collect();
-    b.fields().retain_inputs(|i| !views.contains(i));
     let mut natives = v.native_map().map_err(Error::Plan)?;
     let natives_were = natives.len();
     let theirs = image.native_map().map_err(Error::Plan)?;
@@ -62,7 +66,7 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     }
     for rel in ProgramFields::fact_names(&*image).iter().filter(|rel| missing.contains(*rel)) {
         if !ProgramFields::has_fact_rows(&**v, rel) {
-            b.fields().add_facts(rel, &ProgramFields::fact_rows(&*image, rel));
+            b.fields().set_facts(rel, &ProgramFields::fact_rows(&*image, rel));
         }
     }
     for input in image.input_names().iter().filter(|rel| missing.contains(*rel)) {
@@ -74,7 +78,7 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         m
     });
     let mut added: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for &r in &rules {
+    for r in image.rules().filter(|r| want.contains(&head(r))) {
         let text = image.show_rule(r);
         if held.get(&r.hash()).is_some_and(|ts| ts.contains(&text)) || !added.insert(text) {
             continue;
@@ -84,21 +88,20 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     b.finish().map(|(v, _)| v).map_err(Error::Plan)
 }
 
-/// The rules taken from `components.rerail`: its own (`rr_cx_*` heads), and those its lowering made of core.rerail's
-/// views for what they read (`kind` over `node`, `lower::projections`) where the program derives none: the program is
-/// pruned before the closure is added, so a program that reads only `rr_cx_reach` holds no `kind` rule. Not what else
-/// `core.rerail` brings, and not a relation the program declares otherwise (`declared`: its columns): it keeps its own
-/// declaration, and its input or rule as its lowering made it.
-fn taken<'v>(image: &'v Version, declared: impl Fn(&str) -> Option<Vec<(String, String)>>, derives: impl Fn(&str) -> bool) -> Vec<RuleRef<'v>> {
-    let head = |r: &RuleRef<'_>| image.rel_name(r.head().rel()).to_owned();
+/// The relations whose rules are taken from `components.rerail` (`image`): its own (`rr_cx_*` heads), and those its
+/// lowering made of core.rerail's views for what they read (`kind` over `node`, `lower::projections`) where the
+/// program derives none (`derives`): the program is pruned before the closure is added, so a program that reads only
+/// `rr_cx_reach` holds no `kind` rule. Not what else `core.rerail` brings, and not a relation the program declares
+/// otherwise (`columns`): it keeps its own declaration, and its input or rule as its lowering made it.
+fn taken(image: &Version, columns: impl Fn(&str) -> Option<Vec<(String, String)>>, derives: impl Fn(&str) -> bool) -> BTreeSet<String> {
     let heads = |rel: &str| image.rel(rel).is_some_and(|r| image.heads(r).next().is_some());
-    let mut want: BTreeSet<String> = image.rules().map(|r| head(&r)).filter(|h| h.starts_with("rr_cx_")).collect();
+    let mut want: BTreeSet<String> = image.rules().map(|r| image.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_cx_")).collect();
     let mut todo: Vec<String> = want.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
         let Some(id) = image.rel(&rel) else { continue };
         for r in image.heads(id) {
-            for read in r.body().filter_map(|l| l.atom()).map(|a| image.rel_name(a.rel()).to_owned()) {
-                let same_decl = declared(&read).is_none_or(|d| image.columns_of(&read).is_some_and(|c| c == d));
+            for read in reads(image, r) {
+                let same_decl = columns(&read).is_none_or(|d| image.columns_of(&read) == Some(d));
                 if !want.contains(&read) && same_decl && heads(&read) && !derives(&read) {
                     want.insert(read.clone());
                     todo.push(read);
@@ -106,5 +109,5 @@ fn taken<'v>(image: &'v Version, declared: impl Fn(&str) -> Option<Vec<(String, 
             }
         }
     }
-    image.rules().filter(|r| want.contains(&head(r))).collect()
+    want
 }

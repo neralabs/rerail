@@ -1,5 +1,4 @@
 .policy "ruff-ytt101-sys-version-slice3" revision 1
-.guests off
 .description "Use sys.version_info instead of slicing the first three characters of sys.version; the slice truncates a two-digit minor version."
 .language python
 .mode steer

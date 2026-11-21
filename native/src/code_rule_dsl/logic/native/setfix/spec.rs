@@ -76,8 +76,9 @@ pub enum JoinItem {
     Atom { neg: bool, src: Source, args: Vec<Arg> },
     /// `count <src> <args…> <out>`
     Count { src: Source, args: Vec<Arg>, out: Tok },
-    /// `sum|min|max <src> <args…> <value column> <out>`
-    Extreme { op: Extreme, src: Source, args: Vec<Arg>, col: usize, out: Tok },
+    /// `sum|min|max <src> <args…> <value column> <out>`; bounded (decision 0511), `maxlt|maxle|mingt|minge <src>
+    /// <args…> <value column> <bound> <out>`: the extreme of the values on the bound's side, strictly or not.
+    Extreme { op: Extreme, src: Source, args: Vec<Arg>, col: usize, out: Tok, bound: Option<(Tok, bool)> },
     /// `strjoin <src> <args…> <x column>:<0|1> <by columns|-> <separator> <out>` (a column's `1`: a symbol)
     StrJoin { src: Source, args: Vec<Arg>, x: (usize, bool), by: Vec<(usize, bool)>, sep: Tok, out: Tok },
     /// `cat <out> <a> <b>`
@@ -190,6 +191,9 @@ pub enum Line {
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
+    /// Relation `rel`'s layout says columns `cols` are a key (decision 0361 step 6): its rows are checked as they are
+    /// written, and a second row of a key is reported (`key_breaks`).
+    Key { rel: usize, cols: Vec<usize> },
     Request(usize),
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
@@ -395,13 +399,20 @@ impl std::fmt::Display for JoinItem {
         match self {
             JoinItem::Atom { neg, src, args } => write!(f, "{} {src} {}", if *neg { "neg" } else { "pos" }, joined(args)),
             JoinItem::Count { src, args, out } => write!(f, "count {src} {} {out}", joined(args)),
-            JoinItem::Extreme { op, src, args, col, out } => {
-                let name = match op {
-                    Extreme::Sum => "sum",
-                    Extreme::Min => "min",
-                    Extreme::Max => "max",
+            JoinItem::Extreme { op, src, args, col, out, bound } => {
+                let name = match (op, bound) {
+                    (Extreme::Sum, _) => "sum",
+                    (Extreme::Min, None) => "min",
+                    (Extreme::Max, None) => "max",
+                    (Extreme::Min, Some((_, true))) => "mingt",
+                    (Extreme::Min, Some((_, false))) => "minge",
+                    (Extreme::Max, Some((_, true))) => "maxlt",
+                    (Extreme::Max, Some((_, false))) => "maxle",
                 };
-                write!(f, "{name} {src} {} {col} {out}", joined(args))
+                match bound {
+                    Some((b, _)) => write!(f, "{name} {src} {} {col} {b} {out}", joined(args)),
+                    None => write!(f, "{name} {src} {} {col} {out}", joined(args)),
+                }
             }
             JoinItem::StrJoin { src, args, x, by, sep, out } => {
                 let by = if by.is_empty() { "-".to_owned() } else { by.iter().map(|&b| col(b)).collect::<Vec<_>>().join(",") };
@@ -450,6 +461,15 @@ impl JoinSpec {
                     args: args(&t[2..n - 2], true)?,
                     col: num(t[n - 2])?,
                     out: tok(t[n - 1])?,
+                    bound: None,
+                },
+                "maxlt" | "maxle" | "mingt" | "minge" if n >= 5 => JoinItem::Extreme {
+                    op: if t[0].starts_with("max") { Extreme::Max } else { Extreme::Min },
+                    src: source(t[1])?,
+                    args: args(&t[2..n - 3], true)?,
+                    col: num(t[n - 3])?,
+                    out: tok(t[n - 1])?,
+                    bound: Some((tok(t[n - 2])?, matches!(t[0], "maxlt" | "mingt"))),
                 },
                 "strjoin" if n >= 7 => {
                     let column = |x: &str| -> Result<(usize, bool), String> {
@@ -503,6 +523,7 @@ impl std::fmt::Display for Line {
             Line::KeptOld => f.write_str("keptold"),
             Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
+            Line::Key { rel, cols } => write!(f, "key {rel} {}", cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
@@ -607,6 +628,7 @@ impl ComponentSpec {
                     name: unhex(at(3)?)?,
                     widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
                 },
+                "key" => Line::Key { rel: num(at(1)?)?, cols: list(at(2)?)? },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),

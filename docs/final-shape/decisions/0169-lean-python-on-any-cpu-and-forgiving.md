@@ -37,7 +37,7 @@ a Python file -> stage 1: byte classes, 64 bytes a step (rerail-simd8: NEON, AVX
 
 ## Prior work consulted
 
-- **ast-index-spike indexes:** the spike parsed with tree-sitter only. It has no lexer or recovery to
+- **SQL index prototype indexes:** the spike parsed with tree-sitter only. It has no lexer or recovery to
   compare against.
 - **0134, 0148 (JSON through simdjson; a kernel per CPU family).** **Agrees:** these chose simdjson's
   per-family kernels picked at run time. This decision ports simdjson's `simd8x64` layer to Rust, so

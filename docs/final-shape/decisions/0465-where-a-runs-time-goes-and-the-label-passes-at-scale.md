@@ -1,11 +1,11 @@
 # 0465. Where a run's time goes, a level's phases as one persistent dispatch, and the label passes at scale
 
-Status: accepted (2026-11-19). Three measures. Follows 0463. The persistent dispatch (§2) was built, measured and
+Status: accepted (2026-11-19). Three measures. Follows 0475. The persistent dispatch (§2) was built, measured and
 removed.
 
 ## Intro
 
-After 0463 the label formulas were about 1% of an s1000 run, so the question was what to work on next. Three
+After 0475 the label formulas were about 1% of an s1000 run, so the question was what to work on next. Three
 measures would answer it:
 
 1. **End to end:** where does a run's time go? Is it the parse and batch workers, combine or cross?
@@ -84,7 +84,7 @@ pinned to the GPU, a run each, alternating:
 
 - On both machines the persistent dispatch is slower at every group count.
 - The phases of a level already share one compute encoder. A dispatch boundary inside an encoder costs 5–7 µs, about
-  1.1–1.5 ms over the s1000 run (0463). That is all the fold could save.
+  1.1–1.5 ms over the s1000 run (0475). That is all the fold could save.
 - In its place, each grid barrier waits for the slowest group's tiles. Fewer threads are in flight than in a dispatch
   over the whole grid, and every group polls one word.
 - On the M1 Max, 256 groups of 64 threads were not all resident. Each barrier then spent its whole bound (2^24 polls)

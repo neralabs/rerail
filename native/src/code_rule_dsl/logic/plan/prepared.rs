@@ -115,12 +115,21 @@ impl Prepared {
         Some(Prepared(out))
     }
 
+    /// The rows per node line `line`'s plan assumed of each relation only an estimate sized (none where it has no plan).
+    pub fn assumed(&self, line: u128) -> &[(String, f64)] {
+        self.0.get(&line).map_or(&[], |p| p.assumed.as_slice())
+    }
+
     /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows. Taken as it is, estimates and
     /// all: the run's planning stays lean for the plans that are right, and one that turns out heavy is searched where
-    /// it runs (`Model::prepared_heavy`). `None` where it has none, or where this run searched it so.
-    pub fn take(&self, line: u128, nodes: f64) -> Option<super::Plan> {
+    /// it runs (`Model::prepared_heavy`). `None` where it has none, where this run searched it so, or where it reads
+    /// a relation the run's `shapes` left out, its facts broken (step 6): that line is planned from statistics.
+    pub fn take(&self, line: u128, nodes: f64, b: &super::body::Body<'_>, shapes: &Shapes) -> Option<super::Plan> {
         let p = self.0.get(&line)?;
         if super::prepared_searched(line) {
+            return None;
+        }
+        if !shapes.2.is_empty() && ((0..b.len()).filter_map(|i| b.atom(i)).any(|a| shapes.left_out(b.rel(a))) || p.assumed.iter().any(|(r, _)| shapes.left_out(r))) {
             return None;
         }
         run_counts().taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -164,7 +173,7 @@ fn model_of(v: &Version, f: super::fields::Fields<'_>, shapes: &Shapes, layouts:
         let node_col = |c: usize| v.decl_of(name).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
         let facts: Vec<LayoutFact> = facts.iter().map(|(f, _)| f.clone()).collect();
         let Some(rows) = rows_of(&facts, &node_col) else { continue };
-        stats.card.insert(name.to_owned(), rows);
+        stats.card.insert(name, rows);
         let width = v.decl_of(name).map_or(0, |d| d.cols().count());
         for c in 0..width {
             if let Some(n) = shapes.ndv(name, c, rows, counts) {
@@ -252,8 +261,16 @@ impl Analysis for Prepared {
                 }
                 estimated.insert(name.to_owned());
                 let width = v.decl_of(name).map_or(0, |d| d.cols().count());
-                let rows = (e.rows * times).max(1.0);
-                model.stats.card.insert(name.to_owned(), rows);
+                let estimate = (e.rows * times).max(1.0);
+                let recursion = times > 1.0;
+                // Q290's oracle (`sizes_from`): the rows per node a run held of it, where one did.
+                let rows = sizes_from().and_then(|m| m.get(name).copied()).map_or(estimate, |per| (per * NOMINAL_NODES).max(1.0));
+                let times = times * rows / estimate;
+                if let Some(log) = sizes_log() {
+                    use std::io::Write as _;
+                    let _ = writeln!(log.lock(), "estimate\t{name}\t{}\t{}", rows / NOMINAL_NODES, u8::from(recursion));
+                }
+                model.stats.card.insert(name, rows);
                 for c in 0..width {
                     let n = (e.ndv.get(c).copied().unwrap_or(e.rows) * times).clamp(1.0, rows);
                     model.ndv.insert((name.to_owned(), c), n);
@@ -340,11 +357,20 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
 /// about as deep as its documents' nesting).
 const RECURSION_DEPTH: f64 = 8.0;
 
-/// Whether derived relations the facts do not size are sized from their rules' plans (`RERAIL_DERIVED_ESTIMATES=off`
-/// prepares only the rules over relations the facts size, as before: a measurement aid).
+/// Whether derived relations the facts do not size are sized from their rules' plans, and the rules reading them
+/// prepared: off (Q290, 2026-11-19). Plans prepared over derived relations cost the run more the more lines they take,
+/// and right sizes do not save them: corpus0 x B-now, 957-969 G instructions off, 991-1,056 G on, 1,128 G sized from
+/// what a run on another project held, 1,203 G from what the same corpus's run held (an oracle), the same findings in
+/// each. A relation's size is not what such a plan lacks; the distributions it is priced by are the facts' alone.
+/// `RERAIL_DERIVED_ESTIMATES=on`, or a caller's `DerivedEstimates(Some(true))`, turns them on: a measurement aid, with
+/// `sizes_log` and `sizes_from` (`scripts/profiling/derived_sizes.py`).
 fn derived_estimates() -> bool {
-    !std::env::var("RERAIL_DERIVED_ESTIMATES").is_ok_and(|x| x == "off")
+    rerail_prof::code_rule_dsl::logic::profile::bound::<DerivedEstimates>().0.unwrap_or_else(|| std::env::var("RERAIL_DERIVED_ESTIMATES").is_ok_and(|x| x == "on"))
 }
+
+/// A caller's choice of `derived_estimates`, bound in the run's context (a test's); `None`, the environment's.
+#[derive(Clone, Copy, Default)]
+pub struct DerivedEstimates(pub Option<bool>);
 
 /// A relation's rows and its columns' distinct values as its rules' plans give them: summed over its rules.
 #[derive(Clone, Debug, Default)]
@@ -471,6 +497,45 @@ fn why_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
     crate::code_rule_dsl::logic::run::setting(|| {
         let p = std::env::var_os("RERAIL_PREPARED_WHY")?;
         std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(|f| std::sync::Arc::new(parking_lot::Mutex::new(f)))
+    })
+}
+
+/// `RERAIL_SIZES_LOG=FILE` (Q290's measurement): the derived relations' sizes, estimated and met, appended as tab-separated
+/// lines. `estimate REL PER_NODE RECURSIVE`: what preparation sized a relation at, rows per node at the nominal scale
+/// (`RECURSIVE` 1 for a recursion's, its base rules' times `RECURSION_DEPTH`). `seen REL ASSUMED HELD NODES`: a prepared
+/// plan taken by a run, each relation it assumed a size of, rows per node, against what the run holds of it then (a
+/// relation still being solved is left out). `scripts/profiling/derived_sizes.py` reads it. The run's own.
+pub fn sizes_log() -> Option<std::sync::Arc<parking_lot::Mutex<std::fs::File>>> {
+    crate::code_rule_dsl::logic::run::setting(|| {
+        let p = std::env::var_os("RERAIL_SIZES_LOG")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(|f| std::sync::Arc::new(parking_lot::Mutex::new(f)))
+    })
+}
+
+/// `RERAIL_SIZES_FROM=LOG` (Q290's oracle, a measurement aid: a labelled bound, never a product path): each derived
+/// relation an estimate sizes is sized instead at the rows per node an earlier run held of it (the median of its `seen`
+/// lines in `LOG`, `sizes_log`'s), its columns' distinct values scaled with it. A version's prepared plans are kept by
+/// its identity (Q228), so a run under it needs a new store.
+fn sizes_from() -> Option<std::sync::Arc<HashMap<String, f64>>> {
+    crate::code_rule_dsl::logic::run::setting(|| {
+        let text = std::fs::read_to_string(std::env::var_os("RERAIL_SIZES_FROM")?).ok()?;
+        let mut held: HashMap<String, Vec<f64>> = HashMap::new();
+        for line in text.lines() {
+            let f: Vec<&str> = line.split('\t').collect();
+            if let ["seen", rel, _, h, ..] = f.as_slice()
+                && let Ok(h) = h.parse::<f64>()
+            {
+                held.entry((*rel).to_owned()).or_default().push(h);
+            }
+        }
+        Some(std::sync::Arc::new(
+            held.into_iter()
+                .map(|(r, mut xs)| {
+                    xs.sort_by(f64::total_cmp);
+                    (r, xs[xs.len() / 2])
+                })
+                .collect(),
+        ))
     })
 }
 

@@ -57,7 +57,7 @@ segments, is still looked up by key, because there a lookup reads little.
 
 ## Checked
 
-A 44-file corpus (`l9750_graphql`), run against a copy of the warm data-layer store
+A 44-file corpus (the data layer's GraphQL package), run against a copy of the warm data-layer store
 (`RERAIL_TAPE_CACHE=<copy>`, strict SQL):
 
 | Engine | Result |

@@ -9,6 +9,10 @@ use super::super::program_facts::{self, Facts, Field};
 use super::{ABOUT, Builder, Cell, Version};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A gate (`Program::gates`' entry): its key, relation and level, the relations that must be quiet and the gates it
+/// waits on, as `program_facts` writes them.
+pub type GateEntry = (String, String, usize, Vec<String>, Vec<String>);
+
 impl Version {
     /// The `.about` rows of `relations`, as facts of the version's program (`ABOUT`): what a field's reader reads.
     fn about_values(&self, relations: &[&str]) -> Facts {
@@ -141,7 +145,7 @@ impl Version {
     pub fn ast_patterns(&self) -> Result<BTreeSet<String>, String> {
         self.read(&["ast_pattern"], |f| f.ast_patterns())
     }
-    pub fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> {
+    pub fn doc_scopes(&self) -> Result<crate::code_rule_dsl::logic::program_facts::DocScopes, String> {
         self.read(&["doc_scoped", "doc_scope", "doc_scope_glob"], |f| f.doc_scopes())
     }
     pub fn text_globs(&self) -> Result<Vec<String>, String> {
@@ -155,12 +159,7 @@ impl Version {
 impl Builder<'_> {
     /// States field `f`: its relations' rows are `f`'s, every other field's kept.
     pub(in crate::code_rule_dsl::logic::program_image) fn set_field(&mut self, f: Field<'_>) {
-        // The program's own row, which every field's reader asks for: a new base's first field states it (a
-        // version's from a tree has it from `about_of`).
-        if self.about_cells("program").is_empty() {
-            let p = self.cell(&Value::Str(ABOUT.into()));
-            self.set_about_rows("program", vec![vec![p]]);
-        }
+        // The program's own row comes with the first about row stated (`set_about_rows`).
         let mut facts = Facts::new();
         program_facts::write_field(&mut facts, ABOUT, &f);
         for &name in f.relations() {
@@ -565,7 +564,7 @@ impl FieldsW<'_, '_> {
     pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
         self.0.keep_asked(keep)
     }
-    pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+    pub fn add_gates(&mut self, gates: &[GateEntry]) {
         self.0.add_gates(gates)
     }
     pub fn add_setting(&mut self, key: &str, text: &str) {
@@ -758,7 +757,9 @@ pub struct Shown<'a>(pub &'a dyn ProgramFields);
 impl std::fmt::Debug for Shown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let p = self.0;
-        let mut decls: Vec<(String, Option<Vec<(String, String)>>)> = p.declared_names().into_iter().map(|r| {
+        // A declared relation, and its columns' names and types.
+        type Decl = (String, Option<Vec<(String, String)>>);
+        let mut decls: Vec<Decl> = p.declared_names().into_iter().map(|r| {
             let cols = p.columns_of(&r);
             (r, cols)
         }).collect();

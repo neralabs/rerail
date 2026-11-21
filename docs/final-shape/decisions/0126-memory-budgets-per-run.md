@@ -14,9 +14,9 @@ buffers outside every limit: a level's wave held 400–600 MB of leases on publi
 | Budget | Default | Flag | Variable |
 |---|---|---|---|
 | overall | 1024 MB | `--memory-mb N` | `RERAIL_MEMORY_MB` |
-| Metal | the overall (1024 MB; half of it before decision 0518), **on top of it** | `--metal-mb N` | `RERAIL_METAL_MB` |
+| Metal | the overall (1024 MB; half of it before decision 0549), **on top of it** | `--metal-mb N` | `RERAIL_METAL_MB` |
 
-So a run with Metal may use twice the overall budget (0518; 50% more before it). Every command takes both
+So a run with Metal may use twice the overall budget (0549; 50% more before it). Every command takes both
 flags. The profile's report names both in its header.
 
 ## Where they live

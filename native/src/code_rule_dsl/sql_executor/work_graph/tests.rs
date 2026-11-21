@@ -24,33 +24,6 @@ fn sources() -> BTreeMap<String, Arc<dyn Source>> {
     BTreeMap::from([("edges".into(), Arc::new(edges) as Arc<dyn Source>)])
 }
 
-/// Runs `child`, an ignored test of this module, alone in a child process of this binary. A graph's groups run on the
-/// one pool, which every other test of the run shares: there, a long parallel loop of another test's holds every
-/// thread, and the groups wait for it (minutes, on a loaded 4-core runner). In the child, the pool is the test's own,
-/// so what it times or overlaps is the graph's alone.
-fn alone(child: &str) {
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-    command.args([
-        "--exact",
-        &format!("code_rule_dsl::sql_executor::work_graph::tests::{child}"),
-        "--ignored",
-    ]);
-    let mut process = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = process.try_wait().unwrap() {
-            break status;
-        }
-        if started.elapsed() > Duration::from_secs(120) {
-            let _ = process.kill();
-            let _ = process.wait();
-            panic!("{child} stalled");
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    assert!(status.success(), "{child} failed: {status}");
-}
-
 #[test]
 fn recursive_join_diamond_fuses_once_and_independent_groups_use_sql() {
     let graph = request(
@@ -223,7 +196,7 @@ fn invalid_dependencies_opaque_functions_and_writes_are_rejected() {
 
 #[test]
 fn workers_share_vm_limits_and_failed_queries_do_not_publish() {
-    alone("shared_vm_limits_child");
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::shared_vm_limits_child");
 }
 
 #[test]
@@ -265,9 +238,7 @@ fn shared_vm_limits_child() {
 fn worker_profiles_cover_every_statement_and_session_totals() {
     for threads in [1_u64, 2] {
         let directory = tempfile::tempdir().unwrap();
-        let mut child = std::process::Command::new("nice")
-            .args(["-n", "19"])
-            .arg(std::env::current_exe().unwrap())
+        let mut child = crate::code_rule_dsl::test_support::niced_self()
             .args([
                 "--exact",
                 "code_rule_dsl::sql_executor::work_graph::tests::profiled_graph_child",
@@ -421,7 +392,7 @@ fn public_query_plan_reads_pinned_facts_and_explains_its_groups() {
 
 #[test]
 fn actual_sql_readers_overlap_and_a_shared_intermediate_reads_storage_once() {
-    alone("overlapping_readers_child");
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::overlapping_readers_child");
 }
 
 #[test]
@@ -566,7 +537,7 @@ fn ten_thousand_regions_and_512_operators_fit_four_submissions() {
 
 #[test]
 fn successors_run_before_an_unrelated_group_finishes() {
-    alone("released_successors_child");
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::released_successors_child");
 }
 
 #[test]

@@ -624,6 +624,8 @@ fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
 /// cold, failed and mixed jobs, and a table form on the cores, are not fitted.
 #[test]
 fn learned_rates_come_from_warm_samples_of_one_kernel() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{MIN_SAMPLES, Prices, learn_from};
     use rerail_accel::score::Sample;
     let fixed = Prices::default().fixed[Lane::Gpu.index()];
@@ -658,6 +660,8 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
 /// thousand older samples at another rate neither move it nor cost the fit their pairs.
 #[test]
 fn a_stored_rate_is_fitted_from_its_newest_samples() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{FIT_HELD, Prices, fit_rates};
     use rerail_accel::score::Sample;
     let fixed = Prices::default().fixed[Lane::Gpu.index()];
@@ -734,10 +738,17 @@ fn the_gpu_lane_runs_a_program_beside_the_one_before() {
     assert!(took < hold * 2 - hold / 3, "the two ran side by side: {took:?} for two of {hold:?}");
 }
 
+/// One warm, successful launch of `forms` on `lane`, as a price learns from it (`price::observe`).
+fn one_launch(lane: Lane, forms: &str, units: f64, wall: f64, cpu: f64, load: f64) -> rerail_accel::price::Measured<'_> {
+    rerail_accel::price::Measured { lane, forms, launches: 1, units, wall, cpu, load, cold: false, ok: true }
+}
+
 /// A program's price learns from the run's own launches (`price::observe`): before `RUN_MIN_SAMPLES` of them, its
 /// prior; after, its launches' median wall and host CPU a unit, which a stored rate read later does not replace.
 #[test]
 fn a_programs_price_learns_from_the_runs_own_launches() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{MIN_SAMPLES, Prices, RUN_MIN_SAMPLES, learn_from, observe};
     struct Priced;
     impl rerail_accel::kernel::Program for Priced {
@@ -762,7 +773,7 @@ fn a_programs_price_learns_from_the_runs_own_launches() {
     // A launch measured: 1e-8 s a unit of wall, 2e-9 of host CPU.
     let measured = |n: usize| {
         for _ in 0..n {
-            observe(Lane::Gpu, "test-observed-program", 1, 1e6, fixed.submission + fixed.launch + 1e-8 * 1e6, 2e-9 * 1e6, 3.0, false, true);
+            observe(one_launch(Lane::Gpu, "test-observed-program", 1e6, fixed.submission + fixed.launch + 1e-8 * 1e6, 2e-9 * 1e6, 3.0));
         }
     };
     measured(RUN_MIN_SAMPLES - 1);
@@ -818,13 +829,15 @@ fn a_rate_is_a_launchs_fixed_cost_and_a_units() {
 /// rate is the unloaded one.
 #[test]
 fn a_cores_rate_is_fitted_net_of_the_load_it_ran_under() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, observe};
     let k = program(1e6, Some(1e-6), None);
     let prices = Prices::default();
     let fixed = prices.fixed[Lane::Cpu.index()];
     for _ in 0..RUN_MIN_SAMPLES {
         // 4e-8 s a unit of wall, run under a slowdown of 4.
-        observe(Lane::Cpu, "a test's program", 1, 1e6, fixed.submission + fixed.launch + 4e-8 * 1e6, 0.0, 4.0, false, true);
+        observe(one_launch(Lane::Cpu, "a test's program", 1e6, fixed.submission + fixed.launch + 4e-8 * 1e6, 0.0, 4.0));
     }
     let wall = prices.wall(&k, Lane::Cpu).unwrap();
     assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the unloaded rate: {wall}");
@@ -836,13 +849,15 @@ fn a_cores_rate_is_fitted_net_of_the_load_it_ran_under() {
 /// prior's slope or that sample's own rate a unit, the less.
 #[test]
 fn a_rate_past_its_samples_takes_the_priors_slope() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, learned_rates, observe};
     let prices = Prices::default();
     let fixed = prices.fixed[Lane::Cpu.index()];
     // Small launches at 1e-8 s a unit, with noise that leaves their line flat: 0.7 to 0.8 ms each.
     let small = [(7.0e4, 7.6e-4), (7.5e4, 7.0e-4), (8.0e4, 7.4e-4), (7.2e4, 7.8e-4), (7.8e4, 7.2e-4)];
     for (units, busy) in small.iter().take(RUN_MIN_SAMPLES.max(4)) {
-        observe(Lane::Cpu, "a test's program", 1, *units, fixed.submission + fixed.launch + busy, 0.0, 1.0, false, true);
+        observe(one_launch(Lane::Cpu, "a test's program", *units, fixed.submission + fixed.launch + busy, 0.0, 1.0));
     }
     let rate = learned_rates().into_iter().find(|l| l.name == "a test's program" && l.lane == Lane::Cpu).expect("a rate");
     assert!(!rate.spread && rate.largest == 8e4, "the samples span under SPREAD: {rate:?}");
@@ -861,13 +876,15 @@ fn a_rate_past_its_samples_takes_the_priors_slope() {
 /// sample grows from the largest by the prior's slope where the line's is steeper (the GPU's first small waves).
 #[test]
 fn a_spread_line_prices_within_its_reach() {
+    // The run's prices: a test's run of its own (decision 0442; the learned rates are the run's).
+    let _run = rerail_context::test_run();
     use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, SPREAD, observe};
     let prices = Prices::default();
     let fixed = prices.fixed[Lane::Cpu.index()];
     // 1 ms a launch and 3e-8 s a unit, from 5e4 to 1.5e5 units.
     let units = [5e4, 7.5e4, 1e5, 1.25e5, 1.5e5];
     for u in units.iter().take(RUN_MIN_SAMPLES.max(5)) {
-        observe(Lane::Cpu, "a test's program", 1, *u, fixed.submission + fixed.launch + 1e-3 + 3e-8 * u, 0.0, 1.0, false, true);
+        observe(one_launch(Lane::Cpu, "a test's program", *u, fixed.submission + fixed.launch + 1e-3 + 3e-8 * u, 0.0, 1.0));
     }
     let within = prices.wall(&program(SPREAD * 1.5e5, Some(1e-8), None), Lane::Cpu).unwrap() - fixed.launch;
     let want = 1e-3 + 3e-8 * SPREAD * 1.5e5;

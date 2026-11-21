@@ -123,12 +123,13 @@ pub fn by_levels_ran() {
     BY_LEVELS.with(|c| c.set(c.get() + 1));
 }
 
-/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted on the shared object: read
-/// by the requirement tests (`maintain_tests`), never by a run. nextest runs each test as a process of its own.
+/// What a run did that decision 0364's required shape (§ "Required shape") ruled out, counted by the run: read by the
+/// requirement tests (`maintain_tests`), each in its run's scope, never by a run itself.
 pub mod shape {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
-    /// The counts, on the shared object (decision 0442): over the runs that share it, as a test reads them.
+    /// The counts, the run's own (decision 0442). On the shared object, tests running beside one another in a process
+    /// counted each other's runs (R8 read another test's frames).
     #[derive(Default)]
     struct Counts {
         rows_copied: AtomicUsize,
@@ -136,15 +137,18 @@ pub mod shape {
         frames_read: AtomicUsize,
         rechecks_unpriced: AtomicUsize,
         negated_led: AtomicUsize,
-        drivers_unled: AtomicUsize,
         measures_unkeyed: AtomicUsize,
         inputs_hashed: AtomicUsize,
         inputs_from_entries: AtomicUsize,
+        inputs_from_owners: AtomicUsize,
         inputs_hashed_whole: AtomicUsize,
+        inputs_read_whole: AtomicUsize,
+        rows_decoded: AtomicUsize,
+        drivers_unled: AtomicUsize,
     }
 
     fn counts() -> std::sync::Arc<Counts> {
-        crate::code_rule_dsl::logic::profile::shared::<Counts>()
+        crate::code_rule_dsl::logic::run::local::<Counts>()
     }
 
     /// The counts so far.
@@ -172,9 +176,20 @@ pub mod shape {
         pub inputs_hashed: usize,
         /// R2: a session's inputs whose delta was read from the changed documents' memo entries (`input_delta`).
         pub inputs_from_entries: usize,
+        /// R2: inputs whose delta was made from their changed owners' rows gained and lost, beside them, before the run
+        /// asks for any: a kept input patched by document, or a base relation's versions (0458: the changed
+        /// documents' old and new rows, `input_delta::Before`), which a new process has where it keeps no base rows
+        /// to hash.
+        pub inputs_from_owners: usize,
         /// R2: of `inputs_hashed`, those whose every row was hashed (`retain::document_delta`'s pass), not only the
         /// rows of the documents that changed (`retain::document_delta_except`).
         pub inputs_hashed_whole: usize,
+        /// R2 (0353): a new process's changed inputs whose old rows `retain::Retained::load` read whole from the
+        /// frames (copied into columns, every row hashed), not their changed documents' alone (`retain::OldInput`).
+        pub inputs_read_whole: usize,
+        /// 0353's frames copy: rows a new process decoded from the frames into memory (`retain::Retained::load`), its
+        /// kept relations' and its changed inputs' old rows. Read in place once the kept blocks are bound (0401 step 7).
+        pub rows_decoded: usize,
     }
 
     pub fn now() -> Shape {
@@ -189,7 +204,10 @@ pub mod shape {
             measures_unkeyed: c.measures_unkeyed.load(Relaxed),
             inputs_hashed: c.inputs_hashed.load(Relaxed),
             inputs_from_entries: c.inputs_from_entries.load(Relaxed),
+            inputs_from_owners: c.inputs_from_owners.load(Relaxed),
             inputs_hashed_whole: c.inputs_hashed_whole.load(Relaxed),
+            inputs_read_whole: c.inputs_read_whole.load(Relaxed),
+            rows_decoded: c.rows_decoded.load(Relaxed),
         }
     }
 
@@ -206,7 +224,10 @@ pub mod shape {
             measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
             inputs_hashed: n.inputs_hashed - before.inputs_hashed,
             inputs_from_entries: n.inputs_from_entries - before.inputs_from_entries,
+            inputs_from_owners: n.inputs_from_owners - before.inputs_from_owners,
             inputs_hashed_whole: n.inputs_hashed_whole - before.inputs_hashed_whole,
+            inputs_read_whole: n.inputs_read_whole - before.inputs_read_whole,
+            rows_decoded: n.rows_decoded - before.rows_decoded,
         }
     }
 
@@ -225,11 +246,20 @@ pub mod shape {
     pub fn input_hashed_whole() {
         counts().inputs_hashed_whole.fetch_add(1, Relaxed);
     }
+    pub fn input_read_whole() {
+        counts().inputs_read_whole.fetch_add(1, Relaxed);
+    }
+    pub fn rows_decoded(n: usize) {
+        counts().rows_decoded.fetch_add(n, Relaxed);
+    }
     pub fn input_from_entries() {
         counts().inputs_from_entries.fetch_add(1, Relaxed);
     }
     pub fn input_hashed() {
         counts().inputs_hashed.fetch_add(1, Relaxed);
+    }
+    pub fn input_from_owners() {
+        counts().inputs_from_owners.fetch_add(1, Relaxed);
     }
     pub fn measure_unkeyed() {
         counts().measures_unkeyed.fetch_add(1, Relaxed);

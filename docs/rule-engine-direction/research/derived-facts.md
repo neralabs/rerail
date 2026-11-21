@@ -3,10 +3,10 @@
 The normative text derived from this report is `spec.md` §21 and decision 0005. Part (e) lists the spec edits that were applied.
 
 **Sources and short forms**
-- **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from the checkout `/Users/jeremy/orca/workspaces/data-layer-10/DL-PR-2564`. `dd/` means `docs/design/`.
-- **FE** = `origin/Moti-Velz/facts-engine` at tip `685db3f7`.
-- **HEAD** = the Pulling-it-all-together worktree.
-- Gate-corpus row counts come from `/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Pulling-it-all-together/3adb237a-22e7-4e0c-9a7a-33e109d2ab63/scratchpad/rule-profiles/out/facts.sqlite`, `.../flow.sqlite` and `.../measure.txt` in the same folder, plus `research/heavy-rule-profiles.md`.
+- **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from a local checkout of that PR. `dd/` means `docs/design/`.
+- **FE** = `facts-engine` at tip `685db3f7`.
+- **HEAD** = the PIAT worktree.
+- Gate-corpus row counts come from `rule-profiles/out/facts.sqlite`, `flow.sqlite` and `measure.txt` in a session scratchpad (not kept), plus `research/heavy-rule-profiles.md`.
 
 ---
 
@@ -54,7 +54,7 @@ The PR designed four layers. Shared intermediate facts belong to fact materializ
 - `DerivedFactSpec` is rejected on the declarative path (`fact_engine.py@281f500d7c:1800-1802`).
 - The one global derived table, `lint_function_transitive_summary`, is rebuilt in full on every save (`fact_store.py@281f500d7c:8788`). It also hard-codes lazy-architecture tails (`:8861-8899`), which is a Process Failure case, as are `serverplan_step_class` and `pure_lazy_body_event`.
 
-### Facts-engine (Moti)
+### Facts-engine
 
 - **Today: one definition for both engine and compiler.** Derived relations are SQL views written in `docs/facts/SCHEMA.md` (`py_owner`, `py_function`, `py_call`, `py_parameter`, `cg_def`, `cg_call`, …, `:84-284`). The engine reads them with `include_str!` (`spikes/facts-a/src/views.rs:1-27`). Any change bumps `SCHEMA_VERSION`.
 - **Rules don't name facts yet.** A rule stage binds to a view only when its text is byte-identical, and only under a subtree-closure side condition (SCHEMA.md §2.3).
@@ -67,9 +67,9 @@ The PR designed four layers. Shared intermediate facts belong to fact materializ
 
 ### DLRE and N1562 on HEAD
 
-- **Producer catalog.** `producers/mod.rs` is staged but not committed. A binding's identity is contract name + inputs + typed options + domain, compared as a full definition: "No digest can establish sharing" (`:61`). It caches nothing across evaluations (`docs/shared-producer-contracts.md:55-56`).
-- **Shared syntax facts (c4bd76bf).** Cold CPU went 12.62 → 3.19 s (−74.7%) once one shared preparation replaced per-rule `nodes`/`ownership` rebuilds. Before that, each ownership materialization ran exactly 5,299,816 VM instructions three times (`shared-sql-performance.md:85-98`).
-- **The counter-lesson.** "Adding names to already shared rows alone does not establish a performance improvement" (`shared-producer-workplan.md:271`). Sharing pays only where the same work actually repeats.
+- **Producer catalog.** `producers/mod.rs` is staged but not committed. A binding's identity is contract name + inputs + typed options + domain, compared as a full definition: "No digest can establish sharing" (`:61`). It caches nothing across evaluations (`docs/shared-producer-contracts.md:55-56`, removed; at 7efcac9c67).
+- **Shared syntax facts (c4bd76bf).** Cold CPU went 12.62 → 3.19 s (−74.7%) once one shared preparation replaced per-rule `nodes`/`ownership` rebuilds. Before that, each ownership materialization ran exactly 5,299,816 VM instructions three times (`shared-sql-performance.md:85-98`, removed; at 7efcac9c67).
+- **The counter-lesson.** "Adding names to already shared rows alone does not establish a performance improvement" (`shared-producer-workplan.md:271`, removed; at 7efcac9c67). Sharing pays only where the same work actually repeats.
 - **Deferred SQL facts (f52817fc).** These are view-computed columns over a stored stage table. They are a physical detail, not a fact model.
 - **N1562 `semantic_facts.rs`.** These are per-anchor rows computed inside the packed producer, with no cache and no cross-rule identity. SQL joins them to nested-rule relations.
 
@@ -371,7 +371,7 @@ A whole-repository reachability fact is **not** cached as a fact. `reaches` over
 Decision 0005 (record): "Named derived facts. Intermediate relations shared by several rules, and relational per-document analyses, are named facts defined in `rerail.facts/v1` (algebra compiled to SQL), separate from rules, cached by `fact_digest` and invalidated by dependency cone. E15 and E17 are withdrawn from the IR. Amends 0004." Prior work to cite:
 - PR 2539: the boundary doc :8-29, :67-71, :105-106, :136-143, :169-186; Pass 2 in the framework-facts doc; the dependency maps in `default_catalog.py`;
 - FE: DECLARED-FACTS.md :53-54 and `facts_memo.rs` keys;
-- DLRE: c4bd76bf (−74.7%) and `shared-producer-workplan.md:271`;
+- DLRE: c4bd76bf (−74.7%) and `shared-producer-workplan.md:271` (removed; at 7efcac9c67);
 - ledger lessons 11, 12, 14 and 16.
 
 Add measurements to `architecture.md`:

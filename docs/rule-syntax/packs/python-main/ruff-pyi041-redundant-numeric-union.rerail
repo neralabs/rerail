@@ -1,5 +1,4 @@
 .policy "ruff-pyi041-redundant-numeric-union" revision 1
-.guests off
 .description "Don't combine int, float and complex in a parameter annotation union; a float parameter already accepts ints and a complex parameter accepts both."
 .language python
 .mode steer

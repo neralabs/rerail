@@ -1,5 +1,5 @@
 //! Format 16 (decision 0156 §1), written and read in place (decision 0293), block-major and written in one pass
-//! (decision 0426). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
+//! (decision 0434). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
 //!
 //! A tape is five arrays over a document's nodes in preorder, at widths fixed for the language, in blocks of `Z`
 //! nodes at a fixed stride (each block its own five columns, the last block at its own rows):
@@ -14,7 +14,7 @@
 //! A value too wide for its array is the all-ones value, and its value is in the side list of its 256-node block.
 //! Each array's side list is kept in parts of `PART` nodes (one a block), after the blocks, with each part's start.
 
-use crate::generated_reads::f16 as reads;
+use crate::reads::f16 as reads;
 use crate::tape::{CodeSet, CodeTable, Entry, Tape};
 use rerail_clif::view::TapeView;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub struct Lang {
     /// Slots, gaps, lengths, in bytes.
     widths: [usize; 3],
     revision: u8,
-    /// Each number's kind and field: what a presence's bits are (decision 0426 §4).
+    /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
 }
 
@@ -149,7 +149,7 @@ mod tables {
 }
 
 /// A stored format 16 tape's magic (its first 6 bytes are every stored tape's: the store reads the language tag
-/// after them, `LANGUAGE`). Block-major (decision 0426).
+/// after them, `LANGUAGE`). Block-major (decision 0434).
 pub const MAGIC16: &[u8; 8] = b"TMPTAPB6";
 /// A stored 16z tape's magic.
 pub const MAGIC16Z: &[u8; 8] = b"TMPTAPBZ";
@@ -222,7 +222,7 @@ fn stride_of(w: [usize; 3], cw: usize) -> usize {
     Z * before(w, 4) + Z / K * cw
 }
 
-/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0426): the header,
+/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0434): the header,
 /// blocks of `Z` nodes at a fixed stride (each its codes, slots, gaps, lengths and checkpoints, the last block at
 /// its own rows), then the tail: the four side lists (codes' low parts, then escaped slots, gaps, lengths), their
 /// part starts, and the newline index. The last block, each side list and the newline index are followed by 8 bytes
@@ -327,7 +327,7 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
-    /// The source's length its header states: a view's spans are held to it (decision 0427).
+    /// The source's length its header states: a view's spans are held to it (decision 0463).
     pub source_len: u64,
     pub cw: usize,
     pub widths: [usize; 3],
@@ -391,7 +391,7 @@ impl Placement {
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
         // Each block's columns at `lang`'s widths: the tape's own, which its stride and blocks were checked against
-        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0427;
+        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0463;
         // its walks give only nodes of the tape).
         let (_, _, w) = lang.device();
         if w != self.widths {
@@ -574,13 +574,13 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
-/// The writer whose ops are the CLIF ones (decision 0426 §6).
+/// The writer whose ops are the CLIF ones (decision 0434 §6).
 pub mod ops;
 #[cfg(any(test, feature = "reference"))]
 pub mod reference;
 
-/// The writer: the ops in CLIF, through their Rust (decision 0426 §6, R16).
-pub use ops::Writer;
+/// The writer: the ops in CLIF, through their Rust (decision 0434 §6, R16).
+pub use ops::{Document, Writer};
 
 /// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
 /// subtree's last node.
@@ -627,17 +627,29 @@ impl<'a> StoredPresence<'a> {
     }
     /// `Tape::has_kind`: block `block` (`u32::MAX`: the document) may have a node of kind `kind`.
     pub fn has_kind(&self, block: u32, kind: u16) -> bool {
-        reads::tape_has_kind(self.buf, &self.view, block, u32::from(kind)) != 0
+        reads::has_kind(self.buf, &self.view, block, u32::from(kind)) != 0
     }
 }
 
-/// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0426 §4, step 6).
+/// What a writer's `finish` gives: the tape, its presence laid in its home after it (decision 0434 §4, step 6).
 pub struct Finished {
     pub tape: Written,
 }
 
 impl Written {
     /// Its home's bytes: the tape, then its presence.
+    /// Its bytes, where it owns them (a writer's tape, not a placed one): for the writer to write the next tape in
+    /// (`ops::Writer::recycle`).
+    pub fn into_own(self) -> Option<Vec<u8>> {
+        let home = match self {
+            Written::F16(t) => t.buf,
+            Written::F16Z(t) => t.buf,
+        };
+        match home {
+            crate::home::Home::Own(v) => Some(v),
+            crate::home::Home::Placed(_) => None,
+        }
+    }
     pub fn extent(&self) -> &[u8] {
         match self {
             Written::F16(t) => t.extent(),
@@ -658,7 +670,7 @@ impl Written {
     }
 }
 
-/// A tape's presence in its home (decision 0426 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
+/// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
 /// header of four u32s (its kinds' words, its fields' words, its presences, 0), then the document's words (kinds',
 /// then fields') and each block's after them. Not the tape's layout: the tape's reads never reach it, and its stored
 /// bytes (`as_bytes`) end before it. Read in place by `tape_has_kind` (decision 0310), on the host and the device.
@@ -677,7 +689,7 @@ pub mod presence {
     /// accumulated.
     pub fn lay(out: &mut Vec<u8>, p: &Presence) {
         let words = p.kind_words + p.field_words;
-        let count = 1 + if words == 0 { 0 } else { p.blocks.len() / words };
+        let count = 1 + p.blocks.len().checked_div(words).unwrap_or(0);
         lay_words(out, (p.kind_words, p.field_words), count, &mut p.doc.iter().chain(&p.blocks).copied());
     }
 
@@ -732,7 +744,7 @@ pub mod presence {
 }
 
 /// The kinds and fields a tape's nodes have, as bitmaps over its language's kinds and fields (`Lang::presence_words`):
-/// the document's, and, where the writer was asked for them, each block's (decision 0426 §4). Not part of the tape:
+/// the document's, and, where the writer was asked for them, each block's (decision 0434 §4). Not part of the tape:
 /// the store keeps it beside the document, to leave out what an anchor cannot touch before the tape is read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presence {
@@ -772,7 +784,7 @@ fn bit(words: &[u64], k: u16) -> bool {
 /// Format 16, or 16z where `z`, written over a document's `n` nodes in preorder by the writer's ops (`Writer`):
 /// `node(i)` is node `i`'s cells, asked once each, in order; a node closes when the pass reaches its subtree's end.
 /// `Err` where a node's values break the tape's bounds: no tape is made of it.
-/// A tape writer's ops (decision 0426 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
+/// A tape writer's ops (decision 0434 §2): the writer's (`Writer`, the ops in CLIF), or the reference writer's.
 pub(crate) trait WriterOps: Sized {
     fn open(&mut self, number: u32, start: u64) -> usize;
     fn close(&mut self, end: u64);
@@ -789,6 +801,13 @@ pub(crate) trait WriterOps: Sized {
 
 macro_rules! writer_ops {
     ($t:ty) => {
+        writer_ops!($t, |w: $t| <$t>::finish(w));
+    };
+    // `finish` through `&mut`: a writer used again (`ops::Writer::begin`).
+    ($t:ty, again) => {
+        writer_ops!($t, |mut w: $t| <$t>::finish(&mut w));
+    };
+    ($t:ty, $finish:expr) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -809,12 +828,12 @@ macro_rules! writer_ops {
                 <$t>::set_start(self, i, start)
             }
             fn finish(self) -> Result<Finished, String> {
-                <$t>::finish(self)
+                ($finish)(self)
             }
         }
     };
 }
-writer_ops!(Writer);
+writer_ops!(Writer, again);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
@@ -989,8 +1008,8 @@ rerail_simd8::dispatch! {
     fn code_groups(codes: &[u8], set: &ByteSet, out: &mut [u64; PART / 64]) -> () = groups_of, on code_groups_on;
 }
 
-/// A format 16 tape read in place with its language's choices, through the tape's reads (decision 0310's Rust
-/// backend, `generated_reads`) over its view.
+/// A format 16 tape read in place with its language's choices, through the tape's reads (`crate::reads`, written directly,
+/// decision 0534) over its view.
 #[derive(Clone, Copy)]
 pub struct F16<'a> {
     bytes: &'a [u8],
@@ -1001,11 +1020,11 @@ pub struct F16<'a> {
 impl F16<'_> {
     /// The line (from 0) byte `x` of the source lies in: the newlines before it, by the tape's newline index.
     pub fn line(&self, x: u32) -> u32 {
-        reads::tape_line(self.bytes, &self.view, x)
+        reads::line(self.bytes, &self.view, x)
     }
     /// Line `k`'s first byte (`k` up to the source's newlines).
     pub fn line_start(&self, k: u32) -> u32 {
-        reads::tape_line_start(self.bytes, &self.view, k)
+        reads::line_start(self.bytes, &self.view, k)
     }
     /// The source's lines: one more than its newlines.
     pub fn line_count(&self) -> u32 {
@@ -1025,7 +1044,7 @@ impl Tape for F16<'_> {
     }
     /// By the tape's presence in its home (`tape_has_kind`, the kernels' read).
     fn has_kind(&self, block: u32, kind: u16) -> bool {
-        reads::tape_has_kind(self.bytes, &self.view, block, u32::from(kind)) != 0
+        reads::has_kind(self.bytes, &self.view, block, u32::from(kind)) != 0
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -1033,33 +1052,33 @@ impl Tape for F16<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        reads::tape_number(self.bytes, &self.view, i as u32)
+        reads::number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
+        i + reads::size(self.bytes, &self.view, i as u32) as usize
     }
     /// The node before is the parent (an inner node), or a leaf naming the previous sibling or, on every `K`-th
     /// sibling, the parent: at most `K - 1` sibling steps.
     fn parent(&self, i: usize) -> Option<usize> {
-        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        let p = reads::parent(self.bytes, &self.view, i as u32);
         (p != NONE).then_some(p as usize)
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
+        u64::from(reads::start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
+        u64::from(reads::end(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn start_next(&self, i: usize, prev_start: u64) -> u64 {
-        u64::from(reads::tape_start_next(self.bytes, &self.view, i as u32, prev_start as u32))
+        u64::from(reads::start_next(self.bytes, &self.view, i as u32, prev_start as u32))
     }
     #[inline(always)]
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
-        start + u64::from(reads::tape_length(self.bytes, &self.view, i as u32))
+        start + u64::from(reads::length(self.bytes, &self.view, i as u32))
     }
     /// The code bytes 64 at a time through a 256-entry table; a byte past the cutoff is decoded only when the set
     /// holds a number past it.
@@ -1114,7 +1133,7 @@ const ZLENS: usize = 4;
 const ZKINDS: usize = 5;
 const ZEND: usize = 6;
 
-/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0426 §3), held as
+/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0434 §3), held as
 /// stored (`as_bytes`):
 ///
 /// - the header of the format 16 tape it decodes to, its magic `MAGIC16Z`, and where its own regions lie;
@@ -1227,7 +1246,7 @@ impl Tape16Z {
                 RAW => bytes.len() == want,
                 // Within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths the part starts
                 // state size every cache entry, so they are bounded by the bytes stored, not taken on trust
-                // (decision 0427).
+                // (decision 0463).
                 LZ4 => !bytes.is_empty() && want as u64 <= 255 * bytes.len() as u64 + 64,
                 REPEAT => {
                     let other = if bytes.len() == 4 { u32_at(bytes, 0) as usize } else { usize::MAX };
@@ -1507,7 +1526,7 @@ impl Tape for F16Z<'_> {
     /// The presence lies in the 16z tape's home, read where it lies through the tape's own view (`tape_has_kind`).
     fn has_kind(&self, block: u32, kind: u16) -> bool {
         let view = self.t.view(self.lang).expect("a 16z tape's view: its reader's language is its own");
-        reads::tape_has_kind(&self.t.buf, &view, block, u32::from(kind)) != 0
+        reads::has_kind(&self.t.buf, &view, block, u32::from(kind)) != 0
     }
     #[inline(always)]
     fn table(&self) -> &CodeTable {
@@ -1515,17 +1534,17 @@ impl Tape for F16Z<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        self.with(i / Z, |r, v| reads::tape_number(r, v, (i % Z) as u32))
+        self.with(i / Z, |r, v| reads::number(r, v, (i % Z) as u32))
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + self.with(i / Z, |r, v| reads::tape_size(r, v, (i % Z) as u32)) as usize
+        i + self.with(i / Z, |r, v| reads::size(r, v, (i % Z) as u32)) as usize
     }
     /// As format 16's, each step in the block it falls in (a parent's sibling steps cross blocks' starts).
     fn parent(&self, i: usize) -> Option<usize> {
         let mut j = i;
         while j > 0 {
-            let v = self.with((j - 1) / Z, |r, v| reads::tape_slot(r, v, ((j - 1) % Z) as u32));
+            let v = self.with((j - 1) / Z, |r, v| reads::slot(r, v, ((j - 1) % Z) as u32));
             if v & 1 == 0 {
                 return Some(j - 1);
             }
@@ -1538,19 +1557,19 @@ impl Tape for F16Z<'_> {
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_start(r, v, (i % Z) as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::start(r, v, (i % Z) as u32)))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_end(r, v, (i % Z) as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::end(r, v, (i % Z) as u32)))
     }
     #[inline(always)]
     fn start_next(&self, i: usize, prev_start: u64) -> u64 {
-        u64::from(self.with(i / Z, |r, v| reads::tape_start_next(r, v, (i % Z) as u32, prev_start as u32)))
+        u64::from(self.with(i / Z, |r, v| reads::start_next(r, v, (i % Z) as u32, prev_start as u32)))
     }
     #[inline(always)]
     fn end_with_start(&self, i: usize, start: u64) -> u64 {
-        start + u64::from(self.with(i / Z, |r, v| reads::tape_length(r, v, (i % Z) as u32)))
+        start + u64::from(self.with(i / Z, |r, v| reads::length(r, v, (i % Z) as u32)))
     }
     /// A block at a time: each decoded once, its code bytes read as format 16's are. The block's groups are taken
     /// before `f` is called, so `f` may read the tape.
@@ -1577,9 +1596,9 @@ impl Tape for F16Z<'_> {
     }
 }
 
-/// The LZ4 piece at `buf[from..to]` decoded into `dst[..len]` by the reads' decoder (`tape_lz4`, the one the JIT and
-/// the kernels decode with, decision 0353 step 4b); `dst` has 8 bytes of room after `len`, which a match's copies may
-/// write. A piece that does not decode to its length is a corrupt tape.
+/// The LZ4 piece at `buf[from..to]` decoded into `dst[..len]` by the reads' decoder (`reads::lz4`, the CLIF's
+/// `tape_lz4` written directly, the one the JIT and the kernels decode with, decision 0353 step 4b); `dst` has 8 bytes
+/// of room after `len`, which the JIT's and the kernels' copies may write. A piece that does not decode to its length is a corrupt tape.
 fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) -> Result<(), String> {
     if from > to || to > buf.len() || to > u32::MAX as usize {
         return Err(format!("a 16z piece at {from}..{to} of a tape of {} bytes", buf.len()));
@@ -1587,12 +1606,11 @@ fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) 
     if dst.len() < len + 8 {
         return Err(format!("a 16z piece's room of {} bytes for {len} and 8 after them", dst.len()));
     }
-    // SAFETY: `dst` holds `len` bytes and the 8 the decoder may write past them; its loads of the tape are checked.
-    let n = unsafe { reads::tape_lz4(buf, &TapeView::default(), from as u32, to as u32, dst.as_mut_ptr() as u64, len as u64) };
-    if n as usize == len { Ok(()) } else { Err(format!("a 16z piece decodes to {n} bytes, not {len}")) }
+    let n = crate::reads::lz4(buf, from, to, dst, len);
+    if n == len { Ok(()) } else { Err(format!("a 16z piece decodes to {n} bytes, not {len}")) }
 }
 
-/// LZ4's block format (`lz4-sys`), compressed: HC level 4 in the reference writer (0156 §2.1 chose 9; decision 0426
+/// LZ4's block format (`lz4-sys`), compressed: HC level 4 in the reference writer (0156 §2.1 chose 9; decision 0434
 /// §6 takes 4, which the writer's ops in CLIF port exactly, and write by). Decoded by `decode_block`.
 #[cfg(any(test, feature = "reference"))]
 mod lz4 {
@@ -1657,7 +1675,7 @@ mod tests {
         plain
     }
 
-    /// Block-major (decision 0426, R3): block 0 past the header, the blocks at their stride, the last at its own
+    /// Block-major (decision 0434, R3): block 0 past the header, the blocks at their stride, the last at its own
     /// rows and no padding, the tail right after it.
     fn compact(p: &Placement) {
         assert_eq!((p.blocks, p.stride), (HEAD16, Z * (1 + p.widths[0] + p.widths[1] + p.widths[2]) + Z / K * p.cw));
@@ -1967,169 +1985,61 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
-    /// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
-    /// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
-    /// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
-    const DEVICE_KERNEL: &str = r#"
-#define CLIF_VIEW_SPACE UKL_GLOBAL
-#include READS_HEADER
-
-typedef struct ReadArgs {
-    uint32_t n;
-    uint32_t pad;
-} ReadArgs;
-UKL_REFLECT_STRUCT(ReadArgs, n, pad)
-
-DEFINE_KERNEL2(tests, t_reads,
-               ARGS,     ReadArgs, args,      ,
-               RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[31]",
-               ROBUFFER, uint32_t, parentEnd, "[n]",
-               RWBUFFER, uint32_t, out,       "[n * 23]",
-               GID0,     uint32_t, i,         )
-{
-    if (i >= args.n)
-        return;
-    RWBUFFER(uint32_t) o = out + i * 23u;
-    o[0] = clif_tape_size(tape, view, i);
-    o[1] = clif_tape_end_of(tape, view, i);
-    o[2] = clif_tape_number(tape, view, i);
-    o[3] = clif_tape_start(tape, view, i);
-    o[4] = clif_tape_end(tape, view, i);
-    o[5] = clif_tape_parent(tape, view, i);
-    o[6] = clif_tape_next(tape, view, i);
-    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
-    o[8] = clif_tape_first_child(tape, view, i);
-    o[9] = clif_tape_child_count(tape, view, i);
-    for (uint32_t k = 0u; k <= 12u; k++)
-        o[10u + k] = clif_tape_child(tape, view, i, k);
-}
-"#;
-    const DEVICE_READS: usize = 23;
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct ReadArgs {
-        n: u32,
-        pad: u32,
-    }
-    unsafe impl rerail_gpu::Pod for ReadArgs {}
-
-    /// `t`'s every read of every node, as the kernel lays them out; `parent_end` each node's parent's subtree's end.
-    fn reads_of<T: Tape>(t: &T) -> (Vec<u32>, Vec<u32>) {
-        const NONE: u32 = u32::MAX;
-        let none = |v: Option<usize>| v.map_or(NONE, |v| v as u32);
-        let mut want = Vec::with_capacity(t.len() * DEVICE_READS);
-        let mut parent_end = Vec::with_capacity(t.len());
-        for i in 0..t.len() {
-            let end = t.subtree_end(i);
-            let parent = t.parent(i);
-            let next = parent.and_then(|p| Some(end).filter(|&n| n < t.subtree_end(p)));
-            let kids = crate::tape::children(t, i).collect::<Vec<_>>();
-            parent_end.push(parent.map_or(0, |p| t.subtree_end(p) as u32));
-            want.extend([(end - i) as u32, end as u32, t.code(i), t.start(i) as u32, t.end(i) as u32, none(parent), none(next)]);
-            // `tape_next_in` is read only under a parent.
-            want.push(if parent.is_some() { none(next) } else { NONE });
-            want.extend([none(kids.first().copied()), kids.len() as u32]);
-            want.extend((0..=12).map(|k| none(kids.get(k).copied())));
-        }
-        (want, parent_end)
-    }
-
-    /// The device's reads of every node of `t`, whose bytes are `tape` (with a cache after them for 16z) and whose
-    /// view is `view`, equal `t`'s own.
-    fn same_device_reads<T: Tape>(program: &rerail_gpu::kernels::Program, what: &str, t: &T, tape: &[u8], view: &TapeView) {
-        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
-        let shared = rerail_gpu::shared::get().expect("a device");
-        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
-        let n = t.len();
-        let started = std::time::Instant::now();
-        let (want, parent_end) = reads_of(t);
-        // The bytes, readable through the word that holds the last one.
-        let mut bytes = tape.to_vec();
-        bytes.resize(tape.len().next_multiple_of(8) + 8, 0);
-        // SAFETY: the view is plain u32s.
-        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(view).cast::<u32>(), size_of::<TapeView>() / 4) };
-        let (tb, vb, pb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&parent_end).unwrap());
-        let out = alloc::<u32>(n * DEVICE_READS).unwrap();
-        launch(&q, program.function("t_reads").unwrap())
-            .value("args", &ReadArgs { n: n as u32, pad: 0 })
-            .buffer("tape", &tb)
-            .buffer("view", &vb)
-            .buffer("parentEnd", &pb)
-            .buffer("out", &out)
-            .run(&[n.div_ceil(64) as u64], &[64])
-            .unwrap();
-        q.flush().await_().unwrap();
-        let got: Vec<u32> = read(&out, n * DEVICE_READS);
-        eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
-        const NAMES: [&str; 10] = ["size", "end of subtree", "code", "start", "end", "parent", "next", "next in parent", "first child", "child count"];
-        for i in 0..n {
-            let (g, w) = (&got[i * DEVICE_READS..][..DEVICE_READS], &want[i * DEVICE_READS..][..DEVICE_READS]);
-            for k in 0..DEVICE_READS {
-                if k == 7 && t.parent(i).is_none() {
-                    continue;
-                }
-                let name = NAMES.get(k).map_or_else(|| format!("child {}", k - 10), |s| s.to_string());
-                assert_eq!(g[k], w[k], "{}: {what}: node {i}: {name}", rerail_gpu::device::backend());
-            }
-        }
-    }
-
-    /// Decision 0440 step 6 (0310 §4's test, per backend): the reads as UKL, compiled for this process's GPU (Metal
-    /// on macOS, CUDA on Linux), read every node as this crate's readers do: format 16 with every side list in use,
-    /// 16z through a cache the device's threads share (sized for the whole tape, so no read finds it full), and
-    /// format 15. `<ukl/reads/tape.h>` reads 16 and 15; `tape_z.h` reads all three. Without a device it passes,
-    /// saying so.
+    /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
+    /// reads do through the JIT: format 16 with every side list in use, and format 15.
     #[test]
-    fn the_device_reads_read_every_node_as_the_crate_does() {
-        use rerail_clif::view::cache;
-        if rerail_gpu::shared::get().is_none() {
-            eprintln!("no device: the reads as UKL did not run");
-            return;
-        }
-        let program = |header: &str| {
-            let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
-            let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
-            let started = std::time::Instant::now();
-            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
-            eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
-            p
-        };
-        let (plain_reads, z_reads) = (program("tape.h"), program("tape_z.h"));
+    fn the_rust_reads_are_the_jits() {
+        use crate::reads::{f15, f16};
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
+        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
         let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
         let table = CodeTable::new(entries);
         let lang = lang_of(&table);
         let (nodes, pos) = escaped_nodes();
-        let plain = Plain(&nodes, &table);
-        // Format 16.
-        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
-        let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
-        for (reads, what) in [(plain_reads, "16, tape.h"), (z_reads, "16, tape_z.h")] {
-            same_device_reads(reads, what, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        let t = sixteen(&lang, &Plain(&nodes, &table), &(0..600).collect::<Vec<_>>(), pos + 2);
+        let (b, v) = (t.as_bytes(), placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap());
+        let mut prev = 0;
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f16::size(b, &v, i), jit.one("tape_size", b, &v, n), "size of {i}");
+            assert_eq!(f16::number(b, &v, i), jit.one("tape_number", b, &v, n), "number of {i}");
+            assert_eq!(f16::start_stated(b, &v, i), jit.one("tape_start_stated", b, &v, n), "stated start of {i}");
+            assert_eq!(f16::start(b, &v, i), jit.one("tape_start", b, &v, n), "start of {i}");
+            assert_eq!(f16::end(b, &v, i), jit.one("tape_end", b, &v, n), "end of {i}");
+            assert_eq!(f16::length(b, &v, i), jit.one("tape_length", b, &v, n), "length of {i}");
+            assert_eq!(f16::parent(b, &v, i), jit.one("tape_parent", b, &v, n), "parent of {i}");
+            assert_eq!(f16::slot(b, &v, i), slot(b.as_ptr(), &v, i), "slot of {i}");
+            assert_eq!(f16::start_next(b, &v, i, prev), jit.two("tape_start_next", b, &v, n, prev), "next start of {i}");
+            prev = f16::start(b, &v, i);
         }
-        // 16z: the tape, then its cache (each block decoded once into it), the view naming the cache by its offset.
-        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
-        let mut view = z.view(&lang).unwrap();
-        let blocks = z.len().div_ceil(Z) as u32;
-        let spec = cache::Spec::new(3, blocks + 1, view.columns[3] as usize);
-        let at = z.as_bytes().len().next_multiple_of(64);
-        let mut bytes = z.as_bytes().to_vec();
-        bytes.resize(at + spec.bytes(), 0);
-        spec.init(&mut bytes[at..]).unwrap();
-        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
-        same_device_reads(z_reads, "16z, tape_z.h", &z.reader(&lang).unwrap(), &bytes, &view);
+        for x in 0..=v.source_len {
+            assert_eq!(f16::line(b, &v, x), jit.one("tape_line", b, &v, x as usize), "line of byte {x}");
+        }
+        for k in 0..v.line_count {
+            assert_eq!(f16::line_start(b, &v, k), jit.one("tape_line_start", b, &v, k as usize), "line {k}'s start");
+        }
+        for block in (0..v.nodes.div_ceil(Z as u32)).chain([u32::MAX]) {
+            for kind in 0..640 {
+                assert_eq!(f16::has_kind(b, &v, block, kind), jit.two("tape_has_kind", b, &v, block as usize, kind), "kind {kind} in block {block}");
+            }
+        }
         // Format 15.
         let (image, _) = crate::tape::tests::sample();
-        let (columns, table) = crate::tape::f15_columns(&image).unwrap();
-        let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
-        for (reads, what) in [(plain_reads, "15, tape.h"), (z_reads, "15, tape_z.h")] {
-            same_device_reads(reads, what, &f15, &image, &v);
+        for i in 0..v.nodes {
+            let n = i as usize;
+            assert_eq!(f15::size(&image, &v, i), jit.one("tape_size", &image, &v, n), "size of {i}");
+            assert_eq!(f15::number(&image, &v, i), jit.one("tape_number", &image, &v, n), "number of {i}");
+            assert_eq!(f15::start_stated(&image, &v, i), jit.one("tape_start_stated", &image, &v, n), "stated start of {i}");
+            assert_eq!(f15::end_stated(&image, &v, i), jit.one("tape_end_stated", &image, &v, n), "stated end of {i}");
+            assert_eq!(f15::start(&image, &v, i), jit.one("tape_start", &image, &v, n), "start of {i}");
+            assert_eq!(f15::end(&image, &v, i), jit.one("tape_end", &image, &v, n), "end of {i}");
+            assert_eq!(f15::parent(&image, &v, i), jit.one("tape_parent", &image, &v, n), "parent of {i}");
         }
     }
 
-    /// Decision 0427: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// Decision 0463: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
     /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
@@ -2147,7 +2057,7 @@ DEFINE_KERNEL2(tests, t_reads,
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
         let (n, blocks) = (z.len(), z.len().div_ceil(Z));
         // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
-        // its column's and its side part's, which size every cache entry (decision 0427).
+        // its column's and its side part's, which size every cache entry (decision 0463).
         let packed = (0..PIECES * blocks).rev().find(|&j| z.kind(j) == LZ4).expect("an LZ4 piece");
         let mut stated = z.as_bytes().to_vec();
         let at = z.zat[ZLENS] + 4 * packed;
@@ -2211,24 +2121,60 @@ DEFINE_KERNEL2(tests, t_reads,
         at: *mut u8,
     }
 
-    unsafe extern "C" {
-        fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
-        fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
-        fn munmap(addr: *mut u8, len: usize) -> i32;
+    /// The system's calls for it: a fresh mapping, a range of it made unreadable, the mapping given back.
+    #[cfg(unix)]
+    mod pages {
+        unsafe extern "C" {
+            fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
+            fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+            fn munmap(addr: *mut u8, len: usize) -> i32;
+        }
+        #[cfg(target_os = "macos")]
+        const ANON: i32 = 0x1000;
+        #[cfg(not(target_os = "macos"))]
+        const ANON: i32 = 0x20;
+        pub unsafe fn map(len: usize) -> *mut u8 {
+            let p = unsafe { mmap(std::ptr::null_mut(), len, 3, 2 | ANON, -1, 0) };
+            if p as isize == -1 { std::ptr::null_mut() } else { p }
+        }
+        pub unsafe fn guard(p: *mut u8, len: usize) -> bool {
+            unsafe { mprotect(p, len, 0) == 0 }
+        }
+        pub unsafe fn unmap(p: *mut u8, len: usize) {
+            unsafe { munmap(p, len) };
+        }
+    }
+    #[cfg(windows)]
+    mod pages {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn VirtualAlloc(addr: *mut u8, len: usize, kind: u32, protect: u32) -> *mut u8;
+            fn VirtualProtect(addr: *mut u8, len: usize, protect: u32, old: *mut u32) -> i32;
+            fn VirtualFree(addr: *mut u8, len: usize, kind: u32) -> i32;
+        }
+        pub unsafe fn map(len: usize) -> *mut u8 {
+            // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE.
+            unsafe { VirtualAlloc(std::ptr::null_mut(), len, 0x3000, 0x04) }
+        }
+        pub unsafe fn guard(p: *mut u8, len: usize) -> bool {
+            let mut old = 0;
+            // PAGE_NOACCESS.
+            unsafe { VirtualProtect(p, len, 0x01, &mut old) != 0 }
+        }
+        pub unsafe fn unmap(p: *mut u8, _len: usize) {
+            // MEM_RELEASE, of the whole reservation.
+            unsafe { VirtualFree(p, 0, 0x8000) };
+        }
     }
 
     impl Guarded {
         fn new(bytes: &[u8]) -> Guarded {
             const GUARD: usize = 1 << 16;
-            #[cfg(target_os = "macos")]
-            const ANON: i32 = 0x1000;
-            #[cfg(not(target_os = "macos"))]
-            const ANON: i32 = 0x20;
             let span = bytes.len().next_multiple_of(GUARD) + GUARD;
             // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
-            let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
-            assert!(!map.is_null() && map as isize != -1, "a mapping");
-            assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+            let map = unsafe { pages::map(span) };
+            assert!(!map.is_null(), "a mapping");
+            assert!(unsafe { pages::guard(map.add(span - GUARD), GUARD) }, "a page no read may touch");
             // SAFETY: the readable part of the mapping holds the bytes, ending at the unreadable page.
             let at = unsafe { map.add(span - GUARD - bytes.len()) };
             unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at, bytes.len()) };
@@ -2239,11 +2185,11 @@ DEFINE_KERNEL2(tests, t_reads,
     impl Drop for Guarded {
         fn drop(&mut self) {
             // SAFETY: the mapping `new` made, no read of it left.
-            unsafe { munmap(self.map, self.span) };
+            unsafe { pages::unmap(self.map, self.span) };
         }
     }
 
-    /// Decision 0427: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// Decision 0463: a node's span, from the tape's gaps and lengths, is held to the source its header states:
     /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
     #[test]
     fn a_tapes_spans_stay_within_its_source() {
@@ -2287,6 +2233,226 @@ DEFINE_KERNEL2(tests, t_reads,
         view.source_len = source as u32;
         let reader = rerail_clif::view::Reader::new(&view, z.as_bytes().as_ptr());
         check(z.as_bytes().as_ptr(), reader.view(), z.len());
+    }
+
+    /// The device's kernel: every read of node `i` (`DEVICE_READS` of them) into its slots, from the reads as UKL
+    /// (`READS_HEADER`: `<ukl/reads/tape.h>`, or `tape_z.h`, which reads 16z too), the view read where its buffer holds
+    /// it. `parentEnd[i]` is the end of `i`'s parent's subtree (`tape_next_in`'s bound).
+    const DEVICE_KERNEL: &str = r#"
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include READS_HEADER
+
+typedef struct ReadArgs {
+    uint32_t n;
+    uint32_t pad;
+} ReadArgs;
+UKL_REFLECT_STRUCT(ReadArgs, n, pad)
+
+DEFINE_KERNEL2(tests, t_reads,
+               ARGS,     ReadArgs, args,      ,
+               RWBUFFER, uint8_t,  tape,      "[bytes]",
+               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, parentEnd, "[n]",
+               RWBUFFER, uint32_t, out,       "[n * 23]",
+               GID0,     uint32_t, i,         )
+{
+    if (i >= args.n)
+        return;
+    RWBUFFER(uint32_t) o = out + i * 23u;
+    o[0] = clif_tape_size(tape, view, i);
+    o[1] = clif_tape_end_of(tape, view, i);
+    o[2] = clif_tape_number(tape, view, i);
+    o[3] = clif_tape_start(tape, view, i);
+    o[4] = clif_tape_end(tape, view, i);
+    o[5] = clif_tape_parent(tape, view, i);
+    o[6] = clif_tape_next(tape, view, i);
+    o[7] = clif_tape_next_in(tape, view, i, parentEnd[i]);
+    o[8] = clif_tape_first_child(tape, view, i);
+    o[9] = clif_tape_child_count(tape, view, i);
+    for (uint32_t k = 0u; k <= 12u; k++)
+        o[10u + k] = clif_tape_child(tape, view, i, k);
+}
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
+}
+"#;
+    const DEVICE_READS: usize = 23;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct ReadArgs {
+        n: u32,
+        pad: u32,
+    }
+    unsafe impl rerail_gpu::Pod for ReadArgs {}
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RandomArgs {
+        n: u32,
+        threads: u32,
+        rounds: u32,
+        cache: u32,
+    }
+    unsafe impl rerail_gpu::Pod for RandomArgs {}
+
+    /// `t`'s every read of every node, as the kernel lays them out; `parent_end` each node's parent's subtree's end.
+    fn reads_of<T: Tape>(t: &T) -> (Vec<u32>, Vec<u32>) {
+        const NONE: u32 = u32::MAX;
+        let none = |v: Option<usize>| v.map_or(NONE, |v| v as u32);
+        let mut want = Vec::with_capacity(t.len() * DEVICE_READS);
+        let mut parent_end = Vec::with_capacity(t.len());
+        for i in 0..t.len() {
+            let end = t.subtree_end(i);
+            let parent = t.parent(i);
+            let next = parent.and_then(|p| Some(end).filter(|&n| n < t.subtree_end(p)));
+            let kids = crate::tape::children(t, i).collect::<Vec<_>>();
+            parent_end.push(parent.map_or(0, |p| t.subtree_end(p) as u32));
+            want.extend([(end - i) as u32, end as u32, t.code(i), t.start(i) as u32, t.end(i) as u32, none(parent), none(next)]);
+            // `tape_next_in` is read only under a parent.
+            want.push(if parent.is_some() { none(next) } else { NONE });
+            want.extend([none(kids.first().copied()), kids.len() as u32]);
+            want.extend((0..=12).map(|k| none(kids.get(k).copied())));
+        }
+        (want, parent_end)
+    }
+
+    /// The device's reads of every node of `t`, whose bytes are `tape` (with a cache after them for 16z) and whose
+    /// view is `view`, equal `t`'s own.
+    fn same_device_reads<T: Tape>(program: &rerail_gpu::kernels::Program, what: &str, t: &T, tape: &[u8], view: &TapeView) {
+        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+        let shared = rerail_gpu::shared::get().expect("a device");
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        let n = t.len();
+        let started = std::time::Instant::now();
+        let (want, parent_end) = reads_of(t);
+        // The bytes, readable through the word that holds the last one.
+        let mut bytes = tape.to_vec();
+        bytes.resize(tape.len().next_multiple_of(8) + 8, 0);
+        // SAFETY: the view is plain u32s.
+        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(view).cast::<u32>(), size_of::<TapeView>() / 4) };
+        let (tb, vb, pb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&parent_end).unwrap());
+        let out = alloc::<u32>(n * DEVICE_READS).unwrap();
+        launch(&q, program.function("t_reads").unwrap())
+            .value("args", &ReadArgs { n: n as u32, pad: 0 })
+            .buffer("tape", &tb)
+            .buffer("view", &vb)
+            .buffer("parentEnd", &pb)
+            .buffer("out", &out)
+            .run(&[n.div_ceil(64) as u64], &[64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let got: Vec<u32> = read(&out, n * DEVICE_READS);
+        eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
+        // A 16z tape's cache, as the device's reads left it: what they found, waited for and failed to find.
+        if view.format == rerail_clif::view::F16Z_FORMAT {
+            let back: Vec<u8> = read(&tb, bytes.len());
+            // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+            let counts = unsafe { rerail_clif::view::cache::Counts::read(back.as_ptr().add(view.side[0] as usize)) };
+            eprintln!("{}: {what}: the cache's counts: {:?}", rerail_gpu::device::backend(), counts.named());
+        }
+        const NAMES: [&str; 10] = ["size", "end of subtree", "code", "start", "end", "parent", "next", "next in parent", "first child", "child count"];
+        for i in 0..n {
+            let (g, w) = (&got[i * DEVICE_READS..][..DEVICE_READS], &want[i * DEVICE_READS..][..DEVICE_READS]);
+            for k in 0..DEVICE_READS {
+                if k == 7 && t.parent(i).is_none() {
+                    continue;
+                }
+                let name = NAMES.get(k).map_or_else(|| format!("child {}", k - 10), |s| s.to_string());
+                assert_eq!(g[k], w[k], "{}: {what}: node {i}: {name}", rerail_gpu::device::backend());
+            }
+        }
+    }
+
+    /// Decision 0400 step 6 (0310 §4's test, per backend): the reads as UKL, compiled for this process's GPU (Metal
+    /// on macOS, CUDA on Linux), read every node as this crate's readers do: format 16 with every side list in use,
+    /// 16z through a cache the device's threads share (sized for the whole tape, so no read finds it full), and
+    /// format 15. `<ukl/reads/tape.h>` reads 16 and 15; `tape_z.h` reads all three. Without a device it passes,
+    /// saying so.
+    #[test]
+    fn the_device_reads_read_every_node_as_the_crate_does() {
+        use rerail_clif::view::cache;
+        if rerail_gpu::shared::get().is_none() {
+            eprintln!("no device: the reads as UKL did not run");
+            return;
+        }
+        let program = |header: &str| {
+            let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")).into_boxed_str());
+            let name: &'static str = Box::leak(format!("tape_reads_{header}").into_boxed_str());
+            let started = std::time::Instant::now();
+            let p = rerail_gpu::kernels::program(name, text).unwrap_or_else(|e| panic!("{}: {header}: {e}", rerail_gpu::device::backend()));
+            eprintln!("{}: {header} compiled in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
+            p
+        };
+        let (plain_reads, z_reads) = (program("tape.h"), program("tape_z.h"));
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        // Format 16.
+        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
+        let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        for (reads, what) in [(plain_reads, "16, tape.h"), (z_reads, "16, tape_z.h")] {
+            same_device_reads(reads, what, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        }
+        // 16z: the tape, then its cache (each block decoded once into it), the view naming the cache by its offset.
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count() as u32;
+        let spec = cache::Spec::new(3, blocks + 1, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes(), 0);
+        spec.init(&mut bytes[at..]).unwrap();
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
+        same_device_reads(z_reads, "16z, tape_z.h", &z.reader(&lang).unwrap(), &bytes, &view);
+        // Format 15.
+        let (image, _) = crate::tape::tests::sample();
+        let (columns, table) = crate::tape::f15_columns(&image).unwrap();
+        let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
+        let v = crate::tape::f15_view(&image, 0).unwrap();
+        for (reads, what) in [(plain_reads, "15, tape.h"), (z_reads, "15, tape_z.h")] {
+            same_device_reads(reads, what, &f15, &image, &v);
+        }
     }
 
     /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)
@@ -2352,6 +2518,72 @@ DEFINE_KERNEL2(tests, t_reads,
         drop(buf);
     }
 
+    /// Decision 0540: the device's threads read a 16z tape through a cache they share while it turns, as this crate
+    /// does: 256 threads read 32 nodes each at random through a cache of three generations, each of one block fewer
+    /// than the tape's, so lookups find blocks other threads are decoding, promote blocks from the oldest generation
+    /// and fill the head. Read at random, the cache thrashes (every turn's head filled by promotions), and a lookup
+    /// may run out of tries (on Metal most do: a SIMD group's turn outlasts several turns of the cache, and once one
+    /// lookup has failed, a pending one does not wait). What holds is the cache's promise: a read wrong only where
+    /// the cache counted a failure (the dead entry read), so a caller refuses the batch (decision 0463). Each thread
+    /// reads the failure count after each of its reads: no read is wrong while it is still 0. Without a device it
+    /// passes, saying so.
+    #[test]
+    fn the_device_reads_16z_through_a_cache_that_turns() {
+        use rerail_clif::view::cache;
+        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+        let Some(shared) = rerail_gpu::shared::get() else {
+            eprintln!("no device: the reads as UKL did not run");
+            return;
+        };
+        let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", "<ukl/reads/tape_z.h>").into_boxed_str());
+        let program = rerail_gpu::kernels::program("tape_reads_turning", text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
+        let want: Vec<u32> = (0..n).flat_map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count() as u32;
+        let spec = cache::Spec::new(3, blocks - 1, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes(), 0);
+        spec.init(&mut bytes[at..]).unwrap();
+        bytes.resize(bytes.len().next_multiple_of(8) + 8, 0);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
+        // SAFETY: the view is plain u32s.
+        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&view).cast::<u32>(), size_of::<TapeView>() / 4) };
+        let (threads, rounds) = (256u32, 32u32);
+        let (tb, vb, wb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&want).unwrap());
+        let out = alloc::<u32>(2 * threads as usize).unwrap();
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        let started = std::time::Instant::now();
+        launch(&q, program.function("t_random").unwrap())
+            .value("args", &RandomArgs { n: n as u32, threads, rounds, cache: at as u32 })
+            .buffer("tape", &tb)
+            .buffer("view", &vb)
+            .buffer("want", &wb)
+            .buffer("out", &out)
+            .run(&[threads.div_ceil(64) as u64], &[64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let words: Vec<u32> = read(&out, 2 * threads as usize);
+        let wrong: u64 = words.iter().step_by(2).map(|&w| u64::from(w)).sum();
+        let silent: u64 = words.iter().skip(1).step_by(2).map(|&w| u64::from(w)).sum();
+        let back: Vec<u8> = read(&tb, bytes.len());
+        // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+        let counts = unsafe { cache::Counts::read(back.as_ptr().add(at)) };
+        eprintln!("{}: {} reads in {:.2} s, wrong {wrong} (before any failure {silent}): {:?}", rerail_gpu::device::backend(), threads * rounds * 4, started.elapsed().as_secs_f64(), counts.named());
+        assert_eq!(silent, 0, "reads wrong with no failure counted yet: {:?}", counts.named());
+        assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
+        assert!(wrong <= u64::from(counts.failed), "{wrong} reads wrong, {} failures", counts.failed);
+    }
+
     /// Every shipped table loads, and its text reads back to the same choices.
     #[test]
     fn shipped_tables_load_and_read_back() {
@@ -2379,7 +2611,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(t.reader(&other).is_err());
     }
 
-    /// A tape of one block is the regions end to end (decision 0426, R2): each column at the node count's offset
+    /// A tape of one block is the regions end to end (decision 0434, R2): each column at the node count's offset
     /// from the header, the tail after.
     #[test]
     fn one_block_is_the_regions() {
@@ -2417,7 +2649,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0426, R5); with the nodes
+    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).
     #[test]
@@ -2500,7 +2732,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// The edits that reach a node before the window (decision 0426 §2): each inner node opened with another code
+    /// The edits that reach a node before the window (decision 0434 §2): each inner node opened with another code
     /// and the node before's start, then retagged and its start set once its first child is open, gives the tape of
     /// the nodes written right, in 16 and 16z, escaped codes and gaps among them (R6).
     #[test]
@@ -2553,7 +2785,7 @@ DEFINE_KERNEL2(tests, t_reads,
 
     /// A 16z writer's block is final once its nodes are closed, the node after it has opened and the frontier is
     /// past it: the blocks under the open root finish as the parse leaves them, the root's last, and a final block's
-    /// room serves the next (decision 0426, R9).
+    /// room serves the next (decision 0434, R9).
     #[test]
     fn blocks_finish_when_closed() {
         let entries: Vec<Entry> = (0..4u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
@@ -2652,7 +2884,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
+    /// Decision 0434 §6, R16: the crate's writer is the ops in CLIF, the hand-written one the tests' oracle: a node
     /// that breaks the tape's bounds is the ops' failure, kept as its code and node (the reference keeps a message),
     /// and `write_from` writes the reference's tape, in 16 and 16z.
     #[test]
@@ -2680,7 +2912,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
+    /// Decision 0434 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
     /// presence from the same ops: escaped codes and values, late closes, a commit at every node or none, `retag`
     /// and `set_start`, a presence a block; and a tape of one node, and of none.
     #[test]
@@ -2688,7 +2920,81 @@ DEFINE_KERNEL2(tests, t_reads,
         writes_the_references_tape(|lang, source, z, blocks, nodes| Writer::new(lang, source, 3, z, blocks, nodes / 3));
     }
 
-    /// Decision 0426 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
+    /// One writer, used again for every case of `writes_the_references_tape` in turn (`ops::Writer::begin`): its
+    /// parts kept from the document before (16 and 16z, larger and smaller, with a presence a block and without),
+    /// each tape and presence the reference writer's. A byte the ops read before they write shows, as `begin` fills
+    /// every part kept with `FRESH` in tests.
+    #[test]
+    fn a_writer_used_again_writes_the_references_tape() {
+        struct Again {
+            w: Option<Writer>,
+            home: std::rc::Rc<std::cell::RefCell<Option<Writer>>>,
+        }
+        impl WriterOps for Again {
+            fn open(&mut self, number: u32, start: u64) -> usize {
+                self.w.as_mut().unwrap().open(number, start)
+            }
+            fn close(&mut self, end: u64) {
+                self.w.as_mut().unwrap().close(end)
+            }
+            fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
+                self.w.as_mut().unwrap().leaf(number, start, end)
+            }
+            fn commit(&mut self) {
+                self.w.as_mut().unwrap().commit()
+            }
+            fn retag(&mut self, i: usize, number: u32) {
+                self.w.as_mut().unwrap().retag(i, number)
+            }
+            fn set_start(&mut self, i: usize, start: u64) {
+                self.w.as_mut().unwrap().set_start(i, start)
+            }
+            fn finish(mut self) -> Result<Finished, String> {
+                let mut w = self.w.take().unwrap();
+                let f = Writer::finish(&mut w);
+                *self.home.borrow_mut() = Some(w);
+                f
+            }
+        }
+        let home = std::rc::Rc::new(std::cell::RefCell::new(None::<Writer>));
+        let used = std::cell::Cell::new(0);
+        writes_the_references_tape(|lang, source, z, blocks, nodes| {
+            let w = match home.borrow_mut().take() {
+                Some(mut w) => {
+                    used.set(used.get() + 1);
+                    w.begin(lang, source, 3, z, blocks, nodes / 3);
+                    w
+                }
+                None => Writer::new(lang, source, 3, z, blocks, nodes / 3),
+            };
+            Again { w: Some(w), home: home.clone() }
+        });
+        assert!(used.get() > 50, "the writer used again: {} times", used.get());
+    }
+
+    /// A tape given back (`ops::Writer::recycle`) is the next document's room: the next tape is written in it, in
+    /// place, and is the tape a new writer writes.
+    #[test]
+    fn a_tape_given_back_is_the_next_tapes_room() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let mut w = Writer::new(&lang, &source, 0, false, true, nodes.len());
+        by_ops(&mut w, &nodes, 1);
+        let first = Writer::finish(&mut w).expect("the first tape").tape;
+        let want = first.extent().to_vec();
+        let at = first.extent().as_ptr();
+        w.recycle(first);
+        w.begin(&lang, &source, 0, false, true, nodes.len());
+        by_ops(&mut w, &nodes, 1);
+        let again = Writer::finish(&mut w).expect("the second tape").tape;
+        assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
+        assert_eq!(again.extent().as_ptr(), at, "the tape is the room given back");
+    }
+
+    /// Decision 0434 §6, R15: the writer's ops compiled by the JIT write the reference writer's tape and presence:
     /// R13's cases.
     #[test]
     fn the_jit_ops_write_the_references_tape() {
@@ -2700,8 +3006,8 @@ DEFINE_KERNEL2(tests, t_reads,
         });
     }
 
-    /// Decision 0426 §6, R15: the writer's ops in UKL (decision 0440), on the process's device, write the reference
-    /// writer's tape and presence: R13's cases.
+    /// Decision 0434 §6, R15: the writer's ops in UKL (`<ukl/writer.h>`), on the process's device, write the reference
+    /// writer's tape and presence: R13's cases. Without a device it passes, saying so.
     #[test]
     fn the_device_writes_the_references_tape() {
         if rerail_gpu::shared::get().is_none() {
@@ -2790,7 +3096,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");
     }
 
-    /// Decision 0426 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
+    /// Decision 0434 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
     /// writer makes no tape: `broken_nodes_make_no_tape`'s cases, and an edit of a final block.
     #[test]
     fn the_clif_ops_fail_as_the_reference() {
@@ -2833,7 +3139,7 @@ DEFINE_KERNEL2(tests, t_reads,
         }
     }
 
-    /// Decision 0426 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
+    /// Decision 0434 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
     /// past the part's capacity and its 8 bytes of room: the tape's blocks, the open nodes, a block's entries, the
     /// laid side lists, the side areas given back.
     #[test]
@@ -2858,7 +3164,7 @@ DEFINE_KERNEL2(tests, t_reads,
         assert_eq!(cases, 7);
     }
 
-    /// Decision 0426 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
+    /// Decision 0434 §6: the writer's LZ4 compressor in CLIF writes liblz4's `LZ4_compress_HC(.., 4)` bytes, for
     /// pieces of every kind (empty, short, random, runs, a tape's columns, longer than a chain's 64 KB reach), each
     /// through one compressor whose tables earlier pieces left, as the writer reuses them.
     #[test]
@@ -2918,11 +3224,22 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(shrunk >= 2 * 20 && differs > 0, "{shrunk} inputs compressed, {differs} unlike HC 9");
     }
 
-    /// The one decoder (`tape_lz4`, the reads' in CLIF) decodes what LZ4 compressed: literal runs of every length
-    /// mod 8, matches at every offset under 8 (which it widens as LZ4's reference decoder does) and far ones, and
-    /// lengths past 15 (their extension bytes); a piece cut short decodes to less than its length.
+    /// The one decoder (`reads::lz4`, and the CLIF's `tape_lz4` it is written from) decodes what LZ4 compressed:
+    /// literal runs of every length mod 8, matches at every offset under 8 (which the CLIF's widens as LZ4's
+    /// reference decoder does) and far ones, and lengths past 15 (their extension bytes); a piece cut short decodes
+    /// to less than its length. The JIT's decodes every piece, whole and cut, to the same bytes and the same count.
     #[test]
     fn the_reads_decoder_decodes_what_lz4_compressed() {
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: `tape_lz4`'s signature: the tape, its view, the piece's bounds, the destination and its length.
+        let tape_lz4: extern "C" fn(*const u8, *const TapeView, u32, u32, u64, u64) -> u64 = unsafe { std::mem::transmute(jit.function("tape_lz4")) };
+        // The JIT's decode of `buf[from..to]`: its count and bytes (its room has the 8 bytes its copies may write).
+        let jits = |buf: &[u8], from: usize, to: usize, len: usize| {
+            let mut dst = vec![0u8; len + 8];
+            let n = tape_lz4(buf.as_ptr(), &TapeView::default(), from as u32, to as u32, dst.as_mut_ptr() as u64, len as u64) as usize;
+            dst.truncate(n);
+            dst
+        };
         let mut seed = 0x9e37_79b9_7f4a_7c15u64;
         let mut next = move || {
             seed ^= seed << 13;
@@ -2952,13 +3269,14 @@ DEFINE_KERNEL2(tests, t_reads,
             let mut dst = vec![0u8; raw.len() + 8];
             decode_block(&buf, 5, buf.len(), &mut dst, raw.len()).unwrap();
             assert_eq!(&dst[..raw.len()], &raw[..], "case {case}");
+            assert_eq!(jits(&buf, 5, buf.len(), raw.len()), raw, "case {case}: the JIT's decode");
             // Cut short: fewer bytes, never past them, and refused.
             let cut = 5 + packed.len() / 2;
             let mut dst = vec![0u8; raw.len() + 8];
             assert!(decode_block(&buf[..cut], 5, cut, &mut dst, raw.len()).is_err(), "case {case}: a piece cut short is refused");
-            // SAFETY: `dst` holds the piece's length and 8 more.
-            let n = unsafe { reads::tape_lz4(&buf[..cut], &TapeView::default(), 5, cut as u32, dst.as_mut_ptr() as u64, raw.len() as u64) };
-            assert!((n as usize) < raw.len(), "case {case}: a piece cut short decodes less");
+            let n = crate::reads::lz4(&buf[..cut], 5, cut, &mut dst, raw.len());
+            assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
+            assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
     }
 }

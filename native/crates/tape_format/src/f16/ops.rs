@@ -1,13 +1,13 @@
-//! Format 16 written by the writer's ops in CLIF (decision 0426 §6), through their Rust (`generated_writer`): the
+//! Format 16 written by the writer (decision 0434 §6), its Rust written directly (`writer16`, decision 0532): the
 //! host's region, each part its own buffer, named in the state by its offset from the state's address. Before each
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
 
 use super::{Finished, K, Lang, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
-use crate::generated_writer as ops;
+use crate::writer16 as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
-/// An op called by its generated Rust; in a test, by the JIT's where the writer has it (`Jit`).
+/// An op called in its Rust (`writer16`); in a test, by the JIT's where the writer has it (`Jit`).
 macro_rules! call {
     ($w:expr, $op:ident($($a:expr),*)) => {{
         #[cfg(test)]
@@ -20,12 +20,13 @@ macro_rules! call {
     }};
 }
 
-/// The ops compiled by the JIT (decision 0426 §6, R15), a test's: what `Writer` calls in place of their Rust.
+/// The ops compiled by the JIT (decision 0434 §6, R15), a test's: what `Writer` calls in place of their Rust.
 #[cfg(test)]
 pub(super) struct Jit {
     _module: rerail_clif::jit::Writer,
     w_open: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
     w_close: unsafe extern "C" fn(*const u8, u64) -> u32,
+    w_leaf: unsafe extern "C" fn(*const u8, u32, u64, u64) -> u32,
     w_commit: unsafe extern "C" fn(*const u8) -> u32,
     w_retag: unsafe extern "C" fn(*const u8, u32, u32) -> u32,
     w_set_start: unsafe extern "C" fn(*const u8, u32, u64) -> u32,
@@ -44,6 +45,7 @@ impl Jit {
             Box::leak(Box::new(Jit {
                 w_open: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_open")),
                 w_close: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u64) -> u32>(m.function("w_close")),
+                w_leaf: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64, u64) -> u32>(m.function("w_leaf")),
                 w_commit: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8) -> u32>(m.function("w_commit")),
                 w_retag: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u32) -> u32>(m.function("w_retag")),
                 w_set_start: std::mem::transmute::<*const u8, unsafe extern "C" fn(*const u8, u32, u64) -> u32>(m.function("w_set_start")),
@@ -66,7 +68,18 @@ const ZBLOCK_MAX: usize = 4 * PIECE_MAX + w::lz4_bound(PIECE_MAX as u64) as usiz
 /// What a fresh byte of the tape's buffer holds: in tests not zero, so a byte the ops do not write shows.
 const FRESH: u8 = if cfg!(test) { 0xa5 } else { 0 };
 
-/// Format 16 or 16z written in one pass as a parser goes (decision 0426 §2), by the writer's ops in CLIF (§6)
+/// What a writer writes a tape of (`Writer::begin_with`): a document of `source` in `lang`, of about `nodes` nodes,
+/// the producer's `tag`, in 16z where `z`, with each block's presence where `blocks`.
+pub struct Document<'a> {
+    pub lang: &'a Lang,
+    pub source: &'a [u8],
+    pub tag: u8,
+    pub z: bool,
+    pub blocks: bool,
+    pub nodes: usize,
+}
+
+/// Format 16 or 16z written in one pass as a parser goes (decision 0434 §2), by the writer's ops in CLIF (§6)
 /// through their Rust: `f16::Writer`. Its API and its bytes are the hand-written reference writer's
 /// (`reference::Writer`, whose doc says what each op writes where), which the tests check it against (R13, R16).
 pub struct Writer {
@@ -76,6 +89,9 @@ pub struct Writer {
     presence_words: (usize, usize),
     keep_blocks: bool,
     z: bool,
+    /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
+    /// the tape's), which `recycle` takes back as they are.
+    given: (usize, usize),
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -89,10 +105,34 @@ impl Writer {
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
     pub fn new(lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        let mut w = Writer::empty();
+        w.begin(lang, source, tag, z, blocks, nodes);
+        w
+    }
+
+    /// A writer of no document yet, its parts empty: `begin` starts each.
+    pub fn empty() -> Self {
+        Writer { state: Box::default(), parts: Default::default(), presence_words: (0, 0), keep_blocks: false, z: false, given: (0, 0), #[cfg(test)] fixed: None, #[cfg(test)] jit: None }
+    }
+
+    /// The next document, in this writer: as `new`, its parts' buffers kept from the documents before (each grown only
+    /// where it is short, so a writer used again zeroes no room), as simdjson's parser keeps its tape from one document to
+    /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
+    /// part kept is filled with `FRESH`, so a byte read before it is written shows).
+    pub fn begin(&mut self, lang: &Lang, source: &[u8], tag: u8, z: bool, blocks: bool, nodes: usize) {
+        self.begin_with(&Document { lang, source, tag, z, blocks, nodes }, |out| crate::newlines::index_into(out, source));
+    }
+
+    /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
+    /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
+    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut Vec<u8>)) {
+        let &Document { lang, source, tag, z, blocks, nodes } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
         let cw = bytes_for(source_len);
-        let lines = crate::newlines::index(source);
+        let mut index = std::mem::take(&mut self.parts[part::LINES as usize]);
+        lines(&mut index);
+        let lines = index;
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let (kind_words, field_words) = lang.presence_words();
         let w3 = [wd[0] as u32, wd[1] as u32, wd[2] as u32];
@@ -122,7 +162,6 @@ impl Writer {
         let buckets = (4 * count).next_power_of_two().max(64);
         state.zbuckets = buckets as u32;
         let stride = state.stride as usize;
-        let mut parts: [Vec<u8>; part::COUNT] = Default::default();
         let mut lens = [0u64; part::COUNT];
         (lens[part::KINDS as usize], lens[part::PRESENCE as usize], lens[part::LINES as usize]) = (kinds.len() as u64, words as u64, lines.len() as u64);
         if z {
@@ -153,20 +192,51 @@ impl Writer {
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
-        parts[part::KINDS as usize] = kinds;
-        parts[part::LINES as usize] = lines;
-        for (buf, &cap) in parts.iter_mut().zip(&caps) {
-            buf.resize(cap, 0);
+        self.parts[part::KINDS as usize] = kinds;
+        self.parts[part::LINES as usize] = lines;
+        for (k, (buf, &cap)) in self.parts.iter_mut().zip(&caps).enumerate() {
+            // Kept from the document before; in tests made `FRESH`, as a byte the ops read before they write it shows.
+            #[cfg(test)]
+            if k as u32 != part::KINDS && k as u32 != part::LINES {
+                buf.fill(FRESH);
+            }
+            let _ = k;
+            if buf.len() < cap {
+                buf.resize(cap, if cfg!(test) { FRESH } else { 0 });
+            }
         }
-        parts[part::OUT as usize].fill(FRESH);
-        parts[part::SEEN as usize].fill(0xff);
-        let mut wr = Writer { state: Box::new(State::default()), parts, presence_words: (kind_words, field_words), keep_blocks: blocks, z, #[cfg(test)] fixed: None, #[cfg(test)] jit: None };
+        // What the ops read before they write: the presence's words (each node's bits are or-ed in), and in 16z the
+        // seen pieces' buckets (empty) and the LZ4 tables.
+        self.parts[part::PRESENCE as usize][..words * (1 + if blocks { count + 1 } else { 0 })].fill(0);
+        if z {
+            self.parts[part::SEEN as usize][..4 * buckets].fill(0xff);
+            self.parts[part::LZ as usize][..w::LZ_TABLES as usize].fill(0);
+        }
+        (self.presence_words, self.keep_blocks, self.z) = ((kind_words, field_words), blocks, z);
+        #[cfg(test)]
+        {
+            self.fixed = None;
+        }
         for (k, &len) in lens.iter().enumerate() {
-            *wr.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
+            *self.part_mut(&mut state, k) = Part { at: 0, cap: 0, len };
         }
-        wr.state = state;
-        wr.bind();
-        wr
+        self.state = state;
+        self.bind();
+    }
+
+    /// A tape this writer finished, given back: its bytes are the next document's room (`begin` keeps them), so a writer
+    /// used again allocates no tape.
+    pub fn recycle(&mut self, tape: super::Written) {
+        let Some(mut buf) = tape.into_own() else { return };
+        let (at, written) = std::mem::take(&mut self.given);
+        if buf.as_ptr() as usize != at || written <= self.parts[part::OUT as usize].len() {
+            return;
+        }
+        // SAFETY: the same allocation `finish` gave out (laying the presence did not move it), whose first `written`
+        // bytes were written (each initialized before `finish` cut the length to the tape's), within its capacity.
+        unsafe { buf.set_len(written.min(buf.capacity())) };
+        self.parts[part::OUT as usize] = buf;
+        self.bind();
     }
 
     fn part_mut<'s>(&self, state: &'s mut State, k: usize) -> &'s mut Part {
@@ -283,7 +353,7 @@ impl Writer {
     }
 
     /// Room for a run of up to `nodes` nodes, `depth` open at once, whose ops code calls itself, with no host
-    /// between them to reserve (tier 2's words, decision 0426 §6, R17): each block's share as `open` reserves it,
+    /// between them to reserve (tier 2's words, decision 0434 §6, R17): each block's share as `open` reserves it,
     /// and room for every block made final as `reserve_final` does. A part found full after it is the run's
     /// failure (`fail::FULL`), and the run goes again with more room.
     pub fn reserve_run(&mut self, nodes: usize, depth: usize) {
@@ -327,6 +397,16 @@ impl Writer {
 
     /// The next node opened, of `number`, at `start` (`w_open`): its index.
     pub fn open(&mut self, number: u32, start: u64) -> usize {
+        let i = self.room_to_open();
+        let desc = self.desc();
+        // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
+        call!(self, w_open(desc, number, start));
+        i
+    }
+
+    /// The room the next node's `w_open` (or `w_leaf`) can need: the open nodes' one more, and at a block's first
+    /// node the block's. The node's index.
+    fn room_to_open(&mut self) -> usize {
         let (i, open) = (self.state.n as usize, self.state.open_len as usize);
         self.reserve(part::OPEN, (open + 1) * OPEN as usize);
         if i.is_multiple_of(Z) {
@@ -349,9 +429,6 @@ impl Writer {
             }
             self.reserve_final(1);
         }
-        let desc = self.desc();
-        // SAFETY: the state's parts lie in their buffers, each with the room the op can need, reserved above.
-        call!(self, w_open(desc, number, start));
         i
     }
 
@@ -373,12 +450,15 @@ impl Writer {
 
     /// A closed node with no children.
     pub fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
-        let i = self.open(number, start);
-        self.close(end);
+        // A leaf's close makes no block final (`w_leaf`): the room is its open's.
+        let i = self.room_to_open();
+        let desc = self.desc();
+        // SAFETY: as `open`'s.
+        call!(self, w_leaf(desc, number, start, end));
         i
     }
 
-    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0426 §2).
+    /// The nodes so far final but for the open ones (`w_commit`): no edit reaches before them (decision 0434 §2).
     pub fn commit(&mut self) {
         let blocks = (self.state.n as usize / Z).saturating_sub(self.state.frontier as usize / Z);
         self.reserve_final(blocks);
@@ -408,11 +488,12 @@ impl Writer {
 
     /// The tape and its presence (`w_finish_blocks`, then `w_finish_tail`); `Err` where an op failed, with the
     /// first failure's code (`fail`) and node.
-    pub fn finish(mut self) -> Result<Finished, String> {
+    pub fn finish(&mut self) -> Result<Finished, String> {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
+        self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
         finished(out, &self.parts[part::PRESENCE as usize], self.presence_words, self.keep_blocks.then_some(count), self.z)
     }
@@ -497,18 +578,19 @@ impl Lz {
     }
 }
 
-/// The ops in UKL on the process's device (decision 0426 §6, R15; decision 0440), a test's: the calls are recorded, then replayed by one
+/// The ops in UKL on the device (decisions 0434 §6 R15, 0440), a test's: the calls are recorded, then replayed by one
 /// thread of a kernel over the region in one buffer, the state at its start and each part at its offset from it, as
 /// the host names them. The device's region does not grow: each part gets the room the host's run of the same calls
-/// reserved (sizing it from bounds is tier 2's, R17).
+/// reserved (sizing it from bounds is tier 2's, R17). On the process's device, whatever its backend.
 #[cfg(test)]
 pub(super) mod device {
     use super::{FRESH, Writer, State, Z, finished, part};
     use crate::f16::{Finished, Lang};
 
-    /// The kernel: the calls `c` (an op and up to three arguments each) through the ops, then `finish`.
+    /// The kernel: the calls `c` (an op and up to three arguments each) through the ops (`<ukl/writer.h>`), then
+    /// `finish`.
     const REPLAY: &str = r#"
-#include <ukl/reads/writer.h>
+#include <ukl/writer.h>
 
 typedef struct ReplayArgs {
     uint32_t n;
@@ -516,7 +598,7 @@ typedef struct ReplayArgs {
 } ReplayArgs;
 UKL_REFLECT_STRUCT(ReplayArgs, n, pad)
 
-DEFINE_KERNEL2(tests, replay,
+DEFINE_KERNEL2(writer, replay,
                ARGS,     ReplayArgs, args, ,
                RWBUFFER, uint8_t,    r,    "[bytes]",
                ROBUFFER, uint64_t,   c,    "[4 * n]",
@@ -547,7 +629,7 @@ DEFINE_KERNEL2(tests, replay,
         n: u32,
         pad: u32,
     }
-    // SAFETY: two u32s, `repr(C)`, as the kernel's `ReplayArgs`.
+    // SAFETY: two u32s, no padding.
     unsafe impl rerail_gpu::Pod for ReplayArgs {}
 
     pub(in crate::f16) struct DeviceOps {
@@ -616,25 +698,25 @@ DEFINE_KERNEL2(tests, replay,
             }
             // SAFETY: the state is plain integers (`repr(C)`), and the region starts with its room.
             unsafe { std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<State>(), state) };
-            use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+            use rerail_gpu::kernels::{buffer_of, launch, read};
+            let shared = rerail_gpu::shared::get().ok_or("no device")?;
             let program = rerail_gpu::kernels::program("tape_writer_replay", REPLAY).unwrap_or_else(|e| panic!("{}: the writer's ops in UKL: {e}", rerail_gpu::device::backend()));
-            let shared = rerail_gpu::shared::get().expect("a device");
-            let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
             let n = self.calls.len() as u32;
             // At least one call's room: a buffer is never empty.
             self.calls.push([0; 4]);
             let calls: Vec<u64> = self.calls.iter().flatten().copied().collect();
-            let (region, cb, result) = (buffer_of(&bytes).unwrap(), buffer_of(&calls).unwrap(), alloc::<u32>(1).unwrap());
-            launch(&q, program.function("replay").unwrap())
+            let (region, calls, result) = (buffer_of(&bytes)?, buffer_of(&calls)?, buffer_of(&[0u32])?);
+            let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+            launch(&q, program.function("replay")?)
                 .value("args", &ReplayArgs { n, pad: 0 })
                 .buffer("r", &region)
-                .buffer("c", &cb)
+                .buffer("c", &calls)
                 .buffer("out", &result)
-                .run(&[1], &[1])
-                .unwrap();
-            q.flush().await_().unwrap();
+                .run(&[1], &[1])?;
+            q.flush().await_()?;
             let r = read::<u32>(&result, 1)[0];
             let bytes: Vec<u8> = read(&region, end);
+            // SAFETY: the region starts with the state, plain integers.
             let state: State = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<State>()) };
             if r != 0 {
                 return Err(format!("the writer's ops failed on the device: {r:#x} at node {}", state.bad_node as i32));
@@ -643,6 +725,116 @@ DEFINE_KERNEL2(tests, replay,
             let count = (state.n as usize).div_ceil(Z);
             let presence = &bytes[state.presence.at as usize..][..self.host.parts[part::PRESENCE as usize].len()];
             finished(bytes[at..at + len].to_vec(), presence, self.made.presence_words, self.made.keep_blocks.then_some(count), self.made.z)
+        }
+    }
+}
+
+/// The writer's Rust reads the state the JIT's and the device's ops read: the same layout, the same constants.
+#[cfg(test)]
+mod layout {
+    use crate::writer16 as d;
+    use rerail_clif::writer as c;
+    use std::mem::{offset_of, size_of};
+
+    #[test]
+    fn the_writers_state_is_the_ops() {
+        assert_eq!(size_of::<d::State>(), size_of::<c::State>());
+        assert_eq!(size_of::<d::Part>(), size_of::<c::Part>());
+        let pairs = [
+            (offset_of!(d::State, esc), offset_of!(c::State, esc)),
+            (offset_of!(d::State, source_len), offset_of!(c::State, source_len)),
+            (offset_of!(d::State, prev_start), offset_of!(c::State, prev_start)),
+            (offset_of!(d::State, w), offset_of!(c::State, w)),
+            (offset_of!(d::State, cw), offset_of!(c::State, cw)),
+            (offset_of!(d::State, vw), offset_of!(c::State, vw)),
+            (offset_of!(d::State, cut), offset_of!(c::State, cut)),
+            (offset_of!(d::State, per), offset_of!(c::State, per)),
+            (offset_of!(d::State, stride), offset_of!(c::State, stride)),
+            (offset_of!(d::State, at), offset_of!(c::State, at)),
+            (offset_of!(d::State, flags), offset_of!(c::State, flags)),
+            (offset_of!(d::State, kw), offset_of!(c::State, kw)),
+            (offset_of!(d::State, fw), offset_of!(c::State, fw)),
+            (offset_of!(d::State, tag), offset_of!(c::State, tag)),
+            (offset_of!(d::State, mark), offset_of!(c::State, mark)),
+            (offset_of!(d::State, newlines), offset_of!(c::State, newlines)),
+            (offset_of!(d::State, n), offset_of!(c::State, n)),
+            (offset_of!(d::State, frontier), offset_of!(c::State, frontier)),
+            (offset_of!(d::State, bad), offset_of!(c::State, bad)),
+            (offset_of!(d::State, bad_node), offset_of!(c::State, bad_node)),
+            (offset_of!(d::State, open_len), offset_of!(c::State, open_len)),
+            (offset_of!(d::State, blocks), offset_of!(c::State, blocks)),
+            (offset_of!(d::State, zbuckets), offset_of!(c::State, zbuckets)),
+            (offset_of!(d::State, zbase), offset_of!(c::State, zbase)),
+            (offset_of!(d::State, zprev), offset_of!(c::State, zprev)),
+            (offset_of!(d::State, znext), offset_of!(c::State, znext)),
+            (offset_of!(d::State, zoff), offset_of!(c::State, zoff)),
+            (offset_of!(d::State, zback), offset_of!(c::State, zback)),
+            (offset_of!(d::State, parts), offset_of!(c::State, kinds)),
+            (offset_of!(d::State, parts) + d::part::LZ * size_of::<d::Part>(), offset_of!(c::State, lz)),
+            (offset_of!(d::Part, at), offset_of!(c::Part, at)),
+            (offset_of!(d::Part, cap), offset_of!(c::Part, cap)),
+            (offset_of!(d::Part, len), offset_of!(c::Part, len)),
+        ];
+        for (k, (a, b)) in pairs.into_iter().enumerate() {
+            assert_eq!(a, b, "field {k}");
+        }
+        let parts = [
+            (d::part::KINDS, c::part::KINDS),
+            (d::part::OPEN, c::part::OPEN),
+            (d::part::OUT, c::part::OUT),
+            (d::part::TABLE, c::part::TABLE),
+            (d::part::SIDES, c::part::SIDES),
+            (d::part::FREE, c::part::FREE),
+            (d::part::LAID, c::part::LAID),
+            (d::part::LAID_AT, c::part::LAID_AT),
+            (d::part::PRESENCE, c::part::PRESENCE),
+            (d::part::LINES, c::part::LINES),
+            (d::part::ROOMS, c::part::ROOMS),
+            (d::part::ROOM_FREE, c::part::ROOM_FREE),
+            (d::part::PIECES, c::part::PIECES),
+            (d::part::SEEN, c::part::SEEN),
+            (d::part::CKPT, c::part::CKPT),
+            (d::part::LZ, c::part::LZ),
+        ];
+        for (a, b) in parts {
+            assert_eq!(a, b as usize);
+        }
+        assert_eq!(d::part::COUNT, c::part::COUNT);
+        let consts = [
+            (u64::from(d::Z), u64::from(c::Z)),
+            (u64::from(d::K), u64::from(c::K)),
+            (u64::from(d::BLOCK), u64::from(c::BLOCK)),
+            (d::HEAD16, u64::from(c::HEAD16)),
+            (u64::from(d::MAX_NODES), u64::from(c::MAX_NODES)),
+            (u64::from(d::NONE), u64::from(c::NONE)),
+            (d::MAGIC16, c::MAGIC16),
+            (d::MAGIC16Z, c::MAGIC16Z),
+            (d::OPEN, u64::from(c::OPEN)),
+            (d::TABLE, u64::from(c::TABLE)),
+            (d::LAID_AT, u64::from(c::LAID_AT)),
+            (d::SIDE_LIST, u64::from(c::SIDE_LIST)),
+            (d::SIDE_AREA, u64::from(c::SIDE_AREA)),
+            (d::PIECE, u64::from(c::PIECE)),
+            (u64::from(d::RAW), u64::from(c::RAW)),
+            (u64::from(d::LZ4), u64::from(c::LZ4)),
+            (u64::from(d::REPEAT), u64::from(c::REPEAT)),
+            (d::REPEAT_MIN, u64::from(c::REPEAT_MIN)),
+            (d::LZ4_MIN, u64::from(c::LZ4_MIN)),
+            (u64::from(d::LZ_HASH_LOG), u64::from(c::LZ_HASH_LOG)),
+            (u64::from(d::LZ_TABLES), u64::from(c::LZ_TABLES)),
+            (d::LZ_ATTEMPTS as u64, u64::from(c::LZ_ATTEMPTS)),
+            (u64::from(d::fail::BOUNDS), u64::from(c::fail::BOUNDS)),
+            (u64::from(d::fail::OUTSIDE), u64::from(c::fail::OUTSIDE)),
+            (u64::from(d::fail::FINAL), u64::from(c::fail::FINAL)),
+            (u64::from(d::fail::NOT_OPEN), u64::from(c::fail::NOT_OPEN)),
+            (u64::from(d::fail::NO_OPEN), u64::from(c::fail::NO_OPEN)),
+            (u64::from(d::fail::UNCLOSED), u64::from(c::fail::UNCLOSED)),
+            (u64::from(d::fail::NUMBER), u64::from(c::fail::NUMBER)),
+            (u64::from(d::fail::PASSED), u64::from(c::fail::PASSED)),
+            (u64::from(d::fail::FULL), u64::from(c::fail::FULL)),
+        ];
+        for (k, (a, b)) in consts.into_iter().enumerate() {
+            assert_eq!(a, b, "constant {k}");
         }
     }
 }

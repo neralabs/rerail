@@ -187,7 +187,7 @@ impl Grammar {
         self.kinds.field_name(code)
     }
 
-    /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
+    /// The tree-sitter language of this grammar's dialect (the predecessor's accessor; the packed runtime's
     /// Metal tests compile queries against it).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn language(&self) -> Language {
@@ -221,10 +221,14 @@ impl Grammar {
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
     /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+        // Read-locked for a grammar built already: every parse worker asks it for each document (0477).
         static GRAMMARS: std::sync::LazyLock<
-            std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
+            std::sync::RwLock<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
-        let mut grammars = GRAMMARS.lock().map_err(|_| "grammar cache poisoned")?;
+        if let Some(grammar) = GRAMMARS.read().map_err(|_| "grammar cache poisoned")?.get(&lang) {
+            return Ok(Arc::clone(grammar));
+        }
+        let mut grammars = GRAMMARS.write().map_err(|_| "grammar cache poisoned")?;
         if let Some(grammar) = grammars.get(&lang) {
             return Ok(Arc::clone(grammar));
         }
@@ -270,6 +274,24 @@ pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
+
+    /// Whether `parse` builds the file's programs itself (Blade's compiled view). Otherwise the router builds them over
+    /// its tape, for a dialect that embeds others (`TapeImage::parse`).
+    fn embeds_itself(&self) -> bool {
+        false
+    }
+
+    /// The node kinds it parses a text from besides a whole file (decision 0466): a fragment's start.
+    fn starts(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    /// `source` parsed from the node kind `start` (one of `starts`), the tape's root one such node with none above
+    /// it: `None` where the parser refuses the text (there is no tree-sitter fallback for a fragment), `Some(Err)`
+    /// where the tape cannot be made.
+    fn parse_from(&self, _grammar: &Grammar, _source: &str, _start: &str, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
 
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
@@ -331,10 +353,27 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
     let _ = ROUTER.set(Router { registered, chosen });
 }
 
+/// `parser`'s documents of `source` (`TreeParser::parse`), with the programs a dialect that embeds others holds, built
+/// over the parser's tape (`embed::host` reads it in place), unless the parser builds them itself: a file that embeds
+/// code is read by its lean parser too. Every caller of a dialect's own parser reads a file through it.
+pub fn parse_own(parser: &dyn TreeParser, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    let parsed = parser.parse(grammar, source, budget)?;
+    if parser.embeds_itself() || grammar.lang.embeds().is_empty() {
+        return Some(parsed);
+    }
+    Some(parsed.and_then(|image| FileImage::embedding(image.primary, grammar, source, budget).map_err(TemplateError::Encode)))
+}
+
 /// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     let router = ROUTER.get()?;
     router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// The node kinds `dialect`'s hand-written parser parses a fragment from (decision 0466): none for a dialect only
+/// tree-sitter parses.
+pub fn starts(dialect: GrammarDialect) -> &'static [&'static str] {
+    tree_parser(dialect).map_or(&[], |p| p.starts())
 }
 
 /// Every registered implementation, in registration order, and whether the router took it.
@@ -391,7 +430,7 @@ pub fn stored_presence(bytes: &[u8], tag: u8) -> Option<StoredPresence<'_>> {
 }
 
 /// The kind a presence records for a node of kind `kind`: its own, an ERROR node's `ERROR_CODE` (the tape's folded
-/// code, decision 0426 §4). The kernels' `presence_kind`.
+/// code, decision 0434 §4). The kernels' `presence_kind`.
 pub fn presence_kind(kind: u16) -> u16 {
     if kind == ERROR_SYMBOL { ERROR_CODE } else { kind }
 }
@@ -402,7 +441,7 @@ pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
 /// A tape as held, in one format.
 #[derive(Clone)]
 pub enum Held {
-    F15(Columns15),
+    F15(Box<Columns15>),
     F16(Arc<rerail_tape_format::f16::Tape16>),
     F16Z(Arc<rerail_tape_format::f16::Tape16Z>),
 }
@@ -579,6 +618,9 @@ pub struct DerivedImage {
     pub(super) host_errors: Arc<Vec<(u32, u32)>>,
     /// Its tree over `text`, in its own dialect.
     pub tape: TapeImage,
+    /// The parent's bytes of the node it stands at, where they are not its text's (`embed::Program::at`: a Python
+    /// string's program stands at the string, around its content); `None`: the innermost node over its text.
+    pub at: Option<(u32, u32)>,
 }
 
 impl DerivedImage {
@@ -630,10 +672,96 @@ impl DerivedImage {
                     .map(|range| (range.start as u32, range.end as u32))
                     .collect(),
             ),
+            at: program.at.map(|at| (at.start as u32, at.end as u32)),
             text: Arc::new(program.text),
             source_map: Arc::new(program.segments),
             tape,
         })
+    }
+
+    /// A stored derived document (`stored`, its tape `tape` read apart), checked as a tape of its own and against
+    /// document `parent` it was derived from (of `parent_dialect`, `parent_len` bytes): an embedding that document's
+    /// dialect has, a tape of that embedding's dialect over its text, a source map and host errors within both texts,
+    /// and the role its map gives it.
+    pub fn checked(stored: &StoredDerived<'_>, parent: u32, parent_dialect: GrammarDialect, parent_len: usize, tape: TapeImage) -> Result<Self, String> {
+        let via = via_of_code(parent_dialect, stored.via).ok_or("unsupported embedding")?;
+        let text = std::str::from_utf8(stored.text)
+            .map_err(|_| "derived document text is not UTF-8")?
+            .to_owned();
+        let dialect = tape.language;
+        if !parent_dialect.embeds().contains(&(via, dialect)) {
+            return Err("a derived document's dialect is not one its parent embeds".into());
+        }
+        if tape.source_len != text.len() {
+            return Err("a derived document's tape is not of its text".into());
+        }
+        let source_map = SegmentMap::read(stored.source_map, text.len(), parent_len)?;
+        if !stored.host_errors.len().is_multiple_of(8) {
+            return Err("truncated derived document host errors".into());
+        }
+        let host_errors = stored
+            .host_errors
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|pair| {
+                let (start, end) = pair.split_at(4);
+                (u32::from_le_bytes(start.try_into().expect("u32 width")), u32::from_le_bytes(end.try_into().expect("u32 width")))
+            })
+            .collect::<Vec<_>>();
+        if host_errors.windows(2).any(|pair| pair[0] > pair[1])
+            || host_errors
+                .iter()
+                .any(|&(start, end)| start > end || end as usize > parent_len)
+        {
+            return Err("noncanonical derived document host errors".into());
+        }
+        let role = DocumentRole::from_code(stored.role)
+            .filter(|&role| role == DocumentRole::derived(&text, &source_map))
+            .ok_or("a derived document's role is not its source map's")?;
+        Ok(DerivedImage {
+            role,
+            via,
+            parent,
+            text: Arc::new(text),
+            source_map: Arc::new(source_map),
+            host_errors: Arc::new(host_errors),
+            tape,
+            at: stored.at.filter(|&(start, end)| start <= end && end as usize <= parent_len),
+        })
+    }
+
+    /// Its tape's grammar id in the store (`file_documents`' tapes): its dialect's tape tag, marked derived (bit 8), with
+    /// a fingerprint of the placeholders its source map omits in the bits above (0 where it omits none). A derived
+    /// tape is its text's tree less those placeholders: the same text under two maps omitting different ones has two
+    /// tapes, and none need be the tape a file of that text parses to.
+    pub fn stored_grammar_id(&self) -> i64 {
+        derived_grammar_id(self.dialect(), &self.omission_bytes())
+    }
+
+    /// Queued for the store with its file's tape (decision 0431 step 6), as `file_documents` keeps it.
+    pub fn queued(&self) -> Result<crate::content_store::QueuedDocument, String> {
+        Ok(crate::content_store::QueuedDocument {
+            parent_ordinal: i64::from(self.parent),
+            role_id: self.role.code(),
+            via_id: via_code(self.via),
+            source: Arc::clone(&self.text),
+            grammar_id: self.stored_grammar_id(),
+            tape: self.tape.to_bytes()?,
+            source_map: self.source_map_bytes(),
+            host_errors: self.host_error_bytes(),
+            at: self.at,
+        })
+    }
+
+    /// Its tape in `format` (`TapeImage::in_format`), of its text.
+    pub fn in_format(self, format: formats::Format) -> Self {
+        DerivedImage { tape: self.tape.in_format(format, self.text.as_bytes()), ..self }
+    }
+
+    /// Where its text stands in its parent's.
+    pub fn source_map(&self) -> &Arc<SegmentMap> {
+        &self.source_map
     }
 
     /// The dialect of its tree.
@@ -678,6 +806,18 @@ impl DerivedImage {
     }
 }
 
+/// The store's grammar id of a derived tape in `dialect` that omits the placeholders `omissions` names
+/// (`DerivedImage::omission_bytes`): see `DerivedImage::stored_grammar_id`.
+pub fn derived_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
+    let fingerprint = if omissions.is_empty() {
+        0
+    } else {
+        let digest: [u8; 32] = Sha256::digest(omissions).into();
+        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
+    };
+    ((fingerprint as i64) << 9) | (1 << 8) | i64::from(crate::code_rule_dsl::language::tape_tag(dialect).expect("a tape tag"))
+}
+
 /// A derived document as the store keeps it (its `file_documents` row, text and tape), before
 /// `FileImage::read` checks it.
 pub struct StoredDerived<'a> {
@@ -689,6 +829,8 @@ pub struct StoredDerived<'a> {
     pub source_map: &'a [u8],
     pub host_errors: &'a [u8],
     pub tape: &'a [u8],
+    /// The parent's bytes it stands at (`DerivedImage::at`).
+    pub at: Option<(u32, u32)>,
 }
 
 impl FileImage {
@@ -753,55 +895,13 @@ impl FileImage {
                     (document.tape.language, document.text.len())
                 }
             };
-            let via = via_of_code(parent_dialect, stored.via).ok_or("unsupported embedding")?;
-            let text = std::str::from_utf8(stored.text)
-                .map_err(|_| "derived document text is not UTF-8")?
-                .to_owned();
             let dialect = stored
                 .tape
                 .get(8)
                 .and_then(|&tag| super::language::from_tape_tag(tag))
                 .ok_or("unsupported derived document language")?;
-            if !parent_dialect.embeds().contains(&(via, dialect)) {
-                return Err("a derived document's dialect is not one its parent embeds".into());
-            }
             let tape = TapeImage::from_bytes(stored.tape, &Grammar::embedded(dialect)?)?;
-            if tape.source_len != text.len() {
-                return Err("a derived document's tape is not of its text".into());
-            }
-            let source_map = SegmentMap::read(stored.source_map, text.len(), parent_len)?;
-            if !stored.host_errors.len().is_multiple_of(8) {
-                return Err("truncated derived document host errors".into());
-            }
-            let host_errors = stored
-                .host_errors
-                .chunks_exact(8)
-                .map(|pair| {
-                    (
-                        u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),
-                        u32::from_le_bytes(pair[4..].try_into().expect("u32 width")),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if host_errors.windows(2).any(|pair| pair[0] > pair[1])
-                || host_errors
-                    .iter()
-                    .any(|&(start, end)| start > end || end as usize > parent_len)
-            {
-                return Err("noncanonical derived document host errors".into());
-            }
-            let role = DocumentRole::from_code(stored.role)
-                .filter(|&role| role == DocumentRole::derived(&text, &source_map))
-                .ok_or("a derived document's role is not its source map's")?;
-            image.derived.push(DerivedImage {
-                role,
-                via,
-                parent,
-                text: Arc::new(text),
-                source_map: Arc::new(source_map),
-                host_errors: Arc::new(host_errors),
-                tape,
-            });
+            image.derived.push(DerivedImage::checked(stored, parent, parent_dialect, parent_len, tape)?);
         }
         Ok(image)
     }
@@ -836,6 +936,7 @@ impl FileImage {
                     source_map,
                     host_errors,
                     tape,
+                    at: document.at,
                 },
             )
             .collect::<Vec<_>>();
@@ -999,7 +1100,7 @@ pub struct Visit {
     pub kind_alias: Option<(String, bool)>,
 }
 
-/// Where the cursor walk writes a tree's nodes, in preorder (decision 0426 §2): format 15's pending nodes
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0434 §2): format 15's pending nodes
 /// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
 pub trait TreeOut {
     /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
@@ -1226,7 +1327,7 @@ impl TapeImage {
     fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         match &self.held {
             Held::F15(c) => self.emit15(c, put),
-            // The tape's home: the tape, and its presence after it (decision 0426 §4, step 6), stored and placed as one.
+            // The tape's home: the tape, and its presence after it (decision 0434 §4, step 6), stored and placed as one.
             Held::F16(t) => {
                 put(t.extent());
                 Ok(())
@@ -1238,7 +1339,7 @@ impl TapeImage {
         }
     }
 
-    /// Whether the tape's home holds its presence (decision 0426 §4, step 6).
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6).
     pub fn has_presence(&self) -> bool {
         match &self.held {
             Held::F15(_) => false,
@@ -1333,7 +1434,7 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Box::new(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() })), language, source_len, source_digest }
     }
 
     /// The tape as held.
@@ -1500,7 +1601,7 @@ impl TapeImage {
                 start = padded(start + column.len());
             }
             let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
-            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
+            return Ok(Self { held: Held::F15(Box::new(c)), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1518,7 +1619,7 @@ impl TapeImage {
         // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
         if let Some(parser) = tree_parser(grammar.lang)
             && !(ALL_TOKENS.get() && grammar.kinds.grammar().is_some())
-            && let Some(parsed) = parser.parse(grammar, source, &budget)
+            && let Some(parsed) = parse_own(parser, grammar, source, &budget)
         {
             return match parsed {
                 Ok(image) => Some(Ok(image)),
@@ -1527,9 +1628,10 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
-        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061).
+        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061), and its embedders the programs
+        // it holds (decision 0495: its JSON objects, regexes and patterns).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
+            return Some(Self::encode_rr(grammar, source, budget).and_then(|image| FileImage::embedding(image, grammar, source, budget)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -1558,6 +1660,24 @@ impl TapeImage {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
         }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
+    }
+
+    /// `source` parsed from the node kind `start` by `grammar`'s hand-written parser (decision 0466): `None` where its
+    /// dialect has no parser that starts there. A text the parser refuses is one `ERROR` node over it (`refused`):
+    /// no tree is made up for it, and a rule's `.on guest_error` sees it where it stands.
+    pub fn parse_from(grammar: &Grammar, source: &str, start: &str, budget: &impl Fn() -> bool) -> Option<Result<FileImage, String>> {
+        let parser = tree_parser(grammar.lang).filter(|p| p.starts().contains(&start))?;
+        let image = parser.parse_from(grammar, source, start, &budget).unwrap_or_else(|| Self::refused(grammar, source, budget));
+        Some(image.map(|image| FileImage::single(image, source)))
+    }
+
+    /// A refused fragment's tape (decision 0466): one `ERROR` node over the text less the blanks at its ends.
+    pub fn refused(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let start = source.len() - source.trim_start().len();
+        let end = source.trim_end().len().max(start);
+        let kf = Code::error(0)?.kf();
+        let node = Pending { kf, parent: None, start: start as u32, length: (end - start) as u32, size: 1, extra: false, error: true, missing: false, kind_alias: None };
+        Self::finish(vec![node], Vec::new(), grammar, source, budget)
     }
 
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
@@ -1619,7 +1739,7 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, None, budget),
+            formats::RrTape::Written(written) => Self::written_16(*written, grammar.lang, source, None, budget),
         }
     }
 
@@ -1668,7 +1788,7 @@ impl TapeImage {
         Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The tape `walk` writes in preorder, in the run's format (decision 0426 §2): by format 16's ops where the run
+    /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops where the run
     /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
     /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
     /// lacks, said once a language), `walk` runs again for format 15.
@@ -1754,7 +1874,7 @@ impl TapeImage {
         let count = code.len() / 2;
         let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
         if count == 0
-            || code.len() % 2 != 0
+            || !code.len().is_multiple_of(2)
             || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
             || size.len() != count * size_width
             || off.len() != count * off_width
@@ -1827,7 +1947,7 @@ impl TapeImage {
                 }
                 None => SENTINEL,
             };
-            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
+            let flags = (u8::from(node.extra) * CODE_EXTRA) | (u8::from(node.error) * CODE_ERROR) | (u8::from(node.missing) * CODE_MISSING);
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {
@@ -2509,6 +2629,29 @@ impl TapeSource {
 }
 
 impl TapeDoc {
+    /// The document over `held`, a tape the facts were read off and checked then (`facts::core`): the same image,
+    /// read in place, with nothing copied or checked again (decision 0353). An embedder that reads the host through
+    /// the scope table reads it so (decision 0470).
+    pub fn over(held: Arc<formats::DocTape>, grammar: Arc<Grammar>, lines: Arc<LineTable>) -> Self {
+        let image = Arc::clone(held.image_arc());
+        let source = Arc::clone(held.source());
+        Self {
+            source_digest: image.source_digest.unwrap_or_default(),
+            points: Arc::new(Points { source: Arc::clone(&source), rows: std::sync::OnceLock::new() }),
+            held,
+            source,
+            grammar,
+            lines,
+            labels: Arc::new(Vec::new()),
+            texts: Arc::default(),
+            guests: Guests::Owned(Arc::new(Vec::new())),
+            host: None,
+            image,
+            digest: Arc::default(),
+            path: None,
+        }
+    }
+
     /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).
@@ -2813,7 +2956,7 @@ impl TapeDoc {
     }
 
     /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
-    /// 0426 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
+    /// 0434 §4), read before any node is: `false` only where the writer saw no node of that kind. An error node's
     /// kind is `ERROR_SYMBOL`, which no presence holds, so it is always possible.
     pub fn may_have_kind(&self, kind: u16) -> bool {
         use rerail_tape_format::tape::Tape;
@@ -2840,7 +2983,7 @@ impl TapeDoc {
         });
     }
 
-    /// Whether the tape's home holds its presence (decision 0426 §4, step 6): a format 16 or 16z writer's.
+    /// Whether the tape's home holds its presence (decision 0434 §4, step 6): a format 16 or 16z writer's.
     pub fn has_presence(&self) -> bool {
         self.image.has_presence()
     }
@@ -3213,28 +3356,12 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         let parent = self.up();
         (parent != NONE).then(|| self.at(parent, UNKNOWN))
     }
-    /// The parent, then (where asked further) the rest of the path, from one descent from the root
-    /// (`Tape::path`): each ancestor with its own parent known, so a climb reads no parent.
+    /// The parent, then its parent, and so on: a parent read each, at most `K - 1` sibling steps in format 16. A
+    /// climb mostly stops a few levels up (the nearest function or class), where a descent from the root
+    /// (`Tape::path`) read every sibling before the path at each level: in a module of hundreds of statements, the
+    /// reference graph's climbs from its parameters were a sixth of its time (0465, Q334).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
-        let first = self.parent();
-        let me = *self;
-        let mut path: Option<Vec<usize>> = None;
-        let mut given = 0usize;
-        std::iter::from_fn(move || {
-            if given == 0 {
-                given = 1;
-                return first;
-            }
-            let path = path.get_or_insert_with(|| {
-                read!("parent");
-                let mut path = Vec::new();
-                me.tape.path(me.index as usize, &mut path);
-                path
-            });
-            let at = path.len().checked_sub(1 + given)?;
-            given += 1;
-            Some(me.at(path[at] as u32, if at == 0 { NONE } else { path[at - 1] as u32 }))
-        })
+        std::iter::successors(self.parent(), Self::parent)
     }
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
@@ -3315,7 +3442,9 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn range(&self) -> Range<usize> {
         read!("span");
         read_at!("tape span", self.index);
-        self.start() as usize..self.end() as usize
+        // The end from the start in hand (format 16: the start plus the length), not a second search for the start.
+        let start = self.tape.start(self.index as usize);
+        start as usize..self.tape.end_with_start(self.index as usize, start) as usize
     }
     fn start_pos(&self) -> Position {
         read!("points");

@@ -1,5 +1,4 @@
 .policy "ruff-pie810-multiple-starts-ends-with" revision 1
-.guests off
 .description "Pass a tuple to one startswith() or endswith() call instead of or-ing several calls on the same string."
 .language python
 .mode steer

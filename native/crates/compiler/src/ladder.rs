@@ -1,18 +1,12 @@
-//! The Bitlex ladder's checks (the engine's tests and this crate's use them): thirteen languages, from one keyword to a data language with nested
-//! records, lists, texts, escapes, numbers and two kinds of comment, a step at a time. Each is
-//! parsed by its Bitlex file alone (`bitlex_ladder/`), with no Rust between the bytes and the
-//! nodes.
+//! The checks of a Bitlex grammar against the reference (the engine's tests and this crate's use them): JSON's
+//! grammars (`json_parser/`: `json-rfc`, `jsonc`, the token loop's `json` and `json-simdjson`), and any other grammar
+//! given (`.rr`'s, Kotlin's, the C directives'). Each is parsed by its Bitlex file alone, with no Rust between the
+//! bytes and the nodes.
 //!
-//! The languages are made up, so that no step is a known format: records are `< >`, lists
-//! `( )`, items are separated by `;`, an entry is `#key# = value`, texts are between `#`, a caret
-//! escapes, the booleans are `vrai` and `fausse`, nothing is `nul`, a number has a tilde for minus
-//! and a decimal comma (`~3,14e~2`), and comments are `-- …` and `{- … -}`.
+//! No grammar's test code knows its language: the documents are drawn from the grammar's own tree grammar, its
+//! tokens' keywords and checks, and then mutated a byte at a time.
 //!
-//! Each step adds one construct to the one before. No step's test code knows its language: the
-//! documents are drawn from the step's own tree grammar, its tokens' keywords and checks, and
-//! then mutated a byte at a time.
-//!
-//! For each step and document, the same nodes (or the same refusal, where the file goes to
+//! For each grammar and document, the same nodes (or the same refusal, where the file goes to
 //! tree-sitter) from:
 //!
 //! 1. the reference: the evaluator and tree parser of `tools/bitlex`, which run Bitlex without
@@ -22,7 +16,7 @@
 //!    reading tier 1's buffers as written.
 //!
 //! Tier 1 on Cranelift and on Metal (generated MSL) equals its interpreter bit for bit. And each
-//! step has the shape the compiler promises: tier 1's body has no branch but the loop's and the
+//! grammar has the shape the compiler promises: tier 1's body has no branch but the loop's and the
 //! extracts' flattening (it is branchless per block), and tier 2 has one loop, over the tokens
 //! (and one over 64-byte blocks inside each `check`); neither calls anything.
 
@@ -83,37 +77,86 @@ impl Ids {
     }
 }
 
-/// The ladder's directory (`bitlex_ladder/` beside this crate's `src/`), found as the program runs: above the program,
+/// JSON's grammars' directory (`json_parser/`, beside this crate), found as the program runs: above the program,
 /// `CARGO_MANIFEST_DIR` or the working directory. Not written into the build (decision 0224): with its checkout's path
 /// in, this crate and every crate above it were a different crate in every checkout, for every profile.
 pub fn dir() -> String {
-    let ladder = std::path::Path::new(file!()).parent().and_then(std::path::Path::parent).expect("src/ladder.rs").join("bitlex_ladder");
+    let crates = std::path::Path::new(file!()).ancestors().nth(3).expect("crates/compiler/src/ladder.rs");
+    let json = crates.join("json_parser");
     let starts = [std::env::current_exe().ok(), std::env::var_os("CARGO_MANIFEST_DIR").map(Into::into), std::env::current_dir().ok()];
     starts
         .into_iter()
         .flatten()
-        .find_map(|start| start.ancestors().map(|a| a.join(&ladder)).find(|d| d.is_dir()))
-        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", ladder.display()))
+        .find_map(|start| start.ancestors().map(|a| a.join(&json)).find(|d| d.is_dir()))
+        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", json.display()))
         .to_string_lossy()
         .into_owned()
 }
 
-/// The ladder's files, in order.
-pub fn steps() -> Vec<(String, String)> {
-    steps_in(&dir())
+/// A grammar whose gap mark (`semi`) is read from the blank run before each token, with two
+/// comment kinds as extras (`ladder_tests::a_gap_mark_read_from_the_blanks`): each extra keeps
+/// the blank marks of its own gap (`Records::extra`). The Metal tests run it too.
+pub const BLANKS_STEP: &str = r#"lexer t
+class ws        = ' ' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class dq        = '"'
+class word      = 'a'..'z'
+class punct     = '(' ')' ';'
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+  str   = dq .. dq
+}
+mask code       = ~hidden & ~o_line & ~o_block & ~o_str
+mask last_byte  = ~next(~empty)
+error "a comment or a string open at the end of the file" by tokens when (f_block | f_str) & last_byte
+mask w          = code & word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token string    = start o_str read str
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { "k" }
+keywords punct { "(" ")" ";" } required
+skip ws
+mark semi       = lf & code unless after ";", end, ends
+tree t {
+  node source_file whole = (statement (semi | ';'))*
+  choice statement nested = call | simple_identifier | string
+  node call             = 'k' '(' [simple_identifier | string] ')'
+  hidden semi
+  extra line_comment multiline_comment
+}
+"#;
+
+/// A text of `BLANKS_STEP` whose comments lie after a line break, one after another too, and
+/// on their token's line: semi's bits of its records are 0, 0, 1, 1, 0, 1.
+pub const BLANKS_TEXT: &[u8] = b"a // x\n// y\n/* z */ /* w */\nb\n";
+
+/// JSON's two reference forms, by name: `json-rfc` (RFC 8259, as simdjson accepts it) and `jsonc` (with comments, as
+/// tree-sitter-json parses it). The token loop's forms in `dir()` (`json`, `json-simdjson`) have their own shape and are
+/// checked by `rerail_parser_tests::json`.
+pub fn grammars() -> Vec<(String, String)> {
+    grammars_in(&dir()).into_iter().filter(|(n, _)| n == "json-rfc" || n == "jsonc").collect()
 }
 
-/// The steps of a ladder in `dir`, in order: its `.bitlex` files (not those of its
-/// subdirectories, which are other ladders).
-pub fn steps_in(dir: &str) -> Vec<(String, String)> {
+/// The grammars in `dir`, by name: its `.bitlex` files.
+pub fn grammars_in(dir: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = std::fs::read_dir(dir)
-        .expect("the ladder's directory")
+        .expect("the grammars' directory")
         .map(|e| e.expect("an entry").path())
         .filter(|p| p.extension().is_some_and(|x| x == "bitlex"))
         .map(|p| (p.file_stem().unwrap().to_string_lossy().into_owned(), std::fs::read_to_string(&p).expect("reads")))
         .collect();
     out.sort();
-    // `RERAIL_LADDER`: only the steps whose names hold it.
+    // `RERAIL_LADDER`: only the grammars whose names hold it.
     let only = std::env::var("RERAIL_LADDER").ok();
     out.retain(|(n, _)| only.as_deref().is_none_or(|o| n.contains(o)));
     out
@@ -477,17 +520,37 @@ pub struct Compiled {
     pub program: Words,
     pub native: Structure,
     pub parser: crate::native_cpu_stream::Parser,
+    /// The program's text, as the assembler read it.
+    pub text: String,
+    /// Tier 2's state machine as text (`grammar::text`).
+    pub machine: String,
 }
 
 pub fn compile_step(name: &str, source: &str) -> Compiled {
+    compile_step_shaped(name, source, crate::bitlex_masks::Shape::Auto)
+}
+
+/// `compile_step` with tier 2's shape: `Shape::Rules` makes the rules calls.
+pub fn compile_step_shaped(name: &str, source: &str, shape: crate::bitlex_masks::Shape) -> Compiled {
+    // `RERAIL_STEP_TIMES`: each phase's time.
+    let times = std::env::var_os("RERAIL_STEP_TIMES").is_some();
+    let (mut t0, mut c0) = (std::time::Instant::now(), crate::native_cpu_block::thread_cpu());
+    let mut phase = |what: &str| {
+        let c = crate::native_cpu_block::thread_cpu();
+        if times {
+            eprintln!("{name}: {what} {:.2?} wall, {:.2}s CPU", t0.elapsed(), c - c0);
+        }
+        (t0, c0) = (std::time::Instant::now(), c);
+    };
     let stmts = parse(source).unwrap_or_else(|e| panic!("{name}: parses: {e}"));
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
         let field = |n: &str| Some(ids.of(&format!("field {n}")));
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
-        crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
+        crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
+    phase("bitlex compile");
     let text = compiled.text();
     // `RERAIL_LADDER_DUMP`: the program as text, for a step whose name holds it.
     if std::env::var("RERAIL_LADDER_DUMP").is_ok_and(|d| name.contains(&d)) {
@@ -495,8 +558,21 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
     }
     let program = crate::rir_asm::assemble(&text).unwrap_or_else(|e| panic!("{name}: assembles: {e}\n{text}"));
     let native = crate::native_ir::lower(&program, 0, 0).unwrap_or_else(|e| panic!("{name}: lowers: {e:?}"));
+    phase("assemble and lower");
     let parser = crate::native_cpu_stream::Parser::new(&native).unwrap_or_else(|e| panic!("{name}: Cranelift refuses: {e:?}"));
-    Compiled { stmts, ids, program, native, parser }
+    phase("Cranelift (tier 1 and tier 2)");
+    let machine = compiled.machine.clone();
+    Compiled { stmts, ids, program, native, parser, text, machine }
+}
+
+/// Why the compiler refuses `source` in tier 2's `shape`; `None` where it compiles.
+pub fn compile_error_shaped(source: &str, shape: crate::bitlex_masks::Shape) -> Option<String> {
+    let stmts = parse(source).unwrap_or_else(|e| panic!("parses: {e}"));
+    let ids = Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
+    crate::bitlex_masks::compile_shaped(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols), shape).err()
 }
 
 /// Why the compiler refuses `source`; `None` where it compiles.
@@ -593,30 +669,73 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // (`native_cpu_codegen::switch_trees`: its Arm jump tables carry a speculation
     // barrier), so neither tier's machine code has a jump table or a `br`.
     for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
-        // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
-        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
-        let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
+        let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| MachineCode::table(l));
+        let out: Vec<&&str> = rest.iter().filter(|l| MachineCode::out(l)).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
         assert!(tables_asm.is_empty(), "{name}: {tier} has a jump table in Cranelift's code: {tables_asm:?}");
-        assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| l.contains("blr")).collect::<Vec<_>>());
+        let calls: Vec<&str> = asm.lines().filter(|l| MachineCode::own_call(l)).collect();
+        assert_eq!(calls.len(), own, "{name}: {tier} calls out: {calls:?}");
     }
 }
 
-/// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
-/// record pass makes instead (`BlockNative::cpu_unstored`, all of them where the pass has no
-/// block loop: `PassShape::block_loop`), the positions and totals, and the codes but for the
-/// gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_code_bits`). A file both
-/// send to the fallback (a total set) is the same up to its refusal: a refusal leaves the compiled
-/// loop (decision 0177), so its positions are a prefix of the interpreter's, which goes on, and its
-/// codes the interpreter's up to the refusal and none or 0s past it; its outputs are not read.
-/// The outputs not compared are those the CPU stores no rows for (`BlockNative::cpu_unstored`:
-/// the record pass's, a token's last by its gap (decision 0411), and the totals read by no row).
-pub(crate) fn tier1_agrees(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
-    let block = &c.native.block_programs[0];
-    let unmade = block.cpu_unstored();
-    let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
-    let lazy = crate::native_cpu_block::lazy_code_bits(block);
-    let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
+/// The forms of Cranelift's machine code (its VCode text) the ladder's checks read, the target's: a jump table, a
+/// jump or call out of the function, and a call of one of its own outlined functions (through a register, as the
+/// JIT calls them).
+struct MachineCode;
+
+#[cfg(target_arch = "aarch64")]
+impl MachineCode {
+    /// A jump table's sequence is one line, its `br` inside, its entries the function's labels.
+    fn table(l: &str) -> bool {
+        l.contains("jt_entries")
+    }
+    fn out(l: &str) -> bool {
+        l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")
+    }
+    fn own_call(l: &str) -> bool {
+        l.contains("blr")
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl MachineCode {
+    /// A jump table's sequence is one line (`br_table`).
+    fn table(l: &str) -> bool {
+        l.trim_start().starts_with("br_table")
+    }
+    /// A direct call, an indirect jump, or a tail call.
+    fn out(l: &str) -> bool {
+        let l = l.trim_start();
+        (l.starts_with("call ") && !l.starts_with("call    *")) || l.starts_with("jmpq") || l.starts_with("return_call")
+    }
+    fn own_call(l: &str) -> bool {
+        l.trim_start().starts_with("call    *")
+    }
+}
+
+/// A target with no JIT (wasm32) compiles no step, so it has no machine code to read.
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+impl MachineCode {
+    fn table(_: &str) -> bool {
+        false
+    }
+    fn out(_: &str) -> bool {
+        false
+    }
+    fn own_call(_: &str) -> bool {
+        false
+    }
+}
+
+/// Tier 1 compiled agrees with its interpreter on a document, on what the CPU makes: every output
+/// but those in `made` (`tier1_made`), the positions and totals, and the codes but for the bits in
+/// `lazy` (the gap marks tier 2 on the CPU tests itself, `native_cpu_block::lazy_code_bits`). A
+/// file both send to the fallback (a total set) is the same up to its refusal (decision 0177, "A
+/// refusal leaves the loop"): the compiled loop leaves there, so its positions are a prefix of the
+/// interpreter's, which goes on, and its codes the interpreter's up to the refusal and none or 0s
+/// past it.
+pub(crate) fn tier1_agrees(cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun, made: &[usize], lazy: u32) -> bool {
+    let outputs = cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| made.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]);
     let codes = cpu.codes.len() == interpreted.codes.len() && cpu.codes.iter().zip(&interpreted.codes).all(|(a, b)| a & !lazy == b & !lazy);
     let fell = interpreted.totals.iter().any(|&t| t != 0);
     if fell {
@@ -630,11 +749,24 @@ pub(crate) fn tier1_agrees(c: &Compiled, cpu: &crate::block::BlockRun, interpret
     cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && outputs && codes
 }
 
-/// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
+/// The outputs tier 1 on the CPU does not make as the interpreter does: those its record pass
+/// makes and the totals no one reads by their rows (`BlockNative::cpu_unstored`), and all of them
+/// where a pass has no block loop (`PassShape::block_loop`).
+fn tier1_made(c: &Compiled) -> Vec<usize> {
+    let block = &c.native.block_programs[0];
+    let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
+    if !looped {
+        return (0..block.outputs.len()).collect();
+    }
+    let mut made = block.cpu_unstored();
+    made.extend(block.records_made());
+    made
+}
+
+/// A ladder's checks (`every_grammar_parses_as_the_reference`) over `steps`, mutations drawn from
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
-
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -669,16 +801,20 @@ pub fn check_documents(
     let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
     let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+    let (made, lazy) = (tier1_made(c), crate::native_cpu_block::lazy_code_bits(&c.native.block_programs[0]));
     let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(c, b).is_some(), alphabet);
     docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
     for (i, bytes) in docs.into_iter().enumerate() {
         let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
-        let want = reference(&c, &bytes);
+        let want = reference(c, &bytes);
         let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
         let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
         let tier1 = c.parser.tier1.extract(&bytes);
-        if !tier1_agrees(c, &tier1, &run) {
+        if !tier1_agrees(&tier1, &run, &made, lazy) {
+            if std::env::var_os("RERAIL_LADDER_CODES").is_some() {
+                eprintln!("codes interp {:x?}\n      cpu    {:x?}\nstarts {:?}", run.codes, tier1.codes, run.positions.first());
+            }
             return Some(format!("{}: tier 1 compiled differs from its interpreter", show()));
         }
         if interp != want || compiled != want {
@@ -708,7 +844,7 @@ pub fn check_documents(
             None => {
                 fell += 1;
                 if i < before {
-                    *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
+                    *reasons.entry(refusal(c, &bytes)).or_default() += 1;
                 }
             }
         }

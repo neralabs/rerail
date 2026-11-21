@@ -24,6 +24,9 @@ typedef struct UklScan {
 UKL_INLINE uint32_t ukl_tg_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
 {
     uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    // A group of one SIMD group: its sum is the group's.
+    if (groups <= 1u)
+        return ukl_sg_sum(v __UKL_ARGS);
     uint32_t s = ukl_sg_sum(v __UKL_ARGS);
     if (lane == 0u)
         scratch[sg] = s;
@@ -37,15 +40,43 @@ UKL_INLINE uint32_t ukl_tg_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL
     return t;
 }
 
+// The group's bitwise OR (`and_`: AND) of `v`, in every thread: a butterfly in each SIMD group, then the SIMD
+// groups' partials.
+UKL_INLINE uint32_t ukl_tg_bits(uint32_t v, bool and_, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    for (uint32_t m = 1u; m < UKL_SIMD_WIDTH; m <<= 1u) {
+        uint32_t w = ukl_sg_shuffle_xor(v, m __UKL_ARGS);
+        v = and_ ? (v & w) : (v | w);
+    }
+    if (lane == 0u)
+        scratch[sg] = v;
+    ukl_tg_barrier();
+    uint32_t acc = and_ ? ~0u : 0u;
+    for (uint32_t i = 0u; i < groups; i++)
+        acc = and_ ? (acc & scratch[i]) : (acc | scratch[i]);
+    ukl_tg_barrier();
+    return acc;
+}
+UKL_INLINE uint32_t ukl_tg_or(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) { return ukl_tg_bits(v, false, lid, lsz, scratch __UKL_ARGS); }
+UKL_INLINE uint32_t ukl_tg_and(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS) { return ukl_tg_bits(v, true, lid, lsz, scratch __UKL_ARGS); }
+
 // The exclusive scan of `v` over the group's threads in order, and the group's total.
 UKL_INLINE UklScan ukl_tg_exclusive_sum(uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
 {
     uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = lsz / UKL_SIMD_WIDTH;
+    UklScan r;
+    // A group of one SIMD group: its scan is the group's.
+    if (groups <= 1u) {
+        uint32_t t = 0u, inc = ukl_sg_inclusive_sum_total(v, lane, &t __UKL_ARGS);
+        r.exclusive = inc - v;
+        r.total = t;
+        return r;
+    }
     uint32_t inc = ukl_sg_inclusive_sum(v, lane __UKL_ARGS);
     if (lane == UKL_SIMD_WIDTH - 1u)
         scratch[sg] = inc;
     ukl_tg_barrier();
-    UklScan r;
     if (groups <= UKL_SIMD_WIDTH) {
         uint32_t p = lane < groups ? scratch[lane] : 0u;
         uint32_t pin = ukl_sg_inclusive_sum(p, lane __UKL_ARGS);

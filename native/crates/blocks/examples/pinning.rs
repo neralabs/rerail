@@ -6,32 +6,27 @@
 //! cargo run -p rerail-blocks --profile profiling --example pinning
 //! ```
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn main() {
-    use metal::*;
     use rerail_blocks::block::{Block, kind};
-    use std::ffi::c_void;
+    use rerail_device::device::Buffer;
     use std::time::Instant;
 
-    const SRC: &str = "kernel void touch(device uint *p [[buffer(0)]], uint i [[thread_position_in_grid]]) { p[i] += 1; }";
-    let device = Device::system_default().expect("a Metal device");
-    let lib = device.new_library_with_source(SRC, &CompileOptions::new()).unwrap();
-    let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("touch", None).unwrap()).unwrap();
-    let queue = device.new_command_queue();
+    // The kernel in UKL, on the process's device (`RERAIL_GPU` chooses its backend; decision 0440 step C).
+    const SRC: &str = r#"
+#include <ukl/backend.h>
+DEFINE_KERNEL2(pinning, touch, RWBUFFER, uint32_t, p, "[n]", GID0, uint32_t, i, ) { p[i] += 1u; }
+"#;
+    let shared = rerail_gpu::shared::get().expect("a device");
+    let touch = rerail_gpu::kernels::program("pinning.uglykl", SRC).unwrap_or_else(|e| panic!("{e}")).function("touch").unwrap();
     let threads = (1u64 << 20) / 4;
-    let run = |buf: &BufferRef| {
-        let cmd = queue.new_command_buffer();
-        let enc = cmd.new_compute_command_encoder();
-        enc.set_compute_pipeline_state(&pipe);
-        enc.set_buffer(0, Some(buf), 0);
-        enc.dispatch_threads(MTLSize::new(threads, 1, 1), MTLSize::new(256, 1, 1));
-        enc.end_encoding();
-        cmd.commit();
-        cmd.wait_until_completed();
+    let run = |buf: &Buffer| {
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        rerail_gpu::kernels::launch(&q, touch).buffer("p", buf).run(&[threads / 256], &[256]).unwrap_or_else(|e| panic!("{e}"));
+        q.flush().await_().unwrap();
     };
-    let wrap = |b: &Block, len: usize| {
-        device.new_buffer_with_bytes_no_copy(b.base_ptr() as *const c_void, len as u64, MTLResourceOptions::StorageModeShared, None)
-    };
+    // SAFETY: each block outlives the wraps made of it.
+    let wrap = |b: &Block, len: usize| unsafe { rerail_device::device::wrap_host_memory(&shared.device, b.base_ptr(), len) }.expect("a wrap");
     let ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     // Warm the pipeline and the driver once.
     let warm = Block::anon(kind::FACTS, 1 << 20);
@@ -92,5 +87,5 @@ fn main() {
     println!("pool of 4 x 256 MiB slabs, wrapped once, 40 runs recycling them: {:.3} ms a run", ms(t) / 40.0);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn main() {}

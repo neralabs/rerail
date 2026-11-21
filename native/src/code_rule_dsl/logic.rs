@@ -22,6 +22,8 @@ mod test_load {
     static LOAD: extern "C" fn() = load;
 }
 pub mod analysis;
+pub mod bloom;
+pub mod join_size;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]

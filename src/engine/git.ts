@@ -1,11 +1,11 @@
-import type { ChildProcess } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 import { MessageChannel, type MessagePort, receiveMessageOnPort, Worker } from "node:worker_threads";
-import { endProcessTree, execFile, spawn, spawnSync } from "./child-process.js";
+import { endProcessTree, execFile, spawnSync } from "./child-process.js";
+import { runGitSyncBytes, startGit, type GitProcess } from "./git-start.js";
 import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -1034,12 +1034,9 @@ export function runGitBytes(cwd: string, args: readonly string[], options: RunGi
 
 /** One blocking start of the Git at `executable` with `args`, as {@link runGitBytes} makes it. */
 function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
-  const result = spawnSync(executable, args, {
-    timeout: DEFAULT_TIMEOUT_MS,
-    ...options,
-    env: gitEnvironment(executable, options.env),
-  });
-  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr?.toString("utf8") ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  const { env, ...limits } = options;
+  const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
+  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
@@ -1069,7 +1066,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   const { maxBuffer = 1024 * 1024, timeout = DEFAULT_TIMEOUT_MS, signal } = options;
   if (signal?.aborted === true) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
   const { promise, resolve: settle } = Promise.withResolvers<GitResult>();
-  const child = startGit(() => spawn(executable, args, { env: gitEnvironment(executable), stdio: ["pipe", "pipe", "pipe"] }));
+  const child = startOrError(() => startGit(executable, args, gitEnvironment(executable), "pipe"));
   if (child instanceof Error) return { status: null, stdout: "", stderr: "", error: child };
   const printed = { stdout: [] as string[], stderr: [] as string[] };
   let failure: Error | undefined;
@@ -1102,9 +1099,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -1143,6 +1149,11 @@ export class GitReads {
     };
     running.then(forget, forget);
     return running;
+  }
+
+  /** Whether {@link stop} was called: a read starts no Git from then on. */
+  get stopped(): boolean {
+    return this.#stopping.signal.aborted;
   }
 
   /** Kills every read still running and settles once the Git each started has exited. */
@@ -1200,7 +1211,7 @@ async function startedWithin<T>(executable: string, limits: ReadLimits, start: (
  * EFTYPE for a git.exe that is not a program, such as one an installer is still writing, which a look for Git can find.
  * A call it ends so answers as one whose Git could not start, and only ENOENT looks for Git again.
  */
-function startGit<T extends ChildProcess>(start: () => T): T | Error {
+function startOrError<T extends GitProcess>(start: () => T): T | Error {
   try {
     return start();
   } catch (error) {
@@ -1218,7 +1229,7 @@ function startThrew(error: unknown): error is Error {
  * Whether the start of `child` found no program at its path ({@link programMissing}), as its `error` event tells; asked
  * once the read has settled.
  */
-function startMissing(child: ChildProcess): () => boolean {
+function startMissing(child: GitProcess): () => boolean {
   let missing = false;
   child.once("error", error => {
     missing = programMissing(error);
@@ -1227,7 +1238,7 @@ function startMissing(child: ChildProcess): () => boolean {
 }
 
 /** Resolves once `child` has exited, or at once when it never started. */
-async function exited(child: ChildProcess): Promise<void> {
+async function exited(child: GitProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   child.once("exit", () => settle());
@@ -1270,10 +1281,7 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
   const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["pipe", "pipe", "ignore"],
-    }));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: { ended: "failed" }, missing: false };
     const missing = startMissing(child);
     const printed = gitPrinted(child, maxBuffer);
@@ -1296,7 +1304,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
  * ({@link endPastMaxBuffer}). Answers that text for the `status` Git exited with: only for 0, and only within
  * `maxBuffer`.
  */
-function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | null) => string | undefined {
+function gitPrinted(child: GitProcess, maxBuffer: number): (status: number | null) => string | undefined {
   const chunks: string[] = [];
   let bytes = 0;
   child.stdout?.setEncoding("utf8");
@@ -1309,7 +1317,7 @@ function gitPrinted(child: ChildProcess, maxBuffer: number): (status: number | n
 }
 
 /** Ends a Git that printed more than its read takes: closes its output, then sends it SIGTERM. */
-function endPastMaxBuffer(child: ChildProcess): void {
+function endPastMaxBuffer(child: GitProcess): void {
   child.stdout?.destroy();
   child.kill();
 }
@@ -1482,23 +1490,39 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1531,6 +1555,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
@@ -1611,7 +1638,7 @@ function timeLimit(limitMs: number): (progress: Readonly<ReadProgress>) => boole
 }
 
 /** What `child`'s read has had so far ({@link ReadProgress}), kept up to date. */
-function readProgress(child: ChildProcess): Readonly<ReadProgress> {
+function readProgress(child: GitProcess): Readonly<ReadProgress> {
   const progress: ReadProgress = { ends: 0 };
   const ended = (): void => {
     progress.ends += 1;
@@ -1626,7 +1653,7 @@ function readProgress(child: ChildProcess): Readonly<ReadProgress> {
  * looks one loop turn after each tick: after a stall, Node runs its timers before it reads what a Git that finished
  * during the stall printed and handles its exit, and the look sees both.
  */
-function lookPastTimeLimit(child: ChildProcess, limitMs: number, end: () => void): () => void {
+function lookPastTimeLimit(child: GitProcess, limitMs: number, end: () => void): () => void {
   const tickMs = Math.min(TIME_LIMIT_TICK_MS, limitMs);
   const mayGoOn = timeLimit(limitMs);
   const progress = readProgress(child);
@@ -1664,7 +1691,7 @@ interface ReadLimits {
  * much of it the event loop stalled, and a read past it goes on only once more after Git exited or its output ended
  * ({@link timeLimit}). `settle` is told whether `timeoutMs` or `signal` ended the read.
  */
-function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
+function settleWhenDone(child: GitProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
     stopLooking();
@@ -1714,10 +1741,7 @@ interface GitStream extends GitReadOptions {
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
   await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
-    const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
-      env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["pipe", "pipe", "ignore"],
-    }));
+    const child = startOrError(() => startGit(executable, [...SAFE_CONFIG, "-C", cwd, ...args], { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" }, "ignore"));
     if (child instanceof Error) return { answer: undefined, missing: false };
     const missing = startMissing(child);
     child.stdout.on("data", stream.onData);

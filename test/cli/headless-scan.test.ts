@@ -158,7 +158,7 @@ Seen(@place("git",1), oid) :- git_revision(r, "HEAD", oid), git_revision(r, ":a.
       const packDirectory = join(root, ".git", "objects", "pack");
       const earlier = new Date("2020-01-01T00:00:00Z");
       utimesSync(packDirectory, earlier, earlier);
-      const rows = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "reopened.sqlite"), "", undefined, undefined, pinned));
+      const rows = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store: join(home, "reopened.sqlite"), output: "" }, undefined, pinned));
       expect(rows[0].diagnostics.map((row: { message: string }) => row.message)).toEqual([head]);
       expect(existsSync(join(other, ".git", "rerail-repository-id"))).toBe(false);
     } finally { vi.unstubAllEnvs(); }
@@ -1132,7 +1132,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     writeFileSync(bad, '#include "core.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
     writeFileSync(metadata, '#include "git.rerail"\n.policy "metadata" revision 1\n.violation V(at:span) "tree"\nV(@place("git",1)) :- git_source_tree(_,_).\n');
     const evaluate = async (files: string[], view?: InstanceType<typeof engine.GitRevisionSource>) =>
-      JSON.parse(await engine.scanRrPoliciesAsync(files, root, store, "", undefined, undefined, view));
+      JSON.parse(await engine.scanRrPoliciesAsync({ paths: files, root, store, output: "" }, undefined, view));
     const manifests = (scope: string) => queryContentStore(store, "SELECT manifest_id FROM analysis_scope_manifest WHERE scope=? ORDER BY manifest_id", [scope]);
     const runs = (scope: string) => queryContentStore(store, "SELECT directory,tree,git_commit FROM analysis_scope_run WHERE scope=? ORDER BY acquisition", [scope]);
     for (const historical of [true, false]) {
@@ -1187,9 +1187,7 @@ Call(n) :- kind(n, "call").
     const store = join(home, "content.sqlite");
     let sequence = 0;
     const evaluate = async (): Promise<string[]> => {
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync(
-        [policy], root, store, join(home, `output-${sequence++}`), undefined, undefined, source,
-      ));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: join(home, `output-${sequence++}`) }, undefined, source));
       return report.diagnostics.map((finding: { path: string }) => finding.path).sort();
     };
     const corrupt = (revision: string, bad: string) => {
@@ -1559,7 +1557,7 @@ Seen(@place("git",1),e,"error") :- git_revision_error(_,e,_).
         } else { expect(select, e).toThrow(); }
         if (e.startsWith("@")) messages.push(e + " " + (result.status === 0 ? result.stdout.trim() : "error"));
       }
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([file], root, join(home, "store.sqlite"), "", undefined, undefined, pinned));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [file], root, store: join(home, "store.sqlite"), output: "" }, undefined, pinned));
       expect(report.error).toBeUndefined();
       expect(report.diagnostics.map((d: {message: string}) => d.message).sort()).toEqual(messages.sort());
     };
@@ -1825,7 +1823,7 @@ File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
     expect(report.status).toBe("failed");
     const engine = loadNativeBinding();
     const view = new engine.GitRevisionSource(root, revision, "names");
-    const nativeReports = JSON.parse(await engine.scanRrPoliciesAsync([rr, parse], root, ":memory:", "", undefined, undefined, view));
+    const nativeReports = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [rr, parse], root, store: ":memory:", output: "" }, undefined, view));
     const nativeFailures = view.sourceFailures();
     for (const parent of ["", directory]) {
       const prefix = parent && parent + "/";
@@ -2153,7 +2151,7 @@ process.stdout.write(JSON.stringify(visited));`,
     expect(existsSync(unrelated)).toBe(false);
   }, 30_000);
 
-  // Decision 0494: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
+  // Decision 0547: a release of a scope a scan holds fails until the scan has finished; retried, it removes the run.
   it("refuses a release between evaluation and publication, and the retried release removes the published run", async () => {
     const root = checkout(), home = root + "-home", databasePath = join(home, "rerail.sqlite"), store = join(home, "scope.sqlite");
     const engine = loadNativeBinding(), prototype = engine.AnalysisScopeRun.prototype, finish = prototype.finish;
@@ -2201,7 +2199,7 @@ Seen(@place("git",1), "unexpected run") :- analysis_scope_run(_,_).
 `);
       const pending = new engine.AnalysisScopeRun(store, "pending-only", false, "unpublished", 0);
       const read = async () => {
-        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([query], root, store, "", pending, undefined, view));
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [query], root, store, output: "" }, pending, view));
         expect(report.error).toBeUndefined();
         return (report.diagnostics as { message: string }[]).map(row => row.message).sort();
       };
@@ -2277,7 +2275,7 @@ Seen(@place("git",1),"view",v) :- git_root_view(_,v).
 git_revision_request(r,"HEAD") :- git_root_repo(r).
 Seen(@place("git",1),c) :- git_revision(_,"HEAD",c).
 `);
-    const run = async () => JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "store.sqlite"), "", undefined, undefined, view))[0];
+    const run = async () => JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store: join(home, "store.sqlite"), output: "" }, undefined, view))[0];
     git(root, "commit", "--allow-empty", "-qm", "same checkout, new HEAD");
     expect((await run()).diagnostics.map((d: {message: string}) => d.message)).toEqual([git(root, "rev-parse", "HEAD")]);
     git(other, "commit", "--allow-empty", "-qm", "replacement HEAD");
@@ -2338,7 +2336,7 @@ Seen(@place("git",1),c) :- git_root_repo(r), analysis_named_scope("readonly",s),
       const producer = join(home, "producer.rerail"), query = join(home, "history.rerail");
       writeFileSync(producer, '#include "git.rerail"\n.policy "source" revision 1\n.violation Seen(at: span, c: symbol) "{c}"\nSeen(@place("git",1), c) :- git_source_commit(_, c).\n');
       const run = new engine.AnalysisScopeRun(store, "release", false, "native", 0);
-      const evaluate = (analysis: typeof run, source: typeof view) => engine.scanRrPoliciesAsync([producer], root, store, "", analysis, undefined, source);
+      const evaluate = (analysis: typeof run, source: typeof view) => engine.scanRrPoliciesAsync({ paths: [producer], root, store, output: "" }, analysis, source);
       expect(JSON.parse(await evaluate(run, view))[0].diagnostics[0].message).toBe(head);
       expect(() => evaluate(run, bareTree)).toThrow(/selected source/u);
       run.finish(true);
@@ -2359,7 +2357,7 @@ Seen(@place("git",1), id, "commit", c) :- analysis_run_commit(r,repo,c), git_roo
 Seen(@place("git",1), id, "snapshot", s) :- analysis_run_snapshot(r,s), analysis_run_scan_id(r,id).
 `);
       const read = async () => {
-        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([query], root, store, "", undefined, undefined, view));
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [query], root, store, output: "" }, undefined, view));
         expect(report.error).toBeUndefined();
         return (report.diagnostics as { message: string }[]).map(d => d.message);
       };
@@ -2998,7 +2996,7 @@ if (phase === "after-store-ack") {
     const binding = loadNativeBinding();
     const run = binding.scanRrPoliciesAsync;
     const failure = vi.spyOn(binding, "scanRrPoliciesAsync").mockImplementation(async (...args) => {
-      expect(args[2]).toBe(store);
+      expect(args[0].store).toBe(store);
       renameSync(cache, cache + ".saved");
       try {
         mkdirSync(cache);
@@ -3151,7 +3149,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     let seq = 0;
     const read = async (source: ReturnType<typeof open>, language: string) => {
       source.setSourceLanguages(JSON.stringify({ names: {}, suffixes: { ".py": language } }));
-      const [result] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, join(home, "lang.sqlite"), join(home, String(++seq)), undefined, undefined, source));
+      const [result] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store: join(home, "lang.sqlite"), output: join(home, String(++seq)) }, undefined, source));
       return result.diagnostics.map((row: { message: string }) => row.message);
     };
     const view = open();
@@ -3173,12 +3171,12 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       const policy = join(home, name + ".rerail");
       writeFileSync(policy, `#include "git.rerail"\n.policy "${name}" revision 1\n.violation Seen(at: span) "${name}"\nSeen(@place("git",1)) :- git_source_tree(_, _).\n`);
       const run = new engine.AnalysisScopeRun(store, "reuse", false, name, 0);
-      expect(() => engine.scanRrPoliciesAsync([policy], root, join(home, "other.sqlite"), "", run, undefined, source))
+      expect(() => engine.scanRrPoliciesAsync({ paths: [policy], root, store: join(home, "other.sqlite"), output: "" }, run, source))
         .toThrow(/another content store/u);
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, join(home, name), run, undefined, source));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: join(home, name) }, run, source));
       expect(report.diagnostics.map((row: { message: string }) => row.message)).toEqual([name]);
       expect(run.finish(true)).toBeNull();
-      expect(() => engine.scanRrPoliciesAsync([policy], root, store, "", run, undefined, source))
+      expect(() => engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: "" }, run, source))
         .toThrow(/has finished/u);
       const rows = manifests();
       expect(rows.map(row => row.scope)).toEqual(rows.map(() => "named:reuse"));
@@ -3206,9 +3204,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     const source = open(first);
     for (const order of [[first, second], [second, first]]) {
       const catalog = new engine.LoadedRrPolicies(store);
-      const run = async (policySource?: typeof source, spelling = path, loaded = true) => JSON.parse(await engine.scanRrPoliciesAsync(
-        [spelling], root, store, "", undefined, undefined, source, policySource, loaded ? catalog : undefined,
-      ))[0];
+      const run = async (policySource?: typeof source, spelling = path, loaded = true) => JSON.parse(await engine.scanRrPoliciesAsync({ paths: [spelling], root, store, output: "" }, undefined, source, policySource, loaded ? catalog : undefined))[0];
       catalog.load(path, open(order[0]!));
       expect((await run()).diagnostics[0].message).toBe(order[0] === first ? "one" : "two");
       catalog.load("policies//which.rerail", open(order[1]!));
@@ -3250,7 +3246,7 @@ const engine = loadNativeBinding(), view = new engine.GitRevisionSource(root, re
 try {
   const inputs = JSON.parse(catalog.load(policy, view)).programInputs;
   const run = new engine.AnalysisScopeRun(destination, scope, false, "run-" + process.pid, 0);
-  const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, destination, "", run, undefined, view, view, catalog));
+  const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store: destination, output: "" }, run, view, view, catalog));
   if (report.error) throw Error(report.error);
   if (run.finish(true) != null) throw Error("Failed to publish the scope");
   console.log(JSON.stringify({ words: report.diagnostics.map(d => d.message), hashes: inputs.filter(f => f.sha256).map(f => f.sha256) }));
@@ -3307,7 +3303,7 @@ try {
     writeFileSync(include, word("one"));
     const inspect = () => JSON.parse(catalog.load(policy)).programInputs.find((input: { path: string }) => input.path === toNamespacedPath(realpathSync.native(include)))?.sha256;
     const run = async (pinned: boolean) => {
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", undefined, undefined, view, undefined, pinned ? catalog : undefined));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: "" }, undefined, view, undefined, pinned ? catalog : undefined));
       return report.diagnostics.map((row: { message: string }) => row.message);
     };
     expect(inspect()).toBe(createHash("sha256").update(word("one")).digest("hex"));
@@ -3338,7 +3334,7 @@ function inspect(catalog, name) {
   return JSON.parse(catalog.load(policy)).programInputs.find(row => basename(row.path) === "word.rerail" && row.sha256).path;
 }
 async function message(catalog) {
-  const [run] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, "", undefined, undefined, view, undefined, catalog));
+  const [run] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: "" }, undefined, view, undefined, catalog));
   if (run.error) throw Error(run.error);
   return run.diagnostics.map(row => row.message);
 }
@@ -3380,7 +3376,7 @@ Seen(n) :- kind(n, "identifier").
     const evaluate = async (source: typeof view, store: string, publish: boolean, file = policy, scope = "repeat") => {
       const run = new engine.AnalysisScopeRun(store, scope, false, "test", 0);
       const loaded = store === first && file === policy ? inspected : undefined;
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([file], root, store, "", run, undefined, source, undefined, loaded));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [file], root, store, output: "" }, run, source, undefined, loaded));
       expect(report.diagnostics.length).toBeGreaterThan(0);
       expect(run.finish(publish)).toBeNull();
     };
@@ -3425,7 +3421,7 @@ Seen(n) :- kind(n, "identifier").
         const [repo, policy, store] = process.argv.slice(2), engine = loadNativeBinding();
         const view = new engine.GitRevisionSource(repo, "HEAD", "repeat");
         const run = new engine.AnalysisScopeRun(store, "repeat", false, "reopened", 0);
-        const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], repo, store, "", run, undefined, view));
+        const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root: repo, store, output: "" }, run, view));
         if (run.finish(true) != null) throw Error("cache publication failed");
         console.log(report.diagnostics.length);`,
     });
@@ -3687,7 +3683,7 @@ Seen(n) :- kind(n, "identifier").
     writeFileSync(policy, '#include "git.rerail"\n.policy "tracked" revision 1\n.violation Value(at: span, v: number) "{v}"\nValue(@place("git",1), v) :- git_root_repo(_), v = @git_tracked("marked").\n');
     const engine = loadNativeBinding();
     const evaluate = async (root: string, id: number) => {
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, ":memory:", join(first, "out", String(id)), undefined, undefined, undefined));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store: ":memory:", output: join(first, "out", String(id)) }));
       return report.diagnostics.map((row: { message: string }) => row.message);
     };
     for (let batch = 0; batch < 3; batch++) {
@@ -3715,7 +3711,7 @@ Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify
     let sequence = 0;
     const evaluate = async (store: string) => {
       const source = new engine.GitRevisionSource(root, "HEAD", "tracked");
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([policy], root, store, join(home, String(++sequence)), undefined, undefined, source));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [policy], root, store, output: join(home, String(++sequence)) }, undefined, source));
       return report.diagnostics.map((row: { message: string }) => row.message);
     };
     const store = join(home, "tracked.sqlite");
@@ -4316,7 +4312,7 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       source.setSourceLanguages(JSON.stringify({ names: {}, suffixes: JSON.parse(registry) }));
       const store = join(home, "store.sqlite");
       const run = new engine.AnalysisScopeRun(store, "versions", false, index, 0);
-      const [report] = JSON.parse(await engine.scanRrPoliciesAsync([join(home, "policy.rerail")], root, store, join(home, "out-" + index), run, undefined, source));
+      const [report] = JSON.parse(await engine.scanRrPoliciesAsync({ paths: [join(home, "policy.rerail")], root, store, output: join(home, "out-" + index) }, run, source));
       const paths = report.diagnostics.filter(finding => finding.code === "Call").map(finding => finding.path).sort();
       const keys = Object.fromEntries(report.diagnostics.filter(finding => finding.code === "LanguageKey").map(finding => [finding.path, finding.message]));
       console.log(JSON.stringify({ paths, keys, warning: run.finish(true) }));

@@ -1,5 +1,4 @@
 .policy "ruff-ruf017-quadratic-list-summation" revision 1
-.guests off
 .description "Avoid flattening lists by summing them onto an empty list; it is quadratic, so chain them with itertools instead."
 .language python
 .mode steer

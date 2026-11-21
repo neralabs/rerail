@@ -7,7 +7,7 @@
 //! preprocessed at run time for the device's architecture. Either is compiled once per process on the shared device
 //! (`gpu::shared`; randomforest_kernels_metal.rs).
 
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 
 // The copied host sources, each translated to Rust where it sits (upstream paths under `mldb/`).
 #[path = "mldb/utils/fixed_point_accum.rs"]
@@ -75,10 +75,7 @@ pub mod gpu {
 
 /// The process's user + system CPU seconds.
 pub fn process_cpu() -> f64 {
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-    let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
-    s(u.ru_utime) + s(u.ru_stime)
+    rerail_gpu::process_cpu_seconds()
 }
 
 /// Sorts keys and gives each distinct one once, in order (a numeric column's values, `from_column_device`).
@@ -98,7 +95,7 @@ fn distinct_keys(keys: &[i64]) -> Result<Vec<i64>, String> {
     }
     use rayon::prelude::*;
     let mut sorted = keys.to_vec();
-    sorted.par_sort_unstable();
+    rerail_context::on_cores(|| sorted.par_sort_unstable());
     sorted.dedup();
     Ok(sorted)
 }

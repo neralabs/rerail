@@ -1,5 +1,4 @@
 .policy "ruff-up032-f-string" revision 1
-.guests off
 .description "Prefer an f-string over a str.format() call on a string literal; it keeps each value next to its placeholder."
 .language python
 .mode steer

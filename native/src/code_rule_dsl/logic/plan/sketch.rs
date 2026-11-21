@@ -27,18 +27,43 @@ const LEVELS: usize = 32;
 const FORMAT: u8 = 2;
 const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counter and 7 an AMS row, of three");
 
-/// One column's sketches.
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// One column's sketches, in a block (decision 0478 R5, Q338): `words` holds the AMS counters (`D` rows of `W`), then
+/// a page of `M` counters for each level a value reached, in the order they were first reached. `page[level]` is that
+/// level's page (one past it; 0 for none), and `open` the levels holding a count now: a level whose counters all
+/// went back to zero keeps its page, zeroed, but is not open.
+#[derive(Clone)]
 pub struct Sketch {
-    ams: [[i64; W]; D],
-    /// Per level, M counters; a level is allocated when a value first reaches it (most levels stay empty).
-    levels: Vec<Option<Box<[i64; M]>>>,
+    words: crate::code_rule_dsl::facts::rows::BlockVec<i64>,
+    page: [u8; LEVELS],
+    open: u32,
 }
 
 impl Default for Sketch {
     fn default() -> Self {
-        Sketch { ams: [[0; W]; D], levels: vec![None; LEVELS] }
+        let mut words = crate::code_rule_dsl::facts::rows::BlockVec::new();
+        words.resize(D * W, 0);
+        Sketch { words, page: [0; LEVELS], open: 0 }
     }
+}
+
+/// Two sketches are equal when their counters are: the same AMS counters and the same open levels' counts.
+impl PartialEq for Sketch {
+    fn eq(&self, other: &Self) -> bool {
+        self.words[..D * W] == other.words[..D * W]
+            && self.open == other.open
+            && (0..LEVELS).filter(|l| self.open & 1 << l != 0).all(|l| self.level(l) == other.level(l))
+    }
+}
+impl Eq for Sketch {}
+impl std::fmt::Debug for Sketch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sketch").field("ams", &&self.words[..D * W]).field("open", &format_args!("{:#x}", self.open)).finish()
+    }
+}
+
+/// `mix` of a value: the slot an exact count's value hashes to (`statkeep::Exact`).
+pub fn mix_of(v: i64) -> u64 {
+    mix(v as u64)
 }
 
 /// splitmix64: a fixed mixer, so a sketch is the same in every process.
@@ -50,44 +75,63 @@ fn mix(mut x: u64) -> u64 {
 }
 
 impl Sketch {
+    /// Level `level`'s counters, when it holds a count.
+    fn level(&self, level: usize) -> Option<&[i64]> {
+        (self.open & 1 << level != 0).then(|| {
+            let at = D * W + (usize::from(self.page[level]) - 1) * M;
+            &self.words[at..at + M]
+        })
+    }
+    /// Level `level`'s counters to add to, its page made if it has none, and the level open.
+    fn level_mut(&mut self, level: usize) -> &mut [i64] {
+        if self.page[level] == 0 {
+            let pages = (self.words.len() - D * W) / M;
+            self.words.resize(self.words.len() + M, 0);
+            self.page[level] = (pages + 1) as u8;
+        }
+        self.open |= 1 << level;
+        let at = D * W + (usize::from(self.page[level]) - 1) * M;
+        &mut self.words[at..at + M]
+    }
+    /// Level `level` closed if its counters are all zero again.
+    fn settle(&mut self, level: usize) {
+        if self.level(level).is_some_and(|c| c.iter().all(|&x| x == 0)) {
+            self.open &= !(1 << level);
+        }
+    }
+
     /// `n` rows of value `v` in (`n < 0`: taken out).
     pub fn add(&mut self, v: i64, n: i64) {
         // One mix a value: each AMS row's sign and counter from 7 bits of it (bits 0–20), the bitmap's slot from 6
         // more (21–26), and its level from the rest's trailing zeros (format 2; format 1 mixed once a row and once
         // more for the bitmap, 7 mixes a value).
         let h = mix(v as u64);
-        ams_add(&mut self.ams, h, n);
+        ams_add(&mut self.words[..D * W], h, n);
         let level = ((h >> 27).trailing_zeros() as usize).min(LEVELS - 1);
         let slot = ((h >> 21) % M as u64) as usize;
-        let counters = self.levels[level].get_or_insert_with(|| Box::new([0; M]));
-        counters[slot] += n;
-        if n < 0 && counters.iter().all(|&c| c == 0) {
-            self.levels[level] = None;
+        self.level_mut(level)[slot] += n;
+        if n < 0 {
+            self.settle(level);
         }
     }
 
     /// `other`'s rows in too (`sign` −1: out).
     pub(in crate::code_rule_dsl) fn merge(&mut self, other: &Sketch, sign: i64) {
-        for (a, b) in self.ams.iter_mut().zip(&other.ams) {
-            for (x, y) in a.iter_mut().zip(b) {
-                *x += sign * y;
-            }
+        for (x, y) in self.words[..D * W].iter_mut().zip(&other.words[..D * W]) {
+            *x += sign * y;
         }
-        for (level, theirs) in other.levels.iter().enumerate() {
-            let Some(theirs) = theirs else { continue };
-            let ours = self.levels[level].get_or_insert_with(|| Box::new([0; M]));
-            for (x, y) in ours.iter_mut().zip(theirs.iter()) {
+        for level in 0..LEVELS {
+            let Some(theirs) = other.level(level) else { continue };
+            for (x, y) in self.level_mut(level).iter_mut().zip(theirs) {
                 *x += sign * y;
             }
-            if ours.iter().all(|&c| c == 0) {
-                self.levels[level] = None;
-            }
+            self.settle(level);
         }
     }
 
     /// The estimated sum of squared postings.
     pub fn sq(&self) -> f64 {
-        ams_sq(&self.ams)
+        ams_sq(&self.words[..D * W])
     }
 
     /// The estimated distinct values.
@@ -96,7 +140,7 @@ impl Sketch {
         // From the top level down: the union of levels ≥ L, and the lowest L where linear counting still holds.
         let mut best = None;
         for level in (0..LEVELS).rev() {
-            if let Some(c) = &self.levels[level] {
+            if let Some(c) = self.level(level) {
                 for (o, &x) in occupied.iter_mut().zip(c.iter()) {
                     *o |= x != 0;
                 }
@@ -115,7 +159,7 @@ impl Sketch {
 
     /// Bytes this sketch takes stored (`encode`).
     pub fn bytes(&self) -> usize {
-        5 + D * W * 4 + self.levels.iter().flatten().count() * M * 4
+        5 + D * W * 4 + self.open.count_ones() as usize * M * 4
     }
 
     /// The sketch as stored (`stat_total.sketch`): a format byte, the AMS counters, a mask of the occupied levels,
@@ -123,13 +167,12 @@ impl Sketch {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.bytes());
         out.push(FORMAT);
-        for &c in self.ams.iter().flatten() {
+        for &c in &self.words[..D * W] {
             out.extend_from_slice(&(c as i32).to_le_bytes());
         }
-        let mask = self.levels.iter().enumerate().filter(|(_, l)| l.is_some()).fold(0u32, |m, (i, _)| m | 1 << i);
-        out.extend_from_slice(&mask.to_le_bytes());
-        for &c in self.levels.iter().flatten().flat_map(|l| l.iter()) {
-            out.extend_from_slice(&(c as i32).to_le_bytes());
+        out.extend_from_slice(&self.open.to_le_bytes());
+        for c in (0..LEVELS).filter_map(|l| self.level(l)).flatten() {
+            out.extend_from_slice(&(*c as i32).to_le_bytes());
         }
         out
     }
@@ -147,17 +190,15 @@ impl Sketch {
             return None;
         }
         let mut s = Sketch::default();
-        for c in s.ams.iter_mut().flatten() {
+        for c in s.words[..D * W].iter_mut() {
             *c = i64::from(int()?);
         }
         let mask = int()? as u32;
         for level in 0..LEVELS {
             if mask & 1 << level != 0 {
-                let mut l = Box::new([0; M]);
-                for c in l.iter_mut() {
+                for c in s.level_mut(level).iter_mut() {
                     *c = i64::from(int()?);
                 }
-                s.levels[level] = Some(l);
             }
         }
         (at == bytes.len()).then_some(s)
@@ -186,7 +227,7 @@ impl Moments {
     /// `n` rows of value `v` in (`n > 0`).
     pub fn add(&mut self, v: i64, n: i64) {
         let h = mix(v as u64);
-        ams_add(&mut self.ams, h, n);
+        ams_add(self.ams.as_flattened_mut(), h, n);
         // Another mix for the registers, so they share no bits with the AMS sketch's choices.
         let g = mix(h ^ 0x5851_f42d_4c95_7f2d);
         let at = (g >> (64 - HLL_P)) as usize;
@@ -196,7 +237,7 @@ impl Moments {
 
     /// The estimated sum of squared postings.
     pub fn sq(&self) -> f64 {
-        ams_sq(&self.ams)
+        ams_sq(self.ams.as_flattened())
     }
 
     /// The estimated distinct values: HyperLogLog's, by linear counting while registers are empty and it is small.
@@ -211,16 +252,16 @@ impl Moments {
 }
 
 /// `n` rows of the value hashed to `h` into the AMS counters.
-fn ams_add(ams: &mut [[i64; W]; D], h: u64, n: i64) {
-    for (i, row) in ams.iter_mut().enumerate() {
+fn ams_add(ams: &mut [i64], h: u64, n: i64) {
+    for (i, row) in ams.as_chunks_mut::<W>().0.iter_mut().enumerate() {
         let at = (((h >> (i * 7)) >> 1) % W as u64) as usize;
         row[at] += if (h >> (i * 7)) & 1 == 1 { n } else { -n };
     }
 }
 
 /// The AMS counters' estimate of the sum of squared postings: the median row's.
-fn ams_sq(ams: &[[i64; W]; D]) -> f64 {
-    let mut rows: Vec<f64> = ams.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
+fn ams_sq(ams: &[i64]) -> f64 {
+    let mut rows: Vec<f64> = ams.as_chunks::<W>().0.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
     rows.sort_by(f64::total_cmp);
     rows[D / 2]
 }
@@ -250,6 +291,26 @@ pub fn shadow(at: &str, col: &str, rows: i64, ndv: i64, sq: i64, sketch: &Sketch
 #[cfg(test)]
 pub mod tests {
     use super::{Moments, Sketch};
+
+    /// Decision 0478 R5 (Q338): a sketch's counters are one block array, a level's page made where a value first
+    /// reaches it; a level counted out again is closed, so the sketch equals one that never held those rows.
+    #[test]
+    fn a_planner_sketchs_counters_are_one_block_array() {
+        let mut s = Sketch::default();
+        for v in 0..5000 {
+            s.add(v, 2);
+        }
+        assert!(s.words.facts().is_some() && s.open != 0, "its counters in a block");
+        let mut t = s.clone();
+        for v in 5000..5100 {
+            t.add(v, 1);
+        }
+        for v in 5000..5100 {
+            t.add(v, -1);
+        }
+        assert_eq!(t, s, "counted out again, the same sketch");
+        assert_eq!(Sketch::decode(&s.encode()), Some(s));
+    }
 
     /// A column's moments over parts that share values (the corpus's chunks): distinct values counted once,
     /// whichever parts hold them, and the squared postings of each value's total, not of its parts' counts.

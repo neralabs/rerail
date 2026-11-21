@@ -823,10 +823,8 @@ impl Scanner {
                         entry |= CASE_INDENT_FLAG;
                     }
                 }
-                Ok(b'|' | b'&') => {
-                    if !self.after_colon_eol && is_leading_infix_continuation(l) {
-                        return None;
-                    }
+                Ok(b'|' | b'&') if !self.after_colon_eol && is_leading_infix_continuation(l) => {
+                    return None;
                 }
                 _ => {}
             }
@@ -1010,10 +1008,8 @@ impl Scanner {
                         return None;
                     }
                 }
-                Ok(b'm') => {
-                    if scan_word(l, b"match") {
-                        return None;
-                    }
+                Ok(b'm') if scan_word(l, b"match") => {
+                    return None;
                 }
                 _ => {}
             }

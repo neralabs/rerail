@@ -1,5 +1,4 @@
 .policy "ruff-perf403-manual-dict-comprehension" revision 1
-.guests off
 .description "Use a dictionary comprehension or update instead of filling a dict key by key inside a for loop."
 .language python
 .mode steer

@@ -207,10 +207,10 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
 }
 
 /// Whether `rel` names an earlier phase's export (`<phase>__<export>`), or an input the runner binds with the phases'
-/// (Git's, the analysis history's, the references' and the source languages'): shared by every program of a run
+/// (Git's, the analysis history's and the source languages'): shared by every program of a run
 /// (`corpus::combine` does not prefix it).
 pub fn is_phased(rel: &str) -> bool {
-    super::analysis_history::is_input(rel) || super::git::INPUTS.contains(&rel) || super::reference_facts::is_input(rel) || super::source_languages::is_input(rel)
+    super::analysis_history::is_input(rel) || super::git::INPUTS.contains(&rel) || super::source_languages::is_input(rel)
         || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
 

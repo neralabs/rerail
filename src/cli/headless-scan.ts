@@ -5,15 +5,16 @@
  * home's configuration it opens that database as the daemon would, which applies this version's schema to it.)
  *
  * Which rules run:
- * - When the scan's tree declares its packs (`.rerail/packs.json`, in the working tree or at `--rules-ref`), exactly
- *   those packs, fetched or read for this scan (`scan-packs.ts`), and the tree's own rules, on a throwaway database:
- *   the Rerail home's attachments, settings and installed packs are not used, so every machine runs the same rules
- *   for the same commit. `--pack` is then refused.
+ * - When the scan's tree declares its packs (`.rerail/packs.json`, in the working tree or at `--rules-ref`) and no
+ *   `--pack` is given, exactly those packs, fetched or read for this scan (`scan-packs.ts`), with the option values
+ *   the file sets for their rules, and the tree's own rules, on a throwaway database: the Rerail home's attachments,
+ *   settings and installed packs are not used, so every machine runs the same rules for the same commit.
  * - Otherwise the Rerail home's configuration for the checkout, when Rerail is started and set up in it there (packs
- *   attached, approvals, settings), and neither `--pack` nor `--rules-ref` is given.
+ *   attached, approvals, settings), the tree declares no packs, and neither `--pack` nor `--rules-ref` is given.
  * - Otherwise a throwaway database: the checkout's own `.rerail/rules/` (unapproved, so they run in Log), plus each
- *   `--pack` installed in the Rerail home. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git
- *   ref instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
+ *   `--pack` installed in the Rerail home. `--pack` replaces the packs `.rerail/packs.json` declares, which is then not
+ *   read: a scan of experimental packs. With `--rules-ref <ref>` the rules come from `.rerail/rules/` at that Git ref
+ *   instead of the working tree, which the change under review cannot edit. Either way the approval policy is a
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -25,7 +26,8 @@ import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { textRealPath } from "../engine/catalog/checkout-control.js";
 import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
-import type { RrPolicySource, RuleCatalog } from "../engine/catalog/repository-model.js";
+import type { DeclaredRuleConfig } from "../engine/catalog/packs-file/pack-config.js";
+import type { RrPolicySource, RuleCatalog, RuleSetting } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { resolveRrModes, setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
@@ -126,7 +128,7 @@ export interface ScanReport {
   skippedPathDetails?: { path: string; reason: GitPathSkipReason; mode?: number }[];
   /** Null when the scan had something to scan and ran no audit, so no configuration's rules ran: `failures` says why. */
   rulesSource: { kind: "home" } | { kind: "worktree" } | RefRuleSource | { kind: "rr" } | null;
-  /** The rule packs the scan ran, besides the tree's own rules: what `.rerail/packs.json` lists, else the home's. */
+  /** The rule packs the scan ran, besides the tree's own rules: what `.rerail/packs.json` lists, else the home's (its configuration or `--pack`). */
   packs: ScanPack[];
   status: "completed" | "failed";
   rules: ScanRule[];
@@ -372,10 +374,10 @@ function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: reado
  */
 function prepareScanConfiguration(
   database: RerailDatabase, root: string, home: RerailDatabase | undefined, useHome: boolean,
-  packs: readonly ScanPackAttachment[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
-  catalog: RuleCatalog,
+  packs: readonly ScanPackAttachment[], ruleConfigs: readonly DeclaredRuleConfig[], refRules: RefRules | undefined,
+  ruleDocuments: Map<string, RuleDocument> | undefined, catalog: RuleCatalog,
 ): Set<string> {
-  if (!useHome || home === undefined) return setUpThrowawayConfiguration(database, root, home, packs, refRules, ruleDocuments, catalog);
+  if (!useHome || home === undefined) return setUpThrowawayConfiguration(database, root, home, packs, ruleConfigs, refRules, ruleDocuments, catalog);
   copyTables(home, database, CONFIGURATION_TABLES);
   // A copy of a started checkout made with its `.git` has no row: the home finds it by its clone id, but no session
   // recorded it. Recorded here, it runs the home's rules as a session started in it would.
@@ -384,15 +386,16 @@ function prepareScanConfiguration(
 }
 
 /**
- * `root` recorded, started and set up with `packs` and the ref's rules, and the home's approvals: approval is of
- * content, by its digest, so a rule read from a ref, a worktree's rule or a pack from a folder steers here exactly when
- * a person approved that content in the Rerail home, as it would in a session. The ref's rules are stored against
- * `catalog`, the packs the scan runs. Returns the ids of the rules read from the ref.
+ * `root` recorded, started and set up with `packs`, each rule's `ruleConfigs` as its whole-repository `config`
+ * setting, the ref's rules, and the home's approvals: approval is of content, by its digest, so a rule read from a
+ * ref, a worktree's rule or a pack from a folder steers here exactly when a person approved that content in the
+ * Rerail home, as it would in a session. The ref's rules are stored against `catalog`, the packs the scan runs.
+ * Returns the ids of the rules read from the ref.
  */
 function setUpThrowawayConfiguration(
   database: RerailDatabase, root: string, home: RerailDatabase | undefined,
-  packs: readonly ScanPackAttachment[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
-  catalog: RuleCatalog,
+  packs: readonly ScanPackAttachment[], ruleConfigs: readonly DeclaredRuleConfig[], refRules: RefRules | undefined,
+  ruleDocuments: Map<string, RuleDocument> | undefined, catalog: RuleCatalog,
 ): Set<string> {
   const refRuleIds = new Set<string>();
   const { repositoryKey } = recordCheckout(database, root);
@@ -406,7 +409,9 @@ function setUpThrowawayConfiguration(
       libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
     }
   }
-  setUpRepository(database, repositoryKey, { packs: [...packs], rules: libraryRules });
+  const owner = { kind: "repository" as const, repositoryKey };
+  const settings = ruleConfigs.map(({ ruleId, config }): RuleSetting => ({ owner, folder: "", targetKind: "rule", targetId: ruleId, on: null, mode: null, config }));
+  setUpRepository(database, repositoryKey, { packs: [...packs], rules: libraryRules, settings });
   if (refRules !== undefined) {
     // The working tree's own rules are what the change under review may have edited: they do not run.
     setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
@@ -689,7 +694,7 @@ async function scanRrRules(
   loadedRr?: NativeLoadedRrPolicies,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[]; failures: ScanFailure[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync({ paths: inputs, root, store, output, ...(paths === null ? {} : { sourcePaths: paths }) }, analysisRun, source, refPolicy?.rr?.source, loadedRr)) as (RrReport | { error: string; ruleId: string | null })[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
   const failures: ScanFailure[] = [];
@@ -782,7 +787,7 @@ async function scanReport(
   const readConfiguration = () => {
     const useHome = declaredPacks === undefined && home !== undefined && options.rulesRef === undefined && packs.length === 0 && homeIsEligible(home, root);
     const attached = declaredPacks?.attachments ?? packs.map(packId => ({ packId, folder: "" }));
-    const refRuleIds = explicitRr ? new Set<string>() : prepareScanConfiguration(database, root, home, useHome, attached, refRules, options.ruleDocuments, installed);
+    const refRuleIds = explicitRr ? new Set<string>() : prepareScanConfiguration(database, root, home, useHome, attached, declaredPacks?.ruleConfigs ?? [], refRules, options.ruleDocuments, installed);
     return { useHome, refRuleIds, repository: repositoryOf(explicitRr ? home : database, root) };
   };
   const { useHome, refRuleIds, repository } = home === undefined ? readConfiguration() : home.$client.transaction(readConfiguration)();
@@ -896,10 +901,8 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const directory = options.revision === undefined;
   const scanId = randomUUID();
   const { root, requested } = scanRoot(options);
-  const declared = options.rr?.length ? undefined : await declaredPacksOf(root, options.rulesRef);
-  if (declared !== undefined && options.packs.length > 0) {
-    throw new Error(`--pack: this repository lists its packs in ${declared.label}; add ${options.packs.join(", ")} there instead`);
-  }
+  // `--pack` replaces the declared packs: the file is not read, and the scan runs the home's installed version of each.
+  const declared = options.rr?.length || options.packs.length > 0 ? undefined : await declaredPacksOf(root, options.rulesRef);
   const analysisScope: ScanReport["analysisScope"] = options.analysisScope === undefined
     ? { kind: "directory", path: relative(root, requested).split(sep).join("/") || "." }
     : { kind: "named", name: options.analysisScope };

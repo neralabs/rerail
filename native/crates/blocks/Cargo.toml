@@ -15,13 +15,11 @@ libc = "0.2.189"
 rayon = "=1.12.0"
 
 [target.'cfg(windows)'.dependencies]
-# Windows' memory calls for blocks and scratch regions (`windows`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Memory"] }
+# Windows' memory calls and files for blocks and scratch regions (`windows`). `CreateFileMappingW` takes a security
+# attributes argument, so windows-sys declares it only with `Win32_Security`.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-metal = "0.33.0"
-
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # A block's device buffer (`Block::device_buffer`, `Backing::buffer`): the device layer's, on every backend
 # (decision 0440 step B).
 rerail-device = { path = "../../../gpu/device" }
@@ -29,10 +27,13 @@ rerail-device = { path = "../../../gpu/device" }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # The deallocator of a no-copy Metal buffer (examples/deferrable).
 block = "0.1.6"
-# The join kernels' source preprocessed with the relation's reads (`<ukl/reads/relation.h>`) for Metal
-# (examples/paces; decision 0440 §3.3). Above this crate (through the C lexer and the tape crate), so a
-# dev-dependency: the crate itself never preprocesses.
-rerail-ukl = { path = "../ukl" }
+metal = "0.33.0"
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
+# The kernels' launcher (the join of examples/paces, the reads' test): the device layer's programs, which preprocess
+# a source with the relation's reads (`<ukl/reads/relation.h>`; decision 0440 §3.3). Above this crate, so a
+# dev-dependency: the crate itself never compiles or launches a kernel.
+rerail-gpu = { path = "../../../gpu" }
 
 [dev-dependencies]
 rerail-blocks = { path = ".", features = ["test-hooks"] }

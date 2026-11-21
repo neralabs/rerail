@@ -63,7 +63,7 @@ fn function<'s>(source: &'s str, name: &str) -> Vec<&'s str> {
 
 #[test]
 fn the_metal_path_calls_no_host_evaluator() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
+    let dir = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/transducer/packed");
     let mut sources: Vec<(String, String)> = Vec::new();
     for entry in std::fs::read_dir(&dir).expect("the packed directory") {
         let path = entry.expect("an entry").path();

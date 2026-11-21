@@ -49,9 +49,11 @@ import {
   dashboardLink,
   daemonNotRunningMessage,
   lookupDaemon,
+  NOT_HOME_DAEMON_NOTE,
   openInBrowser,
   openDashboard,
   startDaemon,
+  STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -265,7 +267,7 @@ function usage(): string {
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]   rule.rerail: from a Rerail checkout, or with RERAIL_SOURCE_ROOT naming one",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
@@ -474,6 +476,7 @@ function hookHealthLines(home: string): string[] {
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
+    if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
@@ -673,17 +676,20 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** `rerail daemon start [options]` or `rerail daemon stop`, in `home`. */
+async function runDaemonVerb(args: readonly string[], home: string): Promise<number> {
+  const [verb, ...rest] = args;
+  if (verb === "start") return await runDaemonStartCommand(rest, home);
+  if (verb === "stop" && rest.length === 0) {
+    process.stdout.write(STOP_ANSWERS[await stopDaemon(home)]);
+    return 0;
+  }
+  throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
+}
+
 /** The daemon commands need only the launcher home; they never load an activation policy. */
 async function runDaemonCommand(command: string, args: readonly string[], home: string): Promise<number | undefined> {
-  if (command === "daemon") {
-    const [verb, ...rest] = args;
-    if (verb === "start") return await runDaemonStartCommand(rest, home);
-    if (verb === "stop" && rest.length === 0) {
-      process.stdout.write(await stopDaemon(home) === "stopped" ? "Rerail daemon stopped.\n" : "The Rerail daemon is not running.\n");
-      return 0;
-    }
-    throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
-  }
+  if (command === "daemon") return await runDaemonVerb(args, home);
   if (command === "status") return await runStatusCommand(home);
   if (command === "manage") return await runManageCommand(args);
   return undefined;

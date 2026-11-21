@@ -44,7 +44,7 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
     }
 
     /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
-    /// those roots (decision 0424); one read anywhere else, under a negation or with no such join, everywhere.
+    /// those roots (decision 0459); one read anywhere else, under a negation or with no such join, everywhere.
     #[test]
     fn a_matcher_read_only_at_another_matchers_roots_is_bound_there() {
         let src = r#"
@@ -60,11 +60,10 @@ free(w) :- ast(d, w, {"language": "python", "rule": {"kind": "call"}}).
 mixed(w) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
 unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
 "#;
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        let matchers = lower(&mut prog);
-        let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
         // The run reads the rules from the prepared program's image (decision 0281, step R).
-        let (image, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).unwrap();
+        let (image, matchers) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(prog).unwrap();
+        let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
         let demand = demanded_by_roots(&image, &matchers);
         let word = at("identifier");
         assert_eq!(demand[at("function_definition")], Some(vec![word]), "inner's node is ident's, which only the identifier matcher fills");
@@ -181,7 +180,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         let policy = root.with_extension("policy.rerail");
         let rule = r#"{"language": "python", "rule": {"all": [{"kind": "call"}, {"any": [{"filePath": {"regex": "^a/"}}, {"has": {"field": "function", "regex": "^zz"}}]}]}}"#;
         std::fs::write(&policy, format!(".language python\n.violation hit(at: node) code \"X1\" \"hit\"\nhit(n) :- ast(d, n, {rule}).\n")).unwrap();
-        let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join("out"), &serde_json::Value::Null).unwrap();
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&policy);
         let mut hits: Vec<(String, i64)> = report["diagnostics"]

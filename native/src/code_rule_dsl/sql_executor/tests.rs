@@ -323,10 +323,7 @@ fn corpus_sql_mode_matches_native_rule_execution() {
             &root,
             None,
             &dir.path().join(name),
-            modes,
-            false,
-            1024,
-            &[],
+            &crate::code_rule_dsl::tools::LogicRun { modes, metal: false, chunk_nodes: 1024, settings: &[] },
         )
         .unwrap();
         if modes.is_empty() {
