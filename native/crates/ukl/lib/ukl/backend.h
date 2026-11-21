@@ -34,6 +34,12 @@
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
+#endif
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
@@ -104,6 +110,12 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
 #endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __device__ __noinline__
+#endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -159,6 +171,12 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #define UKL_INLINE static inline
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
+#endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
 #endif
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
@@ -260,6 +278,12 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #define UKL_INLINE static inline
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
+#endif
+// A function compiled once and called, however many sites call it: a grid-wide operation (`grid.h`: its barriers
+// cost far more than a call), or a large body at many sites (a kernel's tape reads: 12 to 46 KB each inlined, at
+// ~600 sites they made the preprocessor's setup kernel 14 MB of code and its Metal back end's compile minutes).
+#ifndef UKL_CALLED
+#define UKL_CALLED static __attribute__((noinline))
 #endif
 #define UKL_GLOBAL __global
 #define UKL_COHERENT volatile __global
