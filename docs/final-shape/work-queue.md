@@ -8207,6 +8207,11 @@ on an M3 or M5:
   `cpp` its fan-out gives 8 tokens for 12,288 (the rung-1 run without `cpp` agrees), so it is ignored with them.
 - **The persistent grid (0468 R5, R6)**: `grid_barriers_see_every_groups_writes` and the grid's scan, segmented scan
   and sort fail at 8 groups: "a barrier failed" (bounded, never hangs). They fail at 1 test thread too.
+  - **Found (2026-11-20, decision 0540)**: Q123's stale polls. Traced on the Mac mini's Metal (it fails the same):
+    at the first barrier the last group stepped the generation, and every other group polled it a million times and
+    saw it unchanged, while their compare-and-swaps after found it stepped. The grid now reads its words by polls
+    (`ukl_atomic_poll`, a read-modify-write on Metal), and its four tests pass on the Mac mini's Metal, a DGX
+    Spark's CUDA and a Linux CPU. They stay ignored until the M3 and the M1 Max pass them.
 - **The AOT words** (not the device's; done 2026-11-20): `the_aot_words_are_the_interpreters` and
   `the_words_translate_to_rust` overflowed the test thread's 2 MB stack in `rust_source`.
   - The stack: under gdb, 711 frames deep. The structuring recurses once per level of the dominator tree
@@ -9602,6 +9607,26 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     they passed before these merges.
   - Q445's c_directives device reads and the coverage gate's `replace/3`.
   - `aot_tests::grammars_rust_tapes_are_the_jits` takes 54-62 s.
+
+### Q447. Roll-up 32 (django-bugs onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): django-bugs at cff3d9e8fe, six commits: decision 0540 (a device wait is on a thread that
+  is running, and every persistent launch has a budget). 0540 is free here. Its text's 0518 is 0524 here, renumbered.
+  Its text named a farm host; that is now "a DGX Spark".
+- **The work queue** holds both sides: ours' ring (0486 §10, `ring`, `control[4]`) and theirs' budget (`budget`,
+  `ukl_wq_spent`). Every queue made names both (`{slots, control, capacity, ring, budget}`); the takes keep ours' end
+  of a ring; the idle poll keeps ours' yield.
+- **The grid**: ours' barrier (the arrivals never reset, a poll yielding on the CPU) and theirs' join (0540 §3: the
+  grid is the groups that took a ticket before the first closed the count; a fourth control word). The join itself
+  yields nowhere. With a yield there, the CPU's early groups spent their 1,000-round wait before the first closed
+  the count, and `a_grid_past_residency_is_the_groups_that_run` failed; without it the CPU's grid is the first group
+  alone, as theirs has it. The preprocessor's grids (`pp_grid`, `pp_probes`) do not join and keep three words.
+- **Ours kept**: the grid tests without theirs' ignores (they pass here: Q367's resolution), `work_queue.metal`
+  removed (its queue is `workqueue.h`'s, which has theirs' polls), CUDA's `sym_as`, the 16z cache lookup's fence.
+  The lookup's miss takes theirs' `own`; `<ukl/reads/relation.h>` is written again from the CLIF to match.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-gpu`, `-device`, `-ukl`,
+  `-tape-format`, `-clif`, `-metal` or `-engine`. Tests: `rerail-gpu` 25, `-clif` 17, `-tape-format` 40, `-ukl` 9,
+  `-metal` 24, the engine's lattice, work queue, label pass and 16z tests 22.
 
 ---
 

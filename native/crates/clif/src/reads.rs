@@ -1336,7 +1336,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let k = b.f.block_params(look)[0];
     let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
     let check = b.f.create_block();
-    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.append_block_param(miss, I32);
+    b.f.ins().brif(more, check, &[], miss, &[zero.into()]);
     b.f.switch_to_block(check);
     let want = b.f.ins().isub(epoch, k);
     let generation = gen_of(b, want);
@@ -1386,7 +1387,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().brif(moved, read_slot, &[], slot_wait, &[spin.into()]);
     b.f.switch_to_block(slot_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     // A fence between the slot's number and its entry's offset, key and completion: the writer's fence before it put
     // the number is half of the pair; without this half a reader on a weakly ordered device (Metal's relaxed atomics)
     // can see the number with an older offset, key or completion, take the entry for another key's, and decode the
@@ -1441,7 +1443,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
     b.f.switch_to_block(run_out);
     cache_stat(b, cache, c::DUPLICATES);
-    b.f.ins().jump(miss, &[]);
+    let own = b.c32(1);
+    b.f.ins().jump(miss, &[own.into()]);
     b.f.switch_to_block(probe_on);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
@@ -1460,7 +1463,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     b.f.switch_to_block(copy);
     // An entry's own bytes: what its copy takes and copies.
     let len = cache_load(b, e, c::LEN);
-    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, Some(&|b, to| {
+    let not_own = b.c32(0);
+    let copied = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, len, not_own, Some(&|b, to| {
         // The payload, a word at a time, and the source's completion read again after it.
         let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
         b.f.append_block_param(head, I64);
@@ -1492,6 +1496,8 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again. An
     // entry past the most is never taken: no generation turns for it.
     b.f.switch_to_block(miss);
+    // Whether its wait ran out: an entry of its own, past the pending one's slot.
+    let own = b.f.block_params(miss)[0];
     let (sized, take_it, too_big, find_only) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     let nothing = b.f.ins().icmp_imm(IntCC::Equal, size, 0);
     b.f.ins().brif(nothing, find_only, &[], sized, &[]);
@@ -1499,7 +1505,7 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let over = b.f.ins().icmp(IntCC::UnsignedGreaterThan, size, max);
     b.f.ins().brif(over, too_big, &[], take_it, &[]);
     b.f.switch_to_block(take_it);
-    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, fill);
+    let taken = cache_take(b, cache, epoch, key, tag, &gen_of, &entry_of, entries, h, slot_mask, size, own, fill);
     let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
     let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.ins().brif(got, hit_miss, &[], retry, &[]);
@@ -1576,6 +1582,7 @@ fn cache_take(
     h: Value,
     slot_mask: Value,
     size: Value,
+    own: Value,
     fill: Option<Fill<'_>>,
 ) -> Value {
     use crate::view::cache as c;
@@ -1590,8 +1597,9 @@ fn cache_take(
     let (take, full) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(current, take, &[], done, &[none.into()]);
     // Its slot in the head's index claimed first, pending (its tag, no entry yet), so a thread that misses the same
-    // block at once finds it and waits rather than taking an entry too. A slot of the same block already: none
-    // (the lookup, tried again, finds it). No slot free in its probes: the head full.
+    // block at once finds it and waits rather than taking an entry too. A slot of the same block already, unless
+    // `own` (the lookup's wait for it ran out: an entry of its own, at a slot past it): none (the lookup, tried
+    // again, finds it). No slot free in its probes: the head full.
     b.f.switch_to_block(take);
     let (probe, place, check, theirs, mine_already, next, slotted) =
         (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
@@ -1615,6 +1623,8 @@ fn cache_take(
     b.f.switch_to_block(check);
     let its = b.f.ins().band_imm(was, !i64::from(c::NUMBER));
     let same_tag = b.f.ins().icmp(IntCC::Equal, its, tag);
+    let not_own = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
+    let same_tag = b.f.ins().band(same_tag, not_own);
     b.f.ins().brif(same_tag, theirs, &[], next, &[]);
     b.f.switch_to_block(theirs);
     let number = b.f.ins().band_imm(was, i64::from(c::NUMBER));
@@ -1704,9 +1714,13 @@ fn cache_take(
     let fits = fill(b, e);
     let (complete, unfit) = (b.f.create_block(), b.f.create_block());
     b.f.ins().brif(fits, complete, &[], unfit, &[]);
-    // Too large for an entry: the entry given back.
+    // Not filled (too large for an entry, or a promotion whose source turned under its copy): the entry given back,
+    // its slot no key's (its number, no tag: every tag has bit 16), so it neither stops a probe nor blocks the next
+    // claim of the block (decision 0540).
     b.f.switch_to_block(unfit);
     cache_store(b, e, c::READY, zero);
+    b.f.ins().fence();
+    b.f.ins().atomic_store(MemFlags::trusted(), number, slot);
     b.f.ins().fence();
     cache_add(b, head, c::WRITERS, minus);
     b.f.ins().jump(done, &[none.into()]);
