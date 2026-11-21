@@ -4,6 +4,14 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.8 (2026-11-20)
+
+15 rules, 5 of them on by default.
+
+### Changed
+
+- `phpcs-generic-php-backtick-operator` runs again with Rerail 0.2.0, which skips the previous version's: it now matches the backtick shell command as a whole instead of its closing backtick. It reports the same commands.
+
 ## 0.1.7 (2026-11-17)
 
 15 rules, 5 of them on by default.

@@ -1,8 +1,7 @@
 use super::resolve::is_identifier;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    Adapter, ArgumentFeature, ArgumentRules, gate, with_adapter,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ArgumentFeature, gate};
 use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{Arguments, AstMatcher, SlotKind};
@@ -178,8 +177,10 @@ pub(super) fn compile_arguments(
         Some("estree") => Some(ArgumentFeature::Estree),
         Some(_) | None => None,
     };
-    let call_kinds =
-        with_adapter!(Family::of(language), A => call_kinds::<A>(language, path, markers, mode))?;
+    let call_kinds = {
+        let pack = language_pack::pack(Family::of(language));
+        call_kinds(pack, language, path, markers, mode)
+    }?;
     Ok(AstMatcher::Semantic(Semantic::Arguments(Box::new(
         Arguments {
             language,
@@ -195,7 +196,8 @@ pub(super) fn compile_arguments(
 
 /// The kinds of `A`'s calls in `language`, once `A` reads the slot markers `/` and `*` (where
 /// `markers`) and the `mode`.
-fn call_kinds<A: Adapter>(
+fn call_kinds(
+    pack: &dyn language_pack::LanguagePack,
     language: GrammarDialect,
     path: &str,
     markers: bool,
@@ -204,20 +206,13 @@ fn call_kinds<A: Adapter>(
     if markers {
         gate(
             &format!("{path}/signature"),
-            <A::Arguments as ArgumentRules>::feature(ArgumentFeature::SignatureMarkers),
+            pack.arguments_feature(ArgumentFeature::SignatureMarkers),
         )?;
     }
     if let Some(mode) = mode {
-        gate(
-            &format!("{path}/mode"),
-            <A::Arguments as ArgumentRules>::feature(mode),
-        )?;
+        gate(&format!("{path}/mode"), pack.arguments_feature(mode))?;
     }
-    Ok(kind_ids(
-        language,
-        <A::Arguments as ArgumentRules>::CALL_KINDS,
-    ))
+    Ok(kind_ids(language, pack.arguments_call_kinds()))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

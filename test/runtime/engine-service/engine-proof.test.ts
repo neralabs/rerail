@@ -10,10 +10,11 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadNativeBinding, LOCKS_DIR } from "../../../src/engine/index.js";
-import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
+import { DAEMON_STATE_FILE, lookupDaemon, recordedDaemonStatus, recordedDaemonStatusForEvent, type DaemonState } from "../../../src/runtime/daemon-control.js";
 import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
+import { oneInstancePipeLines } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
@@ -67,9 +68,22 @@ server.listen(path, () => {${TAKE_EVERY_INSTANCE}
 /**
  * {@link BUSY_ENGINE} whose event loop stays stopped until the test writes to its input. Once its loop runs again, Node
  * accepts each connection it held and sets up a new instance of the pipe before it hands the connection over: the
- * engine prints `free` at the first, its own word that an instance is free.
+ * engine prints `free` at the first, its own word that an instance is free. Given milliseconds, it answers the first
+ * proof that long after the proof's request arrives, with its loop running, so the answer's delay is counted from the
+ * proof's own connection, whichever instance that took: a proof's check of a busy pipe opens a freed instance and
+ * closes it at once, and an engine whose loop stopped right after freeing one would take no new connection until it
+ * ran again.
  */
 const HELD_ENGINE = `${PROVING_SERVER}
+const answerHold = Number(process.argv[3] ?? 0);
+if (answerHold > 0) {
+  const answer = server.listeners("request")[0];
+  server.removeAllListeners("request");
+  server.once("request", (request, response) => {
+    server.on("request", answer);
+    setTimeout(() => answer(request, response), answerHold);
+  });
+}
 server.listen(path, () => {${TAKE_EVERY_INSTANCE}
   readSync(0, Buffer.alloc(1));
   server.once("connection", () => writeSync(1, "free\\n"));
@@ -128,6 +142,7 @@ const folders: string[] = [];
 const closers: Array<() => void> = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const close of closers.splice(0)) close();
   for (const socket of sockets.splice(0)) socket.destroy();
   await Promise.all(children.splice(0).map(async (child) => {
@@ -238,23 +253,24 @@ async function answerOrWait(answered: Promise<string>, waits: HeldWaits): Promis
 /**
  * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
  * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
- * 20 s on. With an `answer`, it writes that to the client first. Returns once the instance exists.
+ * which it does once the test ends. With an `answer`, it writes that to the client first. Returns once the instance
+ * exists. Its pipe is made as `oneInstancePipeLines` makes it, through .NET calls alone, so the case's wait for
+ * `listening` waits on no module.
  */
 async function holderThatNeverReads(name: string, answer?: string): Promise<void> {
   const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "Add-Type -AssemblyName System.Core",
-    `$pipe = New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 0, 4096)`,
+    ...oneInstancePipeLines(name, { options: "None", outBufferSize: 4096 }),
     "[Console]::Out.WriteLine('listening'); [Console]::Out.Flush()",
     "$pipe.WaitForConnection()",
     ...(answer === undefined ? [] : [
       `$answer = [Convert]::FromBase64String('${Buffer.from(answer, "latin1").toString("base64")}')`,
       "$pipe.Write($answer, 0, $answer.Length); $pipe.Flush()",
     ]),
-    "Start-Sleep -Seconds 20",
+    // Lives until its input closes: the test's end, or the kill after it.
+    "[void][Console]::In.ReadLine()",
   ].join("\n");
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
-    stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
+    stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   children.push(holder);
   expect(await firstLine(holder)).toMatch(/^listening/u);
@@ -441,6 +457,62 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
     expect(await answerOrWait(answered, waits)).toBe("refused");
     expect(waits.asked, "the waits the proof asked for, in ms").toHaveLength(BUSY_TRIES + 1);
     expect(waits.asked.filter(ms => ms >= TIMER_TICK_MS), "the waits of a timer tick or longer, in ms").toEqual([]);
+  }, 45_000);
+
+  // main's proof connected as Node does, which waits up to 30 s for a free instance before the proof's own limit began:
+  // a hook's event reached a busy daemon that freed one in that time. Both proofs ask while every instance is taken; the
+  // clock they read then moves past a command's 2 s and stays inside the 30 s, and only then is an instance freed.
+  it("waits past its limit for a free instance when a hook asks, as main's connect did, where a command's proof answers silent", async () => {
+    const path = pipePath("instance");
+    const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path], true, true);
+    const line = linesOf(engine);
+    expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const command = engineCapabilityProof(path, "capability", 2_000);
+    const event = engineCapabilityProof(path, "capability", 2_000, { waitForInstance: true });
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await command).toBe("silent");
+    engine.stdin!.write("go\n");
+    expect(await line()).toBe("free");
+    // The engine then has the proof's 2 s from the connect, not from the ask.
+    expect(await event).toBe("proved");
+  }, 45_000);
+
+  // A command keeps its 2 s from the ask however late its connect comes: here every instance stays taken until 1.9 s
+  // after the ask, and the engine answers the proof 1 s after its request arrives, past the command's 2 s. The
+  // command's limit then has 0.1 s left, and a limit counted from the connect would have 2 s: the engine's answer
+  // falls 0.9 s past the one and 1 s inside the other, whenever the proof connects. The proof asked next is answered
+  // at once, so the first proof's silence is its limit's.
+  it("answers a command silent 2 s from its ask when an instance frees 1.9 s in to an engine that answers 1 s later", async () => {
+    const path = pipePath("late");
+    const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path, "1000"], true, true);
+    const line = linesOf(engine);
+    expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const command = engineCapabilityProof(path, "capability", 2_000);
+    vi.setSystemTime(Date.now() + 1_900);
+    engine.stdin!.write("go\n");
+    expect(await line()).toBe("free");
+    expect(await command).toBe("silent");
+    expect(await engineCapabilityProof(path, "capability", 2_000), "a proof asked next").toBe("proved");
+  }, 45_000);
+
+  // The same through what a hook's start check asks of the daemon daemon.json records, here this process with the
+  // engine's pipe: the daemon is alive once it frees an instance, where a command's read finds it silent.
+  it("lets a hook's read of the recorded daemon find it alive once its busy pipe frees an instance, where a command's read finds it silent", async () => {
+    const path = pipePath("hook-read");
+    const engine = startNode(HELD_ENGINE, [PROOF_MODULE, path], true, true);
+    const line = linesOf(engine);
+    expect(await line()).toMatch(/^busy [1-9]\d* EBUSY$/u);
+    const state = daemonState(process.pid, path);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const command = recordedDaemonStatus(state);
+    const event = recordedDaemonStatusForEvent(state);
+    vi.setSystemTime(Date.now() + 10_000);
+    expect(await command).toBe("silent");
+    engine.stdin!.write("go\n");
+    expect(await line()).toBe("free");
+    expect(await event).toBe("alive");
   }, 45_000);
 
   // The engine start asks before it listens beside a held pipe: a busy engine of this home read as another process

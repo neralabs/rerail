@@ -1,0 +1,19 @@
+#!/bin/sh
+# Builds the farm's patched sccache and installs it (README.md, Setup): upstream at BASE, then
+# sccache-patches/ in order (0000: PRs #3021 and #3022 as merged on BASE; 0001: the farm's own).
+# The source and its build stay in ~/Library/Caches/rerail-farm/sccache-src, outside every
+# worktree, so a rebuild is incremental. Usage: build-sccache
+set -eu
+BASE=e67c02eece3d58620dc54802d6f9d0dfd7516034
+here=$(cd "$(dirname "$0")" && pwd)
+# The repository's toolchain: outside the checkout rustup would pick its default.
+toolchain=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$here/../../../rust-toolchain.toml")
+src=$HOME/Library/Caches/rerail-farm/sccache-src
+[ -d "$src/.git" ] || git clone -q https://github.com/mozilla/sccache.git "$src"
+cd "$src"
+git cat-file -e "$BASE^{commit}" 2>/dev/null || git fetch -q origin
+# The patches add no files: a forced checkout of BASE undoes an earlier run.
+git -c advice.detachedHead=false checkout -q -f "$BASE"
+for p in "$here"/sccache-patches/*.patch; do git apply "$p"; done
+PATH=$HOME/.cargo/bin:$PATH RUSTC_WRAPPER= nice -n 19 cargo "+$toolchain" build -q --release
+"$here/setup" "$src/target/release/sccache"

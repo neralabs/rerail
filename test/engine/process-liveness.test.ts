@@ -1,11 +1,13 @@
 import * as childProcess from "node:child_process";
+import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as native from "../../src/engine/native/native.js";
-import { processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import { exitedEveryThread, processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell, and see whether the engine loads.
 vi.mock("node:child_process", { spy: true });
@@ -42,6 +44,48 @@ describe("processState", () => {
       throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
     };
     expect(processState(DEAD_PID, reapedAfterFirst)).toBe("gone");
+  });
+
+  it.runIf(process.platform === "linux")("reads a process whose main thread exited as running while another thread runs on, and gone once that one has", async () => {
+    // Python's main thread ends itself and leaves a thread that sleeps: /proc reads the process `Z`, while the thread that
+    // runs on still holds every file, socket and lock the process opened.
+    const script = "import ctypes, threading, time\nthreading.Thread(target=time.sleep, args=(60,)).start()\nctypes.CDLL(None).pthread_exit(None)";
+    const child = spawn("python3", ["-c", script], { stdio: "ignore" });
+    const exited = once(child, "exit");
+    const pid = child.pid!;
+    const status = (): string => readFileSync(`/proc/${pid}/status`, "utf8");
+    try {
+      // Within the test's 5 s.
+      await vi.waitFor(() => expect(status()).toMatch(/^State:\s*Z/mu), { timeout: 3_000, interval: 10 });
+      expect(status()).toMatch(/^Threads:\s*2$/mu);
+      expect(processState(pid)).toBe("running");
+      child.kill("SIGKILL");
+      // Node reaps the child only on a later turn of the event loop, so this loop sees the zombie it became once the
+      // thread that ran on has exited too.
+      const deadline = Date.now() + 1_000;
+      while (/^Threads:\s*2$/mu.test(status()) && Date.now() < deadline) {
+        // The killed thread exits on the system's schedule.
+      }
+      expect(processState(pid)).toBe("gone");
+    } finally {
+      child.kill("SIGKILL");
+      await exited;
+    }
+  });
+
+  it("reads a Linux status as exited once every thread has, as the test folders' removal reads it", () => {
+    const status = (state: string, threads?: number): string =>
+      `Name:\tnode\nState:\t${state}\nTgid:\t7\n${threads === undefined ? "" : `Threads:\t${threads}\n`}`;
+    const cases = [
+      [status("Z (zombie)", 1), true],
+      [status("X (dead)", 1), true],
+      [status("Z (zombie)"), true],
+      [status("Z (zombie)", 2), false],
+      [status("S (sleeping)", 1), false],
+      [status("R (running)", 4), false],
+    ] as const;
+    expect(cases.map(([text]) => exitedEveryThread(text))).toEqual(cases.map(([, exited]) => exited));
+    expect(cases.map(([text]) => removalExitedEveryThread(text))).toEqual(cases.map(([, exited]) => exited));
   });
 });
 

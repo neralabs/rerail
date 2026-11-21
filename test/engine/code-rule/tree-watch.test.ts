@@ -60,6 +60,50 @@ describe("the engine's tree watch", () => {
     expect(watch.take()).toEqual([]);
   });
 
+  it("watches a spare root as any root while the watch budget has room", async () => {
+    const root = scratch();
+    mkdirSync(join(root, "src"));
+    const watch = engineWatch();
+    expect(watch.watch(root, ["", "src"], true)).toBe(true);
+
+    writeFileSync(join(root, "src", "a.txt"), "written");
+    const taken = await noticeNaming(watch, root, "src/a.txt");
+    expect(taken.some(notice => notice.ended)).toBe(false);
+  });
+
+  it("watches a spare root through the engine's spare watch, and not at all with an engine built before it", () => {
+    const calls: string[] = [];
+    class Spare {
+      watch(root: string): boolean {
+        calls.push(`watch ${root}`);
+        return true;
+      }
+      watchSpare(root: string): boolean {
+        calls.push(`spare ${root}`);
+        return true;
+      }
+      unwatch(): void {}
+      take(): TreeNotice[] {
+        return [];
+      }
+      close(): void {}
+    }
+    class Older {
+      watch = Spare.prototype.watch;
+      unwatch(): void {}
+      take(): TreeNotice[] {
+        return [];
+      }
+      close(): void {}
+    }
+    for (const TreeWatcher of [Spare, Older]) {
+      vi.mocked(loadNativeBinding).mockReturnValueOnce({ ...loadNativeBinding(), TreeWatcher });
+      const watch = nativeTreeWatch()!;
+      calls.push(`${watch.watch("/r", [""], true)} ${watch.watch("/w", [""])}`);
+    }
+    expect(calls).toEqual(["spare /r", "watch /w", "true true", "watch /w", "false true"]);
+  });
+
   it("is undefined when the loaded engine was built before it", () => {
     const { TreeWatcher: _, ...older } = loadNativeBinding();
     vi.mocked(loadNativeBinding).mockReturnValueOnce(older);

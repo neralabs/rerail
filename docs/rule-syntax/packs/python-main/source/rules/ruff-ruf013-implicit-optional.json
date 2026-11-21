@@ -1,0 +1,1715 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf013-implicit-optional",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Spell out Optional or a union with None in the annotation of a parameter whose default is None; leaving None out of the type is an implicit Optional.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "generic-head": {
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript"
+                }
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "generic_type"
+                }
+              }
+            ]
+          },
+          "generic-item": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[\\[\\],|]$"
+                },
+                {
+                  "kind": "comment"
+                }
+              ]
+            },
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter"
+                }
+              }
+            ]
+          },
+          "none-value": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "none-value"
+                }
+              }
+            ]
+          },
+          "builtin-chain": {
+            "any": [
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": true
+                },
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\.$"
+                }
+              },
+              {
+                "kind": "attribute",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "builtin-chain"
+                }
+              }
+            ]
+          },
+          "known-name": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": true
+                }
+              },
+              {
+                "kind": "attribute",
+                "matches": "builtin-chain"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing_extensions",
+                    "__hello__",
+                    "__phello__",
+                    "_abc",
+                    "_aix_support",
+                    "_ast",
+                    "_asyncio",
+                    "_bisect",
+                    "_blake2",
+                    "_bootsubprocess",
+                    "_bz2",
+                    "_codecs",
+                    "_codecs_cn",
+                    "_codecs_hk",
+                    "_codecs_iso2022",
+                    "_codecs_jp",
+                    "_codecs_kr",
+                    "_codecs_tw",
+                    "_collections",
+                    "_collections_abc",
+                    "_compat_pickle",
+                    "_compression",
+                    "_contextvars",
+                    "_crypt",
+                    "_csv",
+                    "_ctypes",
+                    "_ctypes_test",
+                    "_curses",
+                    "_curses_panel",
+                    "_datetime",
+                    "_dbm",
+                    "_decimal",
+                    "_elementtree",
+                    "_frozen_importlib",
+                    "_frozen_importlib_external",
+                    "_functools",
+                    "_gdbm",
+                    "_hashlib",
+                    "_heapq",
+                    "_imp",
+                    "_io",
+                    "_json",
+                    "_locale",
+                    "_lsprof",
+                    "_lzma",
+                    "_markupbase",
+                    "_md5",
+                    "_msi",
+                    "_multibytecodec",
+                    "_multiprocessing",
+                    "_opcode",
+                    "_operator",
+                    "_osx_support",
+                    "_overlapped",
+                    "_pickle",
+                    "_posixshmem",
+                    "_posixsubprocess",
+                    "_py_abc",
+                    "_pydecimal",
+                    "_pyio",
+                    "_queue",
+                    "_random",
+                    "_scproxy",
+                    "_sha1",
+                    "_sha256",
+                    "_sha3",
+                    "_sha512",
+                    "_signal",
+                    "_sitebuiltins",
+                    "_socket",
+                    "_sqlite3",
+                    "_sre",
+                    "_ssl",
+                    "_stat",
+                    "_statistics",
+                    "_string",
+                    "_strptime",
+                    "_struct",
+                    "_symtable",
+                    "_testbuffer",
+                    "_testcapi",
+                    "_testclinic",
+                    "_testconsole",
+                    "_testimportmultiple",
+                    "_testinternalcapi",
+                    "_testmultiphase",
+                    "_thread",
+                    "_threading_local",
+                    "_tkinter",
+                    "_tracemalloc",
+                    "_uuid",
+                    "_warnings",
+                    "_weakref",
+                    "_weakrefset",
+                    "_winapi",
+                    "_xxsubinterpreters",
+                    "_xxtestfuzz",
+                    "_zoneinfo",
+                    "abc",
+                    "aifc",
+                    "antigravity",
+                    "argparse",
+                    "array",
+                    "ast",
+                    "asynchat",
+                    "asyncio",
+                    "asyncore",
+                    "atexit",
+                    "audioop",
+                    "base64",
+                    "bdb",
+                    "binascii",
+                    "binhex",
+                    "bisect",
+                    "builtins",
+                    "bz2",
+                    "cProfile",
+                    "calendar",
+                    "cgi",
+                    "cgitb",
+                    "chunk",
+                    "cmath",
+                    "cmd",
+                    "code",
+                    "codecs",
+                    "codeop",
+                    "collections",
+                    "colorsys",
+                    "compileall",
+                    "concurrent",
+                    "configparser",
+                    "contextlib",
+                    "contextvars",
+                    "copy",
+                    "copyreg",
+                    "crypt",
+                    "csv",
+                    "ctypes",
+                    "curses",
+                    "dataclasses",
+                    "datetime",
+                    "dbm",
+                    "decimal",
+                    "difflib",
+                    "dis",
+                    "distutils",
+                    "doctest",
+                    "email",
+                    "encodings",
+                    "ensurepip",
+                    "enum",
+                    "errno",
+                    "faulthandler",
+                    "fcntl",
+                    "filecmp",
+                    "fileinput",
+                    "fnmatch",
+                    "fractions",
+                    "ftplib",
+                    "functools",
+                    "gc",
+                    "genericpath",
+                    "getopt",
+                    "getpass",
+                    "gettext",
+                    "glob",
+                    "graphlib",
+                    "grp",
+                    "gzip",
+                    "hashlib",
+                    "heapq",
+                    "hmac",
+                    "html",
+                    "http",
+                    "idlelib",
+                    "imaplib",
+                    "imghdr",
+                    "imp",
+                    "importlib",
+                    "inspect",
+                    "io",
+                    "ipaddress",
+                    "itertools",
+                    "json",
+                    "keyword",
+                    "lib2to3",
+                    "linecache",
+                    "locale",
+                    "logging",
+                    "lzma",
+                    "mailbox",
+                    "mailcap",
+                    "marshal",
+                    "math",
+                    "mimetypes",
+                    "mmap",
+                    "modulefinder",
+                    "msilib",
+                    "msvcrt",
+                    "multiprocessing",
+                    "netrc",
+                    "nis",
+                    "nntplib",
+                    "nt",
+                    "ntpath",
+                    "nturl2path",
+                    "numbers",
+                    "opcode",
+                    "operator",
+                    "optparse",
+                    "os",
+                    "ossaudiodev",
+                    "pathlib",
+                    "pdb",
+                    "pickle",
+                    "pickletools",
+                    "pipes",
+                    "pkgutil",
+                    "platform",
+                    "plistlib",
+                    "poplib",
+                    "posix",
+                    "posixpath",
+                    "pprint",
+                    "profile",
+                    "pstats",
+                    "pty",
+                    "pwd",
+                    "py_compile",
+                    "pyclbr",
+                    "pydoc",
+                    "pydoc_data",
+                    "pyexpat",
+                    "queue",
+                    "quopri",
+                    "random",
+                    "re",
+                    "readline",
+                    "reprlib",
+                    "resource",
+                    "rlcompleter",
+                    "runpy",
+                    "sched",
+                    "secrets",
+                    "select",
+                    "selectors",
+                    "shelve",
+                    "shlex",
+                    "shutil",
+                    "signal",
+                    "site",
+                    "smtpd",
+                    "smtplib",
+                    "sndhdr",
+                    "socket",
+                    "socketserver",
+                    "spwd",
+                    "sqlite3",
+                    "sre_compile",
+                    "sre_constants",
+                    "sre_parse",
+                    "ssl",
+                    "stat",
+                    "statistics",
+                    "string",
+                    "stringprep",
+                    "struct",
+                    "subprocess",
+                    "sunau",
+                    "symtable",
+                    "sys",
+                    "sysconfig",
+                    "syslog",
+                    "tabnanny",
+                    "tarfile",
+                    "telnetlib",
+                    "tempfile",
+                    "termios",
+                    "textwrap",
+                    "this",
+                    "threading",
+                    "time",
+                    "timeit",
+                    "tkinter",
+                    "token",
+                    "tokenize",
+                    "trace",
+                    "traceback",
+                    "tracemalloc",
+                    "tty",
+                    "turtle",
+                    "turtledemo",
+                    "types",
+                    "typing",
+                    "unicodedata",
+                    "unittest",
+                    "urllib",
+                    "uu",
+                    "uuid",
+                    "venv",
+                    "warnings",
+                    "wave",
+                    "weakref",
+                    "webbrowser",
+                    "winreg",
+                    "winsound",
+                    "wsgiref",
+                    "xdrlib",
+                    "xml",
+                    "xmlrpc",
+                    "xx",
+                    "xxlimited",
+                    "xxlimited_35",
+                    "xxsubtype",
+                    "zipapp",
+                    "zipfile",
+                    "zipimport",
+                    "zlib",
+                    "zoneinfo"
+                  ],
+                  "prefix": true
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Union",
+                    "typing.Literal",
+                    "typing.Annotated",
+                    "typing.Optional",
+                    "typing_extensions.Union",
+                    "typing_extensions.Literal",
+                    "typing_extensions.Annotated",
+                    "typing_extensions.Optional",
+                    "_typeshed.Union",
+                    "_typeshed.Literal",
+                    "_typeshed.Annotated",
+                    "_typeshed.Optional"
+                  ]
+                }
+              }
+            ]
+          },
+          "annotated-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Annotated",
+                "typing_extensions.Annotated",
+                "_typeshed.Annotated"
+              ]
+            }
+          },
+          "literal-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Literal",
+                "typing_extensions.Literal",
+                "_typeshed.Literal"
+              ]
+            }
+          },
+          "union-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union",
+                "typing_extensions.Union",
+                "_typeshed.Union"
+              ]
+            }
+          },
+          "optional-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Optional",
+                "typing_extensions.Optional",
+                "_typeshed.Optional"
+              ]
+            }
+          },
+          "none-accepting-name": {
+            "any": [
+              {
+                "matches": "optional-ref"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Any",
+                    "typing_extensions.Any",
+                    "_typeshed.Any"
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "collections.abc.Hashable",
+                    "typing.Hashable",
+                    "typing_extensions.Hashable",
+                    "_typeshed.Hashable",
+                    "builtins.object"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "global": [
+                    "object"
+                  ]
+                }
+              }
+            ]
+          },
+          "literal-none": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "literal-none"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generic-head",
+                      "all": [
+                        {
+                          "matches": "literal-ref"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "literal-none"
+                        }
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameter",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "literal-none"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "value": {
+                  "type": "str",
+                  "regex": "^$|^\\s|\\w\\s+\\w|^[<>=%/!@#$&|^,:;?\\\\*]|^\\.(?:[^\\d.]|$)|^\\.\\.(?:[^.]|$)|[+\\-*/<>=%&|^:@!~]\\s*$|[A-Za-z_]\\.\\s*$|^\\s*(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\\s*$|^\\s*[rRuU]?['\"]|^[^(]*\\)|\\([^)]*$|^[^\\[]*\\]|\\[[^\\]]*$|^[^{]*\\}|\\{[^}]*$|[;$?`]|!(?:[^=]|$)|^[^(]*:=|(?:^|[^\\w.])0[\\d_]*[a-df-ik-np-wyzA-DF-IK-NP-WYZ]|(?:^|[^\\w.])[1-9][\\d_]*[a-df-ik-zA-DF-IK-Z]|(?:^|[^\\w.])0[bB][01_]*[2-9a-zA-Z]|(?:^|[^\\w.])0[oO][0-7_]*[89a-zA-Z]|(?:^|[^\\w.])0[xX][\\da-fA-F_]*[g-zG-Z]|(?:^|[^\\w.])0[xXoObB](?:$|[^\\w])|\\.\\.\\.\\.|(?:^|[^\\w.])\\.\\d[\\d_]*[a-df-ik-zA-DF-IK-Z]"
+                }
+              },
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "literal-none"
+                }
+              }
+            ]
+          },
+          "union-element": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "union-element"
+                }
+              },
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "allows-none"
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "type"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ]
+                },
+                "matches": "allows-none"
+              }
+            ]
+          },
+          "allows-none": {
+            "any": [
+              {
+                "kind": "none"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "allows-none"
+                }
+              },
+              {
+                "kind": "binary_operator",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "allows-none"
+                }
+              },
+              {
+                "kind": "union_type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "allows-none"
+                }
+              },
+              {
+                "kind": "binary_operator",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\|$"
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "not": {
+                  "all": [
+                    {
+                      "matches": "known-name"
+                    },
+                    {
+                      "not": {
+                        "matches": "none-accepting-name"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "generic-head",
+                            "all": [
+                              {
+                                "matches": "known-name"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "generic-head",
+                          "all": [
+                            {
+                              "matches": "optional-ref"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "union-ref"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "union-element"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "union-element"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "literal-ref"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "literal-none"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "literal-none"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "annotated-ref"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "allows-none",
+                                  "not": {
+                                    "follows": {
+                                      "stopBy": "end",
+                                      "matches": "generic-item"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "allows-none",
+                                    "not": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "matches": "generic-item"
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "subscript",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "subscript",
+                                  "matches": "tuple-first-allows-none"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "tuple-first-allows-none"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "any": [
+                    {
+                      "kind": "ERROR"
+                    },
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "any": [
+                          {
+                            "kind": "string"
+                          },
+                          {
+                            "kind": "concatenated_string"
+                          },
+                          {
+                            "matches": "allows-none"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "regex": "^[\\[\\](),|:]$"
+                        },
+                        {
+                          "kind": "comment"
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "none"
+                    },
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    },
+                    {
+                      "kind": "subscript"
+                    },
+                    {
+                      "kind": "generic_type"
+                    },
+                    {
+                      "kind": "string"
+                    },
+                    {
+                      "kind": "concatenated_string"
+                    },
+                    {
+                      "kind": "binary_operator"
+                    },
+                    {
+                      "kind": "type"
+                    },
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "union_type"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reported-type": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "reported-type"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generic-head",
+                      "all": [
+                        {
+                          "matches": "annotated-ref"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "reported-inner",
+                          "not": {
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "generic-item"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameter",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "reported-inner",
+                            "not": {
+                              "follows": {
+                                "stopBy": "end",
+                                "matches": "generic-item"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "subscript",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "subscript",
+                          "matches": "tuple-first-reported"
+                        }
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameter",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "tuple-first-reported"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "concatenated_string"
+                  }
+                ],
+                "parse": {
+                  "grammar": "annotation",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "reported-inner"
+                  }
+                }
+              },
+              {
+                "pattern": "$W",
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "type"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "concatenated_string"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "subscript"
+                        },
+                        {
+                          "kind": "generic_type"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "generic-head",
+                        "all": [
+                          {
+                            "matches": "annotated-ref"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "typing.Annotated",
+                          "typing_extensions.Annotated",
+                          "_typeshed.Annotated"
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "allows-none"
+                    },
+                    {
+                      "kind": "comment"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "reported-inner": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "reported-inner"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generic-head",
+                      "all": [
+                        {
+                          "matches": "annotated-ref"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "reported-inner",
+                          "not": {
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "generic-item"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameter",
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "reported-inner",
+                            "not": {
+                              "follows": {
+                                "stopBy": "end",
+                                "matches": "generic-item"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "kind": "subscript",
+                        "not": {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "regex": "^,$"
+                          }
+                        },
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "subscript",
+                          "matches": "tuple-first-reported"
+                        }
+                      },
+                      {
+                        "kind": "generic_type",
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type_parameter",
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "tuple-first-reported"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "pattern": "$W",
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "type"
+                        },
+                        {
+                          "kind": "parenthesized_expression"
+                        }
+                      ]
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "subscript"
+                        },
+                        {
+                          "kind": "generic_type"
+                        }
+                      ],
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "generic-head",
+                        "all": [
+                          {
+                            "matches": "annotated-ref"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "typing.Annotated",
+                          "typing_extensions.Annotated",
+                          "_typeshed.Annotated"
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "allows-none"
+                    },
+                    {
+                      "kind": "comment"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "tuple-first-reported": {
+            "any": [
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\](),|:]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "reported-inner"
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),|:]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-first-reported"
+                }
+              }
+            ]
+          },
+          "tuple-first-allows-none": {
+            "any": [
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\](),|:]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "allows-none"
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),|:]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|:]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-first-allows-none"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "implicit-optional",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "typed_default_parameter",
+            "all": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "none-value"
+                }
+              },
+              {
+                "has": {
+                  "field": "type",
+                  "matches": "reported-type"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.W",
+        "code": "RUF013",
+        "message": "Allow `None` explicitly: write `$W | None` here (`Optional[$W]` before Python 3.10), or give the parameter a default other than `None`.",
+        "each": "W",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF013"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
-import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { worktreeRuleCatalog } from "../../../src/engine/catalog/worktree-pack.js";
+import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { bundledCodeRuleDslDirectory } from "../../../src/engine/code-rule/code-rule-compile.js";
 import {
@@ -16,22 +17,25 @@ import {
 } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { decisionFor, type RepositoryAuditRuleProvenance } from "../../../src/engine/audit/audit.js";
 import {
+  CLAUSE_KINDS,
   CODE_RULE_LATEST_ECMA_VERSION,
   CODE_RULE_PARSE_GRAMMARS,
   CODE_RULE_PARSE_KINDS,
   CODE_RULE_PYTHON_VERSIONS,
+  CODE_RULE_QUERY_SOURCES,
   codeRuleSchema,
   type CodeRule,
 } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { applyCodeRuleConfig } from "../../../src/engine/code-rule/code-rule-options.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
-import { addAttachment, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
+import { addAttachment, loadCheckoutRuleSet, ruleConfigurationSignature, setRuleSetting } from "../../../src/engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
-import { setUpTestRepository } from "../../support/repository-rules.js";
+import { setUpTestRepository, testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { validateCodeRule } from "../../../src/engine/rules.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { installPack } from "../../support/installed-packs.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -240,7 +244,256 @@ describe("checkout code-rule catalog", () => {
       catalogs.close();
     }
   });
+
+  it("hashes a pack rule's document once for every checkout's catalog, which all build from the daemon's one rule catalog", () => {
+    installPack("typescript");
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+    const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
+    for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
+    const ruleCatalog = loadRuleCatalog();
+    const rules = new Set<unknown>([...ruleCatalog.documents.values()].map(document => document.rule));
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog });
+    try {
+      const firstCount = catalogs.catalog(first).status.ruleCount;
+      expect(firstCount).toBeGreaterThan(0);
+      // A pack rule's document is serialized whole, or wrapped with its kind for its digest. The build's own text of each
+      // rule is of the copy with its mode set that each checkout's rule set makes, so it is not counted here.
+      const stringify = vi.spyOn(JSON, "stringify");
+      const secondCount = catalogs.catalog(second).status.ruleCount;
+      const serialized = stringify.mock.calls.filter(([value]) => rules.has(value) || rules.has((value as { rule?: unknown } | undefined)?.rule)).length;
+      stringify.mockRestore();
+      expect(secondCount).toBe(firstCount);
+      expect(serialized).toBe(0);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("reads a checkout at one cost however many checkouts its repository has recorded", () => {
+    const rowsRead = (recorded: number): number => {
+      const base = temporaryRoot();
+      const main = join(base, "main");
+      execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base"], { cwd: main });
+      const read = join(main, ".worktrees", "read");
+      execFileSync("git", ["worktree", "add", "--quiet", "-b", "read", read], { cwd: main });
+      const databasePath = join(base, "rerail.sqlite");
+      const key = setUpTestRepository(main, {}, databasePath);
+      // Worktrees beside the main checkout and inside it, as a repository many agents work in has.
+      const worktrees = Array.from({ length: recorded }, (_, index) => join(index % 2 === 0 ? base : join(main, ".worktrees"), `worktree-${index}`));
+      recordCheckoutRows(databasePath, key, [read, ...worktrees]);
+      const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+      try {
+        const catalog = catalogs.catalog(read);
+        return countRowsRead(catalogs.database, () => {
+          expect(catalogs.refresh(read)).toBe("ok");
+          expect(catalog.refresh()).toBe(false);
+          expect(catalogs.ownerCheckoutPaths(read)).toEqual([read, main]);
+        });
+      } finally {
+        catalogs.close();
+      }
+    };
+    expect(rowsRead(300)).toBe(rowsRead(10));
+  });
+
+  it("reads a checkout's rule configuration in one statement, prepared once, at every refresh", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const catalog = catalogs.catalog(root);
+      const loaded = catalog.status.sourceSignature;
+      const counted = countStatements(catalogs.database, () => {
+        for (let refresh = 0; refresh < 3; refresh += 1) expect(catalog.refresh()).toBe(false);
+      });
+      // Each refresh reads whether the recorded checkouts changed, the checkout's start state, set-up and parents, then
+      // its rule configuration.
+      expect(counted).toEqual({ prepared: 0, run: 9 });
+      expect(catalog.status.sourceSignature).toBe(loaded);
+
+      // A setting another process makes is read at the next refresh.
+      const other = openRerailDatabase(databasePath);
+      try {
+        setRuleSetting(other, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:any", on: false, mode: null });
+      } finally {
+        other.$client.close();
+      }
+      catalog.refresh();
+      expect(catalog.status.sourceSignature).not.toBe(loaded);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("gives a checkout's rule configuration the signature its rule set has, through every kind of change", () => {
+    const base = temporaryRoot();
+    const main = join(base, "main");
+    execFileSync("git", ["init", "--quiet", "-b", "main", main]);
+    const nested = join(main, "packages", "service");
+    execFileSync("git", ["init", "--quiet", "-b", "main", nested]);
+    const databasePath = join(base, "rerail.sqlite");
+    const key = setUpTestRepository(main, { library: [{ kind: "code", rule: rule("test:everywhere") }] }, databasePath);
+    // The nested clone joins the repository, so the main checkout is its parent and its settings apply there.
+    recordCheckoutRows(databasePath, key, [nested]);
+    const database = openRerailDatabase(databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const signatures = (): [string, string] => {
+        const ruleCatalog = worktreeRuleCatalog(loadRuleCatalog(), nested);
+        catalogs.refresh(nested);
+        const checkoutOf = catalogs.checkout(nested)!;
+        const owners = catalogs.ownerCheckoutPaths(nested);
+        const ruleSet = loadCheckoutRuleSet(database, ruleCatalog, checkoutOf, { started: true, setUp: true, startedBy: "repository" }, owners.slice(1));
+        return [ruleConfigurationSignature(database, ruleCatalog, key, owners), ruleSet.signature.replace(/:started:set-up$/u, "")];
+      };
+      const changes: Array<[string, () => void]> = [
+        ["nothing", () => undefined],
+        ["a repository setting", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["its mode", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "log" })],
+        ["suppressions", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "web", targetKind: "rule", targetId: "test:everywhere", on: null, mode: null, suppressions: "ignore" })],
+        ["a config", () => setRuleSetting(database, { owner: { kind: "repository", repositoryKey: key }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: null, mode: null, config: { b: [1, { c: "x" }], a: 2 } })],
+        ["the checkout's own setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: nested }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["its parent's setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: main }, folder: "api", targetKind: "rule", targetId: "test:everywhere", on: null, mode: "steer" })],
+        ["another checkout's setting", () => setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: join(base, "elsewhere") }, folder: "", targetKind: "rule", targetId: "test:everywhere", on: false, mode: null })],
+        ["a rule in the library that nothing attaches", () => upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only"), "code")],
+        ["its attachment", () => addAttachment(database, { repositoryKey: key, folder: "api", sourceKind: "library_rule", sourceId: "test:api-only" })],
+        ["its next revision", () => upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only", 2), "code")],
+        ["an approval", () => approve(database, ruleSubject("test:api-only", upsertLibraryRule(database, loadRuleCatalog(), rule("test:api-only", 2), "code").payloadHash))],
+        ["a rule of the checkout's own", () => {
+          mkdirSync(join(nested, ".rerail", "rules"), { recursive: true });
+          writeFileSync(join(nested, ".rerail", "rules", "own.json"), JSON.stringify(rule("test:own")));
+        }],
+      ];
+      const seen = new Set<string>();
+      for (const [change, make] of changes) {
+        make();
+        const [signature, ofRuleSet] = signatures();
+        expect(signature, change).toBe(ofRuleSet);
+        seen.add(signature);
+      }
+      // Every change but another checkout's setting and a library rule nothing attaches changes it.
+      expect(seen.size).toBe(changes.length - 2);
+    } finally {
+      catalogs.close();
+      database.$client.close();
+    }
+  });
+
+  it("changes the recorded checkouts' version when a checkout is recorded in place of the newest row, with the clock set back", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    const database = openRerailDatabase(databasePath);
+    try {
+      const insert = database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, ?, 1)");
+      // A checkout recorded while the clock ran ahead, then one recorded after the clock was set back.
+      insert.run(join(root, "ahead"), key, Date.now() + 86_400_000);
+      insert.run(join(root, "b"), key, 5);
+      const before = catalogs.recordedCheckoutsVersion();
+      // Once the newest row is gone SQLite gives the next one its rowid; the clock still reads before the earlier record,
+      // and the new path is as long as the old one: the count, the newest rowid and time and the paths' lengths are as they were.
+      database.$client.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(join(root, "b"));
+      insert.run(join(root, "c"), key, 6);
+      expect(catalogs.recordedCheckoutsVersion()).not.toBe(before);
+    } finally {
+      database.$client.close();
+      catalogs.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("finds the checkouts inside a folder named with a letter outside ASCII in another case, as Windows names one folder", () => {
+    const base = temporaryRoot();
+    const stored = join(base, "café");
+    const service = join(stored, "packages", "service");
+    execFileSync("git", ["init", "--quiet", service]);
+    const databasePath = join(base, "rerail.sqlite");
+    // Git names the nested checkout as the folder is stored; a session typed with caps lock on names the folder around it.
+    const typed = join(base, "CAFÉ");
+    setUpTestRepository(typed, {}, databasePath);
+    setUpTestRepository(service, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      // The folder itself, recorded in the spelling Windows stores, is inside it as `withinCheckout` reads it.
+      expect(catalogs.recordedCheckoutsWithin(typed)).toContain(service);
+      expect(catalogs.recordedCheckoutsWithin(stored)).toContain(service);
+    } finally {
+      catalogs.close();
+    }
+  });
 });
+
+/** The statements `work` prepares and runs on `database`'s connection. */
+function countStatements(database: RerailDatabase, work: () => void): { prepared: number; run: number } {
+  const client = database.$client;
+  // Every statement of the connection, prepared before `work` or during it, shares this prototype.
+  const prototype = Object.getPrototypeOf(client.prepare("SELECT 1")) as Record<string, (...parameters: unknown[]) => unknown>;
+  const counted = { prepared: 0, run: 0 };
+  const originals = ["run", "get", "all", "iterate"].map(method => [method, prototype[method]!] as const);
+  for (const [method, original] of originals) {
+    prototype[method] = function (this: { database: unknown }, ...parameters: unknown[]) {
+      if (this.database === client) counted.run += 1;
+      return original.apply(this, parameters);
+    };
+  }
+  const prepare = vi.spyOn(client, "prepare");
+  try {
+    work();
+  } finally {
+    for (const [method, original] of originals) prototype[method] = original;
+    counted.prepared = prepare.mock.calls.length;
+    prepare.mockRestore();
+  }
+  return counted;
+}
+
+/** Records a checkout of `repositoryKey` at each path, as recording each worktree would. */
+function recordCheckoutRows(databasePath: string, repositoryKey: string, paths: readonly string[]): void {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const insert = database.$client.prepare(
+      "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, 'clone', NULL, 1, 1)",
+    );
+    // One transaction: the database syncs every commit to disk, and 300 commits on a busy disk outlast the test's limit.
+    database.$client.transaction(() => {
+      for (const path of paths) insert.run(path, repositoryKey);
+    })();
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** The rows the statements of `database`'s connection hand back while `work` runs, prepared before it or during it. */
+function countRowsRead(database: RerailDatabase, work: () => void): number {
+  const client = database.$client;
+  // Every statement of the connection shares this prototype.
+  const prototype = Object.getPrototypeOf(client.prepare("SELECT 1")) as Record<string, (...parameters: unknown[]) => unknown>;
+  let rows = 0;
+  const all = prototype.all!;
+  const get = prototype.get!;
+  prototype.all = function (this: { database: unknown }, ...parameters: unknown[]) {
+    const read = all.apply(this, parameters);
+    if (this.database === client && Array.isArray(read)) rows += read.length;
+    return read;
+  };
+  prototype.get = function (this: { database: unknown }, ...parameters: unknown[]) {
+    const read = get.apply(this, parameters);
+    if (this.database === client && read !== undefined) rows += 1;
+    return read;
+  };
+  try {
+    work();
+  } finally {
+    prototype.all = all;
+    prototype.get = get;
+  }
+  return rows;
+}
 
 describe("code rule schema and engine agree on unsupported fields", () => {
   const bundledCapabilities = readFileSync(join(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
@@ -338,7 +591,7 @@ describe("code rule schema and engine agree on unsupported fields", () => {
     ["an empty capture anchor", document({ violation: { ...violation, anchor: "capture." } }), /Anchor must be/],
     ["a non-string fix", document({ violation: { ...violation, fix: { template: "y" } } }), /expected string/],
     ["finding variables", document({ violation: { ...violation, variables: { name: "x" } } }), /Violation variables are not supported yet/],
-    ["an unknown predicate operator", where({ gt: ["s.size", 1] }), /Invalid input/],
+    ["an unknown predicate operator", where({ greaterThan: ["s.size", 1] }), /Invalid input/],
     ["an eq with one operand", where({ eq: ["s.size"] }), /Invalid input/],
     ["an undefined utility", ast({ kind: "identifier", not: { matches: "missing" } }), /Utility rule missing is not defined/],
     ["a call with a rule for an argument", ast({ matches: { wrap: { X: { kind: "number" } } } }, { utils: { wrap: { params: ["X"], rule: { kind: "number" } } } }), /matches must be the id of a utility rule or a call/],
@@ -1266,8 +1519,10 @@ describe("code rule schema and engine agree on unsupported fields", () => {
 
   it("pins parse's grammars and kinds to the engine's", () => {
     const literal = (file: string) => readFileSync(new URL(`../../../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
-    const grammars = [...literal("mod.rs").matchAll(/^\s+"(\w+)" => Some\(Self::\w+\),$/gm)].map(match => match[1]).filter(name => name !== "testChars");
-    expect(grammars).toEqual([...CODE_RULE_PARSE_GRAMMARS]);
+    // Each grammar names itself (`LiteralGrammar::name`) in its own file; `testChars` is the tests' grammar.
+    const files = readdirSync(new URL("../../../native/src/code_rule_dsl/literal/", import.meta.url)).filter(file => file.endsWith(".rs"));
+    const grammars = files.flatMap(file => [...literal(file).matchAll(/fn name\(&self\) -> &'static str \{\s+"(\w+)"/g)].map(match => match[1])).filter(name => name !== "testChars");
+    expect(grammars.sort()).toEqual([...CODE_RULE_PARSE_GRAMMARS].sort());
     const kinds = (file: string) => [...(literal(file).split("KINDS: &[&str] = &[")[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
     expect(kinds("percent.rs")).toEqual([...CODE_RULE_PARSE_KINDS.percentFormat]);
     expect(kinds("brace.rs")).toEqual([...CODE_RULE_PARSE_KINDS.braceFormat]);
@@ -1388,4 +1643,106 @@ describe("compiled rule cache", () => {
     }
     return reference.deref() === undefined;
   }
+});
+
+describe("rules whose finding in one file can depend on another", () => {
+  const violation = { code: "X", anchor: "witness.span", message: "x" };
+  const needle = { regex: { pattern: "NEEDLE", source: "file.content" } };
+  const python = (rule: Record<string, unknown>) => ({ ast: { language: "python", rule } });
+  const crossFileOf = (documents: Record<string, Record<string, unknown>[]>) => {
+    const rules = Object.entries(documents).map(([id, clauses]) => codeRuleSchema.parse({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: clauses.map((clause, index) => (clause.define === undefined ? { id: `c${index}`, violation, ...clause } : { id: `c${index}`, ...clause })),
+    }));
+    const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+    expect(catalog.quarantined()).toEqual([]);
+    return Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]));
+  };
+
+  it("marks a rule whose only clause that reads other files is a select_when, whose exists side holds in any file", () => {
+    // Its select side's findings in one file come and go as another file gains or loses an import.
+    const exists = python({ kind: "import_statement" });
+    expect(crossFileOf({
+      "test:select-when": [{ forbid: { select_when: { select: needle, exists } } }],
+      "test:select-when-absent": [{ forbid: { select_when: { select: needle, exists: python({ kind: "module", not: { has: { kind: "import_statement", stopBy: "end" } } }) } } }],
+    })).toEqual({ "test:select-when": true, "test:select-when-absent": true });
+  });
+
+  it("marks every clause kind and query source the rule schema accepts as the engine evaluates it", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "1");
+    try {
+      const evidence = { evidence: { as: "s", query: python({ kind: "identifier" }), project: { path: "file.path" } } };
+      const files = { evidence: { as: "file", query: python({ kind: "module" }), project: { path: "file.path" } } };
+      // One rule per construct the schema names, and whether a finding of it in one file can depend on another file.
+      const constructs: Record<string, [Record<string, unknown>[], boolean]> = {
+        "forbid.regex": [[{ forbid: needle }], false],
+        "forbid.ast": [[{ forbid: python({ kind: "identifier" }) }], false],
+        "forbid.file": [[{ forbid: { file: {} } }], false],
+        "forbid.select_when": [[{ forbid: { select_when: { select: needle, exists: python({ kind: "import_statement" }) } } }], true],
+        require_each: [[{ require_each: { subject: evidence, evidence } }], true],
+        budget: [[{ budget: { query: evidence, count: { lte: 1 } } }], true],
+        relational: [[{ relational: { inputs: { files }, query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"] } }], true],
+        // The engine answers an `llm` clause with a missing-capability failure that names no file.
+        llm: [[{ llm: {} }], false],
+        // A `report_when` gate reports the rule's findings only once their count over every file passes it.
+        define: [[{ define: { report_when: { count: { gt: 3 } } } }, { forbid: needle }], true],
+      };
+      // A clause kind or query source the schema gains fails here until it has a rule above.
+      expect(Object.keys(constructs).sort()).toEqual(
+        [...CLAUSE_KINDS.filter(kind => kind !== "forbid"), ...CODE_RULE_QUERY_SOURCES.map(source => `forbid.${source}`)].sort(),
+      );
+      const marked = crossFileOf(Object.fromEntries(Object.entries(constructs).map(([name, [clauses]]) => [`test:${name}`, clauses])));
+      // The constructs marked otherwise than they read, by name.
+      expect(Object.entries(constructs).filter(([name, [, crossFile]]) => marked[`test:${name}`] !== crossFile).map(([name]) => name)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("marks each compiled rule that counts, pairs, follows calls or reads imports across files", () => {
+    const evidence = { evidence: { as: "s", query: { ast: { language: "python", rule: { kind: "identifier" } } }, project: { path: "file.path" } } };
+    const document = (id: string, clause: Record<string, unknown>) => codeRuleSchema.parse({
+      format: "rerail.policy/v1", id, revision: 1, mode: "block", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "c", violation: { code: "X", anchor: "witness.span", message: "x" }, ...clause }],
+    });
+    const callsSleep = {
+      kind: "function_definition", regex: "^async ",
+      has: { stopBy: { kind: "function_definition" }, kind: "call", calls: { through: "sync", has: { stopBy: { kind: "function_definition" }, kind: "call" } } },
+    };
+    const rules = [
+      document("test:plain", { forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }),
+      document("test:budget", { budget: { query: evidence, count: { lte: 1 } } }),
+      document("test:pairs", { require_each: { subject: evidence, evidence } }),
+      document("test:calls", { forbid: { ast: { language: "python", rule: callsSleep } } }),
+      codeRuleSchema.parse(JSON.parse(readFileSync(join("packs", "node", "rules", "n-no-missing-import.json"), "utf8"))),
+    ];
+    const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+    expect(catalog.quarantined()).toEqual([]);
+    expect(Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]))).toEqual({
+      "test:plain": false, "test:budget": true, "test:pairs": true, "test:calls": true, "n-no-missing-import": true,
+    });
+  });
+
+  it("marks a rule that reports only past a count of its findings, or that runs a relational plan, as reading other files", () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "1");
+    try {
+      const violation = { code: "X", anchor: "witness.span", message: "x" };
+      const scope = { include: ["**/*.py"], exclude: [] };
+      const files = { evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } };
+      const rules = [
+        codeRuleSchema.parse({ format: "rerail.policy/v1", id: "test:gated", revision: 1, mode: "block", scope, clauses: [
+          { id: "gate", define: { report_when: { count: { gt: 3 } } } },
+          { id: "c", forbid: { regex: { pattern: "NEEDLE", source: "file.content" } }, violation },
+        ] }),
+        codeRuleSchema.parse({ format: "rerail.policy/v1", id: "test:relational", revision: 1, mode: "block", scope, clauses: [
+          { id: "rows", relational: { inputs: { files }, query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"] }, violation },
+        ] }),
+      ];
+      const catalog = testCodeRuleCatalog(rules, writeCapabilities(temporaryRoot()));
+      expect(catalog.quarantined()).toEqual([]);
+      expect(Object.fromEntries(catalog.snapshot().codeRules.map(rule => [rule.id, rule.crossFile]))).toEqual({ "test:gated": true, "test:relational": true });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

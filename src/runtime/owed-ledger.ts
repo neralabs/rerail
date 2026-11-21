@@ -77,6 +77,8 @@ export interface OwedPlace {
 /** A steer the session had not delivered when it closed. */
 export interface OwedSteer extends OwedPlace {
   readonly delivery: AdapterDelivery;
+  /** Its delivery is in the ledger already: an answer no client heard took it. Handing it out records nothing again. */
+  readonly recorded?: true;
 }
 
 /** A finding the session held for its yield digest when it closed, with where its rule comes from. */
@@ -93,10 +95,12 @@ export interface OwedEntry {
 
 export const OwedEntrySchema = z.object({
   type: z.literal("owed"),
-  steers: z.array(z.object({ delivery: LedgerDeliverySchema, scope: z.array(z.string()), digests: FileDigestsSchema })),
+  steers: z.array(z.object({
+    delivery: LedgerDeliverySchema, scope: z.array(z.string()), digests: FileDigestsSchema, recorded: z.literal(true).optional(),
+  })),
   findings: z.array(z.object({
     violation: OwedViolationSchema,
-    source: z.object({ kind: z.enum(RULE_SOURCE_KINDS), packId: z.string().nullable() }).nullable(),
+    source: z.object({ kind: z.enum(RULE_SOURCE_KINDS), packId: z.string().nullable(), title: z.string().optional() }).nullable(),
     scope: z.array(z.string()),
     digests: FileDigestsSchema,
   })),

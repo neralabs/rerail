@@ -95,10 +95,11 @@ export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
-export { steerOrigin } from "./code-rule/steer-origin.js";
+export { steerOrigin, steerTitle, type SteerRuleSource } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
+  RESULT_PAGE_BYTES,
   loadNativeBinding,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
@@ -124,7 +125,7 @@ export {
   resetRepositoryHistory,
   resetRepositoryHistoryIn,
 } from "./storage/database.js";
-export { defaultRerailHome } from "./storage/rerail-home.js";
+export { defaultRerailHome, STATUS_LINES_FOLDER } from "./storage/rerail-home.js";
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {

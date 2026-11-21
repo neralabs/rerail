@@ -28,10 +28,11 @@ const MAX_ANSWER_BYTES = 1_024;
  */
 const PIPE_RETRY_MS = 10;
 /**
- * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
- * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
+ * How long a proof that waits for a free instance of a held Windows pipe waits for one (`waitForInstance`): as long as
+ * Node's own connect waits for one, as main's proof did. A busy engine of this home that frees one in that time proves
+ * itself, so the engine start starts no second daemon beside it, and a hook's event reaches it.
  */
-const START_PIPE_WAIT_MS = 30_000;
+const INSTANCE_WAIT_MS = 30_000;
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -203,29 +204,38 @@ export interface EngineProofOptions {
   challenge?: string;
   /** Waits between the tries of a Windows pipe whose instances are all taken; a test counts the tries through it. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Whether a Windows pipe whose instances are all taken is waited for until one is free, up to {@link INSTANCE_WAIT_MS},
+   * with `timeoutMs` counted from the connect, as main's proof waited. Windows fails a connect to a pipe that is gone,
+   * so a pipe with every instance taken has a listener that lives and is busy: a hook waits for it before its event.
+   * Without it the answer comes within `timeoutMs` of the ask, as a command needs.
+   */
+  waitForInstance?: boolean;
 }
 
 /**
  * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
  * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process. The answer comes within `timeoutMs` of the ask, whatever the listener does, and nothing of the ask outlives
- * it: the connect is bounded ({@link proofRoute}), and so is the exchange ({@link askForProof}).
+ * process. The answer comes within `timeoutMs` of the ask, or of the connect with `waitForInstance`, whatever the
+ * listener does, and nothing of the ask outlives it: the connect is bounded ({@link proofRoute}), and so is the
+ * exchange ({@link askForProof}).
  */
 export async function engineCapabilityProof(
   socketPath: string,
   accessToken: string,
   timeoutMs = 2_000,
-  { challenge = randomBytes(32).toString("hex"), sleep: wait = sleep }: EngineProofOptions = {},
+  { challenge = randomBytes(32).toString("hex"), sleep: wait = sleep, waitForInstance = false }: EngineProofOptions = {},
 ): Promise<EngineProofAnswer> {
-  const deadline = Date.now() + timeoutMs;
-  const route = await proofRoute(socketPath, deadline, wait);
-  return typeof route === "string" ? route : await askForProof(route, accessToken, challenge, deadline);
+  const asked = Date.now();
+  const route = await proofRoute(socketPath, asked + (waitForInstance ? INSTANCE_WAIT_MS : timeoutMs), wait);
+  if (typeof route === "string") return route;
+  return await askForProof(route, accessToken, challenge, (waitForInstance ? Date.now() : asked) + timeoutMs);
 }
 
 /**
  * Whether the process listening on `socketPath` holds `accessToken`, as the engine start asks of a pipe another process
  * holds ({@link engineCapabilityProof}). A Windows pipe whose instances are all taken is waited for up to
- * {@link START_PIPE_WAIT_MS}, and the listener then has `timeoutMs` to answer. A listener that refuses, answers anything
+ * {@link INSTANCE_WAIT_MS}, and the listener then has `timeoutMs` to answer. A listener that refuses, answers anything
  * else, hangs up, stays silent or keeps every instance taken does not hold it.
  */
 export async function engineHoldsCapability(
@@ -234,6 +244,5 @@ export async function engineHoldsCapability(
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<boolean> {
-  const route = await proofRoute(socketPath, Date.now() + START_PIPE_WAIT_MS);
-  return typeof route !== "string" && await askForProof(route, accessToken, challenge, Date.now() + timeoutMs) === "proved";
+  return await engineCapabilityProof(socketPath, accessToken, timeoutMs, { challenge, waitForInstance: true }) === "proved";
 }

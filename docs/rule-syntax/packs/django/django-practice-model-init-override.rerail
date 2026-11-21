@@ -1,0 +1,76 @@
+.policy "django-practice-model-init-override" revision 1
+.description "Do not read model fields in, or change the signature of, a Django model's __init__; record loaded values in from_db or a post_init receiver, and build new objects in a classmethod or manager method."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. It matches `def __init__` written directly in a Django model class (python/django's
+// dj_model, through the run's classes) when the method reads `self.<field>` for a field the model or one of its
+// bases in the run declares (`self.x += 1` reads it too), takes a positional parameter before `*args`, or takes no
+// `*args` at all. Django builds every instance a queryset loads through __init__, as `cls(*values)` with deferred
+// fields left out: a field read there costs one query per row under only()/defer() (or recurses), and a signature
+// without a leading `*args` breaks loading.
+// It leaves alone an __init__ that only sets other attributes or rewrites kwargs; reads of the primary key (never
+// deferred), through `self.__dict__`, or in a method that checks get_deferred_fields(); reads in a nested def or
+// lambda; query-expression classes (Func, Expression), which declare an `output_field` but are not models
+// (python/django's dj_model leaves them out).
+//   class Order(models.Model):
+//       def __init__(self, *args, **kwargs):
+//           super().__init__(*args, **kwargs)
+//           self._old_status = self.status                   reported
+//           self._old_status = self.__dict__.get("status")   not reported: never loads a deferred field
+//           self.status, self.total = "new", 0               not reported: writes, reads nothing
+//   class Invoice(models.Model):
+//       def __init__(self, number, *args, **kwargs): ...     reported
+//       def __init__(self, **kwargs): ...                    reported: cls(*values) fails
+
+#include "python/django.rerail"
+
+.violation ModelInitOverride(at: node, model: symbol, what: symbol) "`{model}.__init__` {what}. Django calls __init__ for every row a queryset loads, positionally and with deferred fields left out: a field read here costs one query per row under only()/defer() (or recurses), and a changed signature breaks loading. Record loaded values in a `from_db` override or a `post_init` receiver (or read `self.__dict__.get(name)`), and build new objects in a classmethod or custom manager method."
+ModelInitOverride(n, m, cat("reads ", fs)) :- mio_init(c, f), def_name(c, m), field(f, "name", n),
+    fs = join q by x sep ", " : { mio_reads(c, f, x), q = cat("`self.", x, "`") }, fs != "".
+ModelInitOverride(n, m, cat("adds the positional parameter `", x, "` before *args")) :- mio_init(c, f), mio_star(f),
+    def_name(c, m), field(f, "name", n), field(f, "parameters", ps), child(ps, p, 1), (kind(p, "identifier") ;
+    kind(p, "typed_parameter") ; kind(p, "default_parameter") ; kind(p, "typed_default_parameter")), mio_param_name(p, x).
+ModelInitOverride(n, m, "takes no *args, so loading a row, which calls `cls(*values)`, fails") :- mio_init(c, f),
+    !mio_star(f), def_name(c, m), field(f, "name", n).
+// mio_star(f): __init__ f takes `*args`, annotated (`*args: Any`, a typed_parameter around the splat) or not.
+.decl mio_star(f: node)
+mio_star(f) :- mio_init(_, f), field(f, "parameters", ps), child(ps, p, _), kind(p, "list_splat_pattern").
+mio_star(f) :- mio_init(_, f), field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, l, _),
+    kind(l, "list_splat_pattern").
+
+// mio_init(c, f): f is the __init__ of model c, outside test and migration code.
+.decl mio_init(c: node, f: node)
+mio_init(c, f) :- dj_model_method(c, f, "__init__"), docof(f, d), !dj_test_doc(d), !dj_migration_doc(d).
+.decl mio_param_name(p: node, x: symbol)
+mio_param_name(p, x) :- kind(p, "identifier"), text(p, x).
+mio_param_name(p, x) :- !kind(p, "identifier"), child(p, i, 0), kind(i, "identifier"), text(i, x).
+// mio_reads(c, f, x): __init__ f of model c loads `self.x` in its own body (not a nested def, lambda or class), x a
+// non-primary-key field, and f does not call get_deferred_fields(). A load is `ast`'s load context (an assignment
+// target, tuple targets included, is a store), or the target of an augmented assignment, which reads before it writes.
+.decl mio_reads(c: node, f: node, x: symbol)
+mio_reads(c, f, x) :- attr_of(a, o, x), text(o, "self"), nearest(a, f, dj_region_stop), mio_init(c, f),
+    field(f, "body", b), within(a, b), (expr_ctx(a, "load") ; aug_target(a)), mio_field(c, x), !mio_checks_deferred(f).
+.decl mio_checks_deferred(f: node)
+mio_checks_deferred(f) :- mio_init(_, f), attr_of(a, _, "get_deferred_fields"), within(a, f).
+// mio_field(c, x): a row of model c holds a field in attribute x (python/django's dj_attname: a field of c or of a
+// base class of it in the run, and `x_id` for a foreign key), and that field is not the primary key.
+.decl mio_field(c: node, x: symbol)
+mio_field(c, x) :- dj_attname(c, x, call), !mio_pk(call).
+.decl mio_pk(call: node)
+mio_pk(call) :- call_arg(call, -1, "primary_key", v), text(v, "True").
+
+// The cases, `cases/django-practice-model-init-override/`, read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/base.py" from "cases/django-practice-model-init-override/shop/base.py"
+    .fixture "shop/models.py" from "cases/django-practice-model-init-override/shop/models.py"
+    .fixture "shop/tests/test_models.py" from "cases/django-practice-model-init-override/shop/tests/test_models.py"
+    .expect _ at "shop/models.py":15
+    .expect _ at "shop/models.py":25
+    .expect _ at "shop/models.py":31
+    .expect _ at "shop/models.py":39
+    .expect _ at "shop/models.py":111
+    .expect _ at "shop/models.py":163
+    .expect _ at "shop/models.py":170
+.end

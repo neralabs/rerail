@@ -597,7 +597,7 @@ PROBES = {
     "SIM905-comment-before-argument.py": "SEP = \",\"\n\"a,b\".split(  # configured separator\n    SEP\n)\n"
                                          "\"a,b\".split(\n    # the separator\n    \",\"\n)\n"
                                          "\"a b\".split(None,  # at most once\n    1)\n",
-    # From Moti's review of #29: parentheses, comments, `\` continuations and t-strings that change the tree-sitter
+    # From the review of #29: parentheses, comments, `\` continuations and t-strings that change the tree-sitter
     # shape but not Python's AST. Each port still misreads its case, so it stays a candidate until it agrees.
     "B017-comment-before-argument.py": "import pytest\ndef test_a():\n    with pytest.raises(Exception,  # c\n"
                                        "                       \"op()\"):\n        pass\n",
