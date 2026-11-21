@@ -105,6 +105,8 @@ struct Facts<'a> {
     reserved: bool,
     /// The containers written as one leaf where they are empty (`empties`), by their `OPEN`.
     empties: HashMap<usize, EmptyAt>,
+    /// The document's containers whose closer must be the stream's last token (`last_closers`), by their `OPEN`.
+    closers: HashMap<usize, u8>,
 }
 
 /// A container's `OPEN` whose call's first switch closes it on one byte at once (`empties`): where the next token is
@@ -248,6 +250,172 @@ fn empties(x: &Facts<'_>) -> HashMap<usize, EmptyAt> {
             .collect();
         if let [(byte, q, table)] = closers[..] {
             out.insert(pc, EmptyAt { after, byte, table, q });
+        }
+    }
+    out
+}
+
+/// The document's containers whose closer must be the stream's last token, as the lean parser checks before its walk
+/// (`*v == '{' && last != '}'`): an `OPEN` of the document's own call (`root_number`'s calls), where
+/// - every way into its rule's `CLOSE` before a `RETURN` comes from an arm of a byte switch on one byte, the closer,
+///   with no token taken between (no `TOKEN` that takes, no call, no empty container's closer);
+/// - its `RETURN`'s place goes on to a counted end (`counted_end`, 0546) with no token taken.
+///
+/// Then the walk accepts only where the closer is the token at `n - 1`, so a file whose last token is another byte
+/// is refused at once. By its `OPEN`: the closer's byte.
+fn last_closers(x: &Facts<'_>) -> HashMap<usize, u8> {
+    let mut out = HashMap::new();
+    let (Some(fx), Some(one)) = (x.fetch.as_ref(), x.one.as_ref()) else { return out };
+    if !(x.sixteen && x.coded && x.sentinel && !x.flagged && one.stacked) || root_number(x).is_none() {
+        return out;
+    }
+    let words = &x.native.structural;
+    let op = |p: usize| words.get(p).map(|w| w.operation);
+    let counted_token = |pc: usize| matches!(op(pc + 1), Some(Op::Switch { table }) if counted_end(x, table));
+    let takes = |pc: usize| match op(pc) {
+        Some(Op::Token { .. }) => x.phase[pc] == crate::stream::TAKEN && !fx.part_at(x, pc) && !counted_token(pc),
+        Some(Op::Push { .. }) => true,
+        _ => false,
+    };
+    // The words on from `pc` that take nothing (an empty container's leaf takes its closer: its normal way alone).
+    let on = |pc: usize| -> Vec<usize> {
+        if fx.part_at(x, pc) {
+            return succ(x, pc);
+        }
+        match op(pc) {
+            Some(Op::Open { .. }) if x.empties.contains_key(&pc) => vec![if field_after(x, pc).is_some() { pc + 2 } else { pc + 1 }],
+            _ => plain_succ(x, pc),
+        }
+    };
+    let reach = |from: usize, stop: &dyn Fn(usize) -> bool| {
+        let mut seen = vec![false; words.len()];
+        let mut work = vec![from];
+        while let Some(w) = work.pop() {
+            if w >= words.len() || std::mem::replace(&mut seen[w], true) {
+                continue;
+            }
+            if !stop(w) {
+                work.extend(on(w));
+            }
+        }
+        seen
+    };
+    // The document's own calls: in the words from word 0, no call followed.
+    let document = {
+        let mut seen = vec![false; words.len()];
+        let mut work = vec![0usize];
+        while let Some(w) = work.pop() {
+            if w < words.len() && !std::mem::replace(&mut seen[w], true) {
+                work.extend(plain_succ(x, w));
+            }
+        }
+        seen
+    };
+    let ft = &fx.ft;
+    for pc in 0..words.len() {
+        if !matches!(op(pc), Some(Op::Open { .. })) {
+            continue;
+        }
+        let mut p = if field_after(x, pc).is_some() { pc + 2 } else { pc + 1 };
+        while matches!(op(p), Some(Op::NodeSuper { .. })) {
+            p += 1;
+        }
+        if !matches!(op(p), Some(Op::Push { .. })) || !document[p] {
+            continue;
+        }
+        let Some(&[after]) = one.after.get(&p).map(Vec::as_slice) else { continue };
+        let c = crate::native_cpu_stream::callee(x.native, p);
+        if !(matches!(op(c), Some(Op::Token { any: None, extras: false, .. })) && takes(c)) {
+            continue;
+        }
+        // The rule's words as the walk goes (`on`: a string's region at its closer), its calls not followed; its
+        // `CLOSE`s before a `RETURN`.
+        let body = {
+            let mut seen = vec![false; words.len()];
+            let mut work = vec![c];
+            while let Some(w) = work.pop() {
+                if w < words.len() && !std::mem::replace(&mut seen[w], true) {
+                    work.extend(on(w));
+                }
+            }
+            seen
+        };
+        let closes: HashSet<usize> = (1..words.len()).filter(|&r| body[r] && matches!(op(r), Some(Op::Return { .. })) && matches!(op(r - 1), Some(Op::Close { this: true }))).map(|r| r - 1).collect();
+        if closes.is_empty() || (1..words.len()).any(|r| body[r] && matches!(op(r), Some(Op::Return { .. })) && !closes.contains(&(r - 1))) {
+            continue;
+        }
+        // Each place a way can start from in the rule, with the bytes its last token can be (`None`: any).
+        let mut from: Vec<(usize, Option<Vec<u8>>)> = Vec::new();
+        let mut plain = true;
+        for w in (0..words.len()).filter(|&w| body[w]) {
+            match op(w) {
+                Some(Op::Switch { table }) => {
+                    let sw = &x.native.switches[usize::from(table)];
+                    if !(on_kinds(x, sw) && fresh(x, sw)) {
+                        plain = false;
+                        break;
+                    }
+                    let delegate = delegate_of(x, fx, sw);
+                    let mut arms: HashMap<u16, Vec<u8>> = HashMap::new();
+                    for b in 0..256usize {
+                        let by = match delegate {
+                            Some((_, other)) if byte_sig(x, fx, other, b) == byte_sig(x, fx, sw, b) => other,
+                            _ => sw,
+                        };
+                        let t = kind_target(x, fx, by, ft.codes1[b]);
+                        if t != REFUSE {
+                            arms.entry(t).or_default().push(b as u8);
+                        }
+                    }
+                    from.extend(arms.into_iter().map(|(t, bytes)| (usize::from(t), Some(bytes))));
+                    // A word's arm: the bytes of the one-byte tokens that are that word (its string one byte), else any.
+                    for &(y, t) in &sw.words {
+                        let bytes: Vec<u8> = (0..256usize)
+                            .filter(|&b| (ft.codes1[b] >> 8) & 0xff == u32::from(y) + 1 && !matches!(ft.rules.get(usize::from(ft.ends[b])), Some(&crate::records::EndRule::Run(_) | &crate::records::EndRule::Read(_))))
+                            .map(|b| b as u8)
+                            .collect();
+                        from.push((usize::from(t), (!bytes.is_empty()).then_some(bytes)));
+                    }
+                    if sw.end != REFUSE {
+                        from.push((usize::from(sw.end), None));
+                    }
+                }
+                // After a take not switched on, after a call, after an empty container's closer: any.
+                Some(Op::Token { .. }) if takes(w) && !matches!(op(w + 1), Some(Op::Switch { .. })) => from.push((w + 1, None)),
+                Some(Op::Push { .. }) => from.extend(one.after.get(&w).into_iter().flatten().map(|&a| (a, None))),
+                Some(Op::Open { .. }) if x.empties.contains_key(&w) => from.push((x.empties[&w].after, None)),
+                _ => {}
+            }
+        }
+        if !plain {
+            continue;
+        }
+        let stop = |w: usize| takes(w) || matches!(op(w), Some(Op::Switch { .. } | Op::Return { .. } | Op::Accept)) || closes.contains(&w);
+        let mut closer: Option<u8> = None;
+        let mut ok = true;
+        for (f, bytes) in from {
+            let seen = reach(f, &|w| w != f && stop(w) || (w == f && (takes(w) || matches!(op(w), Some(Op::Return { .. } | Op::Accept)))));
+            if !closes.iter().any(|&q| seen[q]) {
+                continue;
+            }
+            match bytes.as_deref() {
+                Some(&[b]) if closer.is_none_or(|k| k == b) => closer = Some(b),
+                _ => ok = false,
+            }
+        }
+        let Some(b) = closer.filter(|_| ok) else { continue };
+        if x.empties.get(&pc).is_some_and(|e| e.byte != b) {
+            continue;
+        }
+        // The return's place: on to a counted end, no token taken, nothing else.
+        let seen = reach(after, &|w| takes(w) || matches!(op(w), Some(Op::Switch { .. } | Op::Return { .. } | Op::Accept)));
+        let ends_counted = (0..words.len()).filter(|&w| seen[w]).all(|w| match op(w) {
+            Some(Op::Switch { table }) => counted_end(x, table),
+            Some(Op::Accept | Op::Return { .. }) => false,
+            _ => !takes(w),
+        });
+        if ends_counted {
+            out.insert(pc, b);
         }
     }
     out
@@ -840,7 +1008,7 @@ fn facts(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, sixtee
         return Err("records made in tier 2, with a token's taking flagged or extras: not yet ahead of time".into());
     }
     let unchecked = crate::native_cpu_stream::bounds(native).unchecked(crate::native_cpu_stream::marks_of(words));
-    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default(), ends: None, reserved: false, empties: HashMap::new() };
+    let mut facts = Facts { native, in_code, rest_bits, end_bits, lazy, kind_reps, end_kind, word_kind_of, framed, context, entries: entries.into_iter().collect(), phase, flagged, widths, tag, fetch, classes, unchecked, one: None, sentinel: false, coded: false, sixteen, numbers: Vec::new(), strings: HashMap::new(), part_arg: false, methods: Default::default(), labels: Default::default(), ends: None, reserved: false, empties: HashMap::new(), closers: HashMap::new() };
     facts.sentinel = sentinel(&facts);
     // Where tier 2 makes the records, the program is one function, as `walk_document`.
     if facts.fetch.is_some() && !facts.context {
@@ -890,6 +1058,7 @@ fn source(native: &Structure, widths: rerail_tape_format::Widths, tag: u8, lang:
     }
     facts.empties = empties(&facts);
     facts.ends = last_ends(&facts);
+    facts.closers = last_closers(&facts);
     prelude(&mut out, &facts)?;
     for &e in &facts.entries {
         rule(&mut out, &facts, e)?;
@@ -3430,13 +3599,19 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                     // The node is the ops' alone: no row, its container's slot on the stack. Its number the
                     // language's, a literal; a key the table lacks refuses the file (the JIT's `fail::NUMBER`).
                     let Some(number) = x.number(kf, classes) else { return Ok(UNNUMBERED.into()) };
+                    // The document's container: its closer the stream's last token, checked before the walk, as the lean
+                    // parser's `last != '}'` (`last_closers`).
+                    let first = match x.closers.get(&pc) {
+                        Some(b) => format!("if s.n == 0 || s.byte(unsafe {{ *s.starts.add((s.n - 1) * s.rs) }}) != {b:#04x} {{ return refuse(why::BYTE); }}\n"),
+                        None => String::new(),
+                    };
                     // Empty, its closer the next token (`empties`): one leaf, the closer taken as its call's switch
                     // takes it (the depth counted, as the call's; its end kept where that arm keeps it), then on at
                     // the call's return place.
                     if let Some(e) = x.empties.get(&pc) {
                         let keep = x.ends.as_ref().is_some_and(|en| en.copies.contains(&e.table)) && end_read_from(x, e.q, true);
                         return Ok(format!(
-                            "if s.byte(unsafe {{ *s.starts.add(t.next as usize * s.rs) }}) == {:#04x} {{\nif s.depth == DEPTH {{ return refuse(why::DEPTH); }}\nlet st = t.start;\ns.{}(t)?;\n{}t.rec_end = t.start + 1;\ns.leaf16({number}, st, t.rec_end){};\n{}\n}} else {{\ns.open16({number}, t.start){};\n{}\n}}",
+                            "{first}if s.byte(unsafe {{ *s.starts.add(t.next as usize * s.rs) }}) == {:#04x} {{\nif s.depth == DEPTH {{ return refuse(why::DEPTH); }}\nlet st = t.start;\ns.{}(t)?;\n{}t.rec_end = t.start + 1;\ns.leaf16({number}, st, t.rec_end){};\n{}\n}} else {{\ns.open16({number}, t.start){};\n{}\n}}",
                             e.byte,
                             token_name(None, false),
                             if keep { "t.last_end = t.rec_end;\n" } else { "" },
@@ -3446,7 +3621,7 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
                             jump(0)?
                         ));
                     }
-                    return Ok(format!("s.open16({number}, t.start){};\n{}", x.may_fail(), jump(0)?));
+                    return Ok(format!("{first}s.open16({number}, t.start){};\n{}", x.may_fail(), jump(0)?));
                 }
                 format!("s.code_now({kf}, {classes:#x});\n")
             } else {

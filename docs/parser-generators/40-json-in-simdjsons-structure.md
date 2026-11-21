@@ -593,6 +593,12 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 53, done: the document's closer checked before the walk (decision 0549)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The outer container | `last != '}'` before the walk, then `next == index + count` after it | the count after the walk alone | `if s.n == 0 \|\| s.byte(starts[(s.n - 1) * rs]) != 0x7d { refuse }` in the `{` arm (`0x5d` in `[`), then the count |
+
 ## Step 52, done: a return two ways (decision 0548)
 
 | | the lean parser | before | now |

@@ -24,9 +24,9 @@ step 50.
    refuses (`why::BYTE`), as the byte switch did for a token it has no arm for.
 3. **`ACCEPT` tests no end where every way into it is such a switch's end arm** with no take after it
    (`accept_at_end`). Then only the open nodes are checked there.
-4. **Not done: the lean parser's check before the walk** (that the outer closer is the last token). Here the end is
-   tested once, after the walk, as the lean parser's `next == index + count` after its outer close. A check before
-   the walk would add one test and take none away.
+4. **Not done here: the lean parser's check before the walk** (that the outer closer is the last token). This item
+   said the lean parser checks once, after its walk. It checks both before and after (corrected in 0549, which adds
+   the check before).
 
 ## Checks
 
