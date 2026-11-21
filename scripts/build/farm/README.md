@@ -78,9 +78,13 @@ The sccache is upstream at the commit `build-sccache` pins, with PRs #3021
 `~/Library/Caches/rerail-farm/sccache-src`. Until the PRs land upstream, a newer base means
 merging them again and exporting `0000` anew. The farm's patch caches
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
-engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
+engine's cdylib, test harnesses: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
-file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
+file that uses `__TIME__` (mimalloc's) is cached. A test harness is shared by the checkouts because
+no crate reads its checkout's path as it compiles (decision 0224; `scripts/check/ci/path-free-builds.mjs`
+checks it in CI). On Linux the wrapper copies a program it got from the cache (a build script, a
+test) to a file of its own before cargo runs it: the server's other threads hold the file it wrote
+open until they exec, and running it failed with "Text file busy". Nothing of the farm is installed on a host:
 `farm-agent` is sent with each command and run by the host's `/usr/bin/python3`.
 Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
 entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it) and
@@ -135,8 +139,9 @@ alone takes 90 s at a load of 80).
 The daemon, the wrapper and the agents on the hosts are the installed farm
 (`~/.local/share/rerail-farm`), one version for every worktree; `test-remote` and
 `live-test-remote` run it too, not their checkout's copy, and say when their checkout's is newer.
-`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one (`--force`
-does), the daemon refuses a caller of another version, and stops taking compiles once `setup`
+`farm.VERSION` numbers it: `setup` refuses to install an older version over a newer one, or
+over an install from a commit this checkout has not merged (`installed-from`: a branch's farm
+changes at the same version were lost so, 2026-11-21) (`--force` does both), the daemon refuses a caller of another version, and stops taking compiles once `setup`
 installs another (it finishes the ones it has; the next compile starts the new one). A change to
 the farm's protocol or to what a host keeps raises `VERSION`.
 
@@ -211,6 +216,18 @@ turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead
 its message.
 A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
+
+## A crate built against a replaced one
+
+A library in a target directory can be replaced under the same file name and cargo fingerprint, and
+keep a file time no newer than the crates built against it: cargo then sees all of them fresh, and
+rustc refuses the next crate that links both (E0460 "found possibly newer version of crate", E0463,
+or "compiled by an incompatible version of rustc"; cranelift_frontend against cranelift_codegen,
+2026-11-21). A compile here that fails so compiles each refused crate again, from the record of its
+last compile (`calls/`, for Rerail checkouts and registry crates), down to 3 levels of what that
+crate links in turn, and then runs again. It says so as a `warning: rerail-farm:` line, and logs
+each one in `~/Library/Caches/rerail-farm/stale-externs.log`, since what replaced the library is
+still unknown.
 
 ## Configuration
 

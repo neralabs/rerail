@@ -97,12 +97,14 @@ def save(name, jobs, result):
 
 def bench(names, jobs):
     for name in names:
-        code, text = run(name, CLEAN)
-        if code != 0:
-            with printing:
-                print(f"{name}: not run: {text.strip().splitlines()[-1] if text.strip() else code}", flush=True)
-            continue
         for j in jobs:
+            # Each job count builds from nothing: without this, the second count found the first's
+            # build and timed a no-op (0.1 s, 2026-11-21).
+            code, text = run(name, CLEAN)
+            if code != 0:
+                with printing:
+                    print(f"{name}: not run: {text.strip().splitlines()[-1] if text.strip() else code}", flush=True)
+                break
             before = load(name)
             started = time.time()
             code, text = run(name, BUILD + ["-j", str(j)])

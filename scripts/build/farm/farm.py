@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -23,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 54
+VERSION = 55
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -50,7 +51,9 @@ for _script in ("test-remote", "live-test-remote"):
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
-CACHE_SIZE_GB = 60
+# The cache's size; a machine with less disk to spare sets RERAIL_FARM_CACHE_GB (read when a new
+# checkout joins and the configuration is written).
+CACHE_SIZE_GB = int(os.environ.get("RERAIL_FARM_CACHE_GB") or 60)
 # A workspace crate that missed this recently is being edited here: it compiles incrementally, uncached.
 HOT_SECONDS = 2 * 3600
 # A host nobody has touched for this long is idle: it takes a compile per core.
@@ -58,8 +61,14 @@ USER_IDLE_SECONDS = 300
 # A remote step that takes longer than this has stalled: the compile runs here instead.
 COPY_SECONDS = 120
 COMPILE_SECONDS = 900
-# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped.
-VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_FIXTURES_DIR,RERAIL_ORACLES_DIR"
+# What a crate's build reads as a path must be hashed as it is, not with its checkout stripped. Not
+# RERAIL_FIXTURES_DIR: the tests read it as they run, and as they compile only to embed a fixture's
+# text (`oracle!`, native/src/code_rule_dsl/fixtures.rs), which the key holds; hashed as it is, it made
+# every test binary of every checkout its own (scripts/check/ci/path-free-builds.mjs keeps it so). A
+# hit from another checkout names this checkout's fixtures in its dep-info: sccache writes the
+# dep-info from its own `--emit=dep-info` run of this compile, never from the cache (upstream 81c2834,
+# in build-sccache's BASE), so cargo watches the files this checkout embeds.
+VERBATIM = "CARGO_MANIFEST_DIR,CARGO_MANIFEST_PATH,RERAIL_ORACLES_DIR"
 # Where cargo keeps the crates it downloads: the same files at the same paths on every machine.
 IN_PLACE = (os.path.join(HOME, ".cargo/registry/src"), os.path.join(HOME, ".cargo/git/checkouts"))
 # Variables a remote compile must not see: this machine's jobserver, terminal and farm plumbing.
@@ -236,10 +245,11 @@ def remote_eligible(args):
 
 
 def checkout_of(path):
-    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`."""
+    """The checkout (worktree) holding `path`: the nearest directory above it with a `.git`, or that is
+    Rerail's root (a copy synced without its `.git`, as on the build boxes)."""
     path = os.path.abspath(path)
     while path != "/":
-        if os.path.exists(os.path.join(path, ".git")):
+        if os.path.exists(os.path.join(path, ".git")) or is_rerail(path):
             return path
         path = os.path.dirname(path)
     return None
@@ -371,7 +381,10 @@ class CopyUse:
 
 
 def sccache_env(env):
+    # Either one in the environment replaces the configuration's whole disk cache (its directory
+    # becomes sccache's default, another server's): the farm's cache is the configuration's.
     env.pop("SCCACHE_DIR", None)
+    env.pop("SCCACHE_CACHE_SIZE", None)
     env.update(
         SCCACHE_SERVER_PORT=PORT,
         SCCACHE_CONF=SCCACHE_CONF,
@@ -449,15 +462,45 @@ def hot_marker(out_dir, crate, extra):
 LINKED = {"proc-macro", "cdylib", "dylib", "bin"}
 
 
+def linked_types(args):
+    """The crate types of a compile, a test harness (`--test`) as `bin`: an executable rustc links."""
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if "--test" in args:
+        types.add("bin")
+    return types
+
+
+def fresh_inode(path):
+    """Replaces the program at `path` with a copy of itself, in a file of its own. The farm's sccache
+    writes a hit's files while its other threads start compilers, each of which holds the file open
+    until it execs: cargo running the program then fails with "Text file busy" (ETXTBSY; twice in an
+    hour on the build boxes, 2026-11-18). The copy is a file only this process wrote and closed. A
+    copy that fails (a full disk, a refused write) keeps the program as the compile wrote it: the
+    compile succeeded, and only this bookkeeping did not."""
+    tmp = f"{path}.farm-{os.getpid()}"
+    try:
+        shutil.copy2(path, tmp)
+        os.replace(tmp, path)
+    except FileNotFoundError:
+        pass  # no program: the compile failed, or wrote none
+    except OSError as e:
+        # The partial copy goes first: it frees the space a full disk needs for the log line.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        log(f"fresh_inode: {path} kept as written: {e}")
+
+
 def same_in_every_checkout(args, out_dir, crate):
     """Arguments that keep what rustc links (a proc macro's dylib, a build script, the engine's cdylib)
     free of its checkout's and target directory's paths: its install name and the debug map's paths
     to the objects it links. The farm's sccache caches these (`SCCACHE_CACHE_LINKED`), and every crate
     that uses a proc macro hashes its dylib. A cached one's debug map names objects of the target
     directory that compiled it: elsewhere, its own code has no line tables."""
-    types = set()
-    for t in values(args, "--crate-type"):
-        types.update(t.split(","))
+    types = linked_types(args)
     if not types & LINKED or not out_dir:
         return []
     # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
@@ -909,6 +952,14 @@ def wrapper(rustc, args):
     for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
         env.pop(k, None)
     sccache_env(env)
+    # A program cargo runs (a build script, a binary, a test harness) gets a file of its own on Linux
+    # (`fresh_inode`); macOS has no "Text file busy". The compile keeps cargo's jobserver descriptors
+    # (`CARGO_MAKEFLAGS` names them), as the exec below does.
+    if sys.platform != "darwin" and "bin" in linked_types(args) and out_dir:
+        code = subprocess.run([SCCACHE, shim(rustc)] + args, env=env, close_fds=False).returncode
+        if code == 0:
+            fresh_inode(os.path.join(out_dir, crate + (codegen(args, "extra-filename") or "")))
+        sys.exit(code)
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
 
 
@@ -943,7 +994,14 @@ def cc(argv0, args):
     """`farm-cc` and `farm-c++`, the C and C++ compilers of build scripts (`CC`, `CXX`): clang through
     the farm's sccache, so a build script's C (SQLite, tree-sitter's grammars, simdjson) is compiled
     once for every target directory and worktree, not once per target directory."""
-    compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    if sys.platform == "darwin":
+        compiler = "/usr/bin/clang++" if os.path.basename(argv0).endswith("++") else "/usr/bin/clang"
+    else:
+        # What the `cc` crate runs without `CC`: the system's compiler for this machine's target;
+        # clang, which cross-compiles, for another (one with no `CC_<target>` or `TARGET_CC`: wasm).
+        cross = os.environ.get("TARGET", os.environ.get("HOST")) != os.environ.get("HOST")
+        cxx = os.path.basename(argv0).endswith("++")
+        compiler = ("/usr/bin/clang++" if cxx else "/usr/bin/clang") if cross else ("/usr/bin/c++" if cxx else "/usr/bin/cc")
     if not os.path.exists(SCCACHE):
         os.execv(compiler, [compiler] + args)
     checkout = checkout_of(os.environ.get("OUT_DIR") or os.getcwd()) or checkout_of(os.getcwd())
@@ -1887,13 +1945,73 @@ def farm_rustc(argv0, args):
 
 def local(rustc, args):
     """Compiles here, in one of this machine's slots: held by this process, since a lock does not
-    survive an exec."""
+    survive an exec. A compile that fails on a stale library it links (`stale_externs`) has those
+    rebuilt (`rebuild_extern`) and runs once more."""
     lock = local_slot()
     try:
-        code = subprocess.run([rustc] + args).returncode
+        code, err = compile_here(rustc, args)
+        rebuilt = [name for name in stale_externs(err, args) if rebuild_extern(rustc, name, args)]
+        if code != 0 and rebuilt:
+            code, err = compile_here(rustc, args)
     finally:
         lock.release()
+    sys.stderr.buffer.write(err)
     sys.exit(code)
+
+
+def compile_here(rustc, args):
+    """rustc's exit status and its stderr (cargo's JSON diagnostics: written once the compile's fate
+    is known, so a failure the farm repairs is not shown)."""
+    p = subprocess.run([rustc] + args, stderr=subprocess.PIPE)
+    return p.returncode, p.stderr
+
+
+# rustc refusing a library it links: missing in effect (E0463, also when the file is there but was
+# built against another version of a crate below it), built against another version of a crate
+# (E0460, which names the library that depends on it), or by another rustc (E0514).
+STALE_EXTERN = [re.compile(rb"can't find crate for `(\w+)`"),
+                re.compile(rb"found possibly newer version of crate `\w+` which `(\w+)` depends on"),
+                re.compile(rb"found crate `(\w+)` compiled by an incompatible version of rustc")]
+
+
+def stale_externs(err, args):
+    """The `--extern` crates of `args` that rustc's stderr `err` refused as built against other
+    versions of what they link (2026-11-21: cranelift_frontend in a target, built against a
+    cranelift_codegen since replaced under the same file name and cargo fingerprint, with a file time
+    no newer than the frontend's: cargo saw both fresh)."""
+    externs = {e.split("=", 1)[0] for e in values(args, "--extern") if "=" in e}
+    found = []
+    for pattern in STALE_EXTERN:
+        for m in pattern.finditer(err):
+            name = m.group(1).decode()
+            if name in externs and name not in found:
+                found.append(name)
+    return found
+
+
+def rebuild_extern(rustc, name, args, depth=0):
+    """Compiles the library `--extern name=...` of `args` again, as it was compiled (its `calls`
+    record), against the libraries there now, in place of the stale one; its own stale libraries
+    first (a few levels). True when it was rebuilt."""
+    path = next((os.path.abspath(e.split("=", 1)[1]) for e in values(args, "--extern") if e.split("=", 1)[0] == name), None)
+    rec = read_json(state("calls", key(stem_of(path))), None) if path else None
+    if rec is None or depth > 3:
+        log(f"{name}: stale, and no record of its compile to repeat")
+        return False
+    run_env = dict(os.environ, **rec["env"])
+    p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    if p.returncode != 0:
+        below = [n for n in stale_externs(p.stderr, rec["args"]) if rebuild_extern(rustc, n, rec["args"], depth + 1)]
+        if below:
+            p = subprocess.run([rustc] + rec["args"], cwd=rec["cwd"], env=run_env, stderr=subprocess.PIPE)
+    ok = p.returncode == 0
+    note = (f"{name}: {os.path.basename(path)} was built against another version of a crate it links "
+            f"(same file name, same cargo fingerprint); {'compiled again here' if ok else 'compiling it again failed'}")
+    log(note)
+    with open(state("stale-externs.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {path}: {note}\n")
+    sys.stderr.write(f"warning: rerail-farm: {note}\n")
+    return ok
 
 
 if __name__ == "__main__" and sys.argv[1:2] == ["free-host"]:
