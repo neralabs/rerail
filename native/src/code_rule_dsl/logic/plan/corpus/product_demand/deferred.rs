@@ -253,7 +253,7 @@ fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_pair
             || !upstream::eligible(p, &rel)
             || p.f.qualifiers.get(&rel).is_some_and(|q| !q.is_empty())
             || tapes.contains_key(&rel)
-            || p.f.demand.iter().any(|d| *d == rel)
+            || p.f.demand.contains(&rel)
             || shapes.iter().any(|s| s.head == rel || s.lit == rel)
             || p.f.asked_by.values().flatten().any(|refs| refs.contains(&rel))
         {

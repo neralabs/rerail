@@ -265,7 +265,7 @@ impl JoinFilter {
         let what = || format!(
             "{} probe rows, {} build rows ({}), HLL overlap {overlap:?}, {rejects}/{SAMPLES} sampled probes rejected, use filter {use_filter}",
             outer.len, inner.len, if kept { "its filter kept" } else { "a filter built" });
-        crate::code_rule_dsl::logic::profile::decision("join Bloom filter", || what());
+        crate::code_rule_dsl::logic::profile::decision("join Bloom filter", what);
         if !use_filter {
             if trace {
                 eprintln!("join screen: {}", what());

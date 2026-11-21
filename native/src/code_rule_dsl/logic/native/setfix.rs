@@ -8853,7 +8853,7 @@ pub mod posted_tests {
         let mut view = Box::new(viewing(&a));
         let mark = view.mark();
         assert_eq!(view.delta_ids_since_mark(&mark).map(|d| d.counts()), Some((0, 0)), "the same view: unchanged");
-        assert!(Box::new(viewing(&a)).delta_ids_since_mark(&mark).is_none(), "another relation over the source");
+        assert!(viewing(&a).delta_ids_since_mark(&mark).is_none(), "another relation over the source");
         // The same relation, rows and address, now over another source: its change is not known.
         view.view = Some(View { src: source(40), cols: vec![0, 1], ids: None, eqs: Vec::new() });
         assert!(view.delta_ids_since_mark(&mark).is_none(), "another source");

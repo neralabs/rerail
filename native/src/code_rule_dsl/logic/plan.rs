@@ -5574,7 +5574,7 @@ impl Fx<'_> {
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
-                .map(|l| LiveRel::of_native(l))
+                .map(LiveRel::of_native)
                 .collect());
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
@@ -5593,7 +5593,7 @@ impl Fx<'_> {
         }
         Ok(super::native::component::live_changed(self.db, name, seen)?
             .into_iter()
-            .map(|l| l.map(|l| LiveRel::of_native(l)))
+            .map(|l| l.map(LiveRel::of_native))
             .collect())
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
