@@ -395,6 +395,8 @@ pub struct Lowering {
     pub refuses_taken: HashMap<usize, Vec<::bitlex::syntax::GapPattern>>,
     /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
     pub ends: Vec<usize>,
+    /// The marks each mark passes too where it is taken (`, passes`), by its index in `marks`.
+    pub passes: HashMap<usize, Vec<String>>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
     /// (`Records::checks`).
     pub token_escapes: Vec<(String, bool, Val, u32, crate::records::CheckThen)>,
@@ -427,6 +429,8 @@ pub struct RustTables {
     pub tokens: Vec<(u8, String)>,
     pub mark_bits: Vec<(Option<u8>, u16)>,
     pub extra_bits: Vec<(u8, String)>,
+    /// Tier 1's fallback totals (`EMPTY`): the file goes to tree-sitter unless each is 0.
+    pub empties: u16,
 }
 
 
@@ -537,6 +541,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         refuses: HashMap::default(),
         refuses_taken: HashMap::default(),
         ends: Vec::new(),
+        passes: HashMap::default(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
         mark_tests: Vec::new(),
@@ -746,6 +751,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                         ends: low.ends.contains(&i),
                         settles: low.settles.contains(&i),
                         hidden: low.hidden.contains(name),
+                        passes: low.passes.get(&i).into_iter().flatten().filter_map(|n| low.marks.iter().position(|x| &x.0 == n)).fold(0, |a, m| a | 1 << m),
                         drops: low.drops.get(&i).map_or(&[][..], |v| v.as_slice()),
                         loses: low.loses.get(&i).map_or(&[][..], |v| v.as_slice()),
                         refuses: low.refuses.get(&i).map_or(&[][..], |v| v.as_slice()),
@@ -753,7 +759,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), readers: &r.readers, kinds: &r.kinds };
+            let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), empties: t.empties, readers: &r.readers, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
         }
@@ -1058,7 +1064,10 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes } => {
+                    if !passes.is_empty() {
+                        self.passes.insert(self.marks.len(), passes.clone());
+                    }
                     if !refuses_taken.is_empty() {
                         self.refuses_taken.insert(self.marks.len(), refuses_taken.clone());
                     }
@@ -3637,7 +3646,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3874,7 +3883,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
         // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
         // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
         // each comment.
@@ -3900,6 +3909,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     };
     for k in settle_marks {
         marks[k].settle = Some(k as u16);
+    }
+    // `, passes M`: each a mark after it, by order.
+    for (&k, names) in &low.passes {
+        for n in names {
+            let m = low.marks.iter().position(|x| &x.0 == n).ok_or_else(|| format!("`passes {n}`: no such mark"))?;
+            if m <= k {
+                return Err(format!("`passes {n}`: a mark before it, which taking it passes already"));
+            }
+            marks[k].passes |= 1 << m;
+        }
     }
     // The `drops`, `loses`, `refuses` and `refuses taken` questions (`Words::gap_patterns`), each
     // mark's in turn,
@@ -4988,7 +5007,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         })
         .collect();
     let extra_bits = extra_mark.map(|e| std::iter::once((e, low.extra[0].clone())).chain(extra_kind_bits.iter().map(|(k, b)| (*b, k.clone()))).collect()).unwrap_or_default();
-    low.rust_tables = Some(RustTables { tokens: names.tokens.clone(), mark_bits, extra_bits });
+    low.rust_tables = Some(RustTables { tokens: names.tokens.clone(), mark_bits, extra_bits, empties });
     let mut text = lowered.text;
     crate::rir_text::name_rows(&mut text, &names);
     Ok((grammar::text(&states, &arms), text, takes_last, mark_masks, records))

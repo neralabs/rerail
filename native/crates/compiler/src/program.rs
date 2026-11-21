@@ -295,6 +295,9 @@ pub struct Words {
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
     pub mark_words: Vec<(u8, u16)>,
+    /// The marks each mark passes too where it is taken, past those before it (`markpasses K
+    /// M`, a mark's `, passes`): mark `K`'s, a bit each by order. Rising by mark.
+    pub mark_passes: Vec<(u8, u64)>,
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
@@ -323,6 +326,15 @@ pub struct Words {
     pub local_checks: Vec<LocalCheck>,
     /// The preprocessing words' tables (`pp_words`), when the program has them.
     pub pp: PpTables,
+}
+
+impl Words {
+    /// The marks done at a token where mark `order` is taken: it, the marks before it, and those
+    /// it passes (`mark_passes`).
+    pub fn taken(&self, order: u8) -> u64 {
+        let passes = self.mark_passes.iter().find(|p| p.0 == order).map_or(0, |p| p.1);
+        u64::MAX >> (63 - u32::from(order & crate::program::MARK_ORDER)) | passes
+    }
 }
 
 /// The preprocessing words' tables: what a paste (`##`) may make, which a dialect sets.

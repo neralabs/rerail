@@ -230,10 +230,6 @@ mask line_first = solid & prev(fill(lf & code, solid))
 escape "a `;` that starts a line" when code & semicolon & line_first
 # No solid byte after it, at the file's last byte.
 escape "a `;` that ends the file" when last_byte & fill(code & semicolon, solid)
-# `@Test // c` before a declaration: the annotation takes the line's semicolon, so the comment
-# would be the annotation's, where the lean parser keeps it the declaration's: not read yet.
-mask at_line    = fill(line_first & at_sign, lf)
-escape "a comment on an annotation's line" when (o_line | o_block) & at_line
 # `get` or `set` first on a line: an accessor, which tree-sitter reads as a declaration of its own
 # after a property's; not read yet.
 # A getter or setter on a line of its own: a mark a class body's member takes. Elsewhere (a
@@ -340,6 +336,12 @@ skip ws
 # grammar does not say yet: refused where the class's rule takes the mark (`refuses taken`).
 mark head_ctor  = lf & code, before "constructor", before "public" | "private" | "internal" | "protected" "constructor" without semi, before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor" | "public" | "private" | "internal" | "protected"))* nest ("(" to ")") "constructor", before "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":" | "=" | "constructor"))* nest ("(" to ")") ending ("public" | "private" | "internal" | "protected") "constructor" without semi,
   refuses taken after ~";" multiline_comment with semi
+# The line break an annotation reads past (`annotation`): `semi`'s, but no semicolon of
+# tree-sitter's scanner (none is valid after an annotation) and no `asi` of the lean parser's:
+# it settles nothing and asks no question, so a comment after the annotation is the next
+# token's node's. Before `semi`, so a level that takes it takes it before it ends at `semi`;
+# taken, it passes `semi`.
+mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, passes semi
 # A block comment first on the line after a line break where a semicolon may come (not after a
 # `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
 # questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
@@ -564,9 +566,9 @@ tree kotlin {
   node parameter_modifier = 'vararg' | 'noinline' | 'crossinline'
   node platform_modifier = 'expect' | 'actual'
   # `@A`, `@A.B`, `@A(x)`: its arguments after the type, always.
-  # A line break after an annotation is the scanner's semicolon; the lean parser reads on to
+  # A line break after an annotation is no semicolon (`ann_lf`): the lean parser reads on to
   # what it annotates.
-  node annotation       = '@' [use_site use_site_target] user_type [wrap constructor_invocation _ value_arguments] [semi]
+  node annotation       = '@' [use_site use_site_target] user_type [wrap constructor_invocation _ value_arguments] [ann_lf]
   node use_site_target  = ('field' | 'property' | 'get' | 'set' | 'receiver' | 'param' | 'setparam' | 'delegate') ':'
   node file_annotation  = '@' 'file' ':' user_type [wrap constructor_invocation _ value_arguments]
 
@@ -788,6 +790,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class acc
+  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class acc
   extra line_comment multiline_comment
 }

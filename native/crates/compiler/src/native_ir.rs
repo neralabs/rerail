@@ -384,6 +384,8 @@ pub struct Structure {
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// The marks done where each mark is taken (`Words::taken`), by order: 64 at most.
+    pub taken: Vec<u64>,
     /// The gap patterns (`Words::gap_patterns`).
     pub gap_patterns: Vec<crate::program::TokenMark>,
     /// The local checks (`Words::local_checks`).
@@ -569,6 +571,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        taken: (0..64u8).map(|k| program.taken(k)).collect(),
         gap_patterns: program.gap_patterns.clone(),
         local_checks: program.local_checks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),

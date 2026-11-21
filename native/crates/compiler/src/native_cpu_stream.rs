@@ -6516,7 +6516,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         }
                         // Kept: the callee its arm calls takes it.
                         if !keep {
-                            let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                            let rest = f.ins().band_imm(live, !(native.taken[usize::from(order as u8)] as i64));
                             mset(&mut f, Mem::Live, rest);
                         }
                         f.ins().jump(fall, &[]);
@@ -6563,7 +6563,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     // calls takes it.
                     if !keep {
                         let live = mget(&mut f, Mem::Live);
-                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                        let rest = f.ins().band_imm(live, !(native.taken[usize::from(order as u8)] as i64));
                         mset(&mut f, Mem::Live, rest);
                     }
                     f.ins().jump(fall, &[]);

@@ -56,7 +56,7 @@ fn tier2_rust_is_current() {
 fn aot_text(c: &Compiled, text: &str) -> Result<String, u32> {
     // Tier 1's records and outputs (the masks a string's parts are found by), the interpreter's.
     let run = c.program.block_programs[0].run(text.as_bytes());
-    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &run.positions[0], &run.positions[1], &run.codes, &run.outputs)?;
+    let tape = rerail_kotlin_aot::parse(text.as_bytes(), &run.positions[0], &run.positions[1], &run.codes, &run.outputs, &run.totals)?;
     Ok(lean::tape_text(&tape))
 }
 
@@ -575,6 +575,9 @@ fn soft_words_in_templates_are_the_lean_parsers() {
 #[test]
 fn swallowed_comments_are_the_lean_parsers() {
     same(&[
+        // A line comment after an annotation, before the line break the annotation takes.
+        "@Suppress(\"unused\") // the unused type parameter\nclass A\n",
+        "class A {\n    @Test  // SPR-16412\n    fun f() {}\n}\n",
         "abstract class A {\n    val x = 1\n    /* c */\n    abstract fun f()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    when (x) {}\n}\n",
         "fun f() {\n    a()\n    /** c\n     * d */\n    error(1)\n}\n",
@@ -685,9 +688,13 @@ fn corpus() {
         // Tier 2 as Rust: the lean parser's tape, or refused.
         match aot_text(c, &text) {
             Ok(t) if t == want => aot.0 += 1,
-            Ok(_) => {
+            Ok(t) => {
                 aot.2 += 1;
-                eprintln!("tier 2 as Rust differs: {}", p.display());
+                // Where: the first line that differs, with the lines before it.
+                let (have, wanted): (Vec<&str>, Vec<&str>) = (t.lines().collect(), want.lines().collect());
+                let at = have.iter().zip(&wanted).position(|(a, b)| a != b).unwrap_or(have.len().min(wanted.len()));
+                let from = at.saturating_sub(6);
+                eprintln!("tier 2 as Rust differs: {}\n  context:\n    {}\n  tier 2 as Rust:\n    {}\n  lean:\n    {}", p.display(), wanted[from..at].join("\n    "), have[at..(at + 4).min(have.len())].join("\n    "), wanted[at..(at + 4).min(wanted.len())].join("\n    "));
             }
             Err(_) => aot.1 += 1,
         }
@@ -733,6 +740,7 @@ fn corpus() {
     eprintln!("kotlin corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses)");
     eprintln!("tier 2 as Rust: {} the same, {} refused, {} differ", aot.0, aot.1, aot.2);
     assert_eq!(differ, 0);
+    assert_eq!(aot.2, 0, "tier 2 as Rust: a wrong tape");
 }
 
 /// The lean parser's tape for each file in `RERAIL_KOTLIN_SHOW` (paths, `:`-separated), and the

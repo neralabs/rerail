@@ -744,7 +744,11 @@ pub enum Stmt {
     /// where the question holds, the file is refused, as where the lean lexer's `asi` reads what
     /// the grammar does not say yet (decision 0451). `, refuses taken …`: only where a level takes
     /// the mark (it holds there), as the lean lexer's `asi` reads on in a constructor's context.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern> },
+    ///
+    /// `, passes M`: taken, it passes mark `M` too, though `M` comes after it: a mark tested
+    /// before `M` where both hold (an annotation's line break before `semi`), which leaves no
+    /// `M` at the token, as a line break that is no semicolon leaves none.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Vec<(bool, Vec<Vec<TokenElem>>)>, drops: Vec<GapPattern>, loses: Vec<GapPattern>, refuses: Vec<GapPattern>, refuses_taken: Vec<GapPattern>, passes: Vec<String> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -2180,6 +2184,7 @@ impl P {
                 }
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends, mut drops, mut loses, mut refuses, mut refuses_taken) = (false, None, vec![], false, false, vec![], vec![], vec![], vec![]);
                 let mut next: Vec<(bool, Vec<Vec<TokenElem>>)> = Vec::new();
+                let mut passes = Vec::new();
                 while self.eat_p(",") {
                     self.nls();
                     let not = self.eat_kw("unless");
@@ -2205,6 +2210,8 @@ impl P {
                         }
                     } else if self.eat_kw("ends") {
                         ends = true;
+                    } else if self.eat_kw("passes") {
+                        passes.push(self.ident()?);
                     } else if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
@@ -2225,7 +2232,7 @@ impl P {
                 if !drops.is_empty() && !settles {
                     return self.err("`drops` on a mark that settles");
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes }
             }
             "token" => {
                 let kind = self.kind()?;

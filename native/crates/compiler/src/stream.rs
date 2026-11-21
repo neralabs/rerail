@@ -589,7 +589,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
                     if mode & MARK_KEEP == 0 {
-                        live &= !(u64::MAX >> (63 - k));
+                        live &= !program.taken(k as u8);
                     }
                 } else {
                     pc += 1;

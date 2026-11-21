@@ -222,6 +222,9 @@ pub struct Mark {
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
+    /// `, passes M`: the marks after it that taking it passes too, a bit each by order
+    /// (`Words::mark_passes`).
+    pub passes: u64,
     /// `, drops …`: its questions' first entry (`Words::gap_patterns`), at whose tokens its
     /// arms drop the extra pending last (`SETTLE m=1`).
     pub drop: Option<u16>,
@@ -1668,6 +1671,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     let mark_words: Vec<(u8, u16)> = e.mark_words.iter().map(|(&k, &s)| (k, s)).collect();
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
+    let mark_passes: Vec<(u8, u64)> = marks.iter().enumerate().filter(|(_, m)| m.passes != 0).map(|(k, m)| (k as u8, m.passes)).collect();
+    crate::rir_text::mark_pass_rows(&mut text, &mark_passes);
     let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
     crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);

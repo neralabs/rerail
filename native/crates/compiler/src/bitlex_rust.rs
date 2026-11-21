@@ -43,6 +43,8 @@ pub struct Mark<'a> {
     pub refuses: &'a [::bitlex::syntax::GapPattern],
     pub refuses_taken: &'a [::bitlex::syntax::GapPattern],
     pub hidden: bool,
+    /// `, passes M`: the marks after it that taking it passes too, a bit each by order.
+    pub passes: u64,
 }
 
 /// What the generator reads: the tree's rules and the compiler's tables.
@@ -62,6 +64,9 @@ pub struct Input<'a> {
     /// The marks that tell an extra's record (`Records::extra`): the first, of the first extra
     /// kind, then each later kind's own bit.
     pub extra_bits: Vec<(u8, String)>,
+    /// Tier 1's fallback totals (`EMPTY`), the first `empties`: the file goes to tree-sitter
+    /// unless each is 0.
+    pub empties: u16,
     /// Each row's soft keywords (`Lowering::soft`).
     pub soft: &'a [(String, Vec<Vec<u8>>)],
     /// The records' readers: those whose regions tier 2 splits (`Split::Tier2`) it reads in parts.
@@ -1061,7 +1066,7 @@ impl<'a> G<'a> {
                 let t = self.gap_test(&drops, &format!("drops_{n}"), false, &mut fns)?;
                 let _ = write!(take, "        if {t} {{\n            self.drop_pending();\n        }}\n");
             }
-            let _ = writeln!(out, "    /// Mark `{}` taken: it and the marks before it passed at this token.\n    fn take_{n}(&mut self) -> R {{\n{take}        self.taken |= (2u64 << {order}) - 1;\n        Ok(())\n    }}\n", m.name);
+            let _ = writeln!(out, "    /// Mark `{}` taken: it and the marks before it passed at this token.\n    fn take_{n}(&mut self) -> R {{\n{take}        self.taken |= {:#x};\n        Ok(())\n    }}\n", m.name, (u64::MAX >> (63 - order)) | m.passes);
             let _ = writeln!(out, "    /// Mark `{}` where the rule takes it: it must hold.\n    fn mark_{n}(&mut self) -> R {{\n        if !self.m_{n}() {{\n            return self.refuse();\n        }}\n        self.marked = true;\n        self.take_{n}()\n    }}\n", m.name);
             // Asked wherever a decision tests it (`refuses`, then `loses`): at a level that takes
             // it, always; where the level may end at it (`end`), where the caller's level is the
@@ -1272,7 +1277,7 @@ impl<'a> G<'a> {
         out.push_str(&readings);
         out.push_str(&split);
         out.push_str("}\n");
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and its outputs (the masks a region's parts are found by), or the byte it was refused at.\npub fn parse(src: &[u8], starts: &[u32], lasts: &[u32], codes: &[u32], outputs: &[Vec<u64>]) -> Result<rerail_tape_format::Columns, u32> {{\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, starts, lasts, codes, outputs, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", rule_fn(self.order.first().ok_or("no rule")?));
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code), its outputs (the masks a region's parts are found by) and its totals, or the byte it was refused at.\npub fn parse(src: &[u8], starts: &[u32], lasts: &[u32], codes: &[u32], outputs: &[Vec<u64>], totals: &[u64]) -> Result<rerail_tape_format::Columns, u32> {{\n    // Tier 1's fallback totals: where one is not 0, tier 1 sends the file to tree-sitter.\n    if totals.iter().take({}).any(|&t| t != 0) {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, starts, lasts, codes, outputs, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", self.x.empties, rule_fn(self.order.first().ok_or("no rule")?));
         Ok(out)
     }
 }
