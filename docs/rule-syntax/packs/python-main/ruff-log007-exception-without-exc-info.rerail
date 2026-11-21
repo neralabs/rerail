@@ -1,5 +1,4 @@
 .policy "ruff-log007-exception-without-exc-info" revision 1
-.guests off
 .description "Use error instead of exception when a logging call sets exc_info to a falsy value; it logs the same message and states the intent plainly."
 .language python
 .mode steer

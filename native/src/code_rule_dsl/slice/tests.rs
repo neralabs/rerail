@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 const WS: &str = "/slice";
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn temp(what: &str) -> PathBuf {
@@ -416,11 +416,11 @@ const KNOWN: [(&str, &str, &str); 0] = [];
 fn pack_census() {
     use crate::code_rule_dsl::matcher::match_tree;
     use crate::code_rule_dsl::transducer::packed::{LoweredMatcher, Micro};
-    let packs = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let packs = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs");
     let mut names = std::fs::read_dir(&packs).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.path()).collect::<Vec<_>>();
     names.sort();
     // The data-layer pack, the architecture's hardest test, lives in its own worktree (read only).
-    let data_layer = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
+    let data_layer = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../Data-layer-rule-expressivity/packs/data-layer");
     if data_layer.is_dir() {
         names.push(data_layer);
     }
@@ -491,10 +491,9 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    let mut backends = vec![ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit];
-    if cfg!(any(target_os = "macos", target_os = "linux")) {
-        backends.extend([ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit]);
-    }
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
         let store = ContentStore::open(&temp("supertype-store").with_extension("sqlite")).unwrap();
@@ -530,13 +529,14 @@ fn the_backends_find_the_same_keys_on_real_files() {
     let dir = temp("phase4");
     let (paths, _) = sample_of(&dir, 4, 0);
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-    let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
-    if cfg!(any(target_os = "macos", target_os = "linux")) {
-        backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
-    }
-    let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
+    // Each (policy, file)'s coverage.
+    type Coverages = BTreeMap<(String, String), Coverage>;
+    let mut reference: Option<(Keys, Coverages)> = None;
     for (name, backend) in backends {
         let path = temp(&format!("phase4-{name}")).with_extension("sqlite");
         stores.push(path.clone());
@@ -1079,7 +1079,7 @@ fn files_of_one_tape_shape_keep_their_own_sources() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_pack_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);
@@ -1153,7 +1153,7 @@ fn rer131_pack_keys() {
 #[test]
 #[ignore = "RER-131 oracle: needs RERAIL_PACK and RERAIL_FILES"]
 fn rer131_runtime_keys() {
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(std::env::var("RERAIL_PACK").unwrap());
     let mut documents = Vec::new();
     files(&pack.join("rules"), "json", &mut documents);
     files(&pack.join("candidates/rules"), "json", &mut documents);

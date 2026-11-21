@@ -1,5 +1,4 @@
 .policy "ruff-pt006-pytest-parametrize-names-wrong-type" revision 1
-.guests off
 .description "Pass pytest.mark.parametrize names as a tuple of strings, or a plain string for a single name, not a comma-separated string or a list."
 .language python
 .mode steer

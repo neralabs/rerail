@@ -22,6 +22,7 @@ use super::{Document, Guest, Made, Placement, Projected, Relation, TapePlace};
 #[derive(Default)]
 pub struct GuestRows {
     program: Vec<[i64; 3]>,
+    grammar: Vec<[i64; 2]>,
     tape: Vec<[i64; 2]>,
     parsed: Vec<[i64; 3]>,
     sub_tape: Vec<[i64; 3]>,
@@ -38,7 +39,7 @@ fn hex(digest: &[u8; 32]) -> String {
 }
 
 /// The documents a guest's host is found among (decision 0055): a batch's (`made::Docs`, each made when first read,
-/// decision 0504), which hold the documents of the batches it grew from (decision 0431 §6).
+/// decision 0494), which hold the documents of the batches it grew from (decision 0431 §6).
 pub(super) trait Hosts {
     /// The projection of the document of key `key`.
     fn host(&self, key: u32) -> Option<&Projected>;
@@ -70,6 +71,13 @@ impl GuestRows {
         let key = i64::from(p.key);
         let tape = string(&hex(&d.digest)) as i64;
         self.tape.push([key, tape]);
+        // A file's grammar, read off its tape (a program's is its `rr_program` row).
+        if guest.is_none()
+            && d.facts.tape.is_some()
+            && let Some(grammar) = crate::code_rule_dsl::language::from_tape_tag(d.facts.tag).and_then(crate::code_rule_dsl::language::label)
+        {
+            self.grammar.push([key, string(grammar) as i64]);
+        }
         let root = (!withheld && p.len() > 0).then(|| p.global(0));
         let Some(g) = guest else { return };
         if unparse {
@@ -79,6 +87,8 @@ impl GuestRows {
         // A value document has no host: what made it is its row.
         match &g.made {
             Made::Host => {}
+            // A file's own tree (decision 0512): the file itself, no program of it.
+            Made::File => return,
             // A tape value (decision 0431): a row of each relation for each place, and no `rr_program` row: it is
             // no file's program.
             Made::Tape { places } => {
@@ -172,6 +182,7 @@ impl GuestRows {
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
             ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)]))),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
             ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
             ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
             ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),

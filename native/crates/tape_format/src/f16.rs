@@ -1009,7 +1009,7 @@ rerail_simd8::dispatch! {
 }
 
 /// A format 16 tape read in place with its language's choices, through the tape's reads (`crate::reads`, written directly,
-/// decision 0510) over its view.
+/// decision 0534) over its view.
 #[derive(Clone, Copy)]
 pub struct F16<'a> {
     bytes: &'a [u8],
@@ -1596,17 +1596,17 @@ impl Tape for F16Z<'_> {
     }
 }
 
-/// The LZ4 piece at `buf[from..to]` decoded into `dst[..len]` by the decoder written directly (`reads::lz4`: the
-/// reads' `z_lz4` in Rust, the JIT's and the kernels' decoder, decision 0353 step 4b). A piece that does not decode to
-/// its length is a corrupt tape.
+/// The LZ4 piece at `buf[from..to]` decoded into `dst[..len]` by the reads' decoder (`reads::lz4`, the CLIF's
+/// `tape_lz4` written directly, the one the JIT and the kernels decode with, decision 0353 step 4b); `dst` has 8 bytes
+/// of room after `len`, which the JIT's and the kernels' copies may write. A piece that does not decode to its length is a corrupt tape.
 fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) -> Result<(), String> {
     if from > to || to > buf.len() || to > u32::MAX as usize {
         return Err(format!("a 16z piece at {from}..{to} of a tape of {} bytes", buf.len()));
     }
-    if dst.len() < len {
-        return Err(format!("a 16z piece's room of {} bytes for {len}", dst.len()));
+    if dst.len() < len + 8 {
+        return Err(format!("a 16z piece's room of {} bytes for {len} and 8 after them", dst.len()));
     }
-    let n = crate::reads::lz4(&buf[from..to], dst, len);
+    let n = crate::reads::lz4(buf, from, to, dst, len);
     if n == len { Ok(()) } else { Err(format!("a 16z piece decodes to {n} bytes, not {len}")) }
 }
 
@@ -1985,7 +1985,7 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
-    /// The Rust reads (`crate::reads`, written directly, decision 0510) read every node, byte and line as the CLIF
+    /// The Rust reads (`crate::reads`, written directly, decision 0534) read every node, byte and line as the CLIF
     /// reads do through the JIT: format 16 with every side list in use, and format 15.
     #[test]
     fn the_rust_reads_are_the_jits() {
@@ -2121,24 +2121,60 @@ mod tests {
         at: *mut u8,
     }
 
-    unsafe extern "C" {
-        fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
-        fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
-        fn munmap(addr: *mut u8, len: usize) -> i32;
+    /// The system's calls for it: a fresh mapping, a range of it made unreadable, the mapping given back.
+    #[cfg(unix)]
+    mod pages {
+        unsafe extern "C" {
+            fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
+            fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+            fn munmap(addr: *mut u8, len: usize) -> i32;
+        }
+        #[cfg(target_os = "macos")]
+        const ANON: i32 = 0x1000;
+        #[cfg(not(target_os = "macos"))]
+        const ANON: i32 = 0x20;
+        pub unsafe fn map(len: usize) -> *mut u8 {
+            let p = unsafe { mmap(std::ptr::null_mut(), len, 3, 2 | ANON, -1, 0) };
+            if p as isize == -1 { std::ptr::null_mut() } else { p }
+        }
+        pub unsafe fn guard(p: *mut u8, len: usize) -> bool {
+            unsafe { mprotect(p, len, 0) == 0 }
+        }
+        pub unsafe fn unmap(p: *mut u8, len: usize) {
+            unsafe { munmap(p, len) };
+        }
+    }
+    #[cfg(windows)]
+    mod pages {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn VirtualAlloc(addr: *mut u8, len: usize, kind: u32, protect: u32) -> *mut u8;
+            fn VirtualProtect(addr: *mut u8, len: usize, protect: u32, old: *mut u32) -> i32;
+            fn VirtualFree(addr: *mut u8, len: usize, kind: u32) -> i32;
+        }
+        pub unsafe fn map(len: usize) -> *mut u8 {
+            // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE.
+            unsafe { VirtualAlloc(std::ptr::null_mut(), len, 0x3000, 0x04) }
+        }
+        pub unsafe fn guard(p: *mut u8, len: usize) -> bool {
+            let mut old = 0;
+            // PAGE_NOACCESS.
+            unsafe { VirtualProtect(p, len, 0x01, &mut old) != 0 }
+        }
+        pub unsafe fn unmap(p: *mut u8, _len: usize) {
+            // MEM_RELEASE, of the whole reservation.
+            unsafe { VirtualFree(p, 0, 0x8000) };
+        }
     }
 
     impl Guarded {
         fn new(bytes: &[u8]) -> Guarded {
             const GUARD: usize = 1 << 16;
-            #[cfg(target_os = "macos")]
-            const ANON: i32 = 0x1000;
-            #[cfg(not(target_os = "macos"))]
-            const ANON: i32 = 0x20;
             let span = bytes.len().next_multiple_of(GUARD) + GUARD;
             // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
-            let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
-            assert!(!map.is_null() && map as isize != -1, "a mapping");
-            assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+            let map = unsafe { pages::map(span) };
+            assert!(!map.is_null(), "a mapping");
+            assert!(unsafe { pages::guard(map.add(span - GUARD), GUARD) }, "a page no read may touch");
             // SAFETY: the readable part of the mapping holds the bytes, ending at the unreadable page.
             let at = unsafe { map.add(span - GUARD - bytes.len()) };
             unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at, bytes.len()) };
@@ -2149,7 +2185,7 @@ mod tests {
     impl Drop for Guarded {
         fn drop(&mut self) {
             // SAFETY: the mapping `new` made, no read of it left.
-            unsafe { munmap(self.map, self.span) };
+            unsafe { pages::unmap(self.map, self.span) };
         }
     }
 
@@ -2236,6 +2272,47 @@ DEFINE_KERNEL2(tests, t_reads,
     for (uint32_t k = 0u; k <= 12u; k++)
         o[10u + k] = clif_tape_child(tape, view, i, k);
 }
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
+}
 "#;
     const DEVICE_READS: usize = 23;
 
@@ -2246,6 +2323,16 @@ DEFINE_KERNEL2(tests, t_reads,
         pad: u32,
     }
     unsafe impl rerail_gpu::Pod for ReadArgs {}
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RandomArgs {
+        n: u32,
+        threads: u32,
+        rounds: u32,
+        cache: u32,
+    }
+    unsafe impl rerail_gpu::Pod for RandomArgs {}
 
     /// `t`'s every read of every node, as the kernel lays them out; `parent_end` each node's parent's subtree's end.
     fn reads_of<T: Tape>(t: &T) -> (Vec<u32>, Vec<u32>) {
@@ -2295,6 +2382,13 @@ DEFINE_KERNEL2(tests, t_reads,
         q.flush().await_().unwrap();
         let got: Vec<u32> = read(&out, n * DEVICE_READS);
         eprintln!("{}: {what}: {n} nodes read in {:.2} s", rerail_gpu::device::backend(), started.elapsed().as_secs_f64());
+        // A 16z tape's cache, as the device's reads left it: what they found, waited for and failed to find.
+        if view.format == rerail_clif::view::F16Z_FORMAT {
+            let back: Vec<u8> = read(&tb, bytes.len());
+            // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+            let counts = unsafe { rerail_clif::view::cache::Counts::read(back.as_ptr().add(view.side[0] as usize)) };
+            eprintln!("{}: {what}: the cache's counts: {:?}", rerail_gpu::device::backend(), counts.named());
+        }
         const NAMES: [&str; 10] = ["size", "end of subtree", "code", "start", "end", "parent", "next", "next in parent", "first child", "child count"];
         for i in 0..n {
             let (g, w) = (&got[i * DEVICE_READS..][..DEVICE_READS], &want[i * DEVICE_READS..][..DEVICE_READS]);
@@ -2422,6 +2516,72 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(counts.rotated > 100 && counts.promoted > 0 && counts.hits > 0, "the cache turned: {counts:?}");
         assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
         drop(buf);
+    }
+
+    /// Decision 0540: the device's threads read a 16z tape through a cache they share while it turns, as this crate
+    /// does: 256 threads read 32 nodes each at random through a cache of three generations, each of one block fewer
+    /// than the tape's, so lookups find blocks other threads are decoding, promote blocks from the oldest generation
+    /// and fill the head. Read at random, the cache thrashes (every turn's head filled by promotions), and a lookup
+    /// may run out of tries (on Metal most do: a SIMD group's turn outlasts several turns of the cache, and once one
+    /// lookup has failed, a pending one does not wait). What holds is the cache's promise: a read wrong only where
+    /// the cache counted a failure (the dead entry read), so a caller refuses the batch (decision 0463). Each thread
+    /// reads the failure count after each of its reads: no read is wrong while it is still 0. Without a device it
+    /// passes, saying so.
+    #[test]
+    fn the_device_reads_16z_through_a_cache_that_turns() {
+        use rerail_clif::view::cache;
+        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+        let Some(shared) = rerail_gpu::shared::get() else {
+            eprintln!("no device: the reads as UKL did not run");
+            return;
+        };
+        let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", "<ukl/reads/tape_z.h>").into_boxed_str());
+        let program = rerail_gpu::kernels::program("tape_reads_turning", text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
+        let want: Vec<u32> = (0..n).flat_map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count() as u32;
+        let spec = cache::Spec::new(3, blocks - 1, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes(), 0);
+        spec.init(&mut bytes[at..]).unwrap();
+        bytes.resize(bytes.len().next_multiple_of(8) + 8, 0);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
+        // SAFETY: the view is plain u32s.
+        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&view).cast::<u32>(), size_of::<TapeView>() / 4) };
+        let (threads, rounds) = (256u32, 32u32);
+        let (tb, vb, wb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&want).unwrap());
+        let out = alloc::<u32>(2 * threads as usize).unwrap();
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        let started = std::time::Instant::now();
+        launch(&q, program.function("t_random").unwrap())
+            .value("args", &RandomArgs { n: n as u32, threads, rounds, cache: at as u32 })
+            .buffer("tape", &tb)
+            .buffer("view", &vb)
+            .buffer("want", &wb)
+            .buffer("out", &out)
+            .run(&[threads.div_ceil(64) as u64], &[64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let words: Vec<u32> = read(&out, 2 * threads as usize);
+        let wrong: u64 = words.iter().step_by(2).map(|&w| u64::from(w)).sum();
+        let silent: u64 = words.iter().skip(1).step_by(2).map(|&w| u64::from(w)).sum();
+        let back: Vec<u8> = read(&tb, bytes.len());
+        // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+        let counts = unsafe { cache::Counts::read(back.as_ptr().add(at)) };
+        eprintln!("{}: {} reads in {:.2} s, wrong {wrong} (before any failure {silent}): {:?}", rerail_gpu::device::backend(), threads * rounds * 4, started.elapsed().as_secs_f64(), counts.named());
+        assert_eq!(silent, 0, "reads wrong with no failure counted yet: {:?}", counts.named());
+        assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
+        assert!(wrong <= u64::from(counts.failed), "{wrong} reads wrong, {} failures", counts.failed);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.
@@ -3064,16 +3224,16 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(shrunk >= 2 * 20 && differs > 0, "{shrunk} inputs compressed, {differs} unlike HC 9");
     }
 
-    /// The decoder (`reads::lz4`, written directly) decodes what LZ4 compressed: literal runs of every length mod 8,
-    /// matches at every offset under 8 and far ones, and lengths past 15 (their extension bytes); a piece cut short
-    /// decodes to less than its length. And the JIT's (`tape_lz4`, the reads' in CLIF, which widens an offset under 8
-    /// as LZ4's reference decoder does) decodes each the same: as many bytes, the same bytes (decision 0517).
+    /// The one decoder (`reads::lz4`, and the CLIF's `tape_lz4` it is written from) decodes what LZ4 compressed:
+    /// literal runs of every length mod 8, matches at every offset under 8 (which the CLIF's widens as LZ4's
+    /// reference decoder does) and far ones, and lengths past 15 (their extension bytes); a piece cut short decodes
+    /// to less than its length. The JIT's decodes every piece, whole and cut, to the same bytes and the same count.
     #[test]
     fn the_reads_decoder_decodes_what_lz4_compressed() {
         let jit = rerail_clif::jit::Reads::new();
-        type Lz4 = extern "C" fn(*const u8, *const TapeView, u32, u32, u64, u64) -> u64;
-        // SAFETY: the read's signature: the tape's base, its view, the piece's bounds, the destination and its length.
-        let tape_lz4: Lz4 = unsafe { std::mem::transmute(jit.function("tape_lz4")) };
+        // SAFETY: `tape_lz4`'s signature: the tape, its view, the piece's bounds, the destination and its length.
+        let tape_lz4: extern "C" fn(*const u8, *const TapeView, u32, u32, u64, u64) -> u64 = unsafe { std::mem::transmute(jit.function("tape_lz4")) };
+        // The JIT's decode of `buf[from..to]`: its count and bytes (its room has the 8 bytes its copies may write).
         let jits = |buf: &[u8], from: usize, to: usize, len: usize| {
             let mut dst = vec![0u8; len + 8];
             let n = tape_lz4(buf.as_ptr(), &TapeView::default(), from as u32, to as u32, dst.as_mut_ptr() as u64, len as u64) as usize;
@@ -3114,9 +3274,9 @@ DEFINE_KERNEL2(tests, t_reads,
             let cut = 5 + packed.len() / 2;
             let mut dst = vec![0u8; raw.len() + 8];
             assert!(decode_block(&buf[..cut], 5, cut, &mut dst, raw.len()).is_err(), "case {case}: a piece cut short is refused");
-            let n = crate::reads::lz4(&buf[5..cut], &mut dst, raw.len());
+            let n = crate::reads::lz4(&buf[..cut], 5, cut, &mut dst, raw.len());
             assert!(n < raw.len(), "case {case}: a piece cut short decodes less");
-            assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), &dst[..n], "case {case}: the JIT's decode of the piece cut short");
+            assert_eq!(jits(&buf[..cut], 5, cut, raw.len()), dst[..n], "case {case}: the JIT's decode of the piece cut short");
         }
     }
 }

@@ -20,7 +20,7 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
 
 #[allow(dead_code)]
 fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
-    document.bytes_at(offset, 4 * count).chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect()
+    document.bytes_at(offset, 4 * count).as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect()
 }
 
 use std::sync::Mutex;
@@ -172,7 +172,7 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
         assert_eq!(table.slabs.iter().map(|slab| slab.id).collect::<Vec<_>>(), vec![rest[0].slab.id], "{format:?}: the other slab, made resident");
         for (document, (held, view)) in documents.iter().zip(table.documents.iter().zip(&table.views)) {
             assert!(Arc::ptr_eq(document, held), "{format:?}: the document itself, not a copy");
-            let address = |slab: &Slab| slab.device_buffer().device_address().expect("a slab's device address") as i64;
+            let address = |slab: &Slab| slab.device_buffer().device_address().expect("a buffer with an address") as i64;
             let apart = address(&document.slab).wrapping_sub(address(block));
             assert_eq!(view.offset(), apart + i64::from(document.view.at), "{format:?}: the view counts from the bound slab");
             // Past the batch's numbering, and a 16z view's cache (its address, its entry size), set for the batch.
@@ -334,7 +334,7 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
             .buffer("chunk", table.block.as_ref().expect("one block bound").device_buffer())
             .value("args", &Conformance { count: table.nodes as u32, pad: 0 });
         for slab in &table.slabs {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(cache) = &table.cache {
             launch = launch.uses(cache);

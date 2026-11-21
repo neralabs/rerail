@@ -1,5 +1,4 @@
 .policy "ruff-up024-os-error-alias" revision 1
-.guests off
 .description "Use the builtin OSError instead of its legacy aliases such as IOError, EnvironmentError, WindowsError and socket.error; since Python 3.3 they are all the same class."
 .language python
 .mode steer

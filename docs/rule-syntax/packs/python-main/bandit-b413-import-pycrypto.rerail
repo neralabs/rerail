@@ -1,5 +1,4 @@
 .policy "bandit-b413-import-pycrypto" revision 1
-.guests off
 .description "Avoid importing the pyCrypto package; it is unmaintained and has known vulnerabilities, so use the cryptography package instead."
 .language python
 .mode steer

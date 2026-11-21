@@ -1,4 +1,4 @@
-// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0489 §10).
+// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0486 §10).
 //
 // A store (an array of units: tokens, rows, ...) handed out from its front by an atomic add never takes back what
 // its users are done with. A pool keeps those blocks to hand out again: a free list a size class, each list linked
@@ -32,12 +32,9 @@
 #define UKL_POOL_NONE 0xFFFFFFFFu
 // The classes: 2^0 to 2^31.
 #define UKL_POOL_CLASSES 32u
-// A take's or a push's swaps at most. A swap fails only where another thread's on the same head succeeded, so the
-// loops make progress without it; the bound stops a runaway alone, as the work queue's (`UKL_WQ_TURNS`). It is not a
-// contention budget: a grid's threads push the rests of their splits onto a few heads at once, and at 64 the M1 Max's
-// 2,048 lost half of class 3's blocks to spent pushes (`the_pool_splits_a_larger_block`).
+// A take's swaps at most.
 #ifndef UKL_POOL_TURNS
-#define UKL_POOL_TURNS 100000000u
+#define UKL_POOL_TURNS 64u
 #endif
 
 typedef struct UklPool {
@@ -105,8 +102,6 @@ UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 {
     uint32_t head = ukl_atomic_poll(&p.heads[c]);
     for (uint32_t turn = 0u; turn < UKL_POOL_TURNS && head != UKL_POOL_NONE; turn++) {
-        // The link as last written (a poll: a split's push writes it, then its fence, then the swap that makes the
-        // block the head; a relaxed load may see an older link where atomics are relaxed, as on Metal).
         uint32_t next = ukl_atomic_poll(&p.next[head]);
         uint32_t seen = ukl_atomic_cas(&p.heads[c], head, next);
         if (seen == head)

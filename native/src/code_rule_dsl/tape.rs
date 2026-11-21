@@ -441,7 +441,7 @@ pub const PRESENCE_BLOCK: usize = rerail_tape_format::f16::PART;
 /// A tape as held, in one format.
 #[derive(Clone)]
 pub enum Held {
-    F15(Columns15),
+    F15(Box<Columns15>),
     F16(Arc<rerail_tape_format::f16::Tape16>),
     F16Z(Arc<rerail_tape_format::f16::Tape16Z>),
 }
@@ -618,6 +618,9 @@ pub struct DerivedImage {
     pub(super) host_errors: Arc<Vec<(u32, u32)>>,
     /// Its tree over `text`, in its own dialect.
     pub tape: TapeImage,
+    /// The parent's bytes of the node it stands at, where they are not its text's (`embed::Program::at`: a Python
+    /// string's program stands at the string, around its content); `None`: the innermost node over its text.
+    pub at: Option<(u32, u32)>,
 }
 
 impl DerivedImage {
@@ -669,10 +672,96 @@ impl DerivedImage {
                     .map(|range| (range.start as u32, range.end as u32))
                     .collect(),
             ),
+            at: program.at.map(|at| (at.start as u32, at.end as u32)),
             text: Arc::new(program.text),
             source_map: Arc::new(program.segments),
             tape,
         })
+    }
+
+    /// A stored derived document (`stored`, its tape `tape` read apart), checked as a tape of its own and against
+    /// document `parent` it was derived from (of `parent_dialect`, `parent_len` bytes): an embedding that document's
+    /// dialect has, a tape of that embedding's dialect over its text, a source map and host errors within both texts,
+    /// and the role its map gives it.
+    pub fn checked(stored: &StoredDerived<'_>, parent: u32, parent_dialect: GrammarDialect, parent_len: usize, tape: TapeImage) -> Result<Self, String> {
+        let via = via_of_code(parent_dialect, stored.via).ok_or("unsupported embedding")?;
+        let text = std::str::from_utf8(stored.text)
+            .map_err(|_| "derived document text is not UTF-8")?
+            .to_owned();
+        let dialect = tape.language;
+        if !parent_dialect.embeds().contains(&(via, dialect)) {
+            return Err("a derived document's dialect is not one its parent embeds".into());
+        }
+        if tape.source_len != text.len() {
+            return Err("a derived document's tape is not of its text".into());
+        }
+        let source_map = SegmentMap::read(stored.source_map, text.len(), parent_len)?;
+        if !stored.host_errors.len().is_multiple_of(8) {
+            return Err("truncated derived document host errors".into());
+        }
+        let host_errors = stored
+            .host_errors
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|pair| {
+                let (start, end) = pair.split_at(4);
+                (u32::from_le_bytes(start.try_into().expect("u32 width")), u32::from_le_bytes(end.try_into().expect("u32 width")))
+            })
+            .collect::<Vec<_>>();
+        if host_errors.windows(2).any(|pair| pair[0] > pair[1])
+            || host_errors
+                .iter()
+                .any(|&(start, end)| start > end || end as usize > parent_len)
+        {
+            return Err("noncanonical derived document host errors".into());
+        }
+        let role = DocumentRole::from_code(stored.role)
+            .filter(|&role| role == DocumentRole::derived(&text, &source_map))
+            .ok_or("a derived document's role is not its source map's")?;
+        Ok(DerivedImage {
+            role,
+            via,
+            parent,
+            text: Arc::new(text),
+            source_map: Arc::new(source_map),
+            host_errors: Arc::new(host_errors),
+            tape,
+            at: stored.at.filter(|&(start, end)| start <= end && end as usize <= parent_len),
+        })
+    }
+
+    /// Its tape's grammar id in the store (`file_documents`' tapes): its dialect's tape tag, marked derived (bit 8), with
+    /// a fingerprint of the placeholders its source map omits in the bits above (0 where it omits none). A derived
+    /// tape is its text's tree less those placeholders: the same text under two maps omitting different ones has two
+    /// tapes, and none need be the tape a file of that text parses to.
+    pub fn stored_grammar_id(&self) -> i64 {
+        derived_grammar_id(self.dialect(), &self.omission_bytes())
+    }
+
+    /// Queued for the store with its file's tape (decision 0431 step 6), as `file_documents` keeps it.
+    pub fn queued(&self) -> Result<crate::content_store::QueuedDocument, String> {
+        Ok(crate::content_store::QueuedDocument {
+            parent_ordinal: i64::from(self.parent),
+            role_id: self.role.code(),
+            via_id: via_code(self.via),
+            source: Arc::clone(&self.text),
+            grammar_id: self.stored_grammar_id(),
+            tape: self.tape.to_bytes()?,
+            source_map: self.source_map_bytes(),
+            host_errors: self.host_error_bytes(),
+            at: self.at,
+        })
+    }
+
+    /// Its tape in `format` (`TapeImage::in_format`), of its text.
+    pub fn in_format(self, format: formats::Format) -> Self {
+        DerivedImage { tape: self.tape.in_format(format, self.text.as_bytes()), ..self }
+    }
+
+    /// Where its text stands in its parent's.
+    pub fn source_map(&self) -> &Arc<SegmentMap> {
+        &self.source_map
     }
 
     /// The dialect of its tree.
@@ -717,6 +806,18 @@ impl DerivedImage {
     }
 }
 
+/// The store's grammar id of a derived tape in `dialect` that omits the placeholders `omissions` names
+/// (`DerivedImage::omission_bytes`): see `DerivedImage::stored_grammar_id`.
+pub fn derived_grammar_id(dialect: GrammarDialect, omissions: &[u8]) -> i64 {
+    let fingerprint = if omissions.is_empty() {
+        0
+    } else {
+        let digest: [u8; 32] = Sha256::digest(omissions).into();
+        u64::from_be_bytes(digest[..8].try_into().expect("digest width")) >> 17
+    };
+    ((fingerprint as i64) << 9) | (1 << 8) | i64::from(crate::code_rule_dsl::language::tape_tag(dialect).expect("a tape tag"))
+}
+
 /// A derived document as the store keeps it (its `file_documents` row, text and tape), before
 /// `FileImage::read` checks it.
 pub struct StoredDerived<'a> {
@@ -728,6 +829,8 @@ pub struct StoredDerived<'a> {
     pub source_map: &'a [u8],
     pub host_errors: &'a [u8],
     pub tape: &'a [u8],
+    /// The parent's bytes it stands at (`DerivedImage::at`).
+    pub at: Option<(u32, u32)>,
 }
 
 impl FileImage {
@@ -792,55 +895,13 @@ impl FileImage {
                     (document.tape.language, document.text.len())
                 }
             };
-            let via = via_of_code(parent_dialect, stored.via).ok_or("unsupported embedding")?;
-            let text = std::str::from_utf8(stored.text)
-                .map_err(|_| "derived document text is not UTF-8")?
-                .to_owned();
             let dialect = stored
                 .tape
                 .get(8)
                 .and_then(|&tag| super::language::from_tape_tag(tag))
                 .ok_or("unsupported derived document language")?;
-            if !parent_dialect.embeds().contains(&(via, dialect)) {
-                return Err("a derived document's dialect is not one its parent embeds".into());
-            }
             let tape = TapeImage::from_bytes(stored.tape, &Grammar::embedded(dialect)?)?;
-            if tape.source_len != text.len() {
-                return Err("a derived document's tape is not of its text".into());
-            }
-            let source_map = SegmentMap::read(stored.source_map, text.len(), parent_len)?;
-            if !stored.host_errors.len().is_multiple_of(8) {
-                return Err("truncated derived document host errors".into());
-            }
-            let host_errors = stored
-                .host_errors
-                .chunks_exact(8)
-                .map(|pair| {
-                    (
-                        u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),
-                        u32::from_le_bytes(pair[4..].try_into().expect("u32 width")),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if host_errors.windows(2).any(|pair| pair[0] > pair[1])
-                || host_errors
-                    .iter()
-                    .any(|&(start, end)| start > end || end as usize > parent_len)
-            {
-                return Err("noncanonical derived document host errors".into());
-            }
-            let role = DocumentRole::from_code(stored.role)
-                .filter(|&role| role == DocumentRole::derived(&text, &source_map))
-                .ok_or("a derived document's role is not its source map's")?;
-            image.derived.push(DerivedImage {
-                role,
-                via,
-                parent,
-                text: Arc::new(text),
-                source_map: Arc::new(source_map),
-                host_errors: Arc::new(host_errors),
-                tape,
-            });
+            image.derived.push(DerivedImage::checked(stored, parent, parent_dialect, parent_len, tape)?);
         }
         Ok(image)
     }
@@ -875,6 +936,7 @@ impl FileImage {
                     source_map,
                     host_errors,
                     tape,
+                    at: document.at,
                 },
             )
             .collect::<Vec<_>>();
@@ -1372,7 +1434,7 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Box::new(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() })), language, source_len, source_digest }
     }
 
     /// The tape as held.
@@ -1539,7 +1601,7 @@ impl TapeImage {
                 start = padded(start + column.len());
             }
             let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
-            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
+            return Ok(Self { held: Held::F15(Box::new(c)), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1566,9 +1628,10 @@ impl TapeImage {
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
         }
-        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061).
+        // A `.rerail` file: the rule engine's own parser builds its tree (decision 0061), and its embedders the programs
+        // it holds (decision 0495: its JSON objects, regexes and patterns).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
+            return Some(Self::encode_rr(grammar, source, budget).and_then(|image| FileImage::embedding(image, grammar, source, budget)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -1676,7 +1739,7 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, None, budget),
+            formats::RrTape::Written(written) => Self::written_16(*written, grammar.lang, source, None, budget),
         }
     }
 
@@ -1811,7 +1874,7 @@ impl TapeImage {
         let count = code.len() / 2;
         let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
         if count == 0
-            || code.len() % 2 != 0
+            || !code.len().is_multiple_of(2)
             || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
             || size.len() != count * size_width
             || off.len() != count * off_width
@@ -1884,7 +1947,7 @@ impl TapeImage {
                 }
                 None => SENTINEL,
             };
-            let flags = u8::from(node.extra) * CODE_EXTRA | u8::from(node.error) * CODE_ERROR | u8::from(node.missing) * CODE_MISSING;
+            let flags = (u8::from(node.extra) * CODE_EXTRA) | (u8::from(node.error) * CODE_ERROR) | (u8::from(node.missing) * CODE_MISSING);
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {

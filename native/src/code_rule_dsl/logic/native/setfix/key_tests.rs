@@ -29,6 +29,18 @@ fn a_second_row_of_a_declared_key_breaks_it() {
     assert!(rel.set_key(vec![3]).is_err());
 }
 
+/// A key of no columns (layouts' fact for a rule whose constants fix its one row, Q409's `cpl_policy_doc`) holds
+/// while the relation has one row, a row repeated being none, and a second row breaks it.
+#[test]
+fn a_key_of_no_columns_is_one_row_at_most() {
+    let mut rel = Rel::new("t", b"i");
+    rel.set_key(Vec::new()).unwrap();
+    assert!(rel.push(&[7]) && !rel.push(&[7]));
+    assert!(rel.broke.is_empty() && rel.keyed.len() == 1, "one row keeps it");
+    assert!(rel.push(&[8]));
+    assert_eq!(rel.broke, vec![Vec::<usize>::new()], "a second row breaks it");
+}
+
 /// The rows a relation holds when a key is declared are checked first; and a key whose row died is the next row's
 /// (a maintained run's removal of a row, then the add of another of its key).
 #[test]

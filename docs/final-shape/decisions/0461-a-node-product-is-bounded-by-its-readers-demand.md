@@ -1,6 +1,8 @@
 # 0461. A node product is bounded by its readers' demand, or refused
 
 Status: accepted (2026-11-18); ported from the Release-debugging branch (11a0326b9 and its uncommitted work).
+Numbered 0393 on cost-classifier-metal-rf, 0461 on final-rerail-shape-rr-align and here (Pulling-it-all-together's
+README row), and 0473 on the sync branch (whose 0461 is "a level's formulas as phases", 0474 here).
 
 ## Intro
 

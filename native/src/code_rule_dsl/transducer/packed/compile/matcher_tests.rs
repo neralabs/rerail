@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -192,7 +192,7 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
         lowered - mismatched.len(),
         tapes.len(),
     );
-    slowest.sort_by(|left, right| right.0.cmp(&left.0));
+    slowest.sort_by_key(|s| std::cmp::Reverse(s.0));
     eprintln!("S1 time: W's matcher {oracle_time:?}, lowered {lowered_time:?}; slowest lowered: {:?}", &slowest[..slowest.len().min(5)]);
     for mismatch in &mismatched {
         eprintln!("  mismatch {mismatch}");
@@ -1025,11 +1025,8 @@ fn anchored_walks_find_the_unanchored_roots() {
         unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let cpu = || {
-            // SAFETY: getrusage writes the struct it is given.
-            let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-            let time = |t: libc::timeval| std::time::Duration::from_micros(t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64);
-            time(usage.ru_utime) + time(usage.ru_stime)
+            let (user, system) = crate::code_rule_dsl::prof::process_usage();
+            std::time::Duration::from_secs_f64(user + system)
         };
         let cpu_before = cpu();
         let started = std::time::Instant::now();
@@ -1058,7 +1055,9 @@ fn anchored_walks_find_the_unanchored_roots() {
     let (anchored, with, kept, dropped, swept) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
-    let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
+    // A run's roots by clause and text, and the (clause, text)s it gave to W.
+    type Found = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
+    let settled = |found: &Found, w: usize, c: usize, t: usize| -> BTreeSet<u32> {
         if !found.1.contains(&(c, t)) {
             return found.0[c][t].clone();
         }
@@ -1495,7 +1494,9 @@ fn anchor_rows_per_answer() {
             per.push((name.clone(), candidates, roots, steps, label_rows, clause.labels.defs.len(), anchor_rows));
         }
     }
-    let total = |f: fn(&(String, u64, u64, u64, u64, usize, u64)) -> u64| per.iter().map(f).sum::<u64>();
+    // A clause's name, candidates, roots, steps, label rows, labels and anchor rows (`per`).
+    type Per = (String, u64, u64, u64, u64, usize, u64);
+    let total = |f: fn(&Per) -> u64| per.iter().map(f).sum::<u64>();
     let (candidates, roots, steps, label_rows, anchor_rows) = (total(|p| p.1), total(|p| p.2), total(|p| p.3), total(|p| p.4), total(|p| p.6));
     eprintln!("anchored root walks: {anchor_rows} starts for {roots} roots ({:.2} a root), of {candidates}", anchor_rows as f64 / roots.max(1) as f64);
     eprintln!(
@@ -1828,7 +1829,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {

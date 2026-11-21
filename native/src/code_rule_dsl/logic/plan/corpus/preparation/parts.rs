@@ -1024,9 +1024,9 @@ fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gr
             why = "the parts are not the last link's".to_owned();
         }
     }
-    for j in 0..parts.len() {
-        if prepared[j].is_none() {
-            prepared[j] = Some(prepare(j)?);
+    for (j, slot) in prepared.iter_mut().enumerate() {
+        if slot.is_none() {
+            *slot = Some(prepare(j)?);
         }
     }
     crate::code_rule_dsl::logic::profile::decision("parts prepared (decision 0345)", || format!("{} parts: {} read from the store, {} prepared", parts.len(), found.get(), made.get()));
@@ -1591,9 +1591,9 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let mut slots: Vec<Slot> = (0..parts.len()).map(|j| prepare(j, None, &mut sources)).collect::<Result<_>>()?;
     let base = slots.iter().any(reads_base);
     if base {
-        for j in 0..parts.len() {
-            if !reads_base(&slots[j]) {
-                slots[j] = prepare(j, Some(true), &mut sources)?;
+        for (j, slot) in slots.iter_mut().enumerate() {
+            if !reads_base(slot) {
+                *slot = prepare(j, Some(true), &mut sources)?;
             }
         }
     }

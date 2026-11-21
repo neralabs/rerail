@@ -106,7 +106,6 @@ impl Key {
     }
 }
 
-#[cfg(target_os = "macos")]
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -318,7 +317,8 @@ fn on_metal(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {
 /// A kernel on a device other than Metal: compiled by the device layer (`rerail_gpu::kernels`, its store keeping
 /// the backend's compiled form).
 fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Function>, String> {
-    let key = (Key::of(source, name, constant).pipeline, constant);
+    let k = Key::of(source, name, constant);
+    let key = (k.pipeline, constant);
     let held = made();
     if let Some(f) = held.0.lock().unwrap_or_else(|p| p.into_inner()).elsewhere.get(&key) {
         count(|c| c.from_memory += 1);
@@ -326,7 +326,10 @@ fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Func
     }
     let value = constant.map(|c| format!("{c}u"));
     let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
-    let program = rerail_gpu::kernels::program_with(&format!("{name}.uglykl"), source, &defines)?;
+    // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
+    // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
+    // the CPU, three for the preprocessor's first evaluation).
+    let program = rerail_gpu::kernels::program_with(&format!("{}.ukl", &hex(&k.library)[..16]), source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
     // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.

@@ -1,4 +1,4 @@
-//! A documents' table's places (decision 0504 step 4 part 2): beside each document's content, its sha256, its
+//! A documents' table's places (decision 0494 step 4 part 2): beside each document's content, its sha256, its
 //! source's place in its segment and its tape's hash and place. The writer finds them as it writes the table (its
 //! transaction reads the objects' rows), once the run's sources and tapes are placed. A run inside another's waves
 //! then reads a changed document's old source and tape where they lie, with no SQL (decision 0104), each checked by
@@ -48,8 +48,8 @@ impl DocumentPlaces {
 
 fn digest_of(words: &[i64]) -> [u8; 32] {
     let mut d = [0u8; 32];
-    for (chunk, w) in d.chunks_exact_mut(8).zip(words) {
-        chunk.copy_from_slice(&w.to_le_bytes());
+    for (chunk, w) in d.as_chunks_mut::<8>().0.iter_mut().zip(words) {
+        *chunk = w.to_le_bytes();
     }
     d
 }
@@ -61,8 +61,8 @@ fn words_of(d: &[u8; 32]) -> [i64; 4] {
 fn sha256_of(key: HashKey) -> Option<[u8; 32]> {
     (key.algorithm == super::HASH_SHA256).then(|| {
         let mut d = [0u8; 32];
-        for (chunk, lane) in d.chunks_exact_mut(8).zip(key.lanes) {
-            chunk.copy_from_slice(&lane.to_be_bytes());
+        for (chunk, lane) in d.as_chunks_mut::<8>().0.iter_mut().zip(key.lanes) {
+            *chunk = lane.to_be_bytes();
         }
         d
     })
@@ -85,7 +85,7 @@ pub(super) fn resolve(t: &Connection, rows: &[i64], n: usize, tape: Option<[i64;
          WHERE t.source_id = ?1 AND t.grammar_id = ?2 AND t.grammar_version = ?3 AND t.tape_format_version = ?4",
     )?;
     let hash = |r: &rusqlite::Row<'_>| -> rusqlite::Result<HashKey> { Ok(HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] }) };
-    for row in rows.chunks_exact(DOCUMENT_WORDS).take(n) {
+    for row in rows.as_chunks::<DOCUMENT_WORDS>().0.iter().take(n) {
         let id = match row[2] {
             0 => Some(row[3]),
             1 => super::objects::source_id_by_hash(t, HashKey::from_sha256_digest(digest_of(&row[3..7])))?.map(|s| s.0),

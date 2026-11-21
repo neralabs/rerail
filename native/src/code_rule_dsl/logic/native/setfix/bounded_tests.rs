@@ -4,6 +4,7 @@
 use super::spec::hex;
 use super::*;
 use crate::code_rule_dsl::logic::front::AggOp;
+use crate::code_rule_dsl::logic::program_image::{AggRef, Lit};
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
@@ -23,12 +24,11 @@ fn rel_of(rows: &[Vec<i64>], types: &[u8]) -> InRel {
 
 const SRC: &str = ".decl b(k: number, t: number)\n.decl p(i: number, k: number, r: number)\n.input b, p\n.decl o(i: number, u: number)\n.output o\n";
 
-/// The aggregates of `o`'s rules, as ops, and how many contexts (`rr_ctx…`) the program has.
 fn aggregates(src: &str) -> (Vec<AggOp>, usize) {
-    use crate::code_rule_dsl::logic::program_image::{AggRef, Lit};
-    let v = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+    let p = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+    let head = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| p.rel_name(r.head().rel()).to_owned();
     let mut ops = Vec::new();
-    for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == "o") {
+    for r in p.rules().filter(|&r| head(r) == "o") {
         for l in r.body() {
             if let Lit::Agg { op, .. } = l.view() {
                 ops.push(match op {
@@ -37,13 +37,13 @@ fn aggregates(src: &str) -> (Vec<AggOp>, usize) {
                     AggRef::Max => AggOp::Max,
                     AggRef::Sum => AggOp::Sum,
                     AggRef::Product => AggOp::Product,
-                    AggRef::Join { sep, .. } => AggOp::Join { by: Vec::new(), sep: v.text(sep).to_owned() },
-                    AggRef::Bounded { max, bound, strict } => AggOp::Bounded { max, bound: v.text(r.var(bound)).to_owned(), strict },
+                    AggRef::Join { .. } => AggOp::Join { by: Vec::new(), sep: String::new() },
+                    AggRef::Bounded { max, bound, strict } => AggOp::Bounded { max, bound: p.text(r.var(bound)).to_owned(), strict },
                 });
             }
         }
     }
-    (ops, v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).count())
+    (ops, p.rules().filter(|&r| head(r).starts_with("rr_ctx")).count())
 }
 
 /// Each side of a bound is recognized, either way round, and none needs a context of the probes.

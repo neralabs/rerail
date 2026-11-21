@@ -9,6 +9,10 @@ use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramField
 /// The relations' name's start: `rr_diagnostic_<digest>`, one relation for each finding and form (a node's or a
 /// place's).
 pub const PREFIX: &str = "rr_diagnostic_";
+pub const COMMIT_PREFIX: &str = "rr_diagnostic_commit_";
+
+#[derive(Clone, Copy, PartialEq)]
+enum Location { Document, File, Commit }
 
 /// The columns before a finding's parameters: its policy, clause, code, path, line, place (`at`), message, and
 /// whether it has a tag (`tagged`, then `tag`).
@@ -23,6 +27,9 @@ pub const MESSAGE_COLUMN: usize = 6;
 
 /// Decision 0431 R9: the clauses whose findings are placed at a node no file holds (`corpus::refuse_unplaced`).
 pub const UNPLACED: &str = "rr_unplaced";
+/// The tape values' nodes a string of a file places (`guest_place` at a string whose document is a file's): a node of
+/// a string inside another value stands in that value's text, which is no file's (decision 0431 §3, R9).
+pub const PLACED_AT: &str = "rr_placed_at";
 
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
@@ -31,15 +38,16 @@ pub fn is_diagnostic(rel: &str) -> bool {
 
 /// A finding's relation, by its policy, clause and form: the same in every program of a run, and another for each
 /// policy, so a pack's programs share them as they share `violation` (`corpus::own_names`).
-fn diagnostic_name(policy: &str, clause: &str, place: bool) -> String {
+fn diagnostic_name(policy: &str, clause: &str, location: Location) -> String {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
     h.update(policy.as_bytes());
     h.update([0]);
     h.update(clause.as_bytes());
-    h.update([0, u8::from(place)]);
+    h.update([0, location as u8]);
     let d: [u8; 32] = h.finalize().into();
-    format!("{PREFIX}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
+    let prefix = if location == Location::Commit { COMMIT_PREFIX } else { PREFIX };
+    format!("{prefix}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The setting that keeps a finding's message template beside the program (`.message B101 "…"`): what `rr::print`
@@ -53,8 +61,7 @@ pub fn message_parts(template: &str) -> Result<(Vec<String>, Vec<String>), Strin
     let (mut texts, mut keys) = (Vec::new(), Vec::new());
     let mut rest = template;
     let mut text = String::new();
-    loop {
-        let Some(start) = rest.find(['{', '}']) else { break };
+    while let Some(start) = rest.find(['{', '}']) {
         text.push_str(&rest[..start]);
         let brace = &rest[start..start + 1];
         if rest[start + 1..].starts_with(brace) {
@@ -138,24 +145,20 @@ fn on_reports(settings: &[(String, String)]) -> Vec<(String, String, bool)> {
 }
 
 /// Decision 0055's settings (`Findings::guest_policy`): the `guest_policy` facts they state, the guest errors they
-/// report (`(grammar, code)`), and whether one is a warning.
-fn guest_settings(settings: &[(String, String)]) -> (Vec<(String, String)>, Vec<(Option<String>, String)>, bool) {
+/// report (`(grammar, code)`), and whether one is a warning. `.guests` and `.scope embedded` are refused (decision
+/// 0523): `.embedded` is the one setting.
+fn guest_settings(settings: &[(String, String)]) -> Result<(Vec<(String, String)>, Vec<(Option<String>, String)>, bool), Error> {
     let mut facts = Vec::new();
     let mut findings = Vec::new();
     let mut warn = false;
     for (key, text) in settings {
         let words: Vec<&str> = text.split_whitespace().collect();
-        if key == "guests" {
-            if let [v @ ("on" | "off")] = words.as_slice() {
-                facts.push(("library".to_owned(), (*v).to_owned()));
-            }
-            continue;
+        if key == "guests" || (key == "scope" && words.first() == Some(&"embedded")) {
+            return Err(Error::Syntax(format!(
+                ".{key} {text}: retired (decision 0523): a run reads other languages' files for their programs only under `.embedded on`, and a rule reaches a string's code through `parsed`"
+            )));
         }
-        // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rerail`).
         if key == "scope" {
-            if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
-                facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
-            }
             continue;
         }
         let ["guest_error", rest @ ..] = words.as_slice() else { continue };
@@ -176,7 +179,7 @@ fn guest_settings(settings: &[(String, String)]) -> (Vec<(String, String)>, Vec<
             findings.push((grammar, (*code).to_owned()));
         }
     }
-    (facts, findings, warn)
+    Ok((facts, findings, warn))
 }
 
 /// An entry of a `.scope` glob from a policy option (`front::OPTION_GLOB`): its form and the option's name.
@@ -261,7 +264,7 @@ impl<'p> Findings<'_, 'p> {
     fn findings(&mut self, mut violations: Vec<Violation>, seen: RulesSeen) -> Result<bool, Error> {
         // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on = on_reports(&self.b.settings());
-        let guest_errors = self.guest_policy(seen.reads_guest_policy);
+        let guest_errors = self.guest_policy()?;
         self.references_setting()?;
         if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return Ok(false);
@@ -285,8 +288,21 @@ impl<'p> Findings<'_, 'p> {
         let place_values = seen.place_values;
         let (p, l, c, d, v0) = (self.v("rr_p"), self.v("rr_l"), self.v("rr_c"), self.v("rr_d"), self.v("rr_v0"));
         let w = || Tm::Wild;
+        let inputs = self.b.input_names();
         for f in std::mem::take(&mut violations) {
-            self.diagnostics(&policy, &f)?;
+            // A violation made of direct `@place` heads alone has no document's rows: its document reads stay out of
+            // the plan.
+            // Nor does one made of `@git_commit_location` heads alone (its rows are at a commit, in the relation
+            // `commit_location_relation` names).
+            let commit_locations = self.b.columns_of(&commit_location_relation(&f.name)).is_some();
+            let at_document = (!f.places && !commit_locations) || seen.heads.contains(&f.name) || self.b.states_facts(&f.name) || inputs.contains(&f.name);
+            // A finding at a tape value's node stands at each string that holds it, in that string's file (decision
+            // 0431 §3: "a finding at s by n, placed through s"): C408's `dict()` inside `a: "dict({})"`.
+            let through = at_document && f.node && seen.reads_guests;
+            if through {
+                self.placed_at()?;
+            }
+            self.diagnostics(&policy, &f, at_document, commit_locations, through)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -298,32 +314,51 @@ impl<'p> Findings<'_, 'p> {
             };
             let head = vec![self.s(&policy), self.s(&f.name), code, p.clone(), l.clone(), c.clone()];
             let cols: Vec<Tm> = (0..f.arity).map(|i| if i == 0 || Some(i) == code_col { self.v(&format!("rr_v{i}")) } else { Tm::Wild }).collect();
-            let mut o = self.open("violation", &head);
-            self.put(&mut o, &f.name, &cols, false);
-            if f.node {
-                self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
-            } else {
-                self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
+            if at_document {
+                let mut o = self.open("violation", &head);
+                self.put(&mut o, &f.name, &cols, false);
+                if f.node {
+                    self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
+                } else {
+                    self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
+                }
+                self.put(&mut o, "doc", &[d.clone(), p.clone(), w()], false);
+                self.put(&mut o, "line", &[v0.clone(), l.clone()], false);
+                self.put(&mut o, "col", &[v0.clone(), c.clone()], false);
+                self.scope(&mut o, scoped);
+                self.close(o)?;
+                if through {
+                    let s = self.v("rr_s");
+                    let mut o = self.open("violation", &head);
+                    self.put(&mut o, &f.name, &cols, false);
+                    self.put(&mut o, "guest_place", &[v0.clone(), s.clone(), l.clone(), c.clone()], false);
+                    self.put(&mut o, "node", &[d.clone(), s, w(), w(), w()], false);
+                    self.put(&mut o, "doc", &[d.clone(), p.clone(), w()], false);
+                    self.scope(&mut o, scoped);
+                    self.close(o)?;
+                }
+                // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's), and that no
+                // string places (a value no file's string holds), is refused by the run.
+                self.b.fields().declare_absent(UNPLACED, &[("clause", "sym")]);
+                self.b.fields().add_output(UNPLACED);
+                let clause = self.s(&f.name);
+                let mut o = self.open(UNPLACED, &[clause]);
+                self.put(&mut o, &f.name, &cols, false);
+                if f.node {
+                    self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
+                } else {
+                    self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
+                }
+                self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
+                if through {
+                    // The node's document is a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a
+                    // value in the hidden range is refused too), and no file's string places it.
+                    self.put(&mut o, "tape_of", &[d.clone(), w()], false);
+                    self.put(&mut o, PLACED_AT, std::slice::from_ref(&v0), true);
+                }
+                self.close(o)?;
             }
-            self.put(&mut o, "doc", &[d.clone(), p.clone(), w()], false);
-            self.put(&mut o, "line", &[v0.clone(), l.clone()], false);
-            self.put(&mut o, "col", &[v0.clone(), c.clone()], false);
-            self.scope(&mut o, scoped);
-            self.close(o)?;
-            // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's) is refused by the run.
-            self.b.fields().declare_absent(UNPLACED, &[("clause", "sym")]);
-            self.b.fields().add_output(UNPLACED);
-            let clause = self.s(&f.name);
-            let mut o = self.open(UNPLACED, &[clause]);
-            self.put(&mut o, &f.name, &cols, false);
-            if f.node {
-                self.put(&mut o, "node", &[d.clone(), v0.clone(), w(), w(), w()], false);
-            } else {
-                self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
-            }
-            self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
-            self.close(o)?;
-            if !f.node && place_values {
+            if at_document && !f.node && place_values {
                 let path = self.call(PLACE_PATH, vec![v0.clone()]);
                 let line = self.call(PLACE_LINE, vec![v0.clone()]);
                 let mut found = head.clone();
@@ -634,33 +669,26 @@ impl<'p> Findings<'_, 'p> {
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
-    /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
+    /// - `.guests on | off` and `.scope embedded true | false` are refused (decision 0523): `.embedded` says what a
+    ///   run reads of other languages' files, and a program shows files and the run language's code guests always;
     /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
     ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
     ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
     ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
-    fn guest_policy(&mut self, reads: bool) -> Vec<(Option<String>, String)> {
+    fn guest_policy(&mut self) -> Result<Vec<(Option<String>, String)>, Error> {
         let settings = self.b.settings();
-        let (mut facts, findings, warn) = guest_settings(&settings);
+        let (facts, findings, warn) = guest_settings(&settings)?;
         if warn {
             let mut all = settings.clone();
             all.push(("severity".to_owned(), "guest_error warning".to_owned()));
             self.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
-        }
-        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
-        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
-        // run (`simplify`) instead of reading a relation nothing gives.
-        // A program printed with the fact states it already.
-        let stated = self.b.fact_rows(GUEST_POLICY).iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library"));
-        if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {
-            facts.push(("library".to_owned(), "on".to_owned()));
         }
         if !facts.is_empty() {
             self.b.fields().declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
             let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> = facts.into_iter().map(|(k, v)| [Value::Str(k.into()), Value::Str(v.into())].into()).collect();
             self.b.fields().add_facts(GUEST_POLICY, &rows);
         }
-        findings
+        Ok(findings)
     }
 
     /// Error directives use the same public diagnostic transport as ordinary violations: `body` writes the error's
@@ -670,35 +698,71 @@ impl<'p> Findings<'_, 'p> {
             name: clause.to_owned(), arity: 1, code: FindingCode::Constant(code.to_owned()), node: false,
             places: true, columns: vec![("at".to_owned(), "span".to_owned())], message: String::new(), tag: None,
         };
-        self.diagnostic_rule(policy, &finding, &[Tm::Int(0)], Tm::Int(0), true, body)
+        self.diagnostic_rule(policy, &finding, &[Tm::Int(0)], Tm::Int(0), Location::File, body)
     }
 
-    fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
+    fn diagnostics(&mut self, policy: &str, finding: &Violation, at_document: bool, commit_locations: bool, through: bool) -> Result<(), Error> {
         let cols: Vec<Tm> = (0..finding.arity).map(|i| self.v(&format!("rr_v{i}"))).collect();
         let at = cols[0].clone();
-        self.diagnostic_rule(policy, finding, &cols, at, false, &|me, o| {
-            let (d, p, l) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"));
-            me.put(o, &finding.name, &cols, false);
-            if finding.node {
-                me.put(o, "node", &[d.clone(), cols[0].clone(), Tm::Wild, Tm::Wild, Tm::Wild], false);
-            } else {
-                me.put(o, "docof", &[cols[0].clone(), d.clone()], false);
-            }
-            me.put(o, "doc", &[d, p, Tm::Wild], false);
-            me.put(o, "line", &[cols[0].clone(), l], false);
-        })?;
+        if at_document {
+            self.diagnostic_rule(policy, finding, &cols, at.clone(), Location::Document, &|me, o| {
+                let (d, p, l) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"));
+                me.put(o, &finding.name, &cols, false);
+                if finding.node {
+                    me.put(o, "node", &[d.clone(), cols[0].clone(), Tm::Wild, Tm::Wild, Tm::Wild], false);
+                } else {
+                    me.put(o, "docof", &[cols[0].clone(), d.clone()], false);
+                }
+                me.put(o, "doc", &[d, p, Tm::Wild], false);
+                me.put(o, "line", &[cols[0].clone(), l], false);
+            })?;
+        }
+        // At a tape value's node: at each file's string that holds it, at the node's line there (`guest_place`).
+        if through {
+            self.diagnostic_rule(policy, finding, &cols, at, Location::Document, &|me, o| {
+                let (d, p, l, s) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"), me.v("rr_s"));
+                me.put(o, &finding.name, &cols, false);
+                me.put(o, "guest_place", &[cols[0].clone(), s.clone(), l, Tm::Wild], false);
+                me.put(o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+                me.put(o, "doc", &[d, p, Tm::Wild], false);
+            })?;
+        }
         if finding.places {
             let mut args = vec![self.v("rr_p"), self.v("rr_l")];
             args.extend(cols.iter().skip(1).cloned());
             let place = place_relation(&finding.name);
-            self.diagnostic_rule(policy, finding, &cols, Tm::Int(0), true, &|me, o| me.put(o, &place, &args, false))?;
+            self.diagnostic_rule(policy, finding, &cols, Tm::Int(0), Location::File, &|me, o| me.put(o, &place, &args, false))?;
+        }
+        // `V(@git_commit_location(repo, commit[, field]), …)` rows: at a commit, no file's line.
+        if commit_locations {
+            let mut args = vec![self.v("rr_repo"), self.v("rr_commit"), self.v("rr_has_field"), self.v("rr_field")];
+            args.extend(cols.iter().skip(1).cloned());
+            let commit = commit_location_relation(&finding.name);
+            self.diagnostic_rule(policy, finding, &cols, Tm::Int(0), Location::Commit, &|me, o| me.put(o, &commit, &args, false))?;
         }
         Ok(())
     }
 
+    /// `PLACED_AT`'s rule, once a program: a tape value's node `n`, placed by `guest_place` at a string `s` whose document
+    /// is a file's.
+    fn placed_at(&mut self) -> Result<(), Error> {
+        if self.b.declares(PLACED_AT) {
+            return Ok(());
+        }
+        self.b.fields().declare(PLACED_AT, &[("n", "node")]);
+        let (n, s, d) = (self.v("rr_n"), self.v("rr_s"), self.v("rr_d"));
+        let mut o = self.open(PLACED_AT, std::slice::from_ref(&n));
+        self.put(&mut o, "guest_place", &[n, s.clone(), Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d, Tm::Wild, Tm::Wild], false);
+        self.close(o)
+    }
+
     /// The rule of `finding`'s relation (`diagnostic_name`): its row of the finding's columns `cols`, at `at` (a place's
-    /// when `place`), its body `body`'s literals, then what its message's placeholders read (`Reads`).
-    fn diagnostic_rule(&mut self, policy: &str, finding: &Violation, cols: &[Tm], at: Tm, place: bool, body: &dyn Fn(&mut Self, &mut Open)) -> Result<(), Error> {
+    /// at a file or a commit, `location`), its body `body`'s literals, then what its message's placeholders read
+    /// (`Reads`).
+    fn diagnostic_rule(&mut self, policy: &str, finding: &Violation, cols: &[Tm], at: Tm, location: Location, body: &dyn Fn(&mut Self, &mut Open)) -> Result<(), Error> {
+        let place = location != Location::Document;
         let column = |key: &str| finding.columns.iter().position(|(name, _)| name == key)
             .ok_or_else(|| Error::Syntax(format!(".violation {} message: no column {key}", finding.name)));
         let string_column = |me: &mut Self, i: usize| if matches!(finding.columns[i].1.as_str(), "symbol" | "sym") {
@@ -714,6 +778,7 @@ impl<'p> Findings<'_, 'p> {
             let (term, read) = if let Some((node, property)) = key.split_once('.') {
                 let i = column(node)?;
                 match property {
+                    "line" if i == 0 && location == Location::Commit => return Err(Error::Syntax(format!(".violation {}: a commit location has no source line", finding.name))),
                     "line" if i == 0 => {
                         let l = self.v("rr_l");
                         (self.number(l), Reads::Nothing)
@@ -765,10 +830,17 @@ impl<'p> Findings<'_, 'p> {
         // from the template and the holes, and writes the row without them (`compose_message`, decision 0225 §3).
         let at_type = if place { "int" } else { column_type(&finding.columns[0].1) };
         let mut decl: Vec<(String, String)> = HEAD.iter().zip(["sym", "sym", "sym", "sym", "int", at_type, "sym", "int"]).map(|(c, t)| ((*c).to_owned(), t.to_owned())).collect();
-        let mut args = vec![self.s(policy), self.s(&finding.name), code, self.v("rr_p"), self.v("rr_l"), at, self.s(""), Tm::Int(i64::from(finding.tag.is_some()))];
+        let (path, line) = if location == Location::Commit { (self.s(""), Tm::Int(0)) } else { (self.v("rr_p"), self.v("rr_l")) };
+        let mut args = vec![self.s(policy), self.s(&finding.name), code, path, line, at, self.s(""), Tm::Int(i64::from(finding.tag.is_some()))];
         if let Some(i) = finding.tag {
             decl.push(("tag".to_owned(), column_type(&finding.columns[i].1).to_owned()));
             args.push(cols[i].clone());
+        }
+        if location == Location::Commit {
+            for (column, ty, var) in [("repository","sym","rr_repo"), ("commit","sym","rr_commit"), ("has_field","int","rr_has_field"), ("field","sym","rr_field")] {
+                decl.push((column.to_owned(), ty.to_owned()));
+                args.push(self.v(var));
+            }
         }
         for (i, (name, ty)) in finding.columns.iter().enumerate().skip(1) {
             decl.push((format!("name{i}"), "sym".to_owned()));
@@ -780,7 +852,7 @@ impl<'p> Findings<'_, 'p> {
             decl.push((format!("{HOLE}{j}"), "sym".to_owned()));
             args.push(hole);
         }
-        let rel = diagnostic_name(policy, &finding.name, place);
+        let rel = diagnostic_name(policy, &finding.name, location);
         let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
         self.b.fields().declare(&rel, &pairs);
         self.b.fields().add_output(&rel);
@@ -816,7 +888,7 @@ impl<'p> Findings<'_, 'p> {
 /// setting or a guest error reported. Only then does the caller derive a version for them (`findings_on`).
 pub fn findings_write(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), pending: &PendingFindings) -> bool {
     let settings = prog.settings();
-    !pending.violations.is_empty() || !on_reports(&settings).is_empty() || !guest_settings(&settings).1.is_empty()
+    !pending.violations.is_empty() || !on_reports(&settings).is_empty() || guest_settings(&settings).map_or(true, |g| !g.1.is_empty())
 }
 
 /// The findings (`Findings`) of `pending` written onto `b`: its fields, and its rules after those it holds (where
@@ -864,7 +936,7 @@ impl Findings<'_, '_> {
             me.put(o, &f.name, &cols, false);
             me.put(o, TOOL_CALLS[0], &[cols[0].clone(), Tm::Wild], false);
         };
-        self.diagnostic_rule(policy, f, &cols, at, false, &|me, o| {
+        self.diagnostic_rule(policy, f, &cols, at, Location::Document, &|me, o| {
             at_call(me, o);
             let (p, l, empty) = (me.v("rr_p"), me.v("rr_l"), me.s(""));
             me.put_cmp(o, p, "=", empty);

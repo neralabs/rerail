@@ -202,7 +202,7 @@ pub struct CompiledPp {
     pub code_bytes: Vec<usize>,
     /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
-    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`disassemble`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
@@ -310,7 +310,7 @@ impl Lower<'_, '_> {
 
     /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
     /// table. Cranelift's code has it as a tree of compares
-    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier);
     /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
@@ -1687,8 +1687,8 @@ impl Lower<'_, '_> {
         let p = self.f.ins().iadd(base, n);
         // Eight bytes a store, then the rest one by one.
         let words = b.len() / 8;
-        for (i, w) in b.chunks_exact(8).enumerate() {
-            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w.try_into().unwrap()));
+        for (i, &w) in b.as_chunks::<8>().0.iter().enumerate() {
+            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w));
             self.f.ins().store(bytes_flags(), c, p, (i * 8) as i32);
         }
         for (i, &c) in b[words * 8..].iter().enumerate() {
@@ -2593,7 +2593,7 @@ impl Lower<'_, '_> {
         let lastp = self.f.ins().iadd(lp, ln);
         let c = self.f.ins().load(types::I8, bytes_flags(), lastp, -1);
         let mut e = self.f.ins().iconst(types::I8, 0);
-        for x in [b'e', b'E', b'p', b'P'] {
+        for x in *b"eEpP" {
             let q = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(x));
             e = self.f.ins().bor(e, q);
         }
@@ -6710,6 +6710,7 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
 }
 
+/// **Deprecated** (decision 0550): `rerail-pp-aot`'s source, through `clif_rust`.
 /// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
 /// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
 /// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
@@ -6761,7 +6762,7 @@ pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, 
 }
 
 /// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
-/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+/// Cranelift's code.
 pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, true)
 }
@@ -6771,7 +6772,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let mut disasm = Vec::new();
     let mut code_kept = Vec::new();
     pp_words::validate(program)?;
-    let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let mut builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[("opt_level", "speed")]), default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
     builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
@@ -6901,10 +6902,10 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         f.finalize();
     }
     // A debug aid: the verifier's errors, annotated on the function, written to this file.
-    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF") {
-        if let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa()) {
-            let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
-        }
+    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF")
+        && let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa())
+    {
+        let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
     }
     branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;

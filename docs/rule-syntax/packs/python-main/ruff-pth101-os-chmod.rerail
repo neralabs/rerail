@@ -1,5 +1,4 @@
 .policy "ruff-pth101-os-chmod" revision 1
-.guests off
 .description "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls."
 .language python
 .mode steer

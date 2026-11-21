@@ -1,5 +1,4 @@
 .policy "ruff-f508-percent-format-star-requires-sequence" revision 1
-.guests off
 .description "Pass a tuple, not a dict, to a %-format string that uses a * width or precision; the call fails at run time."
 .language python
 .mode steer

@@ -63,7 +63,7 @@ pub fn library() -> Result<&'static ComputeFunctionLibrary, String> {
         let shared = crate::gpu::shared::get().ok_or("no device")?;
         #[cfg(target_os = "macos")]
         let source = if shared.device.metal().is_some() { SOURCE.to_string() } else { ukl_source(shared.device.preprocess())? };
-        #[cfg(target_os = "linux")]
+        #[cfg(not(target_os = "macos"))]
         let source = ukl_source(shared.device.preprocess())?;
         ComputeFunctionLibrary::compile_from_source(&shared.device, &source, "randomforest_kernels_ukl.h")
     })

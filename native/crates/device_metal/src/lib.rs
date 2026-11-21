@@ -137,7 +137,7 @@ pub mod code_rule_dsl {
         use serde::{Deserialize, Serialize};
     }
     pub use rerail_w::code_rule_dsl::literal;
-    #[cfg_attr(target_os = "macos", path = "logic")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "logic")]
     pub mod logic {
         pub use rerail_logic::code_rule_dsl::logic::*;
         pub mod front {
@@ -167,10 +167,10 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
         }
-        #[cfg_attr(target_os = "macos", path = "native")]
+        #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "native")]
         pub mod native {
             pub use rerail_logic::code_rule_dsl::logic::native::*;
-            #[cfg_attr(target_os = "macos", path = "setfix")]
+            #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "setfix")]
             pub mod setfix {
                 pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -389,7 +389,7 @@ pub mod code_rule_dsl {
     #[cfg(feature="code-rule-profile")]
     pub use rerail_w::code_rule_dsl::profile;
     pub use rerail_w::code_rule_dsl::query;
-    #[cfg_attr(target_os = "macos", path = "residency")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "residency")]
     pub mod residency {
         pub use rerail_transducer::code_rule_dsl::residency::*;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -444,10 +444,10 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub use rerail_facts::code_rule_dsl::text;
-    #[cfg_attr(target_os = "macos", path = "transducer")]
+    #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "transducer")]
     pub mod transducer {
         pub use rerail_transducer::code_rule_dsl::transducer::*;
-        #[cfg_attr(target_os = "macos", path = "packed")]
+        #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "packed")]
         pub mod packed {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
             #[cfg(test)]
@@ -631,16 +631,16 @@ pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
 
-/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
-/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
-/// queue Q23). The first registration holds, so a test may call it at any point. `.rerail` text is read too (the parity
-/// cases' programs, on the CPU pool's workers): without its pack a worker panicked, intermittently, by which test ran
-/// first. And Python's embedder, as the engine's load registers it.
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered as the
+/// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).
+/// `.rr` text is read too (the parity cases' programs, on the CPU pool's workers): registered by the first test that
+/// asked, a worker of another test panicked, now and then, by which test ran first (work queue Q23).
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
     use crate::code_rule_dsl::language::adapter::rr::Rr;
     use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    // Once, as the binary loads (`test_load`) and again where a test asks: the embedders are installed once.
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         register(Family::Python, &Pack::<Python>::NEW);

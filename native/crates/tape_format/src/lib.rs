@@ -21,12 +21,13 @@ pub mod tape;
 pub mod f16;
 pub mod home;
 pub mod newlines;
-/// The tape's reads in Rust, written directly (decision 0510): this crate's readers'.
+/// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
 pub mod reads;
-/// The tape's writer in Rust, written directly (decision 0505): the host's, and a generated tier 2's `w` module.
+/// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 
 
+/// **Deprecated** (decision 0550): only `rust_stream`, itself deprecated, reads it.
 /// The writer as Rust source (`writer16`, the host's own): a tier 2 generated ahead of time that writes format 16
 /// holds it as its module `w` (`rerail_compiler::rust_stream`).
 pub const WRITER_RUST: &str = include_str!("writer16.rs");

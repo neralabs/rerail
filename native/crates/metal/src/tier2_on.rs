@@ -50,6 +50,8 @@ fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) ->
         totals_stride: 4,
         totals_mask: u64::from(u32::MAX),
         record_stride: run.layout.stride() as usize,
+        more: 0,
+        feed: 0,
     };
     let mut tape = t2.tape(starts.1);
     // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.

@@ -36,7 +36,7 @@ type Piece = (String, i64, u8, usize);
 
 pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
     let mut reader = Constants { p, dialect, words, pieces: Vec::new() };
-    let id = p.node(local as u32);
+    let id = p.node(local);
     let mut current = None;
     let mut formatted = false;
     let valid = if dialect.name(&p.facts, id) == "string" {
@@ -63,7 +63,7 @@ impl Constants<'_> {
     fn append(&self, current: &mut Option<Piece>, value: String, owner: u32, start: u32, spec: u8) {
         if let Some((text, _, _, _)) = current { text.push_str(&value); }
         else {
-            let at = self.p.global(self.p.local_of_node(owner as u32));
+            let at = self.p.global(self.p.local_of_node(owner));
             *current = Some((value, at, spec, (start - self.p.facts.start(owner)) as usize));
         }
     }

@@ -158,8 +158,7 @@ const PROGRAM: &str = r#"
 #include "python/references.rerail"
 .decl st_pos(n: node, p: symbol, s: number, e: number)
 st_pos(n, p, s, e) :- node(d, n, _, s, e), doc(d, p, _).
-// A load: a name read of its file's own code (not of a string parsed as code, an annotation's: decision 0431), no
-// `del` target.
+// A load: a name read in its file's code (not of a string parsed as code: `guest_of`, decision 0431), no `del` target.
 .decl st_read(n: node, x: symbol)
 st_read(n, x) :- nameref(n, x), !bind_only(n), !rf_deleted(n), !guest_of(n, _).
 .decl st_load(p: symbol, s: number, e: number)
@@ -235,7 +234,7 @@ pub(super) fn rules_side(dir: &std::path::Path) -> Side {
 
 /// `rules_side` with chunks of `chunk_nodes` nodes: the rows are the same at any size.
 pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
-    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib/python");
+    let lib = rerail_store::source_tree::native().join("../docs/rule-syntax/lib/python");
     let names = heads(&std::fs::read_to_string(lib.join("names.rerail")).unwrap());
     let refs = std::fs::read_to_string(lib.join("references.rerail")).unwrap();
     let (before, after) = refs.split_once("// ==== across files").expect("references.rerail's across-files line");
@@ -334,10 +333,10 @@ fn files_under(root: &std::path::Path) -> Vec<(String, String)> {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|e| e == "py" || e == "pyi") {
-                if let Ok(source) = std::fs::read_to_string(&path) {
-                    files.push((path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), source));
-                }
+            } else if path.extension().is_some_and(|e| e == "py" || e == "pyi")
+                && let Ok(source) = std::fs::read_to_string(&path)
+            {
+                files.push((path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), source));
             }
         }
     }

@@ -1,11 +1,11 @@
-//! `.rerail`'s grammar (`rr_parser/rr.bitlex`, docs/parser-generators/24-rr-and-bitlex-plan.md §3), parsed with no
-//! Rust between the bytes and the nodes.
+//! `.rerail`'s grammar (`rr_parser/rr.bitlex`, docs/parser-generators/24-rr-and-bitlex-plan.md §3), parsed with no Rust
+//! between the bytes and the nodes.
 //!
 //! It is checked as JSON's grammars are (`ladder::check_ladder`): the reference evaluator, the interpreters and
 //! Cranelift give the same nodes on every document, and it has the compiler's shape. And each document it parses is
-//! parsed by the engine's own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for
-//! node (kind, field, span, size), and the engine's must have no `ERROR`. Its kinds and fields are named as the
-//! engine's tape names them (`rerail_rr_syntax::tape`).
+//! parsed by the engine's own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node
+//! (kind, field, span, size), and the engine's must have no `ERROR`. Its kinds and fields are named as the engine's
+//! tape names them (`rerail_rr_syntax::tape`).
 //!
 //! A document the engine parses and the grammar refuses (it goes to the engine) is no difference: it is counted.
 
@@ -261,10 +261,10 @@ const CASES: &[(&str, &str)] = &[
     (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "parses"),
     (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
-    // An integer of 19 digits, an i64 still: the engine's to check (`TO_THE_ENGINE`).
-    ("r(x) :- x = 1.05, z = 1234567890123456789, c = -0.5.", "parses"),
-    // The same, short.
+    (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "parses"),
+    // The same, short of what goes to the engine (`TO_THE_ENGINE`).
     (".scope 1.2\n.mode 1.2\nr(x) :- x = 1.2.", "parses"),
+    ("r(x) :- x = 12345678901234567890, y = 1.5.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 123456789012345678, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
     (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "parses"),
     (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "parses"),
@@ -360,12 +360,10 @@ fn rr_parses_as_the_reference_and_the_engine() {
     assert!(differ.is_empty(), "{} documents differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Cases the grammar sends to the engine, and the escape that sends it: an integer of 19 digits
-/// or more, leading zeros aside (the engine checks its i64). A float's digits are its text, and
-/// a chain of dots (`1.2.3`) the grammar reads itself, a number's run taking one `.` (`once dot`),
-/// so neither goes. The engine's tape is the file's either way (docs/parser-generators/39, "A
-/// number's 19 digits checked at its token").
-const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 1.05, z = 1234567890123456789, c = -0.5.", "escape: a number of 19 digits or more")];
+/// Cases the grammar sends to the engine, and the escape that sends it: an integer of 19 digits or more, its leading
+/// zeros aside (the engine checks its i64). A float's chain of dots (`1.2.3`) and a float's digits, however many, are
+/// read in tier 1, as a lexer reads them (decision 0400, Q40). The engine's tape is the file's either way.
+const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 12345678901234567890, y = 1.5.", "escape: a number of 19 digits or more")];
 
 /// Each case marked `parses` parses, and the engine's tree has no `ERROR`; a case sent to the engine
 /// (`TO_THE_ENGINE`) is refused by its escape alone.
@@ -430,7 +428,7 @@ fn a_reading_is_checked() {
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
     let c = rerail_compiler::ladder::compile_step("rr", &source);
-    assert_eq!(c.program.readings.maps.len(), 3);
+    assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
@@ -487,15 +485,15 @@ fn rr_look() {
     }
 }
 
-/// Every `.rerail` file of the repository through the grammar's compiled path, against the engine's tree: the files
-/// it parses as the engine does, those it parses differently or the engine refuses (each a bug), and those it sends
-/// to the engine, by the reference's reason. Run by name.
+/// Every `.rerail` file of the repository through the grammar's compiled path, against the engine's tree: the files it parses as the engine does,
+/// those it parses differently or the engine refuses (each a bug), and those it sends to the
+/// engine, by the reference's reason. Run by name.
 #[test]
 #[ignore = "the corpus: run by name"]
 fn rr_corpus() {
     let (name, source) = grammar().remove(0);
     let c = rerail_compiler::ladder::compile_step(&name, &source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {

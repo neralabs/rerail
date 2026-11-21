@@ -1,5 +1,4 @@
 .policy "ruff-fix004-line-contains-hack" revision 1
-.guests off
 .description "Replace the workaround a HACK comment marks with a proper solution before shipping, then remove the comment."
 .language python
 .mode steer

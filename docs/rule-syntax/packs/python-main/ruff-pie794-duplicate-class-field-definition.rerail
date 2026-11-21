@@ -1,5 +1,4 @@
 .policy "ruff-pie794-duplicate-class-field-definition" revision 1
-.guests off
 .description "Define each class field once; a later definition silently replaces the earlier one."
 .language python
 .mode steer

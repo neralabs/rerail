@@ -1,5 +1,4 @@
 .policy "ruff-fix002-line-contains-todo" revision 1
-.guests off
 .description "Resolve the missing feature, optimization or refactoring a TODO comment marks before shipping, then remove the comment."
 .language python
 .mode steer

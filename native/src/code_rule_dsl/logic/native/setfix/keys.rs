@@ -53,7 +53,7 @@ impl KeyMap {
 
     /// A map of the slots `slots` (another writer's to fill, `held`), holding `keys` keys.
     pub fn of(slots: BlockVec<u32>, keys: usize) -> KeyMap {
-        debug_assert!((slots.len() / SLOT).is_power_of_two() && slots.len() % SLOT == 0, "a map of {} words", slots.len());
+        debug_assert!((slots.len() / SLOT).is_power_of_two() && slots.len().is_multiple_of(SLOT), "a map of {} words", slots.len());
         KeyMap { slots, keys }
     }
 
@@ -171,7 +171,7 @@ impl KeyMap {
 
     /// Each key's slot: (its live row, its changes, its round).
     pub fn each(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
-        self.slots.chunks_exact(SLOT).filter(|w| w[0] != EMPTY).map(|w| (w[0], w[1], w[2]))
+        self.slots.as_chunks::<SLOT>().0.iter().filter(|w| w[0] != EMPTY).map(|w| (w[0], w[1], w[2]))
     }
 }
 
@@ -262,7 +262,7 @@ impl RowSet {
         }
         let places = (2 * need).next_power_of_two().max(LEAST);
         let old = std::mem::replace(&mut self.slots, BlockVec::from_iter_in(data.home().as_ref(), std::iter::repeat_n(EMPTY, places * ROW_SLOT)));
-        for w in old.chunks_exact(ROW_SLOT).filter(|w| w[0] != EMPTY) {
+        for w in old.as_chunks::<ROW_SLOT>().0.iter().filter(|w| w[0] != EMPTY) {
             self.place(rerail_blocks::key_hash(&data.row(w[0], k)), w[0]);
         }
     }

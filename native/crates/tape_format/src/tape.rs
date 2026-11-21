@@ -350,7 +350,7 @@ pub struct F15Columns<'a> {
 }
 
 /// Format 15, read where its columns lie, through the tape's reads (`crate::reads`, written directly,
-/// decision 0510) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// decision 0534) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
 /// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {

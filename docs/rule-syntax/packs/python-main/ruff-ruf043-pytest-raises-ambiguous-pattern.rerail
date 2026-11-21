@@ -1,5 +1,4 @@
 .policy "ruff-ruf043-pytest-raises-ambiguous-pattern" revision 1
-.guests off
 .description "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant."
 .language python
 .mode steer

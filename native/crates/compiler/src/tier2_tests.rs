@@ -405,7 +405,7 @@ fn a_unicode_escapes_checks_run_at_its_u() {
 }
 
 /// Decision 0411, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
-/// their last bytes, and on every grammar whose tokens do, the lasts and codes are the old
+/// their last bytes, and on every ladder step whose tokens do, the lasts and codes are the old
 /// extract's. JSONC's comments among them: those ending in spaces, at a token, at the file's
 /// end, and those the fallback takes (a comment opened inside another, a quote inside one).
 #[test]
@@ -670,9 +670,9 @@ fn a_mask_leaves_its_vector_where_it_is_read() {
     assert!(checked > 30, "{checked} masks");
 }
 
-/// Decision 0493: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
+/// Decision 0529: tier 1's newline output holds a bit at every `\n` of the file, short files (the edge path alone)
 /// too: the interpreter's always, the compiled tier 1's where it stores them (JSON's forms). A token loop's tier 1
-/// (`.rerail`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
+/// (`.rr`'s, 0177) makes no mask: it offers no newlines, and the index is the scan's.
 #[test]
 fn the_newline_output_is_every_newline() {
     let rr = ("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned());

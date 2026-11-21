@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
@@ -92,7 +94,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     Ok(c)
 }
 
-/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0516): the run's
+/// The language the format 16 source is generated for, rr's shipped table (`f16::lang`, decision 0535): the run's
 /// node numbers are its, literals in the source, so a format 16 run of the ahead-of-time build takes it.
 pub fn lang() -> &'static rerail_tape_format::f16::Lang {
     rerail_tape_format::f16::lang(rerail_tape_format::RR_TAG).expect("rr's format 16 table")

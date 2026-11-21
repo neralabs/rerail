@@ -1,5 +1,4 @@
 .policy "ruff-d106-undocumented-public-nested-class" revision 1
-.guests off
 .description "Add a docstring to each public nested class; it does not inherit the docstring of the class that encloses it."
 .language python
 .mode steer

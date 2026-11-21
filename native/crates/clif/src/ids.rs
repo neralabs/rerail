@@ -145,7 +145,7 @@ fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
     lo
 }
 
-/// The numbering's reads (decision 0517): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
+/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
 /// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
 /// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
 ///

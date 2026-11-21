@@ -55,10 +55,10 @@ fn evaluated(stmts: &[::bitlex::syntax::Stmt], bytes: &[u8], names: &[&str]) -> 
 
 fn cut(mut words: Vec<u64>, n: usize) -> Vec<u64> {
     words.truncate(n.div_ceil(64));
-    if n % 64 != 0 {
-        if let Some(last) = words.last_mut() {
-            *last &= (1u64 << (n % 64)) - 1;
-        }
+    if !n.is_multiple_of(64)
+        && let Some(last) = words.last_mut()
+    {
+        *last &= (1u64 << (n % 64)) - 1;
     }
     words
 }
@@ -175,7 +175,7 @@ fn every_total_is_one_flag_on_every_executor() {
     let block = &p.block_programs[0];
     let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
     let cranelift = native_cpu_block::compile(&native).expect("compiles");
-    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| [b'a', b'b', b'c', b'x', b'x', b'x', b'x', b'x'][usize::from(b) % 8]).collect()).collect();
+    let mut cases: Vec<Vec<u8>> = inputs().into_iter().map(|v| v.into_iter().map(|b| b"abcxxxxx"[usize::from(b) % 8]).collect()).collect();
     cases.extend([b"cxxxxbxx".to_vec(), [vec![b'x'; 61], b"cxxxxb".to_vec()].concat(), b"xbxxa".to_vec(), vec![b'x'; 300]]);
     let want: Vec<Vec<u64>> = cases
         .iter()
@@ -196,22 +196,18 @@ fn every_total_is_one_flag_on_every_executor() {
     }
 }
 
-/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks. None
-/// without a device (`executors::no_device`).
+/// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    if crate::executors::no_device() {
-        return Vec::new();
-    }
     vec![
         ("metal generated".into(), run_split(&[native], batch, LaneWidth::ALL[0], Executor::Generated(ClassStrategy::ALL[0]), 64).expect("runs").files),
         ("metal forward carry".into(), run_serial_split(&[native], batch, Segments { blocks: 3, warm: 1 }).expect("runs").run.files),
     ]
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_batch_runs(_: &block_native::BlockNative, _: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     Vec::new()
@@ -344,7 +340,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
                 let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
                 let file = [block::BatchFile { bytes: &bytes, program: 0 }];
-                for blocks in [3, 29].into_iter().filter(|_| !crate::executors::no_device()) {
+                for blocks in [3, 29] {
                     let run = run_serial_split(&[&native], &file, Segments { blocks, warm: 1 }).unwrap_or_else(|e| panic!("the forward carry runs: {e:?}"));
                     got.push((format!("metal forward carry, segments of {blocks}"), run.run.files[0].outputs.clone()));
                 }
@@ -368,7 +364,7 @@ fn positions_after_a_backward_pass_metal_payoff() {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask ahead = fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(ahead, 3)\n";
     for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
-        let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
+        let file: Vec<u8> = runs().into_iter().flatten().map(|b| b"1`\" "[usize::from(b) % 4]).cycle().take(mb << 20).collect();
         let stmts = backward(text);
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
         let p = rir::assemble(&format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows)).expect("assembles");
@@ -502,7 +498,7 @@ fn a_batch_of_files_and_programs_is_one_launch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
-    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
+    for width in LaneWidth::ALL {
         for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Lookup), Executor::Generated(ClassStrategy::Planes)] {
             for spins in [SPINS, 0] {
                 let run = run_batch(&natives, &files, width, executor, spins).unwrap_or_else(|e| panic!("{executor:?}: {e:?}"));
@@ -1016,7 +1012,7 @@ fn only_the_compiler_reads_tier2s_states() {
     // hands the table to them), and this file, which names them.
     const ALLOWED: [&str; 4] = ["grammar.rs", "bitlex_masks.rs", "bitlex_tier2.rs", "compile_tests.rs"];
     // The engine's transducer and every crate beside it.
-    let native = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let native = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..");
     // The table's types and its arms (`.states` is a common name; a state row is read through
     // its type).
     let needles = [".arms", "ArmRow", "StateRow", "grammar::Act", "Act::Open", "Act::Close", "Act::Leaf"];

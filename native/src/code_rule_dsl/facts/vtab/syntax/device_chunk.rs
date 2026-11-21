@@ -218,7 +218,7 @@ fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
 }
 
 /// Each view's rows of `batch` (`VIEWS`' order).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn rows_of(batch: &Batch) -> [u32; 9] {
     let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
     let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
@@ -229,7 +229,7 @@ fn rows_of(batch: &Batch) -> [u32; 9] {
 /// `values::Layered`): the batch's documents, then each value's batch's, each view's rows of a value past those
 /// before it, as a layered source numbers them. Every document is in the batch's block: `None` where one is not, or
 /// a tape is not where the device reads it.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
     let mut docs = docs_of(batch, [0; 9]);
     let mut past = rows_of(batch);
@@ -532,7 +532,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
             // reader reads before this returns.
             unsafe {
                 for (j, &s) in starts.iter().enumerate() {
-                    *ls.add(j) = u32::try_from(s).expect("a line start within 4 GB");
+                    *ls.add(j) = s;
                 }
                 Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
             }

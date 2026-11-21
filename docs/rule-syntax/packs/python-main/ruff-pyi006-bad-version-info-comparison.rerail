@@ -1,5 +1,4 @@
 .policy "ruff-pyi006-bad-version-info-comparison" revision 1
-.guests off
 .description "Compare sys.version_info with only the less-than or greater-than-or-equal operators; the other operators give surprising results on patch releases."
 .language python
 .mode steer

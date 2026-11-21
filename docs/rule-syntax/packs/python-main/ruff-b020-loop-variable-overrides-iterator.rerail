@@ -1,5 +1,4 @@
 .policy "ruff-b020-loop-variable-overrides-iterator" revision 1
-.guests off
 .description "Don't name a for-loop variable after a name used in the loop's iterable; the loop overwrites the original value."
 .language python
 .mode steer

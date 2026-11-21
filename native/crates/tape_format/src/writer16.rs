@@ -1,4 +1,4 @@
-// The format 16 writer (decision 0434 §6, 0505), written in Rust directly: the host's writer (`f16::Writer`), and
+// The format 16 writer (decision 0434 §6, 0532), written in Rust directly: the host's writer (`f16::Writer`), and
 // the writer a generated tier 2 includes as its `w` module (`rust_stream`), the one source both compile. The
 // shape is simdjson's `tape_builder` and `tape_writer`: the state's named fields, each part a buffer named by its
 // offset from the state, each cell a store at its column's offset from its block. The JIT's and the device's

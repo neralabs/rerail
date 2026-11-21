@@ -1,5 +1,4 @@
 .policy "ruff-b032-unintentional-type-annotation" revision 1
-.guests off
 .description "Use = instead of : when setting a subscript or another object's attribute without a value; a colon there makes a type annotation that assigns nothing."
 .language python
 .mode steer

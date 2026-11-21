@@ -278,11 +278,11 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
         } else {
             groups.last().and_then(|g| g.1)
         };
-        out.rows.push(Row { kind: k, start: v.start(i) as u32, end: v.end(i) as u32, parent });
+        out.rows.push(Row { kind: k, start: v.start(i), end: v.end(i), parent });
         let end = i + v.size(i);
         // Its `#`'s leaf, then its word's (a line marker's number is its `rest`'s).
         let word = if i + 2 < end && field(i + 2).is_none() { i + 2 } else { i + 1 };
-        out.word_ends.push(v.end(word) as u32);
+        out.word_ends.push(v.end(word));
         let mut last_param = false;
         for n in i + 1..end {
             let what = match field(n) {
@@ -311,9 +311,9 @@ pub fn read(image: &[u8]) -> Result<Read, String> {
                 }
             };
             last_param = what == What::Param;
-            out.operands.push(Operand { i: d, what, start: v.start(n) as u32, end: v.end(n) as u32 });
+            out.operands.push(Operand { i: d, what, start: v.start(n), end: v.end(n) });
             if d == 0 && what == What::Expr && v.size(n) <= 6 {
-                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l) as u32, v.end(l) as u32)).collect();
+                out.first_expr = (n + 1..n + v.size(n)).map(|l| (kind(l), v.start(l), v.end(l))).collect();
             }
         }
         i = end;

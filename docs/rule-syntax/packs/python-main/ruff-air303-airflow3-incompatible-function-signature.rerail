@@ -1,5 +1,4 @@
 .policy "ruff-air303-airflow3-incompatible-function-signature" revision 1
-.guests off
 .description "Update calls and methods whose Airflow 3 signature changed: pass lineage asset arguments and dataset extras by keyword, and give get_link a ti_key parameter."
 .language python
 .mode steer

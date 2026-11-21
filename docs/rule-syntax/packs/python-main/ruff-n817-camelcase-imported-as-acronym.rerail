@@ -1,5 +1,4 @@
 .policy "ruff-n817-camelcase-imported-as-acronym" revision 1
-.guests off
 .description "Avoid aliasing a CamelCase import to an acronym of its capital letters; the alias reads like a constant and hides what the name is."
 .language python
 .mode steer

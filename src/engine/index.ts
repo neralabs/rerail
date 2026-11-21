@@ -108,6 +108,12 @@ export {
   resolveNativeBindingPath,
 } from "./native/native.js";
 export { LOCKS_DIR } from "./native/file-lock.js";
+export {
+  acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, collectAnalysisCaches,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, queueAnalysisScopeReleases, readAnalysisScopeGeneration,
+  scanContentStore, settleAnalysisScopeReleases,
+} from "./native/analysis-scope.js";
+export { listAnalysisStores, retireAnalysisStore } from "./native/analysis-store-retirement.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
@@ -129,6 +135,9 @@ export { defaultRerailHome, STATUS_LINES_FOLDER } from "./storage/rerail-home.js
 export { RERAIL_BASELINE_SCHEMA_VERSION, addColumn, type Migration } from "./storage/migrations.js";
 export { AUDIT_HISTORY_TRIGGER_STATEMENTS } from "./storage/audit-history.js";
 export {
+  analysisScopeGeneration,
+  analysisScopeReleaseProbes,
+  analysisScopeReleases,
   auditRequests,
   auditResultPages,
   auditRuleProvenances,

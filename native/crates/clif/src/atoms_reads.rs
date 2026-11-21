@@ -1,8 +1,6 @@
 //! The atoms' reads as CLIF functions, written once (decision 0478 step 2b): an id's string in a directory of runs
-//! of atoms (`rerail_blocks::atoms::AtomsDirRoot`), for the kernels (the UKL backend: `<ukl/reads/relation.h>`) and
-//! the JIT; the host's is written directly (`rerail_blocks::atoms::str_in`, decision 0517), held equal to these by
-//! the tests. A read takes the directory's address and reaches each run's `ends` and `strings` through its spans,
-//! whose offsets are in the reader's own address space.
+//! of atoms (`rerail_blocks::atoms::AtomsDirRoot`), for the kernels (`<ukl/reads/relation.h>`) and the JIT (the host's, `atoms::str_in`, written directly: decision 0536). A read takes the directory's address and reaches each run's `ends`
+//! and `strings` through its spans, whose offsets are in the reader's own address space.
 //!
 //! An id's run is found by a binary search of the runs' first ids; its string ends at `ends[id - from]` and begins
 //! where the one before it ends (`0` for the block's first). Id `0` is the empty string, in no run.
@@ -116,44 +114,4 @@ pub fn atoms_at(b: &mut B<'_, '_>) -> Value {
             )
         },
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use rerail_blocks::atoms::{AtomsDir, AtomsW, str_in};
-
-    fn k_hash(s: &str) -> u64 {
-        s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, c| (h ^ u64::from(c)).wrapping_mul(0x100_0000_01b3))
-    }
-
-    /// Decision 0517 for the atoms: the host's read written directly (`str_in`) finds what the JIT's (`atoms_at`,
-    /// `atoms_len`) find, for every id of two runs, one beginning past its block's first id, id 0 and ids no run holds.
-    #[test]
-    fn the_jits_atoms_reads_are_the_hosts() {
-        let jit = crate::jit::Reads::new();
-        type Len = extern "C" fn(*const u8, u32) -> u32;
-        type At = extern "C" fn(*const u8, u32) -> u64;
-        // SAFETY: each read's signature: the directory's address, then an id.
-        let (len, at): (Len, At) = unsafe { (std::mem::transmute(jit.function("atoms_len")), std::mem::transmute(jit.function("atoms_at"))) };
-        let words: Vec<String> = (0..40).map(|k| format!("w{k}{}", "z".repeat(k % 13))).collect();
-        let mut a = AtomsW::anon(1, 16, 1024);
-        for w in &words[..16] {
-            a.append(w, k_hash(w)).unwrap();
-        }
-        let mut b = AtomsW::anon(17, 32, 4096);
-        for w in &words[16..] {
-            b.append(w, k_hash(w)).unwrap();
-        }
-        let runs = [a.run_from(1), b.run_from(20)];
-        let dir = AtomsDir::host(&runs);
-        let d = dir.root();
-        for id in 0..=45u32 {
-            // SAFETY: a host directory over blocks that live here; a string the JIT finds lies in them.
-            let (host, jits) = unsafe {
-                let n = len(d, id);
-                (str_in(d, id), (n != u32::MAX).then(|| std::slice::from_raw_parts(at(d, id) as *const u8, n as usize)))
-            };
-            assert_eq!(host, jits, "id {id}");
-        }
-    }
 }

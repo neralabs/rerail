@@ -1,5 +1,4 @@
 .policy "ruff-c418-unnecessary-literal-within-dict-call" revision 1
-.guests off
 .description "Remove dict() calls wrapped around a dict literal or dict comprehension; the inner expression already builds a dictionary."
 .language python
 .mode steer

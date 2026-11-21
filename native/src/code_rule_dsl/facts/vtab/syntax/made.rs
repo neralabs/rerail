@@ -1,4 +1,4 @@
-//! A batch's documents and rows, each made when first read (decision 0504).
+//! A batch's documents and rows, each made when first read (decision 0494).
 //!
 //! A batch holds its documents unmade. A document's projection (its rank index, which the views read) is made on its
 //! first read (`Docs`). Its rows, the relations the batch makes off the tapes (`text`, `op`, the matchers'), are made
@@ -6,12 +6,14 @@
 //! A batch read whole from its first read makes one group, in key order: one relation per relation, as an eager batch.
 
 use super::*;
-use crate::code_rule_dsl::facts::vtab::{DeviceView, ReadRow, RowCells, RowStream};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::code_rule_dsl::facts::vtab::DeviceView;
+use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells, RowStream};
 use crate::code_rule_dsl::logic::profile;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A document's views' counts (decision 0504): its nodes, fielded nodes, siblings after it and places, as its
+/// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it and places, as its
 /// projection has them; the documents' table keeps them.
 pub type ViewCounts = [u32; 4];
 
@@ -20,7 +22,7 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     [p.len(), p.fielded(), p.after_siblings(), p.locs()]
 }
 
-/// A batch's documents (decision 0504): each one's projection made on its first read; its key and tag known before.
+/// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
     /// Shared with the batches it grows into (decision 0431 §6): a document is made once, whichever reads it first.
     slots: Vec<Arc<Slot>>,
@@ -171,7 +173,7 @@ impl Docs {
                 && given != view_counts(&made.p)
             {
                 self.fail(format!(
-                    "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0504)",
+                    "{}: its views' counts (nodes, fielded, siblings, places) are {:?}, the documents' table gave {given:?} (decision 0494)",
                     self.slots[i].input.path,
                     view_counts(&made.p)
                 ));
@@ -206,7 +208,11 @@ impl Docs {
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &self.context.block)))));
         let new_span = profile::span(|| "projected".into());
+        // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
+        // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
+        p.file = Guest::file_key(d.guest.as_deref(), d.key);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
@@ -322,10 +328,15 @@ pub(super) struct Group {
     pub(super) ranges: Vec<Range<usize>>,
 }
 
-/// The batch's rows (decision 0504): each relation one block relation (`Relation::grown`), which every group goes on
+/// The batch's rows (decision 0494): each relation one block relation (`Relation::grown`), which every group goes on
 /// in, in the order made, so the CPU and the device read one relation in one block; a group's rows a range of it.
 pub(super) struct Rows {
     state: parking_lot::Mutex<State>,
+    /// Woken when a group goes on in the relations or its claims are given up (`Batch::ensure`).
+    made: parking_lot::Condvar,
+    /// The groups made, those another read's made first and so set aside too: `State::groups`' length, unless two
+    /// reads made one document.
+    makes: std::sync::atomic::AtomicUsize,
     /// The relations a group makes, by name: what an empty group makes, before any document is (`Batch::new`).
     pub(super) names: Vec<String>,
     /// An empty group's relations, which answer what a relation is (its columns, its indexes) before its rows are
@@ -351,6 +362,35 @@ struct State {
     of: Vec<Option<u32>>,
     /// Each relation as the last group left it: every group's rows, in the order made.
     rels: Vec<Arc<Relation>>,
+    /// Each document's maker while a group of it is being made (`Batch::ensure`): another read waits for it rather
+    /// than make it again.
+    claimed: Vec<Option<std::thread::ThreadId>>,
+    /// The threads making a group of this batch now, once a group: a thread on this list makes what it reads itself,
+    /// never waits (its own group is beneath it on its stack).
+    makers: Vec<std::thread::ThreadId>,
+}
+
+/// A group's claims on its documents (`State::claimed`), given up as it ends, made or not (a panic too).
+struct Claim<'a> {
+    rows: &'a Rows,
+    me: std::thread::ThreadId,
+    docs: Vec<usize>,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        let mut s = self.rows.state.lock();
+        for &i in &self.docs {
+            if s.claimed[i] == Some(self.me) {
+                s.claimed[i] = None;
+            }
+        }
+        if let Some(at) = s.makers.iter().position(|t| *t == self.me) {
+            s.makers.swap_remove(at);
+        }
+        drop(s);
+        self.rows.made.notify_all();
+    }
 }
 
 /// How a relation's row names its document: by its first column, as the rule library's declarations type it
@@ -407,7 +447,7 @@ impl Rows {
     /// it grows from (decision 0431 §6), complete, by name, whose documents (`prior_docs`, indexes in this batch) are
     /// its first group: each relation goes on from that one's.
     pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vec<usize>)>) -> Self {
-        let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone() };
+        let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone(), claimed: vec![None; documents], makers: Vec::new() };
         if let Some((rels, docs)) = prior {
             let mut ranges = Vec::with_capacity(names.len());
             for (rel, name) in names.iter().enumerate() {
@@ -422,11 +462,15 @@ impl Rows {
             state.groups.push(Arc::new(Group { docs, ranges }));
         }
         let by = template.iter().map(|t| ByDocument::of(&Source::columns(t.as_ref()))).collect();
-        Self { state: parking_lot::Mutex::new(state), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
+        Self { state: parking_lot::Mutex::new(state), made: parking_lot::Condvar::new(), makes: Default::default(), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
         self.state.lock().groups.len()
+    }
+    /// The groups made, those set aside too (`makes`).
+    pub(super) fn makes(&self) -> usize {
+        self.makes.load(std::sync::atomic::Ordering::Relaxed)
     }
     /// Whether no group has rows yet: the next is written into its block relations, not staged.
     pub(super) fn first(&self) -> bool {
@@ -440,25 +484,67 @@ impl Rows {
 }
 
 impl Batch {
-    /// The rows of `want`'s documents made: those not made yet, as one group (decision 0504), which each relation goes
+    /// The rows of `want`'s documents made: those not made yet, as one group (decision 0494), which each relation goes
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
     /// waiting thread runs other jobs, one of which may read this batch), and goes on in the relations only if no other
     /// read made one of its documents meanwhile; else it is made again of those still unmade.
+    ///
+    /// Its documents are claimed while it is made, so reads side by side make each document once: a read finding a
+    /// document another thread is making waits for it, running the pool's jobs meanwhile, rather than make it too
+    /// (the base relations counted on the pool made the whole batch once each, Q396: four times its work and its
+    /// memory on 901 files). A thread making a group of this batch never waits: a read under it (a job it ran while
+    /// it waited) makes what it reads, as before, so no two makers wait on each other.
     pub(super) fn ensure(&self, want: &[usize]) {
+        let me = std::thread::current().id();
         loop {
-            let need: Vec<usize> = {
+            let (need, waits) = {
                 let s = self.rows.state.lock();
-                let mut need: Vec<usize> = want.iter().copied().filter(|&i| s.of[i].is_none()).collect();
+                let making = s.makers.contains(&me);
+                let mut need: Vec<usize> = Vec::new();
+                let mut waits = false;
+                for &i in want {
+                    if s.of[i].is_some() {
+                        continue;
+                    }
+                    match s.claimed[i] {
+                        Some(t) if t != me && !making => waits = true,
+                        _ => need.push(i),
+                    }
+                }
                 need.sort_unstable();
                 need.dedup();
-                need
+                if need.is_empty() && waits {
+                    // Another thread's group: the pool's next job, else a wait for a group to end.
+                    drop(s);
+                    if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                        let mut s = self.rows.state.lock();
+                        if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
+                            self.rows.made.wait_for(&mut s, std::time::Duration::from_millis(1));
+                        }
+                    }
+                    continue;
+                }
+                (need, waits)
             };
             if need.is_empty() {
+                debug_assert!(!waits);
                 return;
             }
+            let claim = {
+                let mut s = self.rows.state.lock();
+                let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
+                for &i in &docs {
+                    s.claimed[i] = Some(me);
+                }
+                s.makers.push(me);
+                Claim { rows: &self.rows, me, docs }
+            };
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
+            self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut s = self.rows.state.lock();
             if need.iter().any(|&i| s.of[i].is_some()) {
+                drop(s);
+                drop(claim);
                 continue;
             }
             let rels = match made {
@@ -479,9 +565,13 @@ impl Batch {
             for &i in &need {
                 s.of[i] = Some(g);
             }
-            profile::decision("a batch's documents made by group (decision 0504)", || format!("{} of {} documents", need.len(), self.docs.len()));
+            profile::decision("a batch's documents made by group (decision 0494)", || format!("{} of {} documents", need.len(), self.docs.len()));
             s.groups.push(Arc::new(Group { docs: need, ranges }));
-            return;
+            drop(s);
+            drop(claim);
+            if !waits {
+                return;
+            }
         }
     }
 
@@ -492,14 +582,14 @@ impl Batch {
         let named: Vec<(String, Relation)> = relations.into_iter().map(|(name, r)| (name.to_owned(), r)).chain(matched).chain(waved).collect();
         let names: Vec<&str> = named.iter().map(|(n, _)| n.as_str()).collect();
         if names != self.rows.names.iter().map(String::as_str).collect::<Vec<_>>() {
-            return Err(StoreError::Invalid(format!("a group of a batch made the relations {names:?}, not the batch's {:?} (decision 0504)", self.rows.names)));
+            return Err(StoreError::Invalid(format!("a group of a batch made the relations {names:?}, not the batch's {:?} (decision 0494)", self.rows.names)));
         }
         let keys: BTreeSet<u32> = docs.iter().map(|&i| self.docs.key(i)).collect();
         for ((name, r), &by) in named.iter().zip(&self.rows.by) {
             let Some(c) = by.column() else { continue };
             if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| keys.contains(&k))) {
                 return Err(StoreError::Invalid(format!(
-                    "{name}: a row's column {c} ({}) names a document outside its group {keys:?}, which a probe of it would not make (decision 0504)",
+                    "{name}: a row's column {c} ({}) names a document outside its group {keys:?}, which a probe of it would not make (decision 0494)",
                     Source::value(r, row, c)
                 )));
             }
@@ -520,7 +610,7 @@ impl Batch {
                 if let Some(given) = self.rows.counted(rel)
                     && given != Source::len(r.as_ref())
                 {
-                    self.docs.fail(format!("{}: {} rows made, its kept statistics counted {given} (decision 0504)", self.rows.names[rel], Source::len(r.as_ref())));
+                    self.docs.fail(format!("{}: {} rows made, its kept statistics counted {given} (decision 0494)", self.rows.names[rel], Source::len(r.as_ref())));
                 }
             }
             rels
@@ -552,7 +642,7 @@ impl Batch {
     }
 }
 
-/// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0504): every document made, the
+/// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
 pub(super) struct MadeRows {
@@ -748,7 +838,7 @@ impl Source for MadeRows {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         self.done().and_then(|t| t.lookup_all(_equal))
     }
-    /// The documents' rows by group (decision 0504): a group of theirs alone holds theirs and no other; in a group
+    /// The documents' rows by group (decision 0494): a group of theirs alone holds theirs and no other; in a group
     /// with others, theirs are those its routing column names (none for a relation not routed).
     fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         let at: BTreeSet<usize> = docs.iter().filter_map(|&k| self.batch.docs.position(k)).collect();
@@ -799,6 +889,7 @@ impl Source for MadeRows {
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
         self.target().filter_eq(eqs)
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         self.done().and_then(|t| t.device_view())
     }
@@ -927,65 +1018,108 @@ impl Source for MadeRows {
     }
 }
 
-/// A text test's relation (decision 0037) over a batch (decision 0504): a test of a string. A probe tests the probed
-/// strings (each once a run, `Vocabulary::rows`); a scan lists the batch's strings that pass, every document made.
-/// Nothing of it changes with an edit. In a batch whose documents are made by probes (`Batch::lazy`) a join probes it.
+/// A text test's relation (decision 0037) over a batch (decision 0494): a test of a string. A probe tests the probed
+/// strings and a scan the batch's strings, every document made; each string is tested once a run, against every test
+/// at once (`Tested`). Nothing of it changes with an edit. In a batch whose documents are made by probes
+/// (`Batch::lazy`) a join probes it.
 pub(super) struct TextTest {
     batch: Arc<Batch>,
     k: usize,
-    tests: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-    atoms: Arc<crate::content_store::atoms::Atoms>,
-    /// The strings probed: shared with the text test of the batch it grows into (decision 0431 §6), so that each
-    /// string is tested once a run.
-    probed: Arc<parking_lot::Mutex<Probed>>,
+    tested: Arc<Tested>,
+    /// Whether a scan has tested the batch's strings: shared by the batch's tests, so it is scanned once for them all.
+    scanned: Arc<std::sync::atomic::AtomicBool>,
     /// Every string of the batch that passes, the probed first (their rows kept): made by the first scan.
     whole: OnceLock<Relation>,
 }
 
-/// A text test's probes: the strings that passed, in row order, each one's row, and every string tested.
+/// The text tests' answers over a run's strings (decision 0037): shared by every test of a batch and of the batches
+/// it grows into (decision 0431 §6). A string probed or scanned is tested against every test at once
+/// (`Vocabulary::rows`), and each test's passing strings kept in its own rows.
+pub(super) struct Tested {
+    tests: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    atoms: Arc<crate::content_store::atoms::Atoms>,
+    state: parking_lot::Mutex<TestedState>,
+}
+
+/// Every string tested, and each test's passing strings in row order with each one's row.
+struct TestedState {
+    tested: HashSet<i64>,
+    passed: Vec<Passed>,
+}
+
 #[derive(Default)]
-struct Probed {
+struct Passed {
     rows: Vec<i64>,
     at: HashMap<i64, usize>,
-    tested: HashSet<i64>,
+}
+
+impl Tested {
+    pub(super) fn new(tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>) -> Self {
+        let passed = (0..tests.tests.len()).map(|_| Passed::default()).collect();
+        Self { tests: Arc::clone(tests), atoms, state: parking_lot::Mutex::new(TestedState { tested: HashSet::new(), passed }) }
+    }
+    /// Whether these are the answers of `tests`.
+    pub(super) fn of(&self, tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>) -> bool {
+        Arc::ptr_eq(&self.tests, tests)
+    }
+    /// Test the strings not tested yet against every test, outside the lock, and keep each test's passing ones.
+    fn test(&self, strings: Vec<String>, symbols: Vec<u32>) {
+        let (strings, symbols): (Vec<String>, Vec<u32>) = {
+            let s = self.state.lock();
+            strings.into_iter().zip(symbols).filter(|(_, sym)| !s.tested.contains(&i64::from(*sym))).unzip()
+        };
+        if strings.is_empty() {
+            return;
+        }
+        let passing = self.tests.rows(&strings, &symbols);
+        let mut s = self.state.lock();
+        s.tested.extend(symbols.iter().map(|&sym| i64::from(sym)));
+        for (p, rows) in s.passed.iter_mut().zip(passing) {
+            for v in rows {
+                if !p.at.contains_key(&v) {
+                    p.at.insert(v, p.rows.len());
+                    p.rows.push(v);
+                }
+            }
+        }
+    }
+    /// Scan `batch`'s strings, every document made, unless `scanned` says a scan has.
+    fn scan(&self, batch: &Batch, scanned: &std::sync::atomic::AtomicBool) {
+        if scanned.load(Ordering::Acquire) {
+            return;
+        }
+        let (strings, symbols) = batch.vocabulary();
+        self.test(strings, symbols);
+        scanned.store(true, Ordering::Release);
+    }
 }
 
 impl TextTest {
-    /// Test `k` of `tests` over `batch`; `prior`: the same test of the batch it grew from, whose probes it keeps.
-    pub(super) fn new(batch: &Arc<Batch>, k: usize, tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>, atoms: Arc<crate::content_store::atoms::Atoms>, prior: Option<&TextTest>) -> Self {
-        let probed = prior.map_or_else(Default::default, |p| Arc::clone(&p.probed));
-        Self { batch: Arc::clone(batch), k, tests: Arc::clone(tests), atoms, probed, whole: OnceLock::new() }
+    /// Test `k` of `tested`'s tests over `batch`; `scanned`, the batch's tests' one flag.
+    pub(super) fn new(batch: &Arc<Batch>, k: usize, tested: &Arc<Tested>, scanned: &Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self { batch: Arc::clone(batch), k, tested: Arc::clone(tested), scanned: Arc::clone(scanned), whole: OnceLock::new() }
     }
-    /// The batch's passing strings, made outside the cell (they make documents on the pool, decision 0504's
-    /// `ensure`), then kept: those a probe or an earlier batch's scan tested as tested then, the others tested now.
+    /// The answers it shares.
+    pub(super) fn tested(&self) -> &Arc<Tested> {
+        &self.tested
+    }
+    /// The batch's passing strings, made outside the cell (they make documents on the pool, decision 0494's
+    /// `ensure`), then kept.
     fn whole(&self) -> &Relation {
         if let Some(w) = self.whole.get() {
             return w;
         }
-        let (strings, symbols) = self.batch.vocabulary();
-        let untested: (Vec<String>, Vec<u32>) = {
-            let probed = self.probed.lock();
-            strings.into_iter().zip(symbols).filter(|(_, sym)| !probed.tested.contains(&i64::from(*sym))).unzip()
-        };
-        let passing = if untested.0.is_empty() { Vec::new() } else { self.tests.rows(&untested.0, &untested.1).swap_remove(self.k) };
-        let mut probed = self.probed.lock();
-        probed.tested.extend(untested.1.iter().map(|&sym| i64::from(sym)));
-        for s in passing {
-            if !probed.at.contains_key(&s) {
-                let row = probed.rows.len();
-                probed.rows.push(s);
-                probed.at.insert(s, row);
-            }
-        }
-        let r = Relation::from_rows(&["s"], &mut probed.rows.iter().map(|&s| vec![s]));
-        drop(probed);
+        self.tested.scan(&self.batch, &self.scanned);
+        let s = self.tested.state.lock();
+        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| vec![v]));
+        drop(s);
         self.whole.get_or_init(|| r)
     }
     /// The rows of the probed strings that pass, each tested once.
     fn probe(&self, values: &[i64]) -> Vec<usize> {
         let fresh: Vec<i64> = {
-            let probed = self.probed.lock();
-            let mut fresh: Vec<i64> = values.iter().copied().filter(|v| !probed.tested.contains(v)).collect();
+            let s = self.tested.state.lock();
+            let mut fresh: Vec<i64> = values.iter().copied().filter(|v| !s.tested.contains(v)).collect();
             fresh.sort_unstable();
             fresh.dedup();
             fresh
@@ -993,23 +1127,18 @@ impl TextTest {
         let (mut strings, mut symbols) = (Vec::new(), Vec::new());
         for &v in &fresh {
             if let Ok(sym) = u32::try_from(v)
-                && let Ok(Some(text)) = self.atoms.value(sym)
+                && let Ok(Some(text)) = self.tested.atoms.value(sym)
             {
                 strings.push(text);
                 symbols.push(sym);
             }
         }
-        let passing = if strings.is_empty() { Vec::new() } else { self.tests.rows(&strings, &symbols).swap_remove(self.k) };
-        let mut probed = self.probed.lock();
-        probed.tested.extend(fresh);
-        for s in passing {
-            if !probed.at.contains_key(&s) {
-                let row = probed.rows.len();
-                probed.rows.push(s);
-                probed.at.insert(s, row);
-            }
-        }
-        values.iter().filter_map(|v| probed.at.get(v).copied()).collect()
+        self.tested.test(strings, symbols);
+        let mut s = self.tested.state.lock();
+        // A value no atom names is tested too: it passes nothing.
+        s.tested.extend(fresh);
+        let at = &s.passed[self.k].at;
+        values.iter().filter_map(|v| at.get(v).copied()).collect()
     }
 }
 
@@ -1023,14 +1152,14 @@ impl Source for TextTest {
     fn estimated_len(&self) -> usize {
         match self.whole.get() {
             Some(w) => w.len(),
-            None if self.batch.lazy() => self.probed.lock().rows.len().max(1),
+            None if self.batch.lazy() => self.tested.state.lock().passed[self.k].rows.len().max(1),
             None => self.whole().len(),
         }
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         match self.whole.get() {
             Some(w) => Source::value(w, row, column),
-            None => self.probed.lock().rows[row],
+            None => self.tested.state.lock().passed[self.k].rows[row],
         }
     }
     fn indexed(&self, column: usize) -> bool {

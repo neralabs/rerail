@@ -537,10 +537,7 @@ pub struct ReferenceRows {
 /// subclass), `super().x` (`super`), a late-bound name (`late`: `C.m^`), and any other qualified name (`name`: a
 /// definition, an import or re-export of one, a module or class member).
 pub fn reference_via(name: &str) -> &'static str {
-    let marked = |marker: &str, rest: char| {
-        name.split_once(marker)
-            .is_some_and(|(_, tail)| tail.contains(rest))
-    };
+    let marked = |marker: &str, rest: char| name.split_once(marker).is_some_and(|(_, tail)| tail.contains(rest));
     if marked(".<type>.", '.') {
         "param_type"
     } else if marked(".<field>.", '.') {

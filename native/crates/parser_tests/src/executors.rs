@@ -10,13 +10,6 @@ use rerail_compiler::{block, native_cpu_block, native_ir};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 
-/// No device here that runs a block program: none at all (a Linux host without a GPU), or one whose SIMD groups are
-/// not 32 lanes (`block_program::ready`). A test's device runs are left out there; its CPU's are still held.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn no_device() -> bool {
-    metal_program_backend::block_program::ready().is_err()
-}
-
 /// Inputs that put every byte value at every position of a block, and lengths around every
 /// block edge.
 pub fn inputs() -> Vec<Vec<u8>> {
@@ -50,7 +43,7 @@ pub fn runs() -> Vec<Vec<u8>> {
     for len in [700usize, 3000, 20_000] {
         let mut v = Vec::with_capacity(len);
         while v.len() < len {
-            let byte = [b'\\', b'"', b'a', b' ', b',', b'\\'][next(6) as usize];
+            let byte = b"\\\"a ,\\"[next(6) as usize];
             let long = next(4) == 0;
             let run = 1 + next(if long { 200 } else { 5 }) as usize;
             v.extend(std::iter::repeat_n(byte, run));
@@ -63,6 +56,9 @@ pub fn runs() -> Vec<Vec<u8>> {
     out.push(long);
     out
 }
+
+/// Each executor's outputs on a file, by its name.
+pub type Runs = Vec<(String, Vec<Vec<u64>>)>;
 
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
@@ -87,7 +83,7 @@ impl<'a> Executors<'a> {
 
     /// Every executor's outputs over `bytes`, with the executor's name; none over the launch
     /// budget.
-    pub fn every(&self, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+    pub fn every(&self, bytes: &[u8]) -> Runs {
         let (out, skipped) = self.run(bytes, true);
         assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
         out
@@ -96,7 +92,7 @@ impl<'a> Executors<'a> {
     /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal
     /// executor whose run would take more launches than the budget (`metal_launch_budget`):
     /// those are named in the second list.
-    pub fn run(&self, bytes: &[u8], metal: bool) -> (Vec<(String, Vec<Vec<u64>>)>, Vec<String>) {
+    pub fn run(&self, bytes: &[u8], metal: bool) -> (Runs, Vec<String>) {
         let mut out = vec![("cpu interpreter".to_owned(), self.block.interpret(bytes)), ("cranelift".to_owned(), self.cranelift.run(bytes))];
         let mut skipped = Vec::new();
         if metal {
@@ -107,13 +103,14 @@ impl<'a> Executors<'a> {
 
     /// The device's executors' outputs over `bytes` into `out`, those over the launch budget into `skipped`.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn device(&self, bytes: &[u8], out: &mut Vec<(String, Vec<Vec<u64>>)>, skipped: &mut Vec<String>) {
+    fn device(&self, bytes: &[u8], out: &mut Runs, skipped: &mut Vec<String>) {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
         use rerail_compiler::Error;
         let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
             Ok(got) => out.push((name, got)),
             Err(Error::BackendLaunchLimit) => skipped.push(name),
-            Err(Error::UnsupportedBackend) if no_device() => {}
+            // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).
+            Err(Error::UnsupportedBackend) if metal_program_backend::block_program::ready().is_err() => {}
             Err(e) => panic!("{name} runs: {e:?}"),
         };
         for width in LaneWidth::ALL {
@@ -130,8 +127,8 @@ impl<'a> Executors<'a> {
         keep("device forward carry, segments of 3".to_owned(), run_serial_split(&[&self.native], &file, Segments { blocks: 3, warm: 1 }).map(|mut r| r.run.files.remove(0).outputs));
     }
 
-    /// No device executors but on a Mac.
+    /// No device executors off the device layer's targets.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    fn device(&self, _bytes: &[u8], _out: &mut Vec<(String, Vec<Vec<u64>>)>, _skipped: &mut Vec<String>) {}
+    fn device(&self, _bytes: &[u8], _out: &mut Runs, _skipped: &mut Vec<String>) {}
 }
 

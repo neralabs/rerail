@@ -120,15 +120,15 @@ impl MetalWorkspace {
             use crate::code_rule_dsl::prof::count;
             use std::mem::size_of;
             count("ws.new", 1);
-            count("ws.pending_mb", totals.pending as usize * size_of::<PendingRecord>() >> 20);
-            count("ws.captures_mb", totals.captures as usize * size_of::<CaptureRecord>() >> 20);
-            count("ws.cursors_mb", totals.cursors as usize * size_of::<CaptureRecord>() >> 20);
-            count("ws.repeats_mb", totals.repeats as usize * size_of::<RepeatRecord>() >> 20);
+            count("ws.pending_mb", (totals.pending as usize * size_of::<PendingRecord>()) >> 20);
+            count("ws.captures_mb", (totals.captures as usize * size_of::<CaptureRecord>()) >> 20);
+            count("ws.cursors_mb", (totals.cursors as usize * size_of::<CaptureRecord>()) >> 20);
+            count("ws.repeats_mb", (totals.repeats as usize * size_of::<RepeatRecord>()) >> 20);
             count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
-            count("ws.results_mb", totals.results as usize * size_of::<ResultRecord>() >> 20);
-            count("ws.value_states_mb", totals.value_states as usize * 4 >> 20);
+            count("ws.results_mb", (totals.results as usize * size_of::<ResultRecord>()) >> 20);
+            count("ws.value_states_mb", (totals.value_states as usize * 4) >> 20);
             count("ws.output_mb", output_storage_bytes as usize >> 20);
-            count("ws.final_captures_mb", totals.output_captures as usize * size_of::<FinalCaptureRecord>() >> 20);
+            count("ws.final_captures_mb", (totals.output_captures as usize * size_of::<FinalCaptureRecord>()) >> 20);
         }
         Ok(Self {
             totals,
@@ -950,7 +950,7 @@ fn execute_packed_once(
     // The batch's other slabs, which its reads reach from the block by the views' offsets (decision 0353 step 4,
     // 0471), and the 16z documents' cache.
     for slab in &table.slabs {
-        launch = launch.uses(slab.device_buffer());
+        launch = launch.uses_read(slab.device_buffer());
     }
     if let Some(cache) = &table.cache {
         launch = launch.uses(cache);

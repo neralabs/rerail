@@ -1,5 +1,4 @@
 .policy "ruff-pt014-pytest-duplicate-parametrize-test-cases" revision 1
-.guests off
 .description "Remove duplicate test cases from pytest parametrize values; a repeated case runs the same test twice and covers nothing new."
 .language python
 .mode steer

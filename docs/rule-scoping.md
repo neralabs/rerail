@@ -293,6 +293,12 @@ The owner is found from both the file's lexical and real paths; a symlink into a
 
 A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout). While it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded and Git does not list as a worktree (an untracked `git init`, a stray `.git`, even one naming this repository's Git folder) is judged with the checkout around it.
 
+During a watch, the next file lookup uses the current checkout. Moving a nested checkout's `.git` away returns its files to the enclosing checkout.
+Restoring `.git` restores the nested boundary. An unregistered submodule owns its files while its path appears in both `.gitmodules` and the enclosing checkout's index as a gitlink.
+
+Outside Git, the nearest registered directory owns its files while its `.rerail/repository-id` matches the catalog row at that path.
+Pruning the registration releases those files. A replacement directory must establish its own registration.
+
 A session that starts in a stopped or unrecorded checkout judges nothing.
 
 </details>

@@ -350,7 +350,7 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     let parts = programs_of(Arc::clone(&v)).unwrap();
     let lv = &parts.versions.local;
     assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
-    assert!(split.causes.get("under").is_none(), "{:?}", split.causes);
+    assert!(!split.causes.contains_key("under"), "{:?}", split.causes);
 }
 
 /// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document
@@ -376,8 +376,8 @@ named(n, m) :- node(d, n, "identifier", _, _), module(d, m).
     let unstated = split_of(&v);
     assert!(unstated.causes.contains_key("pydoc"), "{:?}", unstated.causes);
     let mut b = Builder::on(&v);
-    b.set_facts("setting_given", &[]);
-    b.set_facts("setting_glob", &[]);
+    b.fields().set_facts("setting_given", &[]);
+    b.fields().set_facts("setting_glob", &[]);
     let (v, _) = b.finish().unwrap();
     let split = split_of(&v);
     assert!(split.local.contains("pydoc") && split.local.contains("module") && split.local.contains("named"), "{:?} {:?}", split.local, split.causes);
@@ -705,14 +705,23 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert_eq!(pass.lines.len(), 1, "{:?}", pass.lines);
     assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
     assert!(rules_of(&out, "fl_outer").is_empty(), "the product is gone:\n{}", out.show());
-    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
+    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash. The first part is
+    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0488): two parts,
+    // one key, and the key's rule reads `encl`.
     let shown = out.show();
     let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
-    assert_eq!(parts.len(), 4, "{parts:?}");
+    assert_eq!(parts.len(), 3, "{parts:?}");
+    let mut keyed = Vec::new();
     for p in parts.iter().filter(|p| !p.starts_with("fzk")) {
         assert!(p["fz".len()..p.len() - "_fl_outer".len()].bytes().all(|b| b.is_ascii_digit()), "{p}");
-        assert!(parts.contains(format!("fzk{}", &p["fz".len()..]).as_str()), "{parts:?}");
+        let key = format!("fzk{}", &p["fz".len()..]);
+        if parts.contains(key.as_str()) {
+            keyed.push(key);
+        }
     }
+    assert_eq!(keyed.len(), 1, "{parts:?}");
+    let key_rules: Vec<_> = shown.lines().filter(|l| l.starts_with(&format!("{}(", keyed[0]))).collect();
+    assert!(!key_rules.is_empty() && key_rules.iter().all(|l| l.contains("encl(")), "{key_rules:?}\n{shown}");
 }
 
 /// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
@@ -769,7 +778,6 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
     let (result, made) = pushed(read(text));
-    let equal_columns = std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off");
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }

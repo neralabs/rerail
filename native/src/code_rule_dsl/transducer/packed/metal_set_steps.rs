@@ -69,11 +69,10 @@ fn insert(bits: &[u64], from: usize, words: &mut [u64]) {
         if let Some(slot) = words.get_mut(word) {
             *slot |= value << shift;
         }
-        if shift != 0 {
-            if let Some(slot) = words.get_mut(word + 1) {
+        if shift != 0
+            && let Some(slot) = words.get_mut(word + 1) {
                 *slot |= value >> (64 - shift);
             }
-        }
     }
 }
 

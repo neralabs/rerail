@@ -1,6 +1,40 @@
 //! The corpus runner's tests. The engine compiles them (its facade of `logic::plan::corpus`): they parse files, and
 //! the languages are registered by the crates above `rerail-logic` as the engine loads.
 
+#[cfg(feature = "tape-cache")]
+#[test]
+fn edits_keep_other_documents_facts_when_the_input_omits_its_owner() {
+    use crate::code_rule_dsl::logic::plan::output;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("sources");
+    let out = temp.path().join("out");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("keep.py"), "keep = 1\n").unwrap();
+    std::fs::write(root.join("base.py"), "base = 1\n").unwrap();
+    let rr = r#".decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl request(k: number)
+request(1) :- doc(_, "keep.py", _).
+request(2) :- doc(_, "remove.py", _).
+.output request
+"#;
+    let run = || {
+        super::run(rr, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let mut rows = output::shown(&out, "request").unwrap();
+        rows.sort();
+        rows
+    };
+    let previous = super::TEST_TAPE_CACHE.with(|p| p.replace(Some(temp.path().join("kept.sqlite"))));
+    assert_eq!(run(), [["1"]]);
+    std::fs::write(root.join("remove.py"), "remove = 2\n").unwrap();
+    assert_eq!(run(), [["1"], ["2"]]);
+    std::fs::remove_file(root.join("remove.py")).unwrap();
+    assert_eq!(run(), [["1"]]);
+    super::TEST_TAPE_CACHE.with(|p| p.replace(previous));
+}
+
 /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
 /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
 /// observer's store is `<RERAIL_TAPE_CACHE>.files`.
@@ -272,7 +306,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
@@ -890,8 +924,9 @@ unused(f) :- def(f, _), !used(f).
 /// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
 /// device's binding too.
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn a_maintained_strata_pieces_run_as_one_component() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1014,8 +1049,9 @@ reach(a, a) :- side(a), never(a).
 /// group; `named` computes its head. Each edit's run starts from the last run's rows. Its outputs are those of a run
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the maintain mode maintains no stratum"]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1348,6 +1384,7 @@ fn benchmark_test_store_copy() {
 #[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
+#[cfg(target_vendor = "apple")] // `clonefile` is APFS's
 fn benchmark_test_store_copy_steps() {
     use std::os::unix::ffi::OsStrExt as _;
     let template = super::test_store::template().to_path_buf();
@@ -1544,16 +1581,23 @@ fn a_runs_output_directory_is_rerails_own() {
 /// `start` (a process a test starts, `switches::started`) while another thread holds `switch` through `switches::set`,
 /// as a test beside it does (`cross_file_rows_are_memoised_per_import_component`'s `RERAIL_INLINE_ONLY`, the session
 /// tests' `RERAIL_CROSS_K4`): the process waits for it, and takes none of it.
-fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce() -> T) -> T {
-    let (held, holding) = std::sync::mpsc::channel();
+///
+/// A test holding the switches over its runs (`switches::reading`) lets them go for this (`held`), and takes them again
+/// after: the other thread's `set` waits for every reader, the test's too, and the test waits for it to set.
+fn beside_a_switch<T>(switch: (&'static str, &'static str), held: &mut Option<super::switches::Reading>, start: impl FnOnce() -> T) -> T {
+    let reading = held.take().is_some();
+    let (held_by_other, holding) = std::sync::mpsc::channel();
     let other = std::thread::spawn(move || {
         let _switched = super::switches::set(&[switch]);
-        held.send(()).unwrap();
+        held_by_other.send(()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
     });
     holding.recv().unwrap();
     let out = start();
     other.join().unwrap();
+    if reading {
+        *held = Some(super::switches::reading());
+    }
     out
 }
 
@@ -1566,16 +1610,15 @@ fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce()
 /// started while another test holds `RERAIL_CROSS_K4=off` (`beside_a_switch`): started holding nothing, it took it and
 /// wrote ("a write gathered for the store in a warm run").
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_writes_nothing() {
     // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
     // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
     // child processes take them as they start.
-    let _switches = super::switches::reading();
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE);
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE, &mut switches);
 }
 
 /// The same with tape values (decision 0431): a policy that parses string annotations. The warm run reads each
@@ -1584,9 +1627,9 @@ fn the_run_after_a_cold_one_writes_nothing() {
 #[test]
 fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
-    let c408 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
-    cold_then_warm(temp.path(), Some(&c408), &files);
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
 
 /// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
@@ -1598,17 +1641,16 @@ const PICKLE_PACKAGE: &[(&str, &str)] = &[("pkg/__init__.py", ""), ("pkg/loader.
 /// and faulted "the observer's store not asked inside the waves". PR #508's 0206654a5 (t47).
 #[cfg(unix)]
 #[test]
-#[ignore = "Q323: fails at rr-align's pin 08e2de78c too: the warm run records a new manifest and recomputes twice"]
 fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
     std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
-    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE);
+    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE, &mut None);
 }
 
 /// A cold run of `program` (else the pickle pack's) over `files` under `base`, then a warm one under
 /// `RERAIL_WARM=list`, which writes nothing.
-fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)]) {
+fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)], switches: &mut Option<super::switches::Reading>) {
     let src = base.join("src");
     for (path, text) in files {
         let at = src.join(path);
@@ -1652,7 +1694,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     run(false);
     let cold = manifests();
     assert!(!cold.is_empty(), "the cold run recorded its manifests");
-    beside_a_switch(("RERAIL_CROSS_K4", "off"), || run(true));
+    beside_a_switch(("RERAIL_CROSS_K4", "off"), switches, || run(true));
     let warm = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
@@ -1716,7 +1758,7 @@ y = x{i} + 2
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
@@ -1739,7 +1781,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
     // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
     // child processes take them as they start.
-    let _switches = super::switches::reading();
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
     let base = kept.as_deref().unwrap_or(temp.path());
@@ -1774,7 +1816,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     run(1);
     let one = manifests();
     // A process of two: the second names the same. Another test's switch is held as it is started.
-    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), || run(2));
+    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), &mut switches, || run(2));
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
@@ -1806,7 +1848,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1829,7 +1871,8 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
+    // Pack test data (`packs/data-layer/upstream/lint/`, not in git since 5e0b69a104): pulled, or the test says so.
+    let rules = crate::code_rule_dsl::test_support::pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog/authored");
     let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rerail", "data-layer-unresolved-forward-refs.rerail", "data-layer-versioned-merged-identity.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1978,6 +2021,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_RR_LIB",
         // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
         "RERAIL_COSTS",
+        // The join model (decision 0354): its prices choose among a line's candidate orders, as the cost model's do.
+        "RERAIL_JOIN_MODEL",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
         // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
@@ -1990,7 +2035,7 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -2228,6 +2273,47 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
+/// makes the HTML file's script at its parse and the batch reads it off the file's record; a run of another program
+/// (no memo hit) finds the file's tape in the store and its script with it, parsing nothing; a tape whose record is
+/// not known (stored before step 6) has its script made in the batch. The rows are the same each time.
+#[test]
+fn a_files_programs_are_kept_with_its_tape() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("programs-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.html"), "<p>x</p>\n<script>f(1)</script>\n").unwrap();
+    let run = |extra: &str| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        let text = format!(".language javascript\n.embedded on\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n{extra}");
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let out = dir.join("out");
+        let _ = std::fs::remove_dir_all(&out);
+        let report = super::run(&program, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = super::super::output::Outputs::open(&out).unwrap().get("calls").map(|r| r.shown()).unwrap_or_default();
+        (report, rows)
+    };
+    let want = [["f(1)", "a.html", "2"]].map(|r| r.map(str::to_owned).to_vec()).to_vec();
+    let (fresh, rows) = run("");
+    assert_eq!(rows, want, "a fresh run's rows");
+    assert_eq!(fresh.programs, (1, 0), "made at the parse, read off the record: none by an embedder in the batch");
+    // Another program: no memo hit, the file's tape found by its text.
+    let (stored, rows) = run(".decl other(x: symbol)\nother(x) :- kind(c, \"identifier\"), text(c, x).\n.output other\n");
+    assert_eq!(rows, want, "a stored tape's rows");
+    assert_eq!(stored.file_tapes, (1, 0), "the file's tape is found, not parsed: {:?}", stored.file_tapes);
+    assert_eq!(stored.programs, (1, 0), "its script found with it: {:?}", stored.programs);
+    // A tape stored with no record: its script made in the batch, as before step 6.
+    rusqlite::Connection::open(dir.join("store.sqlite")).unwrap().execute("UPDATE tape_objects SET programs = -1", []).unwrap();
+    let (unknown, rows) = run(".decl third(x: symbol)\nthird(x) :- kind(c, \"number\"), text(c, x).\n.output third\n");
+    assert_eq!(rows, want, "an unrecorded tape's rows");
+    assert_eq!(unknown.programs, (0, 1), "made by its embedder in the batch: {:?}", unknown.programs);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R5's run: `program` (`.rerail`, with its includes) over `files` in a store of its own, giving the report
 /// and the rows of `output`, as shown.
 fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
@@ -2259,14 +2345,13 @@ fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str,
 #[test]
 fn a_files_programs_build_no_second_batch() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
-    let (report, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
+    let (_, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
 .language html
 #include "html/embeds.rerail"
 .decl calls(x: symbol)
 calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
 .output calls
 "#, "calls");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
@@ -2289,7 +2374,6 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 "#;
     let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
     let (report, names) = batch_run("r10-names", &files, program, "names");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(report.values_admitted, 3, "the two annotations' values and 'Foo''s, each admitted once");
     assert_eq!(report.guest_parses, 3, "each value parsed once");
     let set = |rows: Vec<Vec<String>>| rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
@@ -2301,7 +2385,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -2341,7 +2425,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
         assert!(bytes <= base + q266(3), "{output}: the values' rows are read where they lie ({bytes} bytes uploaded, {base} with no values)");
         assert!(!on_cpu.is_empty(), "{output}: rows");
         assert_eq!(on_metal, on_cpu, "{output}: the device's rows are the CPU's");
-        assert_eq!((metal.values_admitted, metal.guest_parses, metal.slice_runs), (cpu.values_admitted, cpu.guest_parses, cpu.slice_runs), "{output}: the same values, read alike");
+        assert_eq!((metal.values_admitted, metal.guest_parses), (cpu.values_admitted, cpu.guest_parses), "{output}: the same values, read alike");
     }
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
     let programs = r#"

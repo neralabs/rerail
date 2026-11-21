@@ -460,7 +460,7 @@ state S':  ',' -> leaf ...            ; S without its close
 
 ## 9. The ladder: thirteen languages, one keyword to nested data with comments
 
-> **Since decision 0499 (2026-11-20)** the ladder is gone: only JSON's shipped forms are kept, in
+> **Since decision 0531 (2026-11-20)** the ladder is gone: only JSON's shipped forms are kept, in
 > `native/crates/json_parser/` (`json-rfc.bitlex`, `jsonc.bitlex`, with the token loop's `json.bitlex` and
 > `json-simdjson.bitlex`), checked by `ladder::check_ladder` as the steps were. This section is its history.
 

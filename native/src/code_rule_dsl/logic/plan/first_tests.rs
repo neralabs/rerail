@@ -1,14 +1,11 @@
 //! A group's first by an order (t50 step 2, decision 0515): the rules' `X, !later` self-join on one side, W's loop
 //! that keeps the first of each group (`Graph::lookup` over the order) on the other.
 use super::*;
-use crate::code_rule_dsl::logic::rr::lower::first::{First, Order};
-use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::rr::lower::first::{First, Order, recognize};
 use crate::content_store::ContentStore;
 
-/// `src`'s first-of-a-group relations, read off its tape's statements.
-fn recognize(src: &str) -> Vec<First> {
-    let file = crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(src).unwrap_or_else(|e| panic!("{e}"));
-    crate::code_rule_dsl::logic::rr::lower::first::recognize(&file.statements()).found
+fn statements(src: &str) -> Vec<crate::code_rule_dsl::logic::rr::from_tape::Stmt> {
+    crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(src.to_owned()).unwrap_or_else(|e| panic!("{e}")).statements()
 }
 
 const SHORTLEX: &str = "
@@ -26,17 +23,17 @@ later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) = @strlen(r), s < r.
 /// (`pyc_own`), and a min written the other way round are each the first of their group.
 #[test]
 fn a_rows_no_other_row_precedes_is_recognized_with_its_order() {
-    assert_eq!(recognize(SHORTLEX), vec![First { first: "first".into(), later: "later".into(), of: "x".into(), order: Order::Shortlex, drop_later: true }]);
+    assert_eq!(recognize(&statements(SHORTLEX)), vec![First { first: "first".into(), later: "later".into(), of: "x".into(), order: Order::Shortlex, drop_later: true }]);
     let max = ".decl m(q: number, x: symbol, f: number)\n.input m\n.decl t(x: symbol)\n.input t\n.decl own(q: number, x: symbol, f: number)\n.output own\nown(q, x, f) :- m(q, x, f), t(x), !later(q, x, f).\n.decl later(q: number, x: symbol, f: number)\nlater(q, x, f) :- m(q, x, f), m(q, x, g), g > f.\n";
-    assert_eq!(recognize(max).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Max]);
+    assert_eq!(recognize(&statements(max)).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Max]);
     let min = max.replace("g > f", "f > g");
-    assert_eq!(recognize(&min).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Min]);
+    assert_eq!(recognize(&statements(&min)).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Min]);
     // A column X has besides the keys and the value, read as `_` in every use (`rf_field_first`).
     let wild = SHORTLEX.replace(".decl x(c: symbol, f: symbol, r: symbol)", ".decl x(c: symbol, f: symbol, r: symbol, t: symbol)").replace("x(c, f, r)", "x(c, f, r, _)").replace("x(c, f, s)", "x(c, f, s, _)");
-    assert_eq!(recognize(&wild).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Shortlex], "{wild}");
+    assert_eq!(recognize(&statements(&wild)).iter().map(|f| f.order).collect::<Vec<_>>(), vec![Order::Shortlex], "{wild}");
     // Not when the wildcards differ between X's uses.
     let apart = wild.replacen("x(c, f, s, _), @strlen(s) < @strlen(r)", "x(c, _, s, f), @strlen(s) < @strlen(r)", 1);
-    assert!(recognize(&apart).is_empty(), "{apart}");
+    assert!(recognize(&statements(&apart)).is_empty(), "{apart}");
 }
 
 /// Shapes that are not the first of a group are left as written: a literal reading the value, a later-rule over
@@ -51,10 +48,10 @@ fn other_shapes_are_left_as_written() {
         ("text order", "later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) < @strlen(r).\n", ""),
     ] {
         let src = format!("{}\n.decl y(c: symbol, f: symbol, r: symbol)\n.input y\n", SHORTLEX.replace(from, to));
-        assert!(recognize(&src).is_empty(), "{what}");
+        assert!(recognize(&statements(&src)).is_empty(), "{what}");
     }
     let read = format!("{SHORTLEX}.decl seen(c: symbol)\n.output seen\nseen(c) :- later(c, _, _).\n");
-    assert_eq!(recognize(&read).iter().map(|f| f.drop_later).collect::<Vec<_>>(), vec![false]);
+    assert_eq!(recognize(&statements(&read)).iter().map(|f| f.drop_later).collect::<Vec<_>>(), vec![false]);
 }
 
 /// The rows: on a group of 10⁴ routes and 300 smaller groups, the native engine's `first` is each group's shortlex
@@ -86,7 +83,8 @@ fn the_first_of_each_group_is_ws_loops_on_a_large_group() {
 
     let p = crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap_or_else(|e| panic!("{e}"));
     assert!(!p.rules().any(|r| p.rel_name(r.head().rel()) == "later"), "the self-join is not made");
-    assert_eq!(ProgramFields::lattice(&*p).get("first").map(|l| l.lattice().to_owned()).as_deref(), Some("shortlex_min"), "first keeps a group's least");
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    assert_eq!(p.lattice().get("first").and_then(|l| l.merge.as_deref()), Some("shortlex_min"), "first keeps a group's least");
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();

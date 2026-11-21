@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
 }
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -198,6 +198,75 @@ fn lookups_agree_with_scans() {
         assert!(!indexed.is_empty() || filter.contains("0, 7"), "{rel} {filter}: no rows");
         assert_eq!(indexed, scanned, "{rel} {filter}");
     }
+}
+
+/// A view's statistics (`measured`, read through its walk) are those its per-row reads give: rows, ndv, sq and sqd
+/// of every column of `node`, `child`, `field` and `tape` over several documents. The measure of the cross part's
+/// base relations (decision 0458) had read each value by its row, locating it in the batch: 0.9 s of a hogql run.
+#[test]
+fn a_views_measured_statistics_are_its_per_row_reads() {
+    let store = ContentStore::open(&temp("measured")).unwrap();
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        if !["node", "child", "field", "tape"].contains(&name) {
+            continue;
+        }
+        let n = source.len();
+        let per_row: Vec<(String, i64, i64, i64, i64)> = source
+            .columns()
+            .into_iter()
+            .enumerate()
+            .map(|(c, col)| {
+                let mut pairs: Vec<(i64, i64)> = (0..n).map(|r| (source.value(r, c), source.value(r, 0) >> 32)).collect();
+                pairs.sort_unstable();
+                let mut values: BTreeMap<i64, BTreeMap<i64, i64>> = BTreeMap::new();
+                for (v, d) in pairs {
+                    *values.entry(v).or_default().entry(d).or_default() += 1;
+                }
+                let sq = values.values().map(|d| d.values().sum::<i64>().pow(2)).sum();
+                let sqd = values.values().flat_map(|d| d.values()).map(|k| k * k).sum();
+                (col, n as i64, values.len() as i64, sq, sqd)
+            })
+            .collect();
+        assert_eq!(super::measured(source.as_ref()), per_row, "{name}");
+        assert_eq!(super::measured_sorted(source.as_ref()), per_row, "{name}: sorted");
+        assert!(per_row.iter().any(|m| m.2 < m.1), "{name}: a column with repeated values, counted");
+    }
+}
+
+/// A view's walk of the rows whose own column is in a set (`for_rows_keyed`: a semi-join's rows at its exports'
+/// nodes, decision 0458) gives the rows, in row order, and the values that reading those rows one at a time gives:
+/// for every view that has it, at every third row's key, and a stop where `each` says.
+#[test]
+fn a_views_keyed_walk_gives_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("keyed-walk")).unwrap();
+    let mut tried = 0;
+    // Each view, and the view as a chunk binds it (`Layered`, no value admitted): the same walk.
+    let views = sources(&store, documents().into_iter().take(4).collect()).unwrap();
+    let layered = views.iter().map(|(name, s)| (format!("{name} layered"), Arc::new(super::values::Layered::new(name, Arc::clone(s), Default::default())) as Arc<dyn Source>));
+    for (name, source) in views.iter().map(|(n, s)| (n.to_string(), Arc::clone(s))).chain(layered).collect::<Vec<_>>() {
+        let n = source.len();
+        let all: Vec<usize> = (0..source.columns().len()).collect();
+        for c in 0..all.len() {
+            let keys: rustc_hash::FxHashSet<i64> = (0..n).step_by(3).map(|r| source.value(r, c)).collect();
+            let mut walked: Vec<(usize, Vec<i64>)> = Vec::new();
+            if !source.for_rows_keyed(c, &keys, &all, &mut |r, row| {
+                walked.push((r, row.to_vec()));
+                true
+            }) {
+                continue;
+            }
+            let per_row: Vec<(usize, Vec<i64>)> = (0..n).filter(|&r| keys.contains(&source.value(r, c))).map(|r| (r, all.iter().map(|&k| source.value(r, k)).collect())).collect();
+            assert_eq!(walked, per_row, "{name} column {c}");
+            let mut stopped = 0;
+            source.for_rows_keyed(c, &keys, &all, &mut |_, _| {
+                stopped += 1;
+                stopped < 2
+            });
+            assert_eq!(stopped, 2.min(per_row.len()), "{name} column {c}: a stop");
+            tried += 1;
+        }
+    }
+    assert!(tried >= 8, "{tried} views walked by key");
 }
 
 /// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
@@ -857,7 +926,7 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
-    // A document is made on its batch's first read of it (decision 0504): each batch here reads one relation whole.
+    // A document is made on its batch's first read of it (decision 0494): each batch here reads one relation whole.
     let read = |projection: &Projection, rel: &str| {
         let sources = shaped(&store, vec![doc.clone()], projection).unwrap();
         sources.iter().find(|(n, _)| *n == rel).unwrap_or_else(|| panic!("no {rel}")).1.len()
@@ -882,7 +951,7 @@ fn a_raising_ast_parse_fails_the_batch() {
     for read in ["syntax_error", "cpython_syntax_error", "literal_json", "dump_sha256"] {
         let doc = document(0, "a.py", "python", "x = f\"{y:\\x}\"\n");
         let projection = Projection { reads: Some([read.into()].into()), ..Projection::core() };
-        // The document is made on the first read (decision 0504): the source read reports why it failed.
+        // The document is made on the first read (decision 0494): the source read reports why it failed.
         let sources = shaped(&store, vec![doc], &projection).unwrap();
         let source = &sources.iter().find(|(n, _)| *n == read).unwrap_or_else(|| panic!("no {read}")).1;
         let _ = source.len();
@@ -993,7 +1062,6 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.extend((1..=lines.count()).map(|l|lines.span(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
-    for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
     for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
@@ -1049,7 +1117,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1114,7 +1182,7 @@ fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, 
     let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
     let p = Projected::new(d.key, Arc::clone(&d.facts), Some(&dialect), Shape::Core, false, None);
     let f = &*d.facts;
-    let leaves = (0..p.len()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l))).collect();
+    let leaves = (0..p.len()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l))).collect();
     (leaves, p)
 }
 
@@ -1212,7 +1280,7 @@ fn node_order_keys_follow_preorder_and_keep_other_granules() {
         let (_, p) = leaf_ids("python", "a.py", source);
         let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
         let f = &*p.facts;
-        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l as u32)).is_empty()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l), p.order(l))).collect();
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l)).is_empty()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l), p.order(l))).collect();
         assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
         (ascending, leaves)
     };
@@ -1290,7 +1358,7 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l)).collect();
                         let t0 = cpu_now();
                         let _ = granules::number(&p, &dialect, &tokens, None);
                         row.cpu += cpu_now() - t0;
@@ -1588,7 +1656,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
@@ -1872,7 +1940,7 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
     }
 }
 
-/// Decision 0517: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
+/// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
 /// item's bit, rank and select, and lows and order keys that are no item's. In all three formats, whole and narrowed.
 #[test]
@@ -1919,10 +1987,10 @@ fn the_jits_id_reads_are_the_hosts() {
 }
 
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
-/// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly,
-/// `Numbering::is`, …) answer: for every tape node, its bit and ranks, the selects, the ids' low bits of nodes and
-/// tokens and back, and the order keys and back. In all three formats, whole and narrowed, a document of more nodes
-/// than a granule's slot holds. The kernel is UKL, on the process's device (decision 0440 step C).
+/// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
+/// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
+/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn the_kernels_id_reads_are_the_hosts() {
@@ -2183,7 +2251,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }
 
-/// Decision 0504, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
+/// Decision 0494, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;
 /// one whose documents a probe of each made holds the same rows once scanned, over several groups.
 #[test]
 fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
@@ -2221,7 +2289,37 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
-/// Decision 0504, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
+/// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
+/// a read finding documents another is making waits for them, so every group made is kept, none made again and set
+/// aside (the base relations counted on the pool made the whole batch once each).
+#[test]
+fn reads_side_by_side_make_each_document_once() {
+    let store = ContentStore::open(&temp("side-by-side")).unwrap();
+    let docs: Vec<Document> = (1..=48).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect();
+    let reads = ["node", "text", "comment", "op", "str", "name", "line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let start = std::sync::Barrier::new(sources.len());
+    let read: Vec<usize> = std::thread::scope(|scope| {
+        let threads: Vec<_> = sources
+            .iter()
+            .map(|(_, _, s)| {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    (0..s.len()).filter(|&r| s.value(r, 0) >= 0).count()
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    assert!(read.iter().sum::<usize>() > 0);
+    assert!(batch.groups() >= 1);
+    assert_eq!(batch.makes(), batch.groups(), "no group made again and set aside");
+}
+
+/// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
@@ -2240,7 +2338,7 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert!(text.failure().is_none());
 }
 
-/// Decision 0504, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
+/// Decision 0494, R5: a batch given its documents' views' counts and its relations' rows knows every view's and
 /// relation's `len` with no document made; a probe then makes its document alone. A made document whose counts differ
 /// from those given fails, named, and so does a relation whose made rows are not the count given.
 #[test]
@@ -2281,7 +2379,7 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let text = Arc::clone(&made_sources(&off).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
     let _ = text.lookup(0, &[off.docs[1].global(1)]);
     let failed = text.failure().expect("a document's counts differ");
-    assert!(failed.contains("m2.py") && failed.contains("0504"), "{failed}");
+    assert!(failed.contains("m2.py") && failed.contains("0494"), "{failed}");
     // A relation whose rows, every document made, are not the count given: named.
     let mut wrong = totals.clone();
     *wrong.get_mut("text").unwrap() += 1;
@@ -2291,5 +2389,53 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let mut seen = 0;
     text.for_rows(&[0], &mut |_, _| seen += 1);
     let failed = text.failure().expect("a relation's rows differ from its count");
-    assert!(failed.contains("text") && failed.contains("0504"), "{failed}");
+    assert!(failed.contains("text") && failed.contains("0494"), "{failed}");
+}
+
+/// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
+/// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
+/// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules
+/// read string annotations (decision 0483), before the rounds went with the embed slice (0431 step 7).
+#[test]
+fn a_value_admitted_into_the_batch_matches_no_file_again() {
+    struct Seen(std::sync::Mutex<Vec<String>>);
+    impl AstWave for Seen {
+        fn len(&self) -> usize {
+            1
+        }
+        fn matched(
+            &self,
+            tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: &[Option<&Projected>],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &crate::content_store::atoms::Atoms,
+        ) -> StoreResult<Vec<(String, Relation)>> {
+            self.0.lock().unwrap().extend(tapes.iter().map(|(_, _, path)| path.clone()));
+            // A node of each document matched: its key (the test's path `m{key}.py`) above its local id.
+            let mut rows = Relation::new(&["n"]);
+            for (_, _, path) in tapes {
+                let key: i64 = path.trim_start_matches('m').trim_end_matches(".py").parse().unwrap();
+                rows.push(&[key << 32 | 1]);
+            }
+            Ok(vec![("rr_ast_1_1".to_owned(), rows)])
+        }
+    }
+    let store = ContentStore::open(&temp("grown-matchers")).unwrap();
+    let wave = Arc::new(Seen(std::sync::Mutex::new(Vec::new())));
+    let matchers = Matchers::new(Arc::clone(&wave) as Arc<dyn AstWave>);
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
+    let read = |sources: &[(String, Arc<dyn Source>)]| {
+        let (_, matched) = sources.iter().find(|(n, _)| n == "rr_ast_1_1").expect("the matchers' relation is bound");
+        (0..matched.len()).for_each(|r| _ = std::hint::black_box(matched.value(r, 0)));
+    };
+    let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
+    read(&sources);
+    let admitted = grower.admit(&store, file(3), &[], &tests, binding, &projection).unwrap();
+    assert!(!admitted.iter().any(|(n, _)| n == "rr_ast_1_1"), "a value's sources hold no matchers' rows of their own");
+    let mut seen = wave.0.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }

@@ -1,5 +1,4 @@
 .policy "ruff-dtz011-call-date-today" revision 1
-.guests off
 .description "Derive today's date from a timezone-aware current datetime instead of the naive local date; the local date depends on the machine's timezone."
 .language python
 .mode steer

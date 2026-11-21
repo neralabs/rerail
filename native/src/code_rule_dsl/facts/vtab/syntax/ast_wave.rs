@@ -269,7 +269,7 @@ fn matched(
             let _confirm = profile::span(|| "ast roots over the work limit, confirmed (W's matcher at each root)".into());
             let held_over: Vec<usize> = over.iter().map(|&t| held[t]).collect();
             let found_over: Vec<BTreeSet<u32>> = over.iter().map(|&t| found[t].clone()).collect();
-            let (found_rows, budget, _) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms, Some(wave.w_key(c)))?;
+            let (found_rows, budget, _) = captured_rows(m, &held_over, &found_over, at, tapes, atoms, Some(wave.w_key(c)))?;
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
@@ -296,7 +296,7 @@ fn matched(
             // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
-            let (found_rows, limited, cpu) = captured_rows(m, &held, &found, &at, tapes, atoms, Some(wave.w_key(c)))?;
+            let (found_rows, limited, cpu) = captured_rows(m, &held, &found, at, tapes, atoms, Some(wave.w_key(c)))?;
             // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
             if crate::code_rule_dsl::prof::on() {
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
@@ -342,7 +342,9 @@ fn captured_rows(
     // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
     // wave weighs a clause over its budget against. And each tape's CPU, for the profile's captures (t45).
     let measure = w_key.is_some();
-    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64, u128)>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+    // A tape's rows, its roots past the budget, W's steps and nodes, and its CPU (ns).
+    type TapeRun = (Vec<Vec<i64>>, usize, u64, u64, u128);
+    let per: Vec<StoreResult<TapeRun>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         held
             .par_iter()
             .zip(found.par_iter())

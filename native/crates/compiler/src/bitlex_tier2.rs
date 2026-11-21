@@ -51,6 +51,12 @@ pub struct Row {
 }
 
 impl Row {
+    /// Whether tier 2 reads the two rows alike: one kind, its first bytes, its words, its end and
+    /// its check (decision 0509: the rows of one kind in each reader's region, a string's text).
+    fn alike(&self, o: &Row) -> bool {
+        self.kind == o.kind && self.one_byte == o.one_byte && self.first == o.first && self.keywords == o.keywords && self.soft == o.soft && self.check == o.check && self.moved == o.moved
+    }
+
     /// Its tokens' ends are the stream's last bytes (`SPAN m=1`): every row but one of one-byte
     /// tokens. A row of keywords only is no exception: its token runs to its last byte whatever
     /// the word, and `truee` is not `true` (the word's bytes are compared over the whole token).
@@ -182,7 +188,7 @@ pub struct Lowered {
 /// One element of a gap pattern, as `Lowered::gap_patterns` holds it: its offset from the token,
 /// its kinds' names, its words (strings), whether it is a `~` of them, the marks it holds with or
 /// without (each its name and whether with), and the bytes it may start with (`starting`).
-pub type GapElemRow = (i8, Vec<String>, Vec<u16>, bool, Vec<(String, bool)>, Vec<u8>);
+pub type GapElemRow = (i8, Vec<String>, Vec<u16>, bool, Vec<(String, bool)>, Vec<u8>, bool);
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
 /// starts, and whether it is hidden (skipped where no arm takes it).
@@ -214,6 +220,9 @@ pub struct Mark {
     /// `, settles`: its mask from each bit to the next grammar token's start, which its arms
     /// settle the pending extras before (`SETTLE`).
     pub settle: Option<u16>,
+    /// `, passes M`: the marks after it that taking it passes too, a bit each by order
+    /// (`Words::mark_passes`).
+    pub passes: u64,
     /// `, drops …`: its questions' first entry (`Words::gap_patterns`), at whose tokens its
     /// arms drop the extra pending last (`SETTLE m=1`).
     pub drop: Option<u16>,
@@ -224,7 +233,15 @@ pub struct Mark {
     /// The questions themselves (`GapPattern`), whose rows `lower` writes (`Lowered::gap_patterns`).
     pub drops: Vec<::bitlex::syntax::GapPattern>,
     pub loses: Vec<::bitlex::syntax::GapPattern>,
-    /// With `lose`: the flag set where a level is at the mark's level (decision 0451), the lean
+    /// `, refuses …`: its questions' first entry, at whose tokens each test of the mark refuses
+    /// the file (`SETTLE m=19`), and the questions.
+    pub refuse: Option<u16>,
+    pub refuses: Vec<::bitlex::syntax::GapPattern>,
+    /// `, refuses taken …`: its questions' first entry, asked in each arm that takes the mark
+    /// (`SETTLE m=19`, where it holds), and the questions.
+    pub refuse_taken: Option<u16>,
+    pub refuses_taken: Vec<::bitlex::syntax::GapPattern>,
+    /// With `lose` or `refuse`: the flag set where a level is at the mark's level (decision 0451), the lean
     /// parser's `stmt`. A call sets it where the state it returns to takes the mark, keeps its
     /// caller's where that state ends at it, and clears it elsewhere (`lose_flags`).
     pub lose_flag: u16,
@@ -282,6 +299,9 @@ struct Emit<'a> {
     /// `SWITCH` (`at_switch`): found once, before the states are laid out.
     tests_of: Vec<Vec<usize>>,
     at_switch: Vec<bool>,
+    /// Each state whose arms are one call (`Emit::direct_call`): no switch, the call made at once,
+    /// as the lean parser calls `unary()` without peeking first (decision 0492).
+    direct: Vec<bool>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), Place>,
     /// A call's code, by what it does (`CallCode`): a call takes no token, so the arms of one
@@ -480,6 +500,10 @@ impl Emit<'_> {
     fn acts(&mut self, arm: usize) {
         let a = &self.arms[arm];
         let (token, to, ret) = (a.token, a.to, a.push.clone());
+        // `refuses taken`: an arm that takes the mark asks first.
+        if let Some(r) = self.marks.iter().find(|m| m.kind == token).and_then(|m| m.refuse_taken) {
+            self.push("SETTLE", crate::program::SETTLE_REFUSE, Arg::Num(r));
+        }
         // A remembered token is the word of the level it is taken at: after the calls the arm
         // makes, which keep their caller's (`PUSH`), so the innermost level's.
         let mut remember = None;
@@ -914,13 +938,21 @@ impl Emit<'_> {
             // before the token has no width.
             // At the mark's level (it takes the mark): always; where the level may end at it,
             // where the flag says a caller's level is the mark's; never where it refuses.
+            // `refuses`: asked first, the same way.
+            let refuse = crate::program::SETTLE_REFUSE;
+            match (m.refuse, at) {
+                (Some(r), AtMark::Arm(_)) => self.push("SETTLE", refuse, Arg::Num(r)),
+                (Some(r), AtMark::End) => self.push("SETTLE", refuse + 1 + m.lose_flag as u8, Arg::Num(r)),
+                _ => {}
+            }
+            let m = &self.marks[k];
             match (m.lose, at) {
                 (Some(l), AtMark::Arm(_)) => self.push("SETTLE", 2, Arg::Num(l)),
                 (Some(l), AtMark::End) => self.push("SETTLE", 3 + m.lose_flag as u8, Arg::Num(l)),
                 _ => {}
             }
             let m = &self.marks[k];
-            self.push("MARK", k as u8 | if m.end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
+            self.push("MARK", k as u8 | if m.end { crate::program::MARK_END } else { 0 } | if keep { MARK_KEEP } else { 0 }, Arg::Num(m.mask));
             match at {
                 AtMark::Arm(a) => {
                     mark_arms.push((self.pc(), a));
@@ -940,6 +972,37 @@ impl Emit<'_> {
         self.at_switch[s]
     }
 
+
+    /// Whether state `s` only calls, so its switch decides nothing its callee's does not: every
+    /// arm is the same call (its acts, callee and returns), the state may not end, the callee's
+    /// start has an arm on each token it has and on no other, meets the same rows, and tests each
+    /// mark the state tests to the same end (a mark arm the callee takes; a refusal it makes).
+    /// Then a token the state refuses, the callee refuses, as the lean parser's `unary()` refuses
+    /// what no operand starts with.
+    fn direct_call(&self, s: usize) -> bool {
+        let mine: Vec<&ArmRow> = self.arms.iter().filter(|a| usize::from(a.from) == s).collect();
+        let Some(first) = mine.first() else { return false };
+        let to = usize::from(first.to);
+        if !self.by_rules || self.states[s].end.is_some() || to == s || !mine.iter().all(|a| a.call && a.to == first.to && a.push == first.push && a.acts == first.acts) {
+            return false;
+        }
+        let mut here: Vec<u16> = mine.iter().map(|a| a.token).collect();
+        let mut there: Vec<u16> = self.arms.iter().filter(|a| usize::from(a.from) == to).map(|a| a.token).collect();
+        here.sort_unstable();
+        there.sort_unstable();
+        if here != there || self.meets[s] != self.meets[to] {
+            return false;
+        }
+        let callee = self.tests_at(to);
+        self.tests_at(s).iter().all(|&(k, at)| {
+            let theirs = callee.iter().find(|t| t.0 == k).map(|t| t.1);
+            match at {
+                AtMark::Arm(_) => matches!(theirs, Some(AtMark::Arm(_))),
+                AtMark::Refuse => theirs == Some(AtMark::Refuse),
+                AtMark::End => false,
+            }
+        })
+    }
 
     /// State `s`'s mark tests, in order: each mark it takes, a test and its arm; each not hidden
     /// that it does not take, and each its level refuses, a refusal; a mark that ends levels,
@@ -980,7 +1043,7 @@ impl Emit<'_> {
     /// `i` returning to state `ret[i]`: set where that state takes the mark (the level it returns
     /// to is the mark's), kept where it ends at it (its caller decides), else cleared.
     fn lose_flags(&self, ret: &[u16], flags: &mut Vec<(u8, u16, bool)>) {
-        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some()) {
+        for (k, m) in self.marks.iter().enumerate().filter(|(_, m)| m.lose.is_some() || m.refuse.is_some()) {
             for (i, &p) in ret.iter().enumerate() {
                 match self.tests_at(usize::from(p)).iter().find(|t| t.0 == k).map(|t| t.1) {
                     Some(AtMark::Arm(_)) => flags.push((i as u8, m.lose_flag, true)),
@@ -1025,6 +1088,16 @@ impl Emit<'_> {
         self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1) | extras, Arg::Num(STARTS));
         // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
         self.returned_field(&st);
+        if self.direct[s] {
+            // The call at once: no switch, no mark test (`direct_call`).
+            self.switch_at[s] = self.pc();
+            self.default = REFUSE;
+            let jump = self.pc();
+            self.push("GOTO", 0, Arg::Pc(0));
+            let at = self.arm(mine[0], Span::Last, Pre::None);
+            self.words[jump as usize].2 = Arg::Pc(at);
+            return Ok(());
+        }
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
         // hidden that it does not take, and each its level refuses, a test that refuses. A mark
         // that ends levels (`Mark::ends`), or one not hidden, where this nested level may end
@@ -1150,6 +1223,21 @@ impl Emit<'_> {
             taken.sort_unstable();
             taken.dedup();
             let met: Vec<usize> = (0..self.rows.len()).filter(|&r| has(&self.rows[r].first, b) && self.meets[s][r]).collect();
+            // Rows tier 2 reads alike (`Row::alike`, one kind's in several regions): one row, its
+            // arms taken together, as the lean lexer's one `T` a kind.
+            if met.len() > 1 && met.iter().all(|&r| self.rows[r].alike(&self.rows[met[0]]) && cs.iter().any(|c| c.row == r)) {
+                let mut one: Vec<Cand> = Vec::new();
+                for mut c in cs {
+                    c.row = met[0];
+                    if !one.iter().any(|o| o.arm == c.arm && o.word == c.word) {
+                        one.push(c);
+                    }
+                }
+                // As a row tested would be (`target`): a moved row's words its own switch's.
+                let pc = self.target(b, 0, one)?;
+                self.switches[t].targets[usize::from(b)] = pc;
+                continue;
+            }
             // Rows of keywords only beside at most one other: the record's word tells them apart,
             // as the lean parser's `peek()` gives the token's kind (a `.` or a `.5`).
             if met.len() > 1 && met.iter().filter(|&&r| self.rows[r].kind != 0).count() <= 1 {
@@ -1164,9 +1252,10 @@ impl Emit<'_> {
                     let these: Vec<Cand> = cs.iter().filter(|c| c.row == r).cloned().collect();
                     tos.push(self.target(b, 0, these)?);
                 }
-                // Every row it can meet there it takes, to one place: no test tells them apart.
-                if all && tos.iter().all(|&t| t == tos[0]) {
-                    self.switches[t].targets[usize::from(b)] = tos[0];
+                // Every row it can meet there it takes, to one place: no test tells them apart. So
+                // too where the rows it takes go where the others do.
+                if all && tos.iter().all(|&t| t == tos[0]) || !all && tos.iter().all(|&t| t == default) {
+                    self.switches[t].targets[usize::from(b)] = if all { tos[0] } else { default };
                     continue;
                 }
                 let key = (self.rule, taken.clone(), all, default, tos.clone());
@@ -1342,6 +1431,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         marked: vec![0; states.len()],
         tests_of: tests_of(states, arms, marks),
         at_switch: Vec::new(),
+        direct: Vec::new(),
         arm_code: HashMap::default(),
         call_code: HashMap::default(),
         row_chains: HashMap::default(),
@@ -1356,6 +1446,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         if marks.iter().any(|m| m.kind == a.token) || !e.tests_of[to].iter().all(|k| e.tests_of[from].contains(k)) {
             e.at_switch[to] = false;
         }
+    }
+    // A state that only calls: the call at once, its callee entered past its `TOKEN`, where it
+    // tests its marks, as the caller tested none.
+    e.direct = (0..states.len()).map(|s| e.direct_call(s)).collect();
+    for s in (0..states.len()).filter(|&s| e.direct[s]) {
+        let to = arms.iter().find(|a| usize::from(a.from) == s).map(|a| usize::from(a.to)).expect("an arm");
+        e.at_switch[to] = false;
     }
     // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
     // words: a keyword's leaf kind is then its word plus a constant over each run of kinds
@@ -1452,12 +1549,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // in this order), their elements at offsets from the token: `after`'s before it, the last
     // at -1; `before`'s from it.
     let mut gap_patterns = Vec::new();
-    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses]).filter(|q| !q.is_empty()).enumerate() {
+    for (p, qs) in marks.iter().flat_map(|m| [&m.drops, &m.loses, &m.refuses, &m.refuses_taken]).filter(|q| !q.is_empty()).enumerate() {
         for q in qs.iter() {
+            // `since`: `after`'s from the grammar token before (0).
             let a = q.after.len() as i8;
-            let at = q.after.iter().enumerate().map(|(i, x)| (i as i8 - a, x)).chain(q.before.iter().enumerate().map(|(i, x)| (i as i8, x)));
+            let at = q.after.iter().enumerate().map(|(i, x)| if q.since { (i as i8, true, x) } else { (i as i8 - a, false, x) }).chain(q.before.iter().enumerate().map(|(i, x)| (i as i8, false, x)));
             let mut elems = Vec::new();
-            for (offset, choices) in at {
+            for (offset, since, choices) in at {
                 let (not, choices) = match choices.as_slice() {
                     [::bitlex::syntax::TokenElem::Not(inner)] => (true, inner.as_slice()),
                     c => (false, c),
@@ -1473,7 +1571,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                         _ => return Err("a gap pattern's element of kinds, words, `with`, `without` and `starting`".into()),
                     }
                 }
-                elems.push((offset, kinds, words, not, marks_named, first));
+                elems.push((offset, kinds, words, not, marks_named, first, since));
             }
             gap_patterns.push((p as u8, q.unless, elems));
         }
@@ -1498,13 +1596,13 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         }
         // (words, the rule's level's kind, its states)
         let mut top: Vec<(usize, u16, usize)> = by_rule.into_iter().map(|(r, n)| (n, states.iter().find(|s| usize::from(s.rule) == r).map_or(0, |s| s.level), states.iter().filter(|s| usize::from(s.rule) == r).count())).collect();
-        top.sort_by(|a, b| b.0.cmp(&a.0));
+        top.sort_by_key(|t| std::cmp::Reverse(t.0));
         let mut ops: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
         for w in &e.words {
             *ops.entry(w.0).or_default() += 1;
         }
         let mut ops: Vec<_> = ops.into_iter().collect();
-        ops.sort_by(|a, b| b.1.cmp(&a.1));
+        ops.sort_by_key(|o| std::cmp::Reverse(o.1));
         format!("{} words unshared, {} states, {} arms; by opcode {:?}; words, level kind and states by rule: {:?}", e.words.len(), states.len(), arms.len(), &ops[..ops.len().min(10)], &top[..top.len().min(12)])
     };
     // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`
@@ -1593,6 +1691,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     let mark_words: Vec<(u8, u16)> = e.mark_words.iter().map(|(&k, &s)| (k, s)).collect();
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
+    let mark_passes: Vec<(u8, u64)> = marks.iter().enumerate().filter(|(_, m)| m.passes != 0).map(|(k, m)| (k as u8, m.passes)).collect();
+    crate::rir_text::mark_pass_rows(&mut text, &mark_passes);
     let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
     crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);

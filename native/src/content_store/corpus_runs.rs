@@ -88,6 +88,7 @@ pub struct CorpusPass {
     pub kept: Option<CorpusKept>,
     pub plan_rows: usize,
     pub collection: CollectionReport,
+    pub observer: Option<super::observe::Swept>,
 }
 
 impl CorpusPass {
@@ -136,8 +137,9 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
     Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
 }
 
-/// Whether no process `pid` exists on this host.
-pub(super) fn process_gone(pid: i32) -> bool {
+/// Whether no process `pid` exists on this host: never this process, and on Windows when the system knows no
+/// running process of that id.
+pub fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;
     }
@@ -147,7 +149,20 @@ pub(super) fn process_gone(pid: i32) -> bool {
         let r = unsafe { libc::kill(pid, 0) };
         r != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+        // An unknown PID gives ERROR_INVALID_PARAMETER. Access denied can mean a live protected process.
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
+            if handle.is_null() { return GetLastError() == ERROR_INVALID_PARAMETER; }
+            let exited = WaitForSingleObject(handle, 0) == WAIT_OBJECT_0;
+            CloseHandle(handle);
+            exited
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }
@@ -451,6 +466,16 @@ impl ContentStore {
     /// its older ones, which keep no protection (`Protection`). `None`: a lane of no set, protected as before.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_policy(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
+        self.record_scoped_corpus_run(root, sources, grammar_version, tape_format, plan, also, lane, policy, now, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_scoped_corpus_run(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64, scope: Option<&str>) -> StoreResult<bool> {
+        self.record_corpus_run_retaining(root, sources, grammar_version, tape_format, plan, also, lane, policy, now, scope, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_corpus_run_retaining(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, policy: Option<[u8; 32]>, now: i64, scope: Option<&str>, owner: Option<&super::analysis_scope::AnalysisOwner>) -> StoreResult<bool> {
         let mut also: Vec<[u8; 32]> = also.iter().copied().filter(|p| *p != plan).collect();
         also.sort_unstable();
         also.dedup();
@@ -470,6 +495,10 @@ impl ContentStore {
         hash.update(&blob);
         let digest: [u8; 32] = hash.finalize().into();
         self.immediate_transaction(|tx| {
+            if let Some(owner) = owner && !owner.current(tx)? {
+                return Ok(false);
+            }
+            let scope = owner.map(|owner| owner.membership()).or(scope);
             tx.execute_cached("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
             let root_id: i64 = tx.query_row_cached("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
             let run: i64 = tx.query_row_cached("UPDATE corpus_state SET run=run+1 WHERE singleton=1 RETURNING run", [], |r| r.get(0))?;
@@ -477,6 +506,17 @@ impl ContentStore {
                 .query_row_cached("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE root_id=?3 AND digest=?4 RETURNING manifest_id", params![run, now, root_id, &digest[..]], |r| r.get(0))
                 .optional()?;
             let set_lane = |manifest: i64| -> rusqlite::Result<()> {
+                if let Some(scope) = scope {
+                    let acquisition = match owner {
+                        Some(owner) => owner.acquisition,
+                        None => super::analysis_scope::next_acquisition(tx)?,
+                    };
+                    tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
+                        VALUES (?1,?2,?3,?4,?5) ON CONFLICT(scope,manifest_id) DO UPDATE SET
+                          (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)
+                        WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)",
+                        (scope, manifest, owner.map_or(0, super::analysis_scope::AnalysisOwner::acquired_at), acquisition, run))?;
+                }
                 if let Some(lane) = &lane {
                     tx.prepare_cached("UPDATE corpus_manifests SET lane = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &lane[..]])?;
                 }
@@ -569,6 +609,9 @@ impl ContentStore {
     }
 
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
+        if self.analysis_snapshot_due(now)? {
+            return Ok(true);
+        }
         if self.retired_memo_rows_left()? {
             return Ok(true);
         }
@@ -656,6 +699,7 @@ impl ContentStore {
         // Read, decided and applied in one transaction (O95): a manifest or plan another run records meanwhile waits
         // for the write lock, so a decision never drops what it did not see.
         self.immediate_transaction(|tx| {
+            Self::discard_abandoned_analysis(tx)?;
             let manifests = tx
                 .prepare(
                     "SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, lane, policy FROM corpus_manifests \
@@ -668,6 +712,15 @@ impl ContentStore {
                     Ok(Manifest { id, root, last_time, grammar_version, tape_format, plan, lane, policy, sources: decode_ids(&blob)? })
                 })
                 .collect::<StoreResult<Vec<_>>>()?;
+            let scoped: HashSet<i64> = tx.prepare(
+                "SELECT DISTINCT a.manifest_id FROM analysis_scope_manifest a JOIN corpus_manifests m USING(manifest_id) \
+                 WHERE a.scope GLOB 'named:*' OR (a.scope GLOB 'cwd:*' AND NOT EXISTS (\
+                    SELECT 1 FROM analysis_scope_manifest b JOIN corpus_manifests newer USING(manifest_id) \
+                    WHERE b.scope=a.scope AND newer.root_id=m.root_id AND newer.policy IS m.policy \
+                      AND (m.policy IS NOT NULL OR newer.lane IS m.lane)
+                      AND (b.acquired_at,b.acquisition,b.recorded_run)>(a.acquired_at,a.acquisition,a.recorded_run)))",
+            )?
+                .query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             // Bytes of each live source, and of its tape of the live grammar version and format.
             let mut sizes = Sizes::default();
             let mut live = HashSet::new();
@@ -694,10 +747,11 @@ impl ContentStore {
                     let t = last.entry(m.root).or_insert(m.last_time);
                     *t = (*t).max(m.last_time);
                 }
+                let owned_roots: HashSet<_> = manifests.iter().filter(|m| scoped.contains(&m.id)).map(|m| m.root).collect();
                 let roots: Vec<(i64, String)> = tx.prepare("SELECT root_id, path FROM corpus_roots")?.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
                 roots
                     .into_iter()
-                    .filter(|(id, path)| last.get(id).is_none_or(|&t| now - t >= policy.missing_secs) && !std::path::Path::new(path).exists())
+                    .filter(|(id, path)| !owned_roots.contains(id) && last.get(id).is_none_or(|&t| now - t >= policy.missing_secs) && !std::path::Path::new(path).exists())
                     .map(|(id, _)| id)
                     .collect()
             };
@@ -740,7 +794,7 @@ impl ContentStore {
                 }
             }
             let decided = decide(considered, &sizes, policy, now, &aged);
-            let kept_ids: HashSet<i64> = decided.kept.iter().copied().collect();
+            let kept_ids: HashSet<i64> = decided.kept.iter().copied().chain(scoped.iter().copied()).collect();
             let mut keep_live: HashSet<(i64, i64, i64)> = HashSet::new();
             let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
             for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
@@ -755,7 +809,7 @@ impl ContentStore {
             let protected_ids: HashSet<i64> = manifests
                 .iter()
                 .filter(|m| kept_ids.contains(&m.id))
-                .filter(|m| protection.protects(m, policy.protected_runs.max(1), policy.protected_lanes.max(1)))
+                .filter(|m| scoped.contains(&m.id) || protection.protects(m, policy.protected_runs.max(1), policy.protected_lanes.max(1)))
                 .map(|m| m.id)
                 .collect();
             for m in manifests.iter().filter(|m| protected_ids.contains(&m.id)) {
@@ -773,7 +827,9 @@ impl ContentStore {
             // Each lane is a store session (decision 0450 §2, kind 2): its protected runs are its latest data, and a lane
             // none of whose runs is protected ended at its last run. Rewritten by each decision from the kept manifests.
             {
-                let mut lanes: HashMap<(i64, Option<&[u8]>), (i64, i64, bool)> = HashMap::new();
+                // A lane (its root and name): its latest manifest, that one's last use, and whether a run of it is protected.
+                type Lane<'a> = (i64, Option<&'a [u8]>);
+                let mut lanes: HashMap<Lane<'_>, (i64, i64, bool)> = HashMap::new();
                 for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
                     // Newest first: a lane's first manifest is its latest.
                     let lane = lanes.entry((m.root, m.lane.as_deref())).or_insert((m.id, m.last_time, false));
@@ -819,7 +875,7 @@ impl ContentStore {
             tx.execute_cached("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
             // What it left aged may be archived (decision 0450 step 4).
             tx.execute_cached("UPDATE corpus_state SET archive_due=1 WHERE singleton=1", [])?;
-            Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
+            Ok(CorpusKept { manifests: kept_ids.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
         })
     }
 
@@ -946,7 +1002,11 @@ impl ContentStore {
         pass.plan_rows += usize::from(self.compact_memo_pack(MEMO_PACK_FLOOR)? > 0);
         // The tapes' and sources' segments, once files stored again or collected left most of them unnamed (0295 step 5).
         pass.plan_rows += usize::from(self.compact_object_segments(MEMO_PACK_FLOOR)? > 0);
-        if !pass.did_work() {
+        if !pass.did_work() && self.corpus_due()? == 2 {
+            // The same lease protects the live-plan snapshot and the observer sweep. Leave the
+            // pass due until both stores have completed it, including after an interrupted pass.
+            let live = self.live_plans()?;
+            pass.observer = Some(super::observe::collect(&super::observe::store_beside(self.database_path()), |plan| live.contains(plan))?);
             self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
         }
         Ok(pass)

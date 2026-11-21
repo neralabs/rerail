@@ -1,5 +1,5 @@
-# `.rerail`, the rule language, as the engine's parser (`rr_syntax/src/syntax.rs`, the reference) reads it, with
-# a named-only tape (docs/parser-generators/32-named-only-rr-tapes.md). It reads:
+# `.rerail`, the rule language, as the engine's parser (logic/rr/syntax.rs, the reference) reads it, with a named-only
+# tape (docs/parser-generators/32-named-only-rr-tapes.md). It reads:
 #   - `//` and `/* */` comments, `#include "…"` lines;
 #   - settings (`.mode x`, `.scope dirs "a", "b"`: a word and the rest of its line), declarations
 #     (`.decl r(a: number, b: flat<x>) inline`) and the other directives;

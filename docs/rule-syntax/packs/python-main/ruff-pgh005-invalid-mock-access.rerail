@@ -1,5 +1,4 @@
 .policy "ruff-pgh005-invalid-mock-access" revision 1
-.guests off
 .description "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing."
 .language python
 .mode steer

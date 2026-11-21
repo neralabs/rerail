@@ -1,5 +1,4 @@
 .policy "ruff-int002-format-in-get-text-func-call" revision 1
-.guests off
 .description "Pass a constant template to a gettext call and format the translated result; a format method call is evaluated before the catalog lookup."
 .language python
 .mode steer

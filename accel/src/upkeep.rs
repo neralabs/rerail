@@ -96,13 +96,17 @@ impl<'a> Slice<'a> {
     }
 }
 
+/// A probe of other processes' runs on a store: the store's path, its runs lock file (if it opened), when the probe
+/// last looked, and whether another process held the lock then.
+type ProbeHeld = (std::path::PathBuf, Option<std::fs::File>, Instant, bool);
+
 /// The machine's upkeep (decision 0442): its jobs and their scheduler, the runs under way on it, the probes of other
 /// processes' runs, the settings in force.
 #[derive(Default)]
 struct Upkeep {
     /// Runs under way on the machine ([`run_begins`]).
     runs: std::sync::atomic::AtomicUsize,
-    probes: Mutex<Vec<(std::path::PathBuf, Option<std::fs::File>, Instant, bool)>>,
+    probes: Mutex<Vec<ProbeHeld>>,
     settings: OnceLock<Mutex<Settings>>,
     jobs: Mutex<Vec<Entry>>,
     stop: AtomicBool,
@@ -426,7 +430,7 @@ pub fn cpu_ticks() -> (u64, u64) {
         let ticks = std::slice::from_raw_parts(info as *const u32, count as usize);
         let (mut busy, mut total) = (0u64, 0u64);
         // Per core: user, system, idle, nice.
-        for c in ticks.chunks_exact(4) {
+        for c in ticks.as_chunks::<4>().0 {
             busy += c[0] as u64 + c[1] as u64 + c[3] as u64;
             total += c.iter().map(|&t| t as u64).sum::<u64>();
         }
@@ -527,7 +531,7 @@ pub fn heat() -> (bool, u8) {
     (false, 0)
 }
 
-/// The process's physical footprint, bytes: on Linux its resident set.
+/// The process's physical footprint, bytes (Linux: its resident memory).
 pub fn footprint() -> usize {
     #[cfg(target_os = "macos")]
     unsafe {
@@ -537,11 +541,13 @@ pub fn footprint() -> usize {
         }
         0
     }
+    // Linux has no footprint: its resident pages (/proc/self/statm's second figure) are the nearest.
     #[cfg(target_os = "linux")]
     {
-        // `/proc/self/statm`: the size, then the resident pages.
-        let pages = std::fs::read_to_string("/proc/self/statm").ok().and_then(|s| s.split_whitespace().nth(1)?.parse::<usize>().ok());
-        pages.map_or(0, |p| p * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize)
+        let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+        let pages: usize = statm.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+        // SAFETY: sysconf reads a constant.
+        pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(0) as usize
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     0
@@ -687,6 +693,15 @@ pub fn forget_file(file: &std::path::Path) {
     drop(gone);
 }
 
+/// Retire jobs for stores that their owner is about to remove. Call after closing
+/// the users of those stores. Wait for a step that already took a job out of the list.
+pub fn retire_files_under(directory: &std::path::Path) {
+    let st_ = upkeep();
+    let _stepping = st_.stepping.lock().unwrap_or_else(|p| p.into_inner());
+    st_.jobs.lock().unwrap_or_else(|p| p.into_inner())
+        .retain(|entry| !entry.job.file().is_some_and(|file| file.starts_with(directory)));
+}
+
 /// Starts the scheduler's thread, once (when the settings have it on).
 pub fn start() {
     upkeep().scheduler.get_or_init(|| {
@@ -806,7 +821,7 @@ fn run_due(s: &Settings, idle: bool, ticks: &mut (u64, u64), pass: Pass) -> bool
             if upkeep().stop.load(Ordering::Acquire) || (!all && Instant::now() >= pass_end) {
                 return ran;
             }
-            // `finish_soon` holds `STEPPING` through its pass.
+            // `finish_soon` holds the stepping lock through its pass.
             let stepped = if pass == Pass::Utility { step_job_held(id, s, false, yields, None) } else { step_job(id, s, true, yields) };
             let Some((step, file)) = stepped else { break };
             ran = true;
@@ -833,7 +848,7 @@ fn step_job(id: u64, s: &Settings, pause: bool, yields: bool) -> Option<(Step, O
     step_job_held(id, s, pause, yields, Some(stepping))
 }
 
-/// `step_job`, `STEPPING` held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
+/// `step_job`, the stepping lock held by the caller (`finish_soon`, through its whole pass) or given to it (`stepping`,
 /// let go before the step's pause).
 fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Option<std::sync::MutexGuard<'_, ()>>) -> Option<(Step, Option<std::path::PathBuf>)> {
     let mut e = {
@@ -944,10 +959,8 @@ mod tests {
     }
 
     /// A job over a file: a run over the file stops it until its deadline.
-    #[cfg(unix)]
     struct OverFile(Counter, std::path::PathBuf);
 
-    #[cfg(unix)]
     impl Job for OverFile {
         fn name(&self) -> String {
             self.0.name()

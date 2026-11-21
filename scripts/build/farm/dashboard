@@ -44,6 +44,7 @@ HISTORY = 100          # samples kept: 5 minutes at 3 s
 PING_SECONDS = 2
 REFRESH_SECONDS = 20   # the configuration read again: hosts added, removed, enabled or not
 STALE_SECONDS = 12     # no sample for this long: the machine's connection is shown as lost
+SILENT_SECONDS = 30    # no line at all for this long (a Windows sampler's setup takes about 10 s): a new session
 SAMPLER = os.path.join(HERE, "sampler")
 WINDOWS_SAMPLER = os.path.join(HERE, "sampler.ps1")
 LOCAL = "this Mac"
@@ -131,25 +132,34 @@ class Machine:
                                          stderr=subprocess.PIPE, text=True, bufsize=1)
         sent = {}
         alive = threading.Event()
+        heard = [time.monotonic()]
 
         def pinger():
+            # It also ends a session that has gone silent: a sampler stuck on its host (a Windows one never
+            # sees the end of its input) would otherwise keep the card lost until the dashboard restarts.
             n = 0
             while not alive.is_set():
+                if time.monotonic() - heard[0] > SILENT_SECONDS:
+                    self.error = f"no word from the sampler for {SILENT_SECONDS} s; starting another"
+                    p.kill()
+                    return
                 n += 1
-                sent[str(n)] = time.monotonic()
+                with self.lock:  # the reader pops pongs from `sent` under it
+                    sent[str(n)] = time.monotonic()
+                    for k in [k for k in sent if int(k) < n - 10]:
+                        del sent[k]
                 try:
                     p.stdin.write(f"ping {n}\n")
                     p.stdin.flush()
                 except OSError:
                     return
-                for k in [k for k in sent if int(k) < n - 10]:
-                    del sent[k]
                 alive.wait(PING_SECONDS)
         threading.Thread(target=pinger, daemon=True).start()
         err = collections.deque(maxlen=5)
         threading.Thread(target=lambda: [err.append(line.strip()) for line in p.stderr], daemon=True).start()
         try:
             for line in p.stdout:
+                heard[0] = time.monotonic()
                 try:
                     d = json.loads(line)
                 except ValueError:
@@ -173,7 +183,8 @@ class Machine:
             alive.set()
             p.kill()
             p.wait()
-            self.error = " / ".join(e for e in err if e) or f"the sampler ended (exit {p.returncode})"
+            if time.monotonic() - heard[0] <= SILENT_SECONDS:  # else the pinger said why it ended it
+                self.error = " / ".join(e for e in err if e) or f"the sampler ended (exit {p.returncode})"
 
     def state(self):
         with self.lock:

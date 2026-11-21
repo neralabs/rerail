@@ -9,6 +9,10 @@ use super::super::program_facts::{self, Facts, Field};
 use super::{ABOUT, Builder, Cell, Version};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A gate (`Program::gates`' entry): its key, relation and level, the relations that must be quiet and the gates it
+/// waits on, as `program_facts` writes them.
+pub type GateEntry = (String, String, usize, Vec<String>, Vec<String>);
+
 impl Version {
     /// The `.about` rows of `relations`, as facts of the version's program (`ABOUT`): what a field's reader reads.
     fn about_values(&self, relations: &[&str]) -> Facts {
@@ -141,7 +145,7 @@ impl Version {
     pub fn ast_patterns(&self) -> Result<BTreeSet<String>, String> {
         self.read(&["ast_pattern"], |f| f.ast_patterns())
     }
-    pub fn doc_scopes(&self) -> Result<Option<Vec<(Vec<String>, Vec<String>)>>, String> {
+    pub fn doc_scopes(&self) -> Result<crate::code_rule_dsl::logic::program_facts::DocScopes, String> {
         self.read(&["doc_scoped", "doc_scope", "doc_scope_glob"], |f| f.doc_scopes())
     }
     pub fn text_globs(&self) -> Result<Vec<String>, String> {
@@ -352,7 +356,17 @@ impl Version {
     pub fn about_kept(&self, keep: &dyn Fn(&str) -> bool) -> Facts {
         let names: Vec<String> = self.about_facts().iter().map(|f| self.text(f.name()).to_owned()).filter(|n| keep(n)).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        ProgramFields::about(self, &names)
+        self.about_held(&names)
+    }
+    /// The `.about` rows of `names` the version holds, to be written: `about`'s, but the program's own row only where
+    /// the version holds one (its readers are given it, held or not; a write of it would state a row the version
+    /// lacks, and so another image than a run from scratch's).
+    fn about_held(&self, names: &[&str]) -> Facts {
+        let mut about = ProgramFields::about(self, names);
+        if !self.about_facts().iter().any(|f| self.text(f.name()) == "program") {
+            about.remove("program");
+        }
+        about
     }
 }
 
@@ -428,8 +442,8 @@ impl Builder<'_> {
         }
         let names: BTreeSet<String> = [was, now].iter().flat_map(|v| v.about_facts().into_iter().map(|f| v.text(f.name()).to_owned()).collect::<Vec<_>>()).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let about = now.about(&names);
-        if was.about(&names) != about {
+        let about = now.about_held(&names);
+        if was.about_held(&names) != about {
             self.set_about(&about);
         }
     }
@@ -550,7 +564,7 @@ impl FieldsW<'_, '_> {
     pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
         self.0.keep_asked(keep)
     }
-    pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+    pub fn add_gates(&mut self, gates: &[GateEntry]) {
         self.0.add_gates(gates)
     }
     pub fn add_setting(&mut self, key: &str, text: &str) {
@@ -743,7 +757,9 @@ pub struct Shown<'a>(pub &'a dyn ProgramFields);
 impl std::fmt::Debug for Shown<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let p = self.0;
-        let mut decls: Vec<(String, Option<Vec<(String, String)>>)> = p.declared_names().into_iter().map(|r| {
+        // A declared relation, and its columns' names and types.
+        type Decl = (String, Option<Vec<(String, String)>>);
+        let mut decls: Vec<Decl> = p.declared_names().into_iter().map(|r| {
             let cols = p.columns_of(&r);
             (r, cols)
         }).collect();

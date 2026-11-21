@@ -1,5 +1,4 @@
 .policy "ruff-pyi058-generator-return-from-iter-method" revision 1
-.guests off
 .description "Annotate a simple iteration method as returning an iterator, not a generator; the kind of iterator it returns is an implementation detail."
 .language python
 .mode steer

@@ -1,6 +1,6 @@
 //! The checks of a Bitlex grammar against the reference (the engine's tests and this crate's use them): JSON's
 //! grammars (`json_parser/`: `json-rfc`, `jsonc`, the token loop's `json` and `json-simdjson`), and any other grammar
-//! given (`.rerail`'s, Kotlin's, the C directives'). Each is parsed by its Bitlex file alone, with no Rust between the
+//! given (`.rr`'s, Kotlin's, the C directives'). Each is parsed by its Bitlex file alone, with no Rust between the
 //! bytes and the nodes.
 //!
 //! No grammar's test code knows its language: the documents are drawn from the grammar's own tree grammar, its
@@ -77,18 +77,18 @@ impl Ids {
     }
 }
 
-/// JSON's grammars' directory (`json_parser/` beside this crate), found as the program runs: above the program,
+/// JSON's grammars' directory (`json_parser/`, beside this crate), found as the program runs: above the program,
 /// `CARGO_MANIFEST_DIR` or the working directory. Not written into the build (decision 0224): with its checkout's path
 /// in, this crate and every crate above it were a different crate in every checkout, for every profile.
 pub fn dir() -> String {
     let crates = std::path::Path::new(file!()).ancestors().nth(3).expect("crates/compiler/src/ladder.rs");
-    let grammars = crates.join("json_parser");
+    let json = crates.join("json_parser");
     let starts = [std::env::current_exe().ok(), std::env::var_os("CARGO_MANIFEST_DIR").map(Into::into), std::env::current_dir().ok()];
     starts
         .into_iter()
         .flatten()
-        .find_map(|start| start.ancestors().map(|a| a.join(&grammars)).find(|d| d.is_dir()))
-        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", grammars.display()))
+        .find_map(|start| start.ancestors().map(|a| a.join(&json)).find(|d| d.is_dir()))
+        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", json.display()))
         .to_string_lossy()
         .into_owned()
 }
@@ -141,8 +141,8 @@ tree t {
 pub const BLANKS_TEXT: &[u8] = b"a // x\n// y\n/* z */ /* w */\nb\n";
 
 /// JSON's two reference forms, by name: `json-rfc` (RFC 8259, as simdjson accepts it) and `jsonc` (with comments, as
-/// tree-sitter-json parses it). The token loop's forms in `dir()` (`json`, `json-simdjson`) have their own shape and
-/// are checked by `rerail_parser_tests::json`.
+/// tree-sitter-json parses it). The token loop's forms in `dir()` (`json`, `json-simdjson`) have their own shape and are
+/// checked by `rerail_parser_tests::json`.
 pub fn grammars() -> Vec<(String, String)> {
     grammars_in(&dir()).into_iter().filter(|(n, _)| n == "json-rfc" || n == "jsonc").collect()
 }
@@ -767,7 +767,6 @@ fn tier1_made(c: &Compiled) -> Vec<usize> {
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
-
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -807,7 +806,7 @@ pub fn check_documents(
     docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
     for (i, bytes) in docs.into_iter().enumerate() {
         let show = || format!("{name}: {:?}", String::from_utf8_lossy(&bytes));
-        let want = reference(&c, &bytes);
+        let want = reference(c, &bytes);
         let run = c.program.block_programs[0].run_files(&[&bytes]).remove(0);
         let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
         let compiled = c.parser.parse(&bytes).ok().map(as_ids);
@@ -845,7 +844,7 @@ pub fn check_documents(
             None => {
                 fell += 1;
                 if i < before {
-                    *reasons.entry(refusal(&c, &bytes)).or_default() += 1;
+                    *reasons.entry(refusal(c, &bytes)).or_default() += 1;
                 }
             }
         }

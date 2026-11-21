@@ -1,5 +1,4 @@
 .policy "ruff-d409-mismatched-section-underline-length" revision 1
-.guests off
 .description "Make a section underline exactly as long as the section name above it."
 .language python
 .mode steer

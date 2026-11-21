@@ -116,8 +116,8 @@ rf_site(a) :- kind(a, "attribute"), field(a, "object", o), kind(o, "identifier")
 rf_site(i) :- kind(i, "identifier"), !field(_, "function", i), rf_read(i), !rf_object(i).
 .decl rf_object(i: node)
 rf_object(i) :- kind(a, "attribute"), field(a, "object", i).
-// rf_read(i): identifier i is a read of a name (a load) in its file's own code: none inside a string parsed as code
-// (an annotation's, decision 0431: no guest documents).
+// rf_read(i): identifier i is a read of a name (a load), in its file's code: not a node of a string parsed as code
+// (`guest_of`, decision 0431: a string's parsed nodes are its file's rows; they were a fragment document's).
 .decl rf_read(i: node)
 rf_read(i) :- nameref(i, _), !bind_only(i), !rf_deleted(i), !guest_of(i, _).
 // rf_deleted(i): `del x` deletes name i: no load (W's reference reads loads only).

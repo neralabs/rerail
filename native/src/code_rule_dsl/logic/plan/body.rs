@@ -274,18 +274,23 @@ impl<'v> Body<'v> {
                     || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
                         head.strip_prefix("rr_pair_cache_")
                             .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
-                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head))
-                    // Maintenance gives each witness rule a support head (wide__sup0). It needs the same
-                    // driving request as wide itself. An explicitly driving delta still takes precedence.
-                    || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS)
-                        .is_some_and(|producer| producer == head))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
             })
         })
     }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0488), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
     pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS).is_some_and(|p| p == head))
+        }))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
@@ -486,7 +491,17 @@ impl<'v> Body<'v> {
     /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
     /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208); nor a line's planned from given variables bound.
+        self.digest_pre(d);
+        self.digest_atom(d, self.head());
+        d.u64(self.lits.len() as u64);
+        for &l in &self.lits {
+            self.digest_lit(d, l);
+        }
+    }
+
+    /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
+    /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
+    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
         match &self.pre {
             None => {}
             Some(Pre::Head) => d.str("head bound"),
@@ -497,11 +512,6 @@ impl<'v> Body<'v> {
                     d.u64(*w);
                 }
             }
-        }
-        self.digest_atom(d, self.head());
-        d.u64(self.lits.len() as u64);
-        for &l in &self.lits {
-            self.digest_lit(d, l);
         }
     }
     /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,
@@ -752,14 +762,14 @@ impl Placed {
     /// program leaves out of it (where it is some of its version's rules). A sum, so it
     /// does not see the rules' order.
     pub fn digest(&self) -> u64 {
-        let d = match &self.ids {
+        
+        match &self.ids {
             None => self.v.digest(),
             Some(ids) => {
                 let all = self.v.rules().fold(0u64, |a, r| a.wrapping_add(r.hash()));
                 ids.iter().fold(self.v.digest().wrapping_sub(all), |a, &id| a.wrapping_add(self.v.rule(id).map_or(0, |r| r.hash())))
             }
-        };
-        d
+        }
     }
     /// How many rules the program has.
     pub fn len(&self) -> usize {

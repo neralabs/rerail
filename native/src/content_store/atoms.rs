@@ -47,7 +47,7 @@ const READ_RUN: usize = 256;
 /// The fixed hash every string key uses: the interner's table, and the dependency keys of
 /// probes (`Engine::probe`), which must agree for strings that are not (yet) interned.
 pub fn hash_str(s: &str) -> u64 {
-    foldhash::quality::FixedState::with_seed(0x5EED_71).hash_one(s)
+    foldhash::quality::FixedState::with_seed(0x005E_ED71).hash_one(s)
 }
 
 /// The atoms a process holds: the store's, read where they lie in its mapped blocks (decision 0401, `Stored`), and
@@ -178,6 +178,11 @@ impl Interner {
     /// One past the last id: the database's (as far as this process knows) and the pending ones.
     pub fn len(&self) -> usize {
         self.pending.last().map_or(self.base, |b| b.end().max(self.base)) as usize
+    }
+
+    /// No ids, in the database or pending.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Where the pending atoms start: ids below it are in the database.
@@ -331,7 +336,10 @@ pub struct Atoms {
 /// The identity read of each database file, by its path and (device, inode, creation time): `Atoms::identity`. A file
 /// made again at a path may have the inode the deleted one had; it was not made at the same time.
 #[derive(Default)]
-struct Identities(Mutex<HashMap<String, ((u64, u64, u128), Option<i64>)>>);
+struct Identities(Mutex<HashMap<String, (FileIdentity, Option<i64>)>>);
+
+/// A database file's (device, inode, creation time).
+type FileIdentity = (u64, u64, u128);
 
 /// The database at `path` was made a store (`schema::initialize`): the identity read of it before (none) is gone.
 pub(crate) fn forget_identity(path: &str) {
@@ -340,7 +348,7 @@ pub(crate) fn forget_identity(path: &str) {
 
 thread_local! {
     /// The atoms this thread made while reserving (`reserving`), by arena.
-    static RESERVING: std::cell::RefCell<Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>> = const { std::cell::RefCell::new(None) };
+    static RESERVING: std::cell::RefCell<Option<Reserving>> = const { std::cell::RefCell::new(None) };
 }
 
 /// An arena's atoms reserved by components not yet retired (`Atoms::reserved`): pending, but no row a commit writes
@@ -385,10 +393,8 @@ pub const TEXT_MOST: usize = 4096;
 // and the most they keep.
 const _: () = assert!(rerail_clif::view::cache::LEN == 12 && rerail_clif::view::cache::PAYLOAD == 16 && TEXT_MOST == 4096);
 
-/// A verdict (`rerail_clif::verdict_reads`): none yet, the symbol fails, it passes.
-pub const UNKNOWN: u32 = 0;
-pub const FAILS: u32 = 1;
-pub const PASSES: u32 = 2;
+/// A verdict (`rerail_clif::view::cache`'s, the reads'): none yet, the symbol fails, it passes.
+pub use rerail_clif::view::cache::{FAILS, PASSES, UNKNOWN};
 
 // SAFETY: the cache's words are read and written by its reads' atomics alone.
 unsafe impl Send for Kept {}
@@ -420,7 +426,7 @@ impl Kept {
     /// Test `test`'s verdict for `sym`: `PASSES`, `FAILS` or `UNKNOWN`.
     pub fn get(&self, test: u32, sym: u32) -> u32 {
         // SAFETY: a cache `new` made, in the block it keeps.
-        unsafe { rerail_clif::cache::verdict_get(self.cache(), test, sym) }
+        unsafe { rerail_clif::view::cache::verdict_get(self.cache(), test, sym) }
     }
 
     /// The text functions `fns` (`text::automata::text_functions`) made of `sym`, if kept.
@@ -428,7 +434,7 @@ impl Kept {
         use rerail_clif::view::cache::{LEN, PAYLOAD};
         // SAFETY: as `get`'s; an entry found is complete, and its bytes are read before this returns.
         unsafe {
-            let r = rerail_clif::cache::text_find(self.cache(), fns, sym);
+            let r = rerail_clif::view::cache::text_find(self.cache(), fns, sym);
             if r & 3 != 0 {
                 return None;
             }
@@ -447,13 +453,13 @@ impl Kept {
         }
         // SAFETY: as `get`'s; an entry taken is this thread's to write, `text.len()` bytes at its payload.
         unsafe {
-            let r = rerail_clif::cache::text_open(self.cache(), fns, sym, text.len() as u32);
+            let r = rerail_clif::view::cache::text_open(self.cache(), fns, sym, text.len() as u32);
             if r & 3 != rerail_clif::view::cache::TAKEN as u64 {
                 return false;
             }
             let e = (r & !3) as *mut u8;
             std::ptr::copy_nonoverlapping(text.as_ptr(), e.add(PAYLOAD as usize), text.len());
-            rerail_clif::cache::done(self.cache(), r);
+            rerail_clif::view::cache::done(self.cache(), r);
         }
         true
     }
@@ -481,7 +487,7 @@ impl Kept {
     /// Keeps `test`'s verdict for `sym` (`PASSES` or `FAILS`); whether the cache had room.
     pub fn put(&self, test: u32, sym: u32, passes: bool) -> bool {
         // SAFETY: as `get`'s.
-        unsafe { rerail_clif::cache::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) != 0 }
+        unsafe { rerail_clif::view::cache::verdict_put(self.cache(), test, sym, if passes { PASSES } else { FAILS }) }
     }
 }
 
@@ -491,7 +497,10 @@ pub fn reserving(arena: &Arc<Atoms>) -> Reservation {
 
 /// A thread's reservation in progress (`reserving`): `end` gives what it made. It holds the reservation it was
 /// made inside, which goes on when it ends.
-pub struct Reservation(Option<(usize, Vec<(ReservedSet, Vec<Sym>)>)>);
+pub struct Reservation(Option<Reserving>);
+
+/// A reservation under way: its arena (by address), and each reserved set with the atoms made in it.
+type Reserving = (usize, Vec<(ReservedSet, Vec<Sym>)>);
 
 impl Reservation {
     pub fn end(mut self) -> Reserved {
@@ -521,6 +530,10 @@ impl Reserved {
 
     pub fn len(&self) -> usize {
         self.0.iter().map(|(_, ids)| ids.len()).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.iter().all(|(_, ids)| ids.is_empty())
     }
 }
 
@@ -562,6 +575,22 @@ fn memory() -> Arc<Atoms> {
     rerail_prof::code_rule_dsl::logic::profile::with_shared::<MemoryAtoms, _>(|m| Arc::clone(&m.0))
 }
 
+/// The in-memory connections that borrow a store's atoms (`share_memory`), by handle: the shared object's
+/// (decision 0442), as the connections are.
+#[derive(Default)]
+struct MemoryArenas(Mutex<HashMap<usize, Weak<Atoms>>>);
+
+fn arenas() -> Arc<MemoryArenas> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<MemoryArenas>()
+}
+
+struct MemoryArena(usize, Arc<Atoms>);
+impl Drop for MemoryArena {
+    fn drop(&mut self) {
+        arenas().0.lock().remove(&self.0);
+    }
+}
+
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
@@ -571,7 +600,7 @@ pub(super) fn key(path: &Path) -> PathBuf {
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
     }
-    match std::fs::canonicalize(path) {
+    match dunce::canonicalize(path) {
         Ok(key) => {
             rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>().0.lock().insert(path.to_path_buf(), key.clone());
             key
@@ -604,6 +633,10 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 use stored::database_end;
 
 impl Atoms {
+    pub(super) fn ephemeral() -> Arc<Self> {
+        Arc::new(Self::new(None, None))
+    }
+
     fn new(path: Option<PathBuf>, identity: Option<i64>) -> Self {
         let atoms = Interner::over(path.as_deref());
         Atoms {
@@ -725,8 +758,20 @@ impl Atoms {
     pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
-            None => memory(),
+            None => arenas().0.lock().get(&(unsafe { connection.handle() } as usize))
+                .and_then(std::sync::Weak::upgrade).unwrap_or_else(memory),
         }
+    }
+
+    /// Borrow the store's atoms for the life of an in-memory SQL connection.
+    pub fn share_memory(connection: &Connection, atoms: Arc<Self>) -> rusqlite::Result<()> {
+        let lease = MemoryArena(unsafe { connection.handle() } as usize, atoms);
+        arenas().0.lock().insert(lease.0, Arc::downgrade(&lease.1));
+        // SQLite drops the closure when this connection closes.
+        connection.create_scalar_function(c"rr_memory_arena", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+            let _lease = &lease;
+            Ok(0)
+        })
     }
 
     /// Shared scratch databases borrow the arena; only its owner stores atoms.
@@ -781,7 +826,7 @@ impl Atoms {
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => memory(),
+            None => Atoms::for_connection(connection),
         };
         vtab::install(connection, &atoms)?;
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
@@ -793,6 +838,10 @@ impl Atoms {
 
     pub fn len(&self) -> usize {
         self.state.read().atoms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.state.read().atoms.is_empty()
     }
 
     /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom it may meet is

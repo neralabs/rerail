@@ -1,5 +1,4 @@
 .policy "ruff-f601-multi-value-repeated-key-literal" revision 1
-.guests off
 .description "Avoid repeating a literal key (or an equal one, like 1 and 1.0) in a Python dict literal; the later value silently overwrites the earlier one."
 .language python
 .mode steer

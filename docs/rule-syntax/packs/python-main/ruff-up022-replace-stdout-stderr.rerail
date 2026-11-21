@@ -1,5 +1,4 @@
 .policy "ruff-up022-replace-stdout-stderr" revision 1
-.guests off
 .description "Use capture_output with subprocess.run instead of setting both stdout and stderr to a pipe; it does the same thing in one argument."
 .language python
 .mode steer

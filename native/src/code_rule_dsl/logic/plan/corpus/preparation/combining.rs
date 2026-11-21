@@ -148,7 +148,7 @@ impl ProgramPass for FactSpaces<'_> {
         let locations = &split.locations;
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
-        let place = |rel: &str| place_of(f, &locations, derived.contains(rel), rel);
+        let place = |rel: &str| place_of(f, locations, derived.contains(rel), rel);
         // Each relation's places, asked once.
         let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -249,7 +249,7 @@ impl ProgramPass for FactSpaces<'_> {
         }
         let derived_in = |of: &Version, rel: &str| of.rel(rel).is_some_and(|id| of.heads(id).next().is_some());
         let natives: BTreeSet<&str> = f.natives().iter().map(|n| v.rel_name(n.rel)).collect();
-        if heads.iter().any(|h| derived_in(&**v, h) != derived_in(&**last.input, h)) {
+        if heads.iter().any(|h| derived_in(v, h) != derived_in(last.input, h)) {
             return Ok(false);
         }
         let split = {
@@ -273,7 +273,7 @@ impl ProgramPass for FactSpaces<'_> {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
-        let is_derived = |rel: &str| (derived_in(&**v, rel) || natives.contains(rel)) && !f.is_input(rel);
+        let is_derived = |rel: &str| (derived_in(v, rel) || natives.contains(rel)) && !f.is_input(rel);
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         let mut note = |rel: &str| {
@@ -282,7 +282,7 @@ impl ProgramPass for FactSpaces<'_> {
                 if dv {
                     derived.insert(rel.to_owned());
                 }
-                places.insert(rel.to_owned(), place_of(f, &locations, dv, rel));
+                places.insert(rel.to_owned(), place_of(f, locations, dv, rel));
             }
         };
         note("docof");
@@ -302,7 +302,7 @@ impl ProgramPass for FactSpaces<'_> {
         for id in last.delta.removed.iter() {
             let (Some(src), Some(made)) = (last.input.rule(id), last.output.derived(id).next()) else { return Ok(false) };
             for (k, o) in outside.iter().enumerate() {
-                counts[k] = counts[k].saturating_sub(guards_in(&**last.output, made, o).saturating_sub(guards_in(&**last.input, src, o)));
+                counts[k] = counts[k].saturating_sub(guards_in(last.output, made, o).saturating_sub(guards_in(last.input, src, o)));
             }
         }
         let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
@@ -512,7 +512,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
 /// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
 /// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
-/// `DropRepeated`. With guests not shown (`bound`, `.guests off`) nothing is folded.
+/// `DropRepeated`.
 /// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
@@ -522,12 +522,12 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
 impl ProgramPass for FoldOwn<'_> {
     const NAME: &'static str = "fold own guests' copies";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let label = self.label;
-        if super::super::hiding::bound(&**v) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
+        if std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
             return Ok(());
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
@@ -580,10 +580,10 @@ impl ProgramPass for FoldOwn<'_> {
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
-        // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+        // An original holds its copies' rows: its rules' bounds take the annotations in (`RUN_VALUE_KEYS` to
         // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
         let originals: BTreeSet<String> = folded.values().cloned().collect();
-        let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
+        let (narrow, wide) = (i64::from(RUN_VALUE_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
         let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
         w.derive()?;

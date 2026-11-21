@@ -1,5 +1,4 @@
 .policy "ruff-ruf009-function-call-in-dataclass-default-argument" revision 1
-.guests off
 .description "Avoid function calls in dataclass field defaults; the call runs once at class definition, so every instance shares its result."
 .language python
 .mode steer

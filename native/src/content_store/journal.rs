@@ -192,7 +192,7 @@ mod watchman {
     pub(super) fn since(bin: &Path, roots: &[PathBuf], cursor: Option<&str>) -> Since {
         // A clock is of one watch: one root a query.
         let [root] = roots else { return Since::Lost { cursor: None, why: "Watchman is asked one root at a time" } };
-        let Ok(real) = std::fs::canonicalize(root) else { return Since::Lost { cursor: None, why: "a root is not readable" } };
+        let Ok(real) = dunce::canonicalize(root) else { return Since::Lost { cursor: None, why: "a root is not readable" } };
         let Some(watched) = call(bin, &json!(["watch-project", real])) else { return Since::Lost { cursor: None, why: "Watchman did not answer" } };
         let Some(watch) = watched.get("watch").and_then(Value::as_str) else { return Since::Lost { cursor: None, why: "Watchman named no watch" } };
         let relative = watched.get("relative_path").and_then(Value::as_str);
@@ -217,13 +217,16 @@ mod watchman {
         Since::Changed { paths, cursor: clock }
     }
 
-    #[cfg(test)]
+    // The protocol fixture below starts a POSIX shell executable.
+    #[cfg(all(test, unix))]
     mod tests {
         use super::super::Since;
 
         /// Against a stand-in for Watchman that answers as its protocol documents: a cursor's first ask is lost and
         /// gives a clock; a query since a clock names the files relative to the root's `relative_root`; a fresh
         /// instance is lost.
+        // Its stand-in watchman is a shell script.
+        #[cfg(unix)]
         #[test]
         fn watchman_answers_are_read_as_its_protocol_says() {
             let base = std::env::temp_dir().join(format!("rerail-watchman-{}", std::process::id()));
@@ -231,7 +234,7 @@ mod watchman {
             let root = base.join("repo/sub");
             std::fs::create_dir_all(&root).unwrap();
             let bin = base.join("watchman");
-            let real = std::fs::canonicalize(base.join("repo")).unwrap();
+            let real = dunce::canonicalize(base.join("repo")).unwrap();
             let fresh = base.join("fresh");
             std::fs::write(
                 &bin,
@@ -414,6 +417,11 @@ mod fsevents {
                 seen.cookies.entry(path).or_insert((id, at));
                 seen.cookie_at = Some(Instant::now());
                 continue;
+            }
+            // `RERAIL_JOURNAL_TRACE`: each event's flags as delivered, to tell a metadata-only change from a write
+            // (Q422: a file whose times were set was once named under load).
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                eprintln!("journal flags {id} {flag:#x} {path}");
             }
             if flag & META != 0 && flag & CONTENT == 0 {
                 continue;
@@ -623,8 +631,8 @@ mod fsevents {
         if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
             eprintln!("journal prepared at id {now}: {} roots", roots.len());
         }
-        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
-        let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
+        let Ok(cookie_dir) = dunce::canonicalize(cookie_dir) else { return };
+        let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((dunce::canonicalize(r).ok()?, *c))).collect();
         real.sort();
         // Outer roots first (a path sorts before those under it): a stream for each, from its own cursor. A root
         // under it, or another name of it, may hold an older cursor that no run asks any more (one covered by the
@@ -665,8 +673,8 @@ mod fsevents {
         let now = || unsafe { FSEventsGetCurrentEventId() };
         let Some(cursor) = cursor else { return Since::Lost { cursor: Some(now()), why: "no earlier cursor" } };
         // Records are kept by the path the caller gave; events come by the real path.
-        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now()), why: "no cookie directory" } };
-        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((std::fs::canonicalize(r).ok()?, r.clone()))).collect();
+        let Ok(cookie_dir) = dunce::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now()), why: "no cookie directory" } };
+        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((dunce::canonicalize(r).ok()?, r.clone()))).collect();
         if real.len() != roots.len() {
             return Since::Lost { cursor: Some(now()), why: "a root is not readable" };
         }
@@ -808,7 +816,7 @@ mod tests {
         std::fs::create_dir_all(&cookies).unwrap();
         let (mut changed, mut behind) = (0, 0);
         for n in 0..8 {
-            let root = std::fs::canonicalize({
+            let root = dunce::canonicalize({
                 let r = base.join(format!("root{n}"));
                 std::fs::create_dir_all(&r).unwrap();
                 r

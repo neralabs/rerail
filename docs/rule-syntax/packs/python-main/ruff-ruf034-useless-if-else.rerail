@@ -1,5 +1,4 @@
 .policy "ruff-ruf034-useless-if-else" revision 1
-.guests off
 .description "Avoid a conditional expression whose two branches are identical; use the value directly, since the condition changes nothing."
 .language python
 .mode steer

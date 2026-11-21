@@ -161,6 +161,14 @@ pub trait Source: Send + Sync {
             }
         }
     }
+    /// The rows whose `column` holds one of `keys`, each with its values of `columns`, in row order, until `each`
+    /// returns false; `false` (nothing given) where the source has no such read. A view of a batch's documents walks
+    /// the documents the keys name, reading each row's own column and the other columns of the rows kept alone:
+    /// the walk carries a node's depth and place, where a lookup a key computes them again (a semi-join's rows,
+    /// decision 0458).
+    fn for_rows_keyed(&self, _column: usize, _keys: &rustc_hash::FxHashSet<i64>, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        false
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
@@ -210,7 +218,7 @@ pub trait Source: Send + Sync {
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
         None
     }
-    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0504: a
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
     /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         None
@@ -869,8 +877,6 @@ static FORGET: std::sync::OnceLock<Forget> = std::sync::OnceLock::new();
 pub fn install_forget(forget: Forget) {
     let _ = FORGET.set(forget);
 }
-
-/// The tables registered on each connection that no statement has resolved yet (`register`).
 
 /// Resolves every table registered on `db` and not yet resolved, by preparing a read of it: an authorizer installed
 /// after this does not see SQLite connect them (an authored query's authorizer refuses what it does not name).

@@ -570,6 +570,9 @@ cache protocol into bookkeeping:
 | mutable (being written) | exactly one, in the writer's domain | write it there; readers elsewhere read the last frozen version |
 | frozen v+1 from a delta | the delta is shipped to replicas of v and applied there (O(delta), 0260) | read v+1 where it has been made |
 
+(Built for a region on one host: 0491, `rerail_blocks::region`, whose "Against 0440 §7.2" says how its versions, mirrors and
+owner become these domains, replicas and directory.)
+
 **The directory.** One table per process (`rerail_blocks`, beside 0342's allocator) records, for each block: its
 current version, the domain that owns its mutable version if any, and which domains hold which frozen versions,
 with an event per replica for when its copy completes. Across hosts the directory is per host, and a host asks the
@@ -883,7 +886,7 @@ Progress (2026-11-18):
     `reads.rs`, `relation.rs`, `view.rs`, `view_reads.rs` and `rust.rs`. Its generated reads are:
     - block-major format 16 (0399);
     - 16z read through a cache (0353 steps 4a and 4b), which removes `decode16z.metal`;
-    - reads proven to stay within the tape's bytes (0403).
+    - reads proven to stay within the tape's bytes (0463).
 
     It also changes the label passes (`metal_label_passes.metal`, +211 lines), the relation reads, and the blocks'
     `atoms.rs` and `kept.rs`.
@@ -1484,6 +1487,25 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **Found after the commit:** accel's tests did not compile (`blocks.rs`' test module named `Budget` and `Size`, whose
   import had moved into the lane's function): imported in the tests. accel's 85 pass on the Mac, its 60 on the Arc.
 
+**Step E, the whole replay on the GB10 (2026-11-20).**
+
+- **Run** as 12 parts of the 142 checks, each one farm job, with `RERAIL_DEVICE=always` (every program the GPU can
+  take runs there). The engine's test watchdog stops a test at 600 s; the parts take 4-27 minutes, so the runs raise
+  it (`RERAIL_TEST_TIMEOUT`).
+- **Results:** 5,284 events, 5,223 run, 5,215 exact, 0 errors. These are the CPU's numbers in
+  `replay_baseline.txt`, and its eight misses are the same eight.
+- **Found: `text_verdicts` read a text whose buffer had gone back to the pool.** One part (10 checks) failed 2 runs
+  of 4 with CUDA error 700, an illegal address; none failed with launches made blocking (`CUDA_LAUNCH_BLOCKING`).
+  A GPU core dump (`CUDA_ENABLE_COREDUMP_ON_EXCEPTION`, read with `cuda-gdb`) named the kernel: `text_verdicts`,
+  at a load of a term's bytes.
+  - The cause: the text it reads (a column's symbols' names) is held only by its relation's resident entry. A later
+    upload in the same batch may trim that entry (`Resident::trim`, least recently used first) before the kernel
+    has run, so the text's pooled buffer goes back to the pool. The next lease writes it from the host, and the
+    kernel reads those bytes as the text's offsets.
+  - `Batch::replace` and `text_map` keep their input text to the batch's end (`Batch::read`); `verdicts` now does
+    too. The race is the same on every backend; it has not shown on Metal.
+  - With the fix, that part passes 3 runs of 3 (at 457-901 s, the host loaded).
+
 **The Intel plan, step 1: OpenCL's native sub-groups (2026-11-20).**
 
 - **Where the device has them** (`native_subgroups`): OpenCL 3.0's sub-groups with shuffles, relative shuffles and
@@ -1574,11 +1596,29 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
 - **Tested on the CPU at 64 lanes** (`RERAIL_CPU_SIMD_WIDTH=64`, now allowed): the library's 19 pass, as at 32, 8
   and 1. Two of the tests assumed 32-thread groups (a threadgroup of 32 threads, the LZ4 decoder's group): they take
   the device's width now. The test of the votes writes each mask as two words.
+- **On the devices, at 32 lanes:** Metal, Apple's OpenCL and the Arc's as before, and CUDA on the GB10 (the
+  library's 19, the device layer's 6, the lane suite's 58).
 
-- **Open:** `rerail-device-metal`'s tests register Python's and `.rr`'s packs (`test_languages`) only where two tests
-  call it, while its corpus runs read `.rr` documents (`lines::of`) in tests that do not: a CPU worker panics
-  ("no language registered for Rr"), now and then by which test runs first, caught and run again. Every test passes
-  through it, on the Mac as on Linux. The crate's tests need the engine's load-time registration.
+- **Fixed (was open):** `rerail-device-metal`'s tests registered Python's and `.rr`'s packs (`test_languages`) only in
+  the two tests that called it, while its corpus runs read `.rr` documents (`lines::of`) in tests that did not. A CPU
+  worker then panicked ("no language registered for Rr"), now and then, by which test ran first; the panic was caught
+  and the work run again. The packs are now registered as the test binary loads, beside Metal (`test_load`), as the
+  engine registers them as it loads. The lane suite passes with no such panic on Metal (59) and on CUDA (58).
+
+**An AMD integrated GPU under WSL2: what reaches it (2026-11-20).**
+
+- **The machine:** a Ryzen 7 7735HS, whose GPU is a Radeon 680M (RDNA2, gfx1035), running the farm's Linux jobs
+  under WSL2 (Ubuntu 24.04).
+- **What WSL2 gives a Linux process of it: Direct3D 12 only** (`/dev/dxg`, `libd3d12`, `libdxcore`). `/dev/dri` is
+  WSL's placeholder device (`faux_driver`), not the GPU.
+- **ROCm (HIP, the CUDA-like path):** AMD's ROCm for WSL serves a list of discrete Radeons, not this GPU, so HIP
+  cannot reach it from WSL. HIP would be a port of the CUDA backend (`hipModuleLoadData`, `hiprtc`), with RDNA's
+  32 lanes and a 64-bit ballot (`ukl_mask_t`); it needs a machine where HIP runs.
+- **OpenCL:** AMD's OpenCL is not in WSL. Mesa's rusticl (25.2, fetched into the farm's own directory) has the
+  radeonsi, iris, zink and software drivers, and no d3d12 one; no device is found.
+- **So both need the GPU's own driver:** native Windows (AMD's driver ships OpenCL and the HIP runtime; the
+  workspace's Windows build, plan step 4), or native Linux on the machine (radeonsi under rusticl; ROCm, which
+  runs gfx1035 only as gfx1030, with `HSA_OVERRIDE_GFX_VERSION`).
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

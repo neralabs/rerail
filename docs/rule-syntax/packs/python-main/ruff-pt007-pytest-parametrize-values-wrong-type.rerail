@@ -1,5 +1,4 @@
 .policy "ruff-pt007-pytest-parametrize-values-wrong-type" revision 1
-.guests off
 .description "Pass pytest.mark.parametrize values as a list, and each row of several parameters as a tuple, not the other way round."
 .language python
 .mode steer

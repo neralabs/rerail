@@ -226,8 +226,8 @@ impl Exports {
         held.rows.reserve(n * width);
         let mut row = vec![0i64; width];
         for r in 0..n {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v = columns[c][r];
+            for (v, column) in row.iter_mut().zip(&columns) {
+                *v = column[r];
             }
             held.rows.extend_from_slice(&row);
         }

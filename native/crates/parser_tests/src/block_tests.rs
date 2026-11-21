@@ -89,7 +89,7 @@ fn eq_equals_reference_on_every_executor() {
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
             for (name, got) in ex.every(&bytes) {
-                assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
+                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
     }
@@ -340,7 +340,8 @@ fn not_equals_reference_on_every_executor() {
 
 #[test]
 fn binary_operators_equal_reference_on_every_executor() {
-    let cases: [(&str, fn(u64, u64) -> u64); 4] =
+    type Op = fn(u64, u64) -> u64;
+    let cases: [(&str, Op); 4] =
         [("and", |x, y| x & y), ("or", |x, y| x | y), ("xor", |x, y| x ^ y), ("andnot", |x, y| x & !y)];
     for (name, f) in cases {
         // Each operator on the two masks, and on a mask with itself.
@@ -810,9 +811,6 @@ fn back_fill_equals_reference_on_the_cpu_and_the_forward_carry() {
     // fills cross them, at segments of three blocks.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        if crate::executors::no_device() {
-            return;
-        }
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         let long: Vec<u8> = (0..9000u32).map(|i| match i % 701 { 0 => b'"', k if k % 97 == 0 => b'\\', k if k % 5 == 0 => b'a', _ => b'b' }).collect();
         let mut refs = refs;
@@ -918,9 +916,6 @@ fn carried_chain_equals_reference_on_every_executor() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn lookback_fallback_equals_reference() {
-    if crate::executors::no_device() {
-        return;
-    }
     use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
     let one = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 output %4\n";
     let two = "  block 0 %0 = eq 0x5c\n  block 0 %1 = eq 0x22\n  block 0 %2 = escaped %0\n  block 0 %3 = andnot %1, %2\n  block 0 %4 = toggle %3\n  block 0 %5 = prev %4, 5\n  block 0 %6 = toggle %5\n  block 0 output %4\n  block 0 output %6\n";
@@ -983,7 +978,7 @@ pub const STAGE1: &str = include_str!("../../../../fixtures/simdjson-stage1/stag
 pub(crate) const STAGE1_EXPECTED: &str = include_str!("../../../../fixtures/simdjson-stage1/expected.txt");
 
 pub(crate) fn repo_file(path: &str) -> Vec<u8> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
@@ -1022,12 +1017,12 @@ fn extract_executors(p: &Program, bytes: &[u8]) -> Vec<(String, BlockRun)> {
 }
 
 /// The Metal executors' runs with the extract pass (`extract_executors`), each lane width's interpreter and
-/// generated MSL. None without a device (`executors::no_device`).
+/// generated MSL.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret_extract, run_generated_extract};
     let mut out = Vec::new();
-    for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
+    for width in LaneWidth::ALL {
         let w = width.bytes();
         out.push((format!("metal interpreter, {w}-byte lanes"), interpret_extract(block, bytes, width).expect("runs")));
         let (got, _) = run_generated_extract(native, bytes, width, ClassStrategy::Planes).expect("runs");
@@ -1036,7 +1031,7 @@ fn metal_extract_runs(block: &block::BlockProgram, native: &block_native::BlockN
     out
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
@@ -1046,14 +1041,11 @@ fn metal_extract_runs(_: &block::BlockProgram, _: &block_native::BlockNative, _:
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_extract_generated(native: &block_native::BlockNative, bytes: &[u8]) -> Vec<(String, BlockRun)> {
     use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_extract};
-    if crate::executors::no_device() {
-        return Vec::new();
-    }
     let (got, _) = run_generated_extract(native, bytes, LaneWidth::W64, ClassStrategy::Planes).expect("runs");
     vec![("generated msl".to_owned(), got)]
 }
 
-/// No Metal executors off macOS.
+/// No Metal executors off the device layer's targets.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_extract_generated(_: &block_native::BlockNative, _: &[u8]) -> Vec<(String, BlockRun)> {
     Vec::new()
@@ -1084,7 +1076,7 @@ fn extract_equals_reference_on_every_executor() {
         {
             use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
             let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
-            for width in LaneWidth::ALL.into_iter().filter(|_| !crate::executors::no_device()) {
+            for width in LaneWidth::ALL {
                 for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
                     let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
                     assert_eq!(run.files[0].positions, want, "no polls, {}-byte lanes, {executor:?}, {} bytes", width.bytes(), bytes.len());
@@ -1516,9 +1508,6 @@ fn rounds_equal_the_interpreter() {
     // segments.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        if crate::executors::no_device() {
-            return;
-        }
         use metal_program_backend::block_program::serial::{Segments, run_serial_split};
         let mut seed = 0x2545_f491_4f6c_dd1du64;
         let long: Vec<u8> = (0..20_000)

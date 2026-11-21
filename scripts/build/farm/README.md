@@ -77,9 +77,13 @@ The sccache is upstream at the commit `build-sccache` pins, with PRs #3021
 `~/Library/Caches/rerail-farm/sccache-src`. Until the PRs land upstream, a newer base means
 merging them again and exporting `0000` anew. The farm's patch caches
 the crate types that link when `SCCACHE_CACHE_LINKED` is set (proc macros, build scripts, the
-engine's cdylib: upstream never does), keyed also on the linker's and the SDK's versions; accepts
+engine's cdylib, test harnesses: upstream never does), keyed also on the linker's and the SDK's versions; accepts
 `--extern proc_macro` without a path; and keeps `SOURCE_DATE_EPOCH`, which upstream drops, so a C
-file that uses `__TIME__` (mimalloc's) is cached. Nothing of the farm is installed on a host:
+file that uses `__TIME__` (mimalloc's) is cached. A test harness is shared by the checkouts because
+no crate reads its checkout's path as it compiles (decision 0224; `scripts/check/ci/path-free-builds.mjs`
+checks it in CI). On Linux the wrapper copies a program it got from the cache (a build script, a
+test) to a file of its own before cargo runs it: the server's other threads hold the file it wrote
+open until they exec, and running it failed with "Text file busy". Nothing of the farm is installed on a host:
 `farm-agent` is sent with each command and run by the host's `/usr/bin/python3`.
 Each host needs ssh without a password (its name in `farm.json` is a name ssh connects to: a `Host`
 entry of `~/.ssh/config`), the toolchain of `rust-toolchain.toml` (`setup` installs it) and

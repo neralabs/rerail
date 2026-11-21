@@ -27,7 +27,7 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use std::sync::Mutex;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -39,7 +39,7 @@ struct Mapping {
     /// Wrapped for a device: a kernel may have written it, so its write-back unmaps it first (module doc).
     wrapped: bool,
     /// The no-copy wrap the GPU binds the block through, made once with the mapping; let go at the seal.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu: Mutex<Option<rerail_device::device::Buffer>>,
 }
 
@@ -64,7 +64,7 @@ impl Backing for Shared {
         self.0.len
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn buffer(&self) -> Option<rerail_device::device::Buffer> {
         self.0.gpu.lock().unwrap().clone()
     }
@@ -98,7 +98,7 @@ impl Deferrable {
         kind: u32,
         len: usize,
         fresh: bool,
-        #[cfg(any(target_os = "macos", target_os = "linux"))] device: Option<&rerail_device::device::Device>,
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))] device: Option<&rerail_device::device::Device>,
     ) -> io::Result<Deferrable> {
         let len = len.max(crate::block::PAGE).div_ceil(crate::block::PAGE) * crate::block::PAGE;
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(fresh).open(path)?;
@@ -108,7 +108,7 @@ impl Deferrable {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: the mapping outlives the wrap, which it holds and lets go at the seal, before it is unmapped.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let gpu = match device.map(|d| unsafe { rerail_device::device::wrap_host_memory(d, p.cast(), len) }).transpose() {
             Ok(g) => g,
             Err(e) => {
@@ -116,15 +116,15 @@ impl Deferrable {
                 return Err(io::Error::other(e));
             }
         };
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let wrapped = gpu.is_some();
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let wrapped = false;
         let mapping = Arc::new(Mapping {
             base: p.cast(),
             len,
             wrapped,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: Mutex::new(gpu),
         });
         let block = Block::over_with(kind, Box::new(Shared(mapping.clone())), !fresh);
@@ -149,12 +149,14 @@ impl Deferrable {
         self.on_release = Some(Box::new(f));
     }
 
-    /// The wave's half (module doc): every command buffer that used the block has completed. Does not wait for the
-    /// disk.
+    /// The wave's half (module doc): every command buffer that used the block has completed, which its ledger checks
+    /// (decision 0487 step 3: a seal under queued GPU work fails, since the work would write pages the writer reads).
+    /// Does not wait for the disk.
     pub fn seal(mut self) -> Sealed {
         let block = self.block.take().expect("an open deferrable block");
+        assert!(block.ledger().quiet(), "deferrable slab {}: sealed with GPU work that uses it queued (wait for its fence first)", self.path.display());
         let (mapping, path, kind) = (self.mapping.clone(), std::mem::take(&mut self.path), self.kind);
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         {
             block.release_device_buffer();
             mapping.gpu.lock().unwrap().take();
@@ -318,10 +320,30 @@ mod tests {
             kind::JOURNAL,
             len,
             fresh,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             None,
         )
         .unwrap()
+    }
+
+    /// Decision 0487 step 3: a seal under queued GPU work that uses the slab fails; once the work completes, it seals.
+    #[test]
+    fn a_seal_under_a_queued_gpu_use_fails() {
+        let d = dir("seal-queued");
+        let path = d.join("s.seg");
+        let slab = create(&path, 1 << 16, true);
+        let f = crate::ledger::Fence::new();
+        f.writes(slab.block());
+        let slab = std::sync::Mutex::new(Some(slab));
+        let sealed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slab.lock().unwrap().take().unwrap().seal()));
+        assert!(sealed.is_err(), "sealed under the queued work");
+        f.complete();
+        let slab = create(&path, 1 << 16, false);
+        let g = crate::ledger::Fence::new();
+        g.writes(slab.block());
+        g.complete();
+        drop(slab.seal());
+        std::fs::remove_dir_all(&d).ok();
     }
 
     /// The host's writes: read in place once sealed, written back whole, frozen only by the writer.
@@ -391,7 +413,7 @@ mod tests {
 
     /// A kernel's writes through the wrap reach the disk (0295 §7: without the unmap, none did). The kernel is UKL,
     /// on the process's device (decision 0440 step C).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[test]
     fn a_kernels_writes_are_written_back() {
         use rerail_gpu::device::ComputeQueue;

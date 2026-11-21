@@ -1,4 +1,4 @@
-//! Format 16 written by the writer (decision 0434 §6), its Rust written directly (`writer16`, decision 0505): the
+//! Format 16 written by the writer (decision 0434 §6), its Rust written directly (`writer16`, decision 0532): the
 //! host's region, each part its own buffer, named in the state by its offset from the state's address. Before each
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.

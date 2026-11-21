@@ -68,6 +68,21 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 - 0137's `.shape B after A` and `.shape B bound x` stay as the per-rule escape hatch. The test that tells you to
   remove an unneeded directive then also covers declared facts the planner no longer needs.
 
+### A product's side (2026-11-19, Q249)
+
+The preparation refuses a rule whose head pairs two nodes from unconnected reads of the corpus: the product of
+every node with every node (`product_demand`). A node does not count as a side when it holds few values whatever the
+corpus. Either way below is enough:
+
+- **Constants.** The node is set to a constant, or every read of it is a lookup on constants alone:
+  `named("builtins.object", "cls", c)` reads `c` and nothing else but constants. No declaration is needed.
+- **A declared shape.** The node is reached from fixed values (or constants) through a relation's declared key or
+  few-row fan-out: `.layout named fanout(q, k -> v, few)` fixes `v` wherever `q` and `k` are fixed, and the reach
+  follows a chain (`member(m, y)` under `.layout member fanout(m -> n, few)` fixes `y` once `m` is).
+
+A refusal names the rules that make the products and says both ways. A node bound by a lookup with a wildcard
+(`named(_, "cls", c)`) is fixed by neither, since the wildcard ranges over the corpus.
+
 ## Decided with the user (2026-11-17)
 
 1. **A line per relation, `.layout`.** `.decl` stays as Soufflé reads it:
@@ -524,6 +539,13 @@ few probes, break nothing; 200 rows a probe of `few` over 100 probes breaks it, 
 inferred from it left out, in a later model too; a prepared plan reading it not taken). End to end:
 `a_run_finds_a_fanout_its_rows_break_and_finds_the_same` and `a_run_finds_a_key_its_rows_break_where_they_are_written`
 (the findings are the rules', and the run notes one fact broken).
+
+**The writes' check at scale** (2026-11-20, corpus0 x B-now, cold, profiling build, an M3 at load 9-23). Its first
+run found a declared fact false: `.layout doc key(d) key(path)`. A guest document's path is its host file's (decision
+0055), so a path holds a file's documents, not one. The check saw it on four relations a rule copies `doc`'s path
+and document into (`xd_…_rr_diagnostic_…`, inferred `key(rr_p)`), each planned from statistics after; the
+probes never had (no probe there binds a path alone). core.rr keeps `key(d)` alone. After: 463 findings, the
+sorted rows' digest unchanged (a8b386173677), no fact broken, 1,146-1,155 G instructions.
 
 **At scale** (corpus0 x B-now, profiling build, an M1 Max at load 10-15): 3,350 probe steps checked, no fact broken,
 463 findings d067ec2ebf6f; 985.8 G instructions in one run and 1,004.9 and 1,017.7 G in two others, against 982.7 and

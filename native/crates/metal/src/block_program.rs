@@ -63,7 +63,8 @@ pub fn head(width: LaneWidth) -> String {
 /// read-modify-write reads the coherent copy: one launch. Family 9 on (the M3, the M5) the load
 /// sees it, and stays a load there. OpenCL's load is a read-modify-write already.
 fn poll_rmw() -> bool {
-    // A fact of the machine's device, found once (decision 0442: the machine's).
+    // A fact of the machine's device, found once (decision 0442: the machine's). Metal's alone: no other backend
+    // polls by a read-modify-write.
     #[derive(Default)]
     struct PollRmw(std::sync::OnceLock<bool>);
     *rerail_context::machine::<PollRmw>().0.get_or_init(|| {
@@ -265,13 +266,6 @@ const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
 /// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
 #[derive(Default)]
 pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
-
-/// Whether a program starts a file's stream late: a prefix (decision 0335), its positions
-/// (`prefix`) and the token loop's first state past it. `run_batch` generates it (opcode 18);
-/// the serial path (`block_serial`) does not yet, and refuses it there.
-pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
-}
 
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
@@ -1283,7 +1277,7 @@ fn emit(p: usize, native: &BlockNative, width: LaneWidth, chosen: &[usize], word
             // (decision 0335): the word's first chunk, compared once.
             BlockInst::Prefix(n, w) => {
                 let cut = if n >= 8 { u64::MAX } else { (1u64 << (8 * n)) - 1 };
-                format!("SEL(BMC(0), BMC({:#x}ul), ({offset}) == 0u && len >= {n}u && (((uint64_t)c0.x | ((uint64_t)c0.y << 32)) & {cut:#x}ul) == {w:#x}ul)", (1u64 << n) - 1)
+                format!("(({offset}) == 0u && len >= {n}u && ((U64(c0.x) | (U64(c0.y) << 32u)) & {cut:#x}ul) == {w:#x}ul) ? BMC({:#x}ul) : BMC(0)", (1u64 << n) - 1)
             }
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a

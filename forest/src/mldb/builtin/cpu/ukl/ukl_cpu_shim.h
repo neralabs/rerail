@@ -66,8 +66,12 @@ typedef decltype(sizeof 0) size_t;
 #undef UKL_CPU_BACKEND
 
 // The GPU languages' built-in math the kernels call: Metal's and CUDA's `min`, `max`, `fma`, `sqrt`.
-template <typename A, typename B> static inline auto min(A a, B b) -> decltype(a < b ? a : b) { return b < a ? b : a; }
-template <typename A, typename B> static inline auto max(A a, B b) -> decltype(a < b ? a : b) { return a < b ? b : a; }
+// `min` and `max` return a value of the operands' common type. A `decltype(a < b ? a : b)` return type is a
+// reference when both have one type (the conditional of two lvalues is one), to a parameter of the call: a dangling
+// reference, read after the call's frame is gone, which optimized code had reused (Q441: weights read as
+// `weightBits`, then a split's index of -1).
+template <typename A, typename B> static inline auto min(A a, B b) { return b < a ? b : a; }
+template <typename A, typename B> static inline auto max(A a, B b) { return a < b ? b : a; }
 static inline float fma(float a, float b, float c) { return __builtin_fmaf(a, b, c); }
 static inline double fma(double a, double b, double c) { return __builtin_fma(a, b, c); }
 static inline float sqrt(float x) { return __builtin_sqrtf(x); }
@@ -166,6 +170,7 @@ struct __ukl_cpu_thread {
     uint32_t index;            // linear, in the threadgroup
     uint32_t lane;             // in its SIMD group
     uint32_t simd;             // its SIMD group
+    uint32_t sgop;             // its SIMD-group operations so far: the parity is the bank of `slots` it writes
     void (*body)(void*);
     void* ctx;
     void** back;               // where the coroutine goes when it ends: its scheduler's saved stack
@@ -183,7 +188,19 @@ struct __ukl_cpu_sched {
     unsigned char* shared;     // the group's `RWLOCAL` memory
     __ukl_cpu_thread* slot;    // the group's own coroutine, when groups run together
     __ukl_cpu_thread threads[__UKL_CPU_MAX_THREADS];
-    uint64_t slots[__UKL_CPU_MAX_THREADS];
+    // Two banks, a SIMD-group operation's values in the bank of its parity: a lane writes the next operation's
+    // bank while the others still read this one's, so one wait an operation suffices (the next operation's wait
+    // needs every lane past this one's reads).
+    uint64_t slots[2 * __UKL_CPU_MAX_THREADS];
+    // Who waits where, kept by the waits, so a release needs no scan of the threads: at the threadgroup's barrier,
+    // done, and each SIMD group's lanes at its operation and done.
+    uint32_t at_tg, done;
+    uint32_t sg_at[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH], sg_done[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH];
+    // A SIMD-group operation's lanes' results, made once by the first lane past its wait (`__ukl_cpu_once`), and
+    // the operation (its lanes' `sgop`) each SIMD group's are of. One set suffices: the next operation's are made
+    // past its wait, when every lane has read these.
+    uint64_t res[__UKL_CPU_MAX_THREADS];
+    uint32_t res_op[__UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH];
 };
 
 // The running scheduler and thread: in the host thread's one slot (`__ukl_cpu_launch::tls`), never a thread-local of
@@ -196,12 +213,38 @@ struct __ukl_cpu_tls {
 static void* (*__ukl_cpu_tls_of)(void);  // the launch's: the same function in every launch
 #define __ukl_sched (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->sched)
 #define __ukl_self (((__ukl_cpu_tls*)__ukl_cpu_tls_of())->self)
+// The slot, read once: each read of it is a call into the host, so an operation that switches threads (a wait, a SIMD
+// group's exchange) reads it once and passes it on. Through the slot at every use, the preprocessor's evaluation tests
+// took twice their time on the CPU backend (0.6 s to 1.2 s).
+#define __ukl_tl ((__ukl_cpu_tls*)__ukl_cpu_tls_of())
+
+// Thread `t` of `s` stops (it waits, or is done): straight on to the group's next runnable thread after it, else back
+// to the scheduler. A pass of the group's runnable threads is so one switch a thread, in their order.
+static inline void __ukl_cpu_pass(__ukl_cpu_tls* tl, __ukl_cpu_sched* s, __ukl_cpu_thread* t)
+{
+    for (uint32_t j = t->index + 1; j < s->n; j++)
+        if (s->threads[j].state == __UKL_RUN) {
+            tl->self = &s->threads[j];
+            __ukl_cpu_switch(&t->sp, s->threads[j].sp);
+            return;
+        }
+    __ukl_cpu_switch(&t->sp, s->sp);
+}
 
 extern "C" __attribute__((used, visibility("hidden"))) void __ukl_cpu_entry(__ukl_cpu_thread* t)
 {
     t->body(t->ctx);
     t->state = __UKL_DONE;
-    __ukl_cpu_switch(&t->sp, *t->back);
+    __ukl_cpu_tls* tl = __ukl_tl;
+    __ukl_cpu_sched* s = tl->sched;
+    // A group's thread hands on; a coroutine of the launch's own (a resident group's slot) goes back.
+    if (s && t >= s->threads && t < s->threads + s->n) {
+        s->done++;
+        s->sg_done[t->simd]++;
+        __ukl_cpu_pass(tl, s, t);
+    } else {
+        __ukl_cpu_switch(&t->sp, *t->back);
+    }
     __builtin_trap();
 }
 
@@ -225,11 +268,19 @@ static inline void __ukl_cpu_prepare(__ukl_cpu_thread* t, unsigned char* top_byt
 }
 
 // Suspends the calling thread at a barrier of kind `kind` until the scheduler releases it.
+static inline void __ukl_cpu_wait_of(__ukl_cpu_tls* tl, __ukl_cpu_sched* s, __ukl_cpu_thread* t, uint32_t kind)
+{
+    t->state = kind;
+    if (kind == __UKL_AT_TG)
+        s->at_tg++;
+    else if (kind == __UKL_AT_SG)
+        s->sg_at[t->simd]++;
+    __ukl_cpu_pass(tl, s, t);
+}
 static inline void __ukl_cpu_wait(uint32_t kind)
 {
-    __ukl_cpu_thread* t = __ukl_self;
-    t->state = kind;
-    __ukl_cpu_switch(&t->sp, __ukl_sched->sp);
+    __ukl_cpu_tls* tl = __ukl_tl;
+    __ukl_cpu_wait_of(tl, tl->sched, tl->self, kind);
 }
 
 // Appends `s` to the launch's error.
@@ -308,19 +359,26 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
         t->lid[2] = i / (L->block[0] * L->block[1]);
         t->lane = i % UKL_SIMD_WIDTH;
         t->simd = i / UKL_SIMD_WIDTH;
+        t->sgop = 0;
         __ukl_cpu_prepare(t, s->stacks + (uint64_t)(i + 1) * L->stack_bytes, [](void* c) { (*(F*)c)(); }, &f, &s->sp);
     }
+    s->at_tg = 0;
+    s->done = 0;
+    for (uint32_t k = 0; k < __UKL_CPU_MAX_THREADS / UKL_SIMD_WIDTH; k++) {
+        s->sg_at[k] = 0;
+        s->sg_done[k] = 0;
+        s->res_op[k] = 0;
+    }
     for (;;) {
-        bool ran = false;
+        // A pass: the first runnable thread, which hands on to the others in order (`__ukl_cpu_pass`); the last
+        // comes back here. A thread is made runnable only here, so none is left after it.
         for (uint32_t i = 0; i < n; i++) {
             if (s->threads[i].state != __UKL_RUN)
                 continue;
-            ran = true;
             __ukl_self = &s->threads[i];
             __ukl_cpu_switch(&s->sp, s->threads[i].sp);
+            break;
         }
-        if (ran)
-            continue;
         // Every thread waits or is done: release a SIMD group whose live lanes all wait at a SIMD-group operation,
         // else every thread if all live ones wait at a threadgroup barrier. Under OpenCL's rule (`UKL_CPU_OPENCL_RULE`:
         // its SIMD groups emulated through threadgroup memory, whose only wait is the threadgroup's barrier), a SIMD
@@ -342,12 +400,12 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
         }
 #else
         for (uint32_t g = 0; g * UKL_SIMD_WIDTH < n; g++) {
-            uint32_t live = 0, at = 0;
-            for (uint32_t i = g * UKL_SIMD_WIDTH; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++) {
-                live += s->threads[i].state != __UKL_DONE;
-                at += s->threads[i].state == __UKL_AT_SG;
-            }
+            uint32_t width = n - g * UKL_SIMD_WIDTH < UKL_SIMD_WIDTH ? n - g * UKL_SIMD_WIDTH : UKL_SIMD_WIDTH;
+            uint32_t at = s->sg_at[g], live = width - s->sg_done[g];
+            if (at == 0 || at != live)
+                continue;
             // Under `UKL_CPU_SIMD_STRICT`, every lane at the same operation (`__ukl_cpu_site`).
+#if defined(UKL_CPU_SIMD_STRICT)
             for (uint32_t i = g * UKL_SIMD_WIDTH, first = n; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++) {
                 if (s->threads[i].state != __UKL_AT_SG)
                     continue;
@@ -356,26 +414,34 @@ template <typename F> static int __ukl_cpu_group(__ukl_cpu_sched* s, F& f)
                 else if (__ukl_cpu_site(&s->threads[i]) != __ukl_cpu_site(&s->threads[first]))
                     at = 0;
             }
+#endif
             if (live && at == live) {
                 for (uint32_t i = g * UKL_SIMD_WIDTH; i < n && i < (g + 1) * UKL_SIMD_WIDTH; i++)
-                    s->threads[i].state = __UKL_RUN;
+                    if (s->threads[i].state == __UKL_AT_SG)
+                        s->threads[i].state = __UKL_RUN;
+                s->sg_at[g] = 0;
                 released = true;
             }
         }
 #endif
         if (released)
             continue;
+#if defined(UKL_CPU_OPENCL_RULE)
         uint32_t live = 0, at = 0;
         for (uint32_t i = 0; i < n; i++) {
             live += s->threads[i].state != __UKL_DONE;
             at += s->threads[i].state == __UKL_AT_TG;
         }
+#else
+        uint32_t live = n - s->done, at = s->at_tg;
+#endif
         if (!live)
             return 0;
         if (at == live) {
             for (uint32_t i = 0; i < n; i++)
                 if (s->threads[i].state == __UKL_AT_TG)
                     s->threads[i].state = __UKL_RUN;
+            s->at_tg = 0;
             continue;
         }
         // Threads that poll another group's progress: the group yields to the others (when groups run together),
@@ -542,33 +608,166 @@ template <typename G> static int __ukl_cpu_run(const __ukl_cpu_launch* L, G&& gr
 // ---------------------------------------------------------------------------------------------------------------
 // The SIMD group's exchange: each lane's value into its slot, then each lane's read of another's.
 
+// Each lane's `v` into its slot of the operation's bank, then one wait for the SIMD group: the group's slots, lane
+// 0's first.
+static inline const uint64_t* __ukl_cpu_put_of(__ukl_cpu_tls* tl, __ukl_cpu_sched* s, __ukl_cpu_thread* t, uint64_t v)
+{
+    uint64_t* bank = s->slots + (uint64_t)(t->sgop++ & 1u) * __UKL_CPU_MAX_THREADS;
+    bank[t->index] = v;
+    __ukl_cpu_wait_of(tl, s, t, __UKL_AT_SG);
+    return bank + (uint64_t)t->simd * UKL_SIMD_WIDTH;
+}
+static inline const uint64_t* __ukl_cpu_put(uint64_t v)
+{
+    __ukl_cpu_tls* tl = __ukl_tl;
+    return __ukl_cpu_put_of(tl, tl->sched, tl->self, v);
+}
+
+// Whether lane `l` of thread `t`'s SIMD group took part (is in the group and not done), `s` its scheduler. The
+// running scheduler and thread are a call each to read (`__ukl_cpu_tls_of`), so a loop over the lanes takes them once.
+static inline bool __ukl_cpu_in_of(const __ukl_cpu_sched* s, const __ukl_cpu_thread* t, uint32_t l)
+{
+    uint32_t i = t->simd * UKL_SIMD_WIDTH + l;
+    return i < s->n && s->threads[i].state != __UKL_DONE;
+}
+
+// Whether lane `l` of the calling thread's SIMD group took part.
+static inline bool __ukl_cpu_in(uint32_t l)
+{
+    return __ukl_cpu_in_of(__ukl_sched, __ukl_self, l);
+}
+
 static inline uint64_t __ukl_cpu_exchange(uint64_t v, uint32_t from_lane)
 {
-    __ukl_cpu_thread* t = __ukl_self;
-    __ukl_cpu_sched* s = __ukl_sched;
-    s->slots[t->index] = v;
-    __ukl_cpu_wait(__UKL_AT_SG);
-    uint32_t src = t->simd * UKL_SIMD_WIDTH + (from_lane % UKL_SIMD_WIDTH);
-    uint64_t r = src < s->n ? s->slots[src] : v;
-    __ukl_cpu_wait(__UKL_AT_SG);
+    uint32_t l = from_lane % UKL_SIMD_WIDTH;
+    __ukl_cpu_tls* tl = __ukl_tl;
+    __ukl_cpu_sched* s = tl->sched;
+    __ukl_cpu_thread* t = tl->self;
+    const uint64_t* g = __ukl_cpu_put_of(tl, s, t, v);
+    return t->simd * UKL_SIMD_WIDTH + l < s->n ? g[l] : v;
+}
+
+// This operation's results for the calling thread's SIMD group, its value `v` put with its lanes' (`__ukl_cpu_put`):
+// made by the first of its lanes to ask (`make(g, live, r)`, `g` the lanes' values, `live` the mask of the lanes that
+// took part), read by the rest; the thread's lane in `*lane`. A scan is then one pass over the lanes, not one a lane,
+// and the slot is read once.
+template <typename M>
+static inline const uint64_t* __ukl_cpu_put_once(uint64_t v, M make, uint32_t* lane)
+{
+    __ukl_cpu_tls* tl = __ukl_tl;
+    __ukl_cpu_thread* t = tl->self;
+    __ukl_cpu_sched* s = tl->sched;
+    const uint64_t* g = __ukl_cpu_put_of(tl, s, t, v);
+    uint64_t* r = s->res + (uint64_t)t->simd * UKL_SIMD_WIDTH;
+    if (s->res_op[t->simd] != t->sgop) {
+        uint64_t live = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            if (__ukl_cpu_in_of(s, t, l))
+                live |= (uint64_t)1 << l;
+        make(g, live, r);
+        s->res_op[t->simd] = t->sgop;
+    }
+    *lane = t->lane;
     return r;
 }
 
 // The lanes whose `b` holds, lane `l` at bit `l` (64 bits: the widest group).
 static inline uint64_t __ukl_cpu_ballot(bool b)
 {
-    __ukl_cpu_thread* t = __ukl_self;
-    __ukl_cpu_sched* s = __ukl_sched;
-    s->slots[t->index] = b;
-    __ukl_cpu_wait(__UKL_AT_SG);
-    uint64_t m = 0;
-    for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
-        uint32_t i = t->simd * UKL_SIMD_WIDTH + l;
-        if (i < s->n && s->threads[i].state != __UKL_DONE && s->slots[i])
-            m |= (uint64_t)1 << l;
-    }
-    __ukl_cpu_wait(__UKL_AT_SG);
-    return m;
+    uint32_t ln;
+    const uint64_t* r = __ukl_cpu_put_once(b, [](const uint64_t* g, uint64_t live, uint64_t* r) {
+        uint64_t m = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            if ((live >> l & 1u) && g[l])
+                m |= (uint64_t)1 << l;
+        r[0] = m;
+    }, &ln);
+    return r[0];
+}
+
+// The SIMD group's reduction of its live lanes' `v` (`op` 0 sum, 1 minimum, 2 maximum), in one wait.
+static inline uint32_t __ukl_cpu_reduce(uint32_t v, uint32_t op)
+{
+    uint32_t ln;
+    const uint64_t* r = __ukl_cpu_put_once(v, [op](const uint64_t* g, uint64_t live, uint64_t* r) {
+        uint32_t a = op == 0u ? 0u : op == 1u ? 0xffffffffu : 0u;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            if (!(live >> l & 1u))
+                continue;
+            uint32_t x = (uint32_t)g[l];
+            a = op == 0u ? a + x : op == 1u ? (x < a ? x : a) : (x > a ? x : a);
+        }
+        r[0] = a;
+    }, &ln);
+    return (uint32_t)r[0];
+}
+
+// The sum of the live lanes' `v` below this lane (`inclusive`: and its own), and in `*total` all of theirs, in one
+// wait.
+static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, bool inclusive, uint32_t* total)
+{
+    uint32_t ln;
+    const uint64_t* r = __ukl_cpu_put_once(v, [](const uint64_t* g, uint64_t live, uint64_t* r) {
+        uint32_t a = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            r[l] = a;
+            if (live >> l & 1u)
+                a += (uint32_t)g[l];
+        }
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++)
+            r[l] |= (uint64_t)a << 32;
+    }, &ln);
+    uint64_t x = r[ln];
+    *total = (uint32_t)(x >> 32);
+    return inclusive ? (uint32_t)x + v : (uint32_t)x;
+}
+static inline uint32_t __ukl_cpu_prefix(uint32_t v, bool inclusive)
+{
+    uint32_t t;
+    return __ukl_cpu_prefix_total(v, inclusive, &t);
+}
+static inline uint32_t __ukl_cpu_prefix_total(uint32_t v, uint32_t* total) { return __ukl_cpu_prefix_total(v, true, total); }
+
+// The inclusive segmented scan (`add`: a sum, else a maximum) of the live lanes' `v` up to this lane, from the last
+// lane at or before it whose `f` is set; whether there is one in `*fin`; the last live lane's in `*tv`, `*tf`. In
+// one wait.
+static inline uint32_t __ukl_cpu_seg_total(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* tv, uint32_t* tf)
+{
+    uint32_t ln;
+    const uint64_t* r = __ukl_cpu_put_once(((uint64_t)(f != 0u) << 32) | v, [add](const uint64_t* g, uint64_t live, uint64_t* r) {
+        uint32_t a = 0, h = 0;
+        for (uint32_t l = 0; l < UKL_SIMD_WIDTH; l++) {
+            if (live >> l & 1u) {
+                uint32_t x = (uint32_t)g[l];
+                if (g[l] >> 32) {
+                    a = x;
+                    h = 1;
+                } else {
+                    a = add ? a + x : (x > a ? x : a);
+                }
+            }
+            r[l] = ((uint64_t)h << 32) | a;
+        }
+    }, &ln);
+    uint64_t x = r[ln], last = r[UKL_SIMD_WIDTH - 1];
+    *fin = (uint32_t)(x >> 32);
+    *tv = (uint32_t)last;
+    *tf = (uint32_t)(last >> 32);
+    return (uint32_t)x;
+}
+// `__ukl_cpu_seg_total`, and the lane before's in `*ev`, `*ef` (0 for lane 0), from the same operation's results.
+static inline uint32_t __ukl_cpu_seg_ex(bool add, uint32_t f, uint32_t v, uint32_t* fin, uint32_t* ev, uint32_t* ef, uint32_t* tv, uint32_t* tf)
+{
+    uint32_t x = __ukl_cpu_seg_total(add, f, v, fin, tv, tf), l = __ukl_self->lane;
+    uint64_t b = l > 0 ? __ukl_sched->res[(uint64_t)__ukl_self->simd * UKL_SIMD_WIDTH + l - 1] : 0;
+    *ev = (uint32_t)b;
+    *ef = (uint32_t)(b >> 32);
+    return x;
+}
+static inline uint32_t __ukl_cpu_seg(bool add, uint32_t f, uint32_t v, uint32_t* fin)
+{
+    uint32_t tv, tf;
+    return __ukl_cpu_seg_total(add, f, v, fin, &tv, &tf);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

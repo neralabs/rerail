@@ -1,5 +1,4 @@
 .policy "ruff-pie804-unnecessary-dict-kwargs" revision 2
-.guests off
 .description "Pass keyword arguments directly instead of unpacking a dict literal into a Python call."
 .language python
 .mode steer

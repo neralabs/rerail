@@ -498,7 +498,7 @@ fn all_catalog_ast_rules_select_identically_on_native_and_restored_tape() {
             .expect("an AST clause")
     }
 
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..");
     let mut pending = vec![
         root.join("packs/complexity/rules"),
         root.join("packs/javascript/rules"),

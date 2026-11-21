@@ -87,8 +87,8 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
 /// waits must never run it on the caller's own stack. It runs on another of the pool's threads, and the caller runs
-/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), on a thread of its own: one
-/// thread cannot hold both stacks.
+/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), or when no pool thread takes
+/// it at once, on a thread of its own: one thread cannot hold both stacks.
 pub(crate) struct Beside<T> {
     name: &'static str,
     slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
@@ -112,10 +112,27 @@ pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> 
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
         *held.0.lock() = Some(r);
     };
-    if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        crate::code_rule_dsl::logic::profile::cores_spawn(run);
+    // Every pool thread may itself be starting a request and its answers: a pool thread has a millisecond to claim
+    // the job, and one that none claims runs on a thread of its own.
+    let unclaimed = if cfg!(not(target_family = "wasm")) && max() >= 2 {
+        let pending = std::sync::Arc::new(parking_lot::Mutex::new(Some(run)));
+        let queued = std::sync::Arc::clone(&pending);
+        let (claimed, ready) = std::sync::mpsc::channel();
+        crate::code_rule_dsl::logic::profile::cores_spawn(move || {
+            let job = queued.lock().take();
+            if let Some(job) = job {
+                let _ = claimed.send(());
+                job();
+            }
+        });
+        let _ = ready.recv_timeout(std::time::Duration::from_millis(1));
+        pending.lock().take()
     } else {
-        let _ = rerail_accel::exec::service(name, None, run);
+        Some(run)
+    };
+    if let Some(job) = unclaimed && let Err(error) = rerail_accel::exec::service(name, None, job) {
+        slot.1.store(true, std::sync::atomic::Ordering::Release);
+        *slot.0.lock() = Some(Err(Box::new(error)));
     }
     Beside { name, slot }
 }

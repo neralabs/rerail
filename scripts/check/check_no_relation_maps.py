@@ -4,7 +4,7 @@
 What a relation has (its rows, dead rows, indexes, orders, statistics, count tables) is read where it is, in its
 block, by the CPU and the GPU alike; what is derived once for a symbol goes in the one rolling cache (0478 §1-§4).
 A `static` holding a map, a set or a vector of such data, in a `thread_local!` or for the process, is the structure
-0478 removed: it keeps a relation's pages by a thread's timing (Q261), and holds a second copy beside the block's.
+0478 removed: it keeps a relation's pages by a thread's timing (Q314), and holds a second copy beside the block's.
 
 Reads the lines a commit adds (the index against HEAD, and in a merge against every parent; with --all, the working
 tree against HEAD) in the engine's data paths, and refuses a `static` whose type holds a collection (`HashMap`,

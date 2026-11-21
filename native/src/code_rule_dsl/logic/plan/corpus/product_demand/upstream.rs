@@ -129,19 +129,29 @@ fn demand_body(
 }
 
 /// A demand's rule `install` writes: of rule `rule`'s read at literal `read` (its key at the columns), its parts.
-struct Proof {
-    rule: RuleId,
-    read: usize,
+pub(super) struct Proof {
+    pub(super) rule: RuleId,
+    pub(super) read: usize,
     own: bool,
-    parts: Vec<Part>,
+    pub(super) parts: Vec<Part>,
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    install_named(program, rel, cols, products, require_anchor, PREFIX)
+    install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
 }
 
-/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0513).
-pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool, prefix: &str) -> Result<bool, String> {
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
+/// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
+/// costs a join of its own and restricts nothing).
+pub(super) fn install_named(
+    program: &mut Program<'_>,
+    rel: &str,
+    cols: &[usize],
+    products: &BTreeSet<String>,
+    require_anchor: bool,
+    prefix: &str,
+    restricts: &dyn Fn(&Version, &[Proof]) -> bool,
+) -> Result<bool, String> {
     let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
         return Ok(false);
@@ -206,7 +216,7 @@ pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize]
             proofs.push(Proof { rule: rule.id(), read: i, own, parts });
         }
     }
-    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) {
+    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(v, &proofs) {
         return Ok(false);
     }
     let columns: Vec<(String, String)> = {
@@ -223,7 +233,7 @@ pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize]
                 return Ok(false);
             }
             let key = keys(r.head(), cols).expect("a producer's plain key");
-            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(v, r, *t)).collect();
+            let guard: Vec<T<'_>> = key.iter().map(|t| t_of(r, *t)).collect();
             let mut rb = rewritten(first, v, r, b).atom(name.as_str(), &guard);
             for l in r.body() {
                 rb = rb.lit(v, r, l);
@@ -240,9 +250,9 @@ pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize]
             for proof in &proofs {
                 let r = v.rule(proof.rule).expect("a reader of the version");
                 let read = r.body().nth(proof.read).and_then(|l| l.atom()).expect("the read");
-                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(v, r, *t)).collect();
+                let head: Vec<T<'_>> = keys(read, cols).expect("a plain key").iter().map(|t| t_of(r, *t)).collect();
                 let guard: Vec<T<'_>> = if proof.own {
-                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(v, r, *t)).collect()
+                    keys(r.head(), cols).expect("a producer's plain key").iter().map(|t| t_of(r, *t)).collect()
                 } else {
                     Vec::new()
                 };
@@ -384,7 +394,7 @@ impl Arg {
     fn term<'v>(&self, v: &'v Version, r: RuleRef<'v>) -> T<'v> {
         let arg = |r: RuleRef<'v>, j: usize, k: usize| {
             let a = r.body().nth(j).and_then(|l| l.atom()).expect("an atom of the rule");
-            t_of(v, r, a.args().nth(k).expect("an argument of the atom"))
+            t_of(r, a.args().nth(k).expect("an argument of the atom"))
         };
         match *self {
             Arg::Rule(j, k) => arg(r, j, k),

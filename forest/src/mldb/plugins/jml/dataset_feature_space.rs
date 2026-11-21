@@ -345,6 +345,7 @@ impl ColumnInfo {
     ///   each row's bucket by its key against the split points' keys (`numericBucketsKernel`).
     /// - Categorical: the codes present (`markCodesKernel`), their names' buckets, then each row's
     ///   (`categoricalBucketsKernel`).
+    ///
     /// The buckets are packed on the device (`packBucketsKernel`). The host's work is a pass for the keys, the split
     /// points over the distinct values, and one copy of the packed words.
     pub fn from_column_device(column_name: &str, data: &ColumnData, max_num_buckets: i32) -> Result<ColumnInfo, String> {
@@ -481,11 +482,11 @@ mod device_tests {
         let n = 5003;
         let columns: Vec<(&str, Vec<CellValue>)> = vec![
             ("many reals", (0..n).map(|i| CellValue::Float((h(i, 1) % 100_000) as f64 / 7.0 - 3000.0)).collect()),
-            ("reals and nulls", (0..n).map(|i| if h(i, 2) % 10 == 0 { CellValue::Empty } else { CellValue::Float((h(i, 3) % 50) as f64 * 0.5 - 3.0) }).collect()),
+            ("reals and nulls", (0..n).map(|i| if h(i, 2).is_multiple_of(10) { CellValue::Empty } else { CellValue::Float((h(i, 3) % 50) as f64 * 0.5 - 3.0) }).collect()),
             ("zeros", (0..n).map(|i| CellValue::Float(if i % 2 == 0 { -0.0 } else { 0.0 })).collect()),
             ("ints", (0..n).map(|i| CellValue::Integer((h(i, 6) % 6) as i64 - 2)).collect()),
             ("big ints", (0..n).map(|i| CellValue::Integer(h(i, 7) as i64)).collect()),
-            ("categories and nulls", (0..n).map(|i| if h(i, 4) % 9 == 0 { CellValue::Empty } else { CellValue::String(cats[(h(i, 5) % 6) as usize].into()) }).collect()),
+            ("categories and nulls", (0..n).map(|i| if h(i, 4).is_multiple_of(9) { CellValue::Empty } else { CellValue::String(cats[(h(i, 5) % 6) as usize].into()) }).collect()),
             ("many categories", (0..n).map(|i| CellValue::String(format!("form{}", h(i, 8) % 700))).collect()),
             ("only nulls", vec![CellValue::Empty; n]),
             ("constant", vec![CellValue::Integer(7); n]),

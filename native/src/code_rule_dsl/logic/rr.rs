@@ -11,6 +11,8 @@
 //! A file read with `parse_file_version` has `core.rerail` before it, included or not. An included file's `.output`s are its own,
 //! not the program's: they are left out (`python/calls.rerail`'s).
 
+#[allow(unused_imports)]
+use rerail_store::source_tree::Canonical as _;
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
@@ -24,6 +26,8 @@ pub mod aggregate_demand {
 pub use rerail_rr::code_rule_dsl::logic::rr::from_tape;
 pub use rerail_rr::code_rule_dsl::logic::rr::clause;
 pub use from_tape::{code_body, string_value, syntax_error};
+mod git_policy;
+pub use git_policy::GitPolicyInputs;
 pub mod images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
@@ -76,7 +80,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     let policy = statements
         .iter()
         .find_map(|s| match s.what()? {
-            S::Setting { key, text } if key == "policy" => text.split('"').nth(1).map(str::to_owned),
+            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
             _ => None,
         })
         .unwrap_or_default();
@@ -155,7 +159,13 @@ pub fn library() -> PathBuf {
         .map(PathBuf::from)
         // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
         // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
+        .unwrap_or_else(rerail_store::source_tree::rule_library)
+}
+
+/// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
+pub fn library_root() -> PathBuf {
+    let path = library();
+    path.canonical().or_else(|_| std::path::absolute(&path)).unwrap_or(path)
 }
 
 /// A program's `.rerail` text. Its `#include`s name library files (decision 0089), read as `parse_file_version` reads
@@ -633,8 +643,11 @@ fn closed_program(files: &SharedFiles, own: &[Stmt]) -> Result<(), Error> {
 #[allow(clippy::type_complexity)]
 fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&crate::content_store::ContentStore>) -> Result<(Vec<lower::Module>, Vec<Vec<PathBuf>>, Vec<crate::content_store::HashKey>), Error> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("lower the library one module at a time ({} files)", paths.len()));
-    let core = library().join("core.rerail").canonicalize().ok();
-    let at = |p: &Path| paths.iter().position(|q| q == p);
+    let core = library().join("core.rerail").canonical().ok();
+    // An include is found by its canonical path, so the run's files are compared canonical too: on Windows a path
+    // through a link, or with `/` past a `\`-joined root, names the same file another way.
+    let canonical: Vec<PathBuf> = paths.iter().map(|p| p.canonical().unwrap_or_else(|_| p.clone())).collect();
+    let at = |p: &Path| canonical.iter().position(|q| q == p);
     let n = paths.len();
     // Each file's direct includes, by position: the library's file, else the one beside it (`#include`).
     let mut direct: Vec<BTreeSet<usize>> = Vec::with_capacity(n);
@@ -650,7 +663,7 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
             let Some(S::Include(name)) = s.what() else { continue };
             let name = name.as_str();
             let line = s.line();
-            let found = [library().join(name), path.parent().map_or_else(|| PathBuf::from(name), |d| d.join(name))].into_iter().find_map(|p| p.canonicalize().ok());
+            let found = [library().join(name), path.parent().map_or_else(|| PathBuf::from(name), |d| d.join(name))].into_iter().find_map(|p| p.canonical().ok());
             let Some(j) = found.as_deref().and_then(at) else {
                 return Err(Error::Syntax(format!("{}:{line}: #include {name:?} is not among the run's library files", path.display())));
             };
@@ -821,6 +834,17 @@ pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store:
         renew_image(store, id);
     }
     Some(bytes.into_owned())
+}
+
+/// A process can first read this graph for a different store. Keep it where this reader can find it on restart.
+pub(in crate::code_rule_dsl) fn retain_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, encode: impl FnOnce() -> Vec<u8>) {
+    let Some(store) = store else { return };
+    if images::shipped().is_some_and(|bundle| bundle.get(key).is_some()) { return; }
+    if let Ok(Some(id)) = store.source_by_alias(key) {
+        renew_image(store, id);
+    } else {
+        keep_graph_image(Some(store), key, encode());
+    }
 }
 
 /// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
@@ -1038,7 +1062,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut lowering_tail::Declared);
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
+        p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
         p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
@@ -1162,7 +1186,7 @@ impl TextRead {
         names.dedup();
         let mut included: Vec<PathBuf> = files.into_iter().map(|(p, _)| p).collect();
         // The engine's own library programs, which the runner adds to a run (decision 0076's components).
-        included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+        included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonical().ok()));
         Ok(TextNames { included, names, phase })
     }
 }
@@ -1173,7 +1197,7 @@ impl TextNames {
     pub fn of_program(prog: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> TextNames {
         let names = prog.declared_names();
         let phase = prog.setting_values("phase").into_iter().next();
-        let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+        let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonical().ok()).collect();
         TextNames { included, names, phase }
     }
 }
@@ -1234,14 +1258,12 @@ fn resolve_shared(statements: Vec<Stmt>) -> Result<(SharedFiles, Vec<Stmt>), Err
     Ok((files, own))
 }
 
-/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-
 /// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
 /// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
 /// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
 pub fn phases_named(statements: &[Stmt]) -> Vec<String> {
     let own = statements.iter().find_map(|s| match s.what()? {
-        S::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        S::Setting { key: "phase", text } => Some(text.trim().to_owned()),
         _ => None,
     });
     let mut out: Vec<String> = statements
@@ -1260,7 +1282,7 @@ pub fn phases_named(statements: &[Stmt]) -> Vec<String> {
 
 /// The engine's own library programs a run is given besides its includes (`TextNames::included`), canonical.
 pub fn engine_files() -> Vec<PathBuf> {
-    ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect()
+    ENGINE_FILES.iter().filter_map(|f| library().join(f).canonical().ok()).collect()
 }
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
@@ -1304,19 +1326,19 @@ pub(in crate::code_rule_dsl) fn graph_digest(src: &str) -> Result<Option<[u8; 32
 /// The resolution phase 0's own program (`bootstrap.rerail`) is read with: the library, then beside the includer.
 fn builtin_resolve(statements: Vec<Stmt>) -> Result<(Files, Vec<Stmt>), Error> {
     let (includes, own): (Vec<_>, Vec<_>) = statements.into_iter().partition(is_include);
-    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    let core = library().join("core.rerail").canonical().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
     let (mut out, mut read_files, mut seen) = (Vec::new(), Vec::new(), Vec::new());
     if t_shape(&own) {
         seen.push(core);
     } else {
-        visit(&core, &mut out, &mut read_files, &mut seen, false)?;
+        visit(&core, &mut out, &mut read_files, &mut seen, false, &mut |_, _| {})?;
     }
     for (name, line) in include_names(&includes) {
         let path = library().join(&name);
         if !path.exists() {
             return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
         }
-        visit(&path, &mut out, &mut read_files, &mut seen, true)?;
+        visit(&path, &mut out, &mut read_files, &mut seen, true, &mut |_, _| {})?;
     }
     Ok((out, own))
 }
@@ -1411,33 +1433,66 @@ pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
 pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
+    read_file_after(path, None)
+}
+
+pub fn read_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
+    let read = inspect_file_after(path, inspected)?;
+    Ok((read.program, read.files))
+}
+
+/// A rule file's program as `inspect_file_after` reads it: its version, the library files it read, and, for a policy
+/// read from a Git view, the inputs its include graph is kept under.
+pub struct ReadProgram {
+    pub program: std::sync::Arc<super::program_image::Version>,
+    pub files: Vec<LibraryFile>,
+    pub git: Option<GitPolicyInputs>,
+}
+
+/// A repeated inspection in the same catalog can use the reader's current in-process program.
+/// Execution attaches the inspected graph to its destination store, including after collection.
+pub fn inspect_file_after(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<ReadProgram, Error> {
+    if let Some(root) = crate::git_workspace::snapshot::view_root(path) {
+        return git_policy::read(&root, path);
+    }
+    let (program, files) = read_worktree_file(path, inspected)?;
+    Ok(ReadProgram { program, files, git: None })
+}
+
+fn read_worktree_file(path: &Path, inspected: Option<&[LibraryFile]>) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::Mutex;
     // The shared object's lowered programs (decision 0442).
     #[derive(Default)]
-    struct Programs(Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>);
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    struct Programs(Mutex<HashMap<(PathBuf, PathBuf), (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>);
+    let key = path.canonical().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache_held = crate::code_rule_dsl::logic::profile::shared::<Programs>();
     let cache = &cache_held.0;
-    if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
-        && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
-    {
+    let library = library_root();
+    let entry = (key.clone(), library.clone());
+    let cached = cache.lock().expect("the program cache").get(&entry)
+        .filter(|(files, _)| crate::code_rule_dsl::prof::time("rr.inspect.inputs", || LibraryFile::inputs_match(files))).cloned();
+    if let Some((files, program)) = cached {
+        if inspected != Some(files.as_slice()) {
+            retain_current_read(&key, &library, &files, &program);
+        }
+        files.iter().for_each(noted);
         crate::code_rule_dsl::prof::count("rr.program_reused", 1);
-        return Ok((program.clone(), files.clone()));
+        return Ok((program, files));
     }
     // Decision 0275: rederived until a key hits. The file's sha (by its `stat` while that holds), then the entry kept
     // under its path and sha, taken while every file it read still reads as recorded (by `stat`, then sha).
-    let kept = kept_program(&key);
+    let kept = kept_program(&key, &library);
     if let Some((_, _, Some((program, files)))) = &kept {
         crate::code_rule_dsl::prof::count("rr.program_stored", 1);
         files.iter().for_each(noted);
-        cache.lock().expect("the program cache").insert(key.clone(), (files.clone(), program.clone()));
+        cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
         return Ok((program.clone(), files.clone()));
     }
     // The kept statements alone copied from the process's (`read_shared`): each policy copied its libraries whole,
     // to drop most of them (`unreached_dropped`).
     let (shared, files) = program_shared(path)?;
-    let own = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own = path.canonical().unwrap_or_else(|_| path.to_owned());
     let statements = reached_statements(&own, &shared.iter().collect::<Vec<_>>());
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
@@ -1445,7 +1500,7 @@ pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Ve
         super::plan::corpus::combined::record_version(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    cache.lock().expect("the program cache").insert(entry, (files.clone(), program.clone()));
     Ok((program, files))
 }
 
@@ -1500,31 +1555,51 @@ pub fn kept_header_found(src: &str) -> Option<std::sync::Arc<super::program_imag
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn kept_program_found(path: &Path) -> Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)> {
-    kept_program(path).and_then(|(_, _, found)| found)
+    kept_program(path, &library_root()).and_then(|(_, _, found)| found)
 }
 
-/// The entry of the rule file at `path` (canonical): its key, the store it is kept in, and its program and read
-/// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
-/// by, or the program is phase 0's own (its builtin reader).
-#[allow(clippy::type_complexity)]
-fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
-    use super::plan::corpus::{combined, phases};
-    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
-        return None;
+/// Attach an inspected program to the store selected by its consumer. The inputs belong to that inspection.
+pub fn retain_read_program(path: &Path, library: &Path, files: &[LibraryFile], program: &std::sync::Arc<super::program_image::Version>) {
+    if LibraryFile::inputs_match(files) {
+        retain_current_read(path, library, files, program);
     }
+}
+
+fn retain_current_read(path: &Path, library: &Path, files: &[LibraryFile], program: &std::sync::Arc<super::program_image::Version>) {
+    use super::plan::corpus::combined;
+    let Some(sha) = files.iter().find(|file| file.path == path).and_then(|file| file.sha256) else { return };
+    let Some((key, Some(store))) = rule_file_store(path, library, &sha) else { return };
+    let Ok(_held) = crate::code_rule_dsl::prof::time("rr.inspect.collection_lease", || store.hold_collection()) else { return };
+    crate::code_rule_dsl::prof::time("rr.inspect.settle", || store.settle(&combined::queued(&key)));
+    if !combined::retains_read(&store, &key, files).unwrap_or(false) {
+        combined::record_version(&store, "a rule file's program", &key, files, program, &[]);
+    }
+    combined::read_before_the_run(key);
+}
+
+fn rule_file_store(path: &Path, library: &Path, sha: &[u8; 32]) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>)> {
+    use super::plan::corpus::{combined, phases};
+    if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() { return None; }
+    Some((combined::rule_file_key(path, library, sha), crate::code_rule_dsl::prof::time("rr.inspect.store", phases::reading_store)))
+}
+
+/// The entry of the rule file at `path` and the program whose recorded inputs still hold.
+#[allow(clippy::type_complexity)]
+fn kept_program(path: &Path, library: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
+    use super::plan::corpus::combined;
     let sha = super::plan::corpus::observe(|o| o.digest(path))?;
-    let key = combined::rule_file_key(path, &sha);
-    let Some(store) = phases::reading_store() else { return Some((key, None, None)) };
-    let found = {
-        // Read while collection is held off, as a combined program's is (`combine_stored`).
+    let (key, store) = rule_file_store(path, library, &sha)?;
+    let found = if let Some(store) = &store {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
-        combined::lookup_read(&store, &key).ok().flatten()
+        combined::lookup_read(store, &key).ok().flatten()
+    } else {
+        None
     };
     if found.is_some() {
         combined::read_before_the_run(key);
     }
-    Some((key, Some(store), found))
+    Some((key, store, found))
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
@@ -1536,10 +1611,10 @@ pub fn lower_files(path: &Path, statements: Files) -> Result<std::sync::Arc<supe
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
 pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
-    let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own_path = key.clone();
     let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
@@ -1549,7 +1624,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
     token_reads::refuse(&statements)?;
     // The relations an included file declares are the library's: canonical, one copy however many policies of a
     // combined run include it (decision 0091). Printed as `.global library …`, so a program's text keeps that.
-    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    let core = library().join("core.rerail").canonical().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
     let library: Vec<String> = statements
         .iter()
         .filter(|(file, _)| *file != core && *file != key)
@@ -1601,7 +1676,7 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&Stmt>)]) -> File
             t.names_in(c, out);
         }
     }
-    let whole: Vec<PathBuf> = ["core.rerail"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonicalize().ok()).chain(std::iter::once(own.to_owned())).collect();
+    let whole: Vec<PathBuf> = ["core.rerail"].iter().chain(ENGINE_FILES.iter()).filter_map(|f| library().join(f).canonical().ok()).chain(std::iter::once(own.to_owned())).collect();
     // The relations a library derives for the engine to read (`LIBRARY_DERIVED`: loads) are reached: no rule
     // reads them, and the corpus run makes them outputs (`corpus::run_observed`'s requests). Dropped, a library's
     // `load(…)` asked for no document, and no import was resolved.
@@ -1745,7 +1820,7 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     // `core.rerail`'s relations are the engine's (decision 0141): no other file declares or derives one.
-    let core = library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    let core = library().join("core.rerail").canonical().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
     // From `core.rerail` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);
     let engine: std::collections::BTreeSet<&str> = statements
@@ -1763,9 +1838,9 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
                 Some(S::Clause) => s.heads(),
                 _ => Vec::new(),
             };
-            // A relation `DERIVED_BY` names is core.rerail's, but its one library file derives it (decision 0483).
+            // A relation one library file derives (`DERIVED_BY`) that file's clauses may derive; it declares none.
             let derives = |n: &str| {
-                DERIVED_BY.iter().any(|(rel, by)| *rel == n && library().join(by).canonicalize().is_ok_and(|by| &by == file))
+                DERIVED_BY.iter().any(|(rel, by)| *rel == n && library().join(by).canonical().is_ok_and(|by| by == **file))
             };
             if let Some(name) = names.into_iter().find(|n| engine.contains(n) && !(matches!(s.what(), Some(S::Clause)) && derives(n))) {
                 return Err(Error::Syntax(format!("{}:{}: {name} is core.rerail's: a program reads it and cannot declare or derive it", file.display(), s.line())));
@@ -1774,7 +1849,7 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
     }
     // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places. The engine's own
     // library programs (`ENGINE_FILES`, which the runner adds; no rule includes them) may use them.
-    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
+    let own: Vec<PathBuf> = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonical().ok()).collect();
     for (file, statements) in statements.iter().filter(|(file, _)| !own.contains(file)) {
         for s in statements {
             let names: Vec<&str> = match s.what() {
@@ -1839,8 +1914,12 @@ fn noted(file: &LibraryFile) {
 }
 
 impl LibraryFile {
+    pub(in crate::code_rule_dsl) fn inputs_match(files: &[Self]) -> bool {
+        files.iter().all(Self::unchanged)
+    }
+
     /// Whether the file still reads as recorded: the same bytes, or still no file.
-    pub(in crate::code_rule_dsl) fn unchanged(&self) -> bool {
+    pub fn unchanged(&self) -> bool {
         Self::now(&self.path) == *self
     }
 }
@@ -1853,6 +1932,16 @@ pub fn read(path: &Path) -> Result<(Vec<Stmt>, LibraryFile), Error> {
 fn read_shared(path: &Path) -> Result<(std::sync::Arc<RrFile>, LibraryFile), Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+    // A file of a Git revision is read from its tree (bounded), not the checkout.
+    if crate::git_workspace::snapshot::contains(path) {
+        use sha2::Digest as _;
+        let bytes = crate::git_workspace::snapshot::read_bounded(path, 1024 * 1024)
+            .map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        let file = LibraryFile { path: path.to_owned(), sha256: Some(sha2::Sha256::digest(&bytes).into()) };
+        noted(&file);
+        let src = String::from_utf8(bytes).map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        return Ok((RrFile::read(src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?, file));
+    }
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
@@ -1898,8 +1987,10 @@ fn include_names(statements: &[Stmt]) -> Vec<(String, usize)> {
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
-fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+fn visit(requested: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(), Error> {
+    use crate::git_workspace::snapshot as source;
+    let path = source::canonicalize(requested).map_err(|e| Error::Syntax(format!("{}: {e}", requested.display())))?;
+    resolved(requested, &path);
     if seen.contains(&path) {
         return Ok(());
     }
@@ -1911,9 +2002,20 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
         rest.retain(|s| s.what() != Some(S::Io { output: true }));
     }
     for (name, line) in include_names(&includes) {
+        let pinned = source::contains(&path);
+        if pinned && Path::new(&name).is_absolute() {
+            return Err(Error::Syntax(format!("{}:{line}: #include {name:?} must be relative for a Git policy", path.display())));
+        }
         let in_library = library().join(&name);
         let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-        let found = if in_library.exists() {
+        let bundled = if pinned {
+            in_library.canonical().ok().is_some_and(|file| {
+                library().canonical().is_ok_and(|root| file.starts_with(root))
+            })
+        } else {
+            in_library.exists()
+        };
+        let found = if bundled {
             in_library
         } else {
             let miss = LibraryFile { path: in_library, sha256: None };
@@ -1921,10 +2023,10 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
             read_files.push(miss);
             beside
         };
-        if !found.exists() {
+        if !source::is_file(&found) || pinned && !bundled && !source::contains(&found) {
             return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
         }
-        visit(&found, out, read_files, seen, true)?;
+        visit(&found, out, read_files, seen, true, resolved)?;
     }
     out.push((path, rest));
     Ok(())
@@ -1934,7 +2036,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
 /// in reading order.
 fn program_order(path: &Path) -> Result<(Vec<PathBuf>, Vec<LibraryFile>), Error> {
     use super::plan::corpus::phase0;
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = path.canonical().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let g = phase0::graph(&phase0::Seed::File(path.clone()))?;
     let mut order = Vec::new();
     g.order(&path.to_string_lossy(), &mut order)?;
@@ -1968,7 +2070,7 @@ pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_jo
     let mut indexed = BTreeSet::new();
     for (i, root) in paths.iter().enumerate() {
         if root.extension().is_some_and(|e| e == "json") { continue; }
-        let own = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let own = root.canonical().unwrap_or_else(|_| root.to_path_buf());
         let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
         for file in files {
             if file != own && !indexed.insert(file.clone()) { continue; }
@@ -2006,7 +2108,7 @@ struct Shared(Vec<(PathBuf, Vec<Stmt>)>);
 
 impl Shared {
     fn iter(&self) -> impl Iterator<Item = (&PathBuf, Vec<&Stmt>)> {
-        let core = library().join("core.rerail").canonicalize().ok();
+        let core = library().join("core.rerail").canonical().ok();
         let own = self.0.last().map(|(p, _)| p.clone());
         self.0.iter().map(move |(p, statements)| {
             let included = Some(p) != own.as_ref() && Some(p) != core.as_ref();
@@ -2033,7 +2135,7 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
 /// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rerail`, the
 /// file (its JSON bytes' digest, so an edit reads it again), then the rest.
 fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let path = path.canonical().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let (bytes, digest) = super::plan::corpus::observe(|o| o.read(&path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
     let file = LibraryFile { path: path.clone(), sha256: Some(digest) };
     noted(&file);
@@ -2042,7 +2144,7 @@ fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error>
     let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let statements = RrFile::read(src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?.statements();
     let (modules, own) = resolve_shared(statements)?;
-    let core = library().join("core.rerail").canonicalize().ok();
+    let core = library().join("core.rerail").canonical().ok();
     let (first, rest): (Vec<_>, Vec<_>) = modules.iter().partition(|(p, _, _)| Some(p) == core.as_ref());
     let mut files: Vec<LibraryFile> = first.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }).collect();
     files.push(file);
@@ -2068,26 +2170,33 @@ fn trace(g: &super::plan::corpus::phase0::Graph, library: &Path, path: &Path, fi
 /// The library candidate an include probed and did not find, when its file is the one beside the includer.
 fn probe(library: &Path, name: &str, target: &Path, files: &mut Vec<LibraryFile>) {
     let in_library = library.join(name);
-    if in_library.canonicalize().ok().as_deref() != Some(target) {
+    if in_library.canonical().ok().as_deref() != Some(target) {
         files.push(LibraryFile { path: in_library, sha256: None });
     }
 }
 
 /// `program` for phase 0's own reads.
 fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    builtin_program_resolved(path, &mut |_, _| {})
+}
+
+fn builtin_program_resolved(path: &Path, resolved: &mut impl FnMut(&Path, &Path)) -> Result<(Files, Vec<LibraryFile>), Error> {
     let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rerail` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
-    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+    let t_shape = read(&crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
         .0
         .iter()
         .any(|s| s.what() == Some(S::Decl("doc")));
     if !t_shape {
-        visit(&library().join("core.rerail"), &mut out, &mut read_files, &mut Vec::new(), false)?;
+        visit(&library().join("core.rerail"), &mut out, &mut read_files, &mut Vec::new(), false, resolved)?;
     }
-    let mut seen = vec![library().join("core.rerail").canonicalize().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?];
-    visit(path, &mut out, &mut read_files, &mut seen, false)?;
+    let prelude = library().join("core.rerail");
+    let core = prelude.canonical().map_err(|e| Error::Syntax(format!("core.rerail: {e}")))?;
+    resolved(&prelude, &core);
+    let mut seen = vec![core];
+    visit(path, &mut out, &mut read_files, &mut seen, false, resolved)?;
     Ok((out, read_files))
 }
 

@@ -15,7 +15,11 @@ JIT, the Metal kernels and SQLite's virtual tables, all through the reads writte
   - a load from disk to the exact in-memory bytes;
   - a derived fact (a rule's head, an axis's answer, an interned text), written once where it is computed, into a
     relation in a block;
-  - an index in its relation's block.
+  - an index in its relation's block;
+  - the memory hierarchy: registers, caches, paging, a GPU's own memory, a driver that maps or migrates a buffer.
+- **The rule is about the engine's data design, not hardware.** Never use it to refuse a device, backend, driver or
+  platform. Ask one question: does the engine now keep the data in a second structure of its own that readers read
+  instead? If not, it is not a copy.
 - **The copies that still exist are listed in 0353** and marked `copy (0353 step N)` in the code. The list only
   shrinks. `scripts/check/check_no_block_copies.py` (pre-commit) refuses a commit that adds one.
 
@@ -201,7 +205,8 @@ hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 - Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
   Don't build them in a worktree's `tmp/`, and don't run binaries from there.
 
-`rerail-rr-aot`'s generated tiers (about 700 KB of Rust) are written by its build script only
+`rerail-rr-aot` is deprecated (decision 0550), as `rerail-pp-aot`, `rust_stream` and `clif_rust` are:
+no new use. Its generated tiers (about 700 KB of Rust) are written by its build script only
 with the `generated` feature, so a workspace build leaves them out. To test them:
 `nice -n 19 cargo test -p rerail-rr-aot --features generated --profile profiling`.
 

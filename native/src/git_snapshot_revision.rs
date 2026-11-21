@@ -1,0 +1,690 @@
+//! Gix parses revision syntax. This delegate reads each object before following its links.
+
+use gix::bstr::{BStr, ByteSlice};
+use gix::error::{ErrorExt, message};
+use gix::object::Kind;
+use gix::revision::plumbing::spec::{self, parse::delegate};
+use gix::{Object, ObjectId, Repository, Result};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::path::Path;
+
+use super::verified_object;
+
+#[path = "git_snapshot_message_pattern.rs"]
+mod message_pattern;
+use message_pattern::MessagePattern;
+
+#[derive(Debug)]
+struct LookupError {
+    reason: &'static str,
+    detail: String,
+}
+
+impl std::fmt::Display for LookupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for LookupError {}
+
+fn lookup_error(reason: &'static str, detail: impl std::fmt::Display) -> gix::Error {
+    gix::Error::from_error(LookupError { reason, detail: detail.to_string() })
+}
+
+pub fn failure_reason(error: &gix::Error) -> &'static str {
+    error.downcast_any_ref::<LookupError>().map_or("invalid-revision", |cause| cause.reason)
+}
+
+pub fn failure_detail(error: &gix::Error) -> String {
+    error.downcast_any_ref::<LookupError>().map_or_else(|| error.probable_cause().to_string(), |cause| cause.detail.clone())
+}
+
+pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<ObjectId> {
+    Ok(selection(repo, expression, path_base)?.0)
+}
+
+fn commit_metadata<'a>(commit: &'a gix::Commit<'_>) -> Result<gix::objs::CommitRef<'a>> {
+    super::decoded_commit(commit).map_err(|error| lookup_error("malformed-object",
+        format_args!("malformed Git commit {}: {error}", commit.id)))
+}
+
+fn check_kind(id: ObjectId, actual: Kind, expected: Kind) -> Result<()> {
+    if actual == expected { return Ok(()); }
+    Err(lookup_error("wrong-object-kind", format_args!("Git object {id} is {actual}, expected {expected}")))
+}
+
+/// Check a recorded edge without fetching an absent object or inflating its payload.
+pub(super) fn check_local_kind(repo: &Repository, id: ObjectId, expected: Kind) -> Result<()> {
+    if let Some(header) = repo.try_find_header(id)
+        .map_err(|error| lookup_error("unreadable-object", format_args!("Git object {id}: {error}")))? {
+        check_kind(id, header.kind(), expected)?;
+    }
+    Ok(())
+}
+
+/// Check every link as it is followed, including the kind recorded in annotated tags.
+pub(super) fn peel_object<'repo>(
+    mut object: Object<'repo>, kind: Option<Kind>, mut read: impl FnMut(ObjectId) -> Result<Object<'repo>>,
+) -> Result<Object<'repo>> {
+    loop {
+        if kind == Some(object.kind) { return Ok(object); }
+        object = match object.kind {
+            Kind::Tag => {
+                let tag = object.into_tag();
+                let decoded = tag.decode().map_err(|e| lookup_error("malformed-object", format_args!("Git tag {}: {e}", tag.id)))?;
+                let target = read(decoded.target())?;
+                if target.kind != decoded.target_kind {
+                    return Err(lookup_error("wrong-object-kind", format_args!(
+                        "Git tag {} declares {} as {}, found {}", tag.id, target.id, decoded.target_kind, target.kind)));
+                }
+                target
+            }
+            Kind::Commit if kind == Some(Kind::Tree) => {
+                let tree = read(commit_metadata(&object.into_commit())?.tree())?;
+                check_kind(tree.id, tree.kind, Kind::Tree)?;
+                return Ok(tree);
+            }
+            _ if kind.is_none() => return Ok(object),
+            _ => return Err(lookup_error("wrong-object-kind", format_args!(
+                "Git object {} is {}, expected {}", object.id, object.kind, kind.expect("requested object kind")))),
+        };
+    }
+}
+
+pub(super) fn selection(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
+    // rev-parse tries the first pair of dots as a range even inside a tree path.
+    // If an endpoint does not resolve, the full path can still name a single object.
+    if let Some((from, to)) = expression.split_once("..") {
+        let to = to.strip_prefix('.').unwrap_or(to);
+        let endpoint = |s: &str| parse_object(repo, if s.is_empty() { "HEAD" } else { s }, path_base).is_ok();
+        if expression != ".." && endpoint(to) && endpoint(from) {
+            return Err(lookup_error("invalid-revision", "Git revision expressions must resolve to a single object"));
+        }
+    }
+    parse_object(repo, expression, path_base)
+}
+
+fn parse_object(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<(ObjectId, bool)> {
+    let mut revision = Revision {
+        push_mode: configured_push_mode(repo)?,
+        anchor_name: expression.split(['^', '~', ':']).next().unwrap_or_default().split("@{").next().unwrap_or_default(),
+        selects_path: false,
+        repo,
+        path_base,
+        reference: None,
+        candidates: Vec::new(),
+        read_failure: RefCell::new(None),
+    };
+    let spelling = previous_branch_suffix(repo, expression)?;
+    let parsed = spec::parse(spelling.as_ref().as_bstr(), &mut revision);
+    // A checksum failure while narrowing an ambiguous prefix must not select a
+    // different candidate. The parser can also wrap errors with syntax context.
+    if let Some(failure) = revision.read_failure.into_inner() {
+        return Err(failure);
+    }
+    parsed?;
+    match revision.candidates.as_slice() {
+        [id] => Ok((*id, revision.selects_path)),
+        [] => Err(lookup_error("missing-revision", "No Git revision matched")),
+        _ => Err(lookup_error("ambiguous-revision", format_args!("Ambiguous Git revision {expression:?}"))),
+    }
+}
+
+/// Gix parses one reflog suffix per anchor. Git first substitutes the branch selected by @{-n}.
+fn previous_branch_suffix<'a>(repo: &Repository, expression: &'a str) -> Result<std::borrow::Cow<'a, [u8]>> {
+    let literal = std::borrow::Cow::Borrowed(expression.as_bytes());
+    let Some((number, suffix)) = expression.strip_prefix("@{-").and_then(|rest| rest.split_once('}')) else { return Ok(literal) };
+    if !suffix.starts_with("@{") || !number.bytes().all(|b| b.is_ascii_digit()) { return Ok(literal); }
+    let Some(number) = number.parse::<usize>().ok().filter(|n| *n > 0) else { return Ok(literal) };
+    let previous = previous_checkout(repo, number)?;
+    let reference = repo.try_find_reference(previous.as_bstr())?
+        .ok_or_else(|| lookup_error("invalid-revision", "Previous checkout has no branch reflog"))?;
+    let mut expanded = reference.name().as_bstr().to_vec();
+    expanded.extend_from_slice(suffix.as_bytes());
+    Ok(std::borrow::Cow::Owned(expanded))
+}
+
+fn previous_checkout(repo: &Repository, number: usize) -> Result<gix::bstr::BString> {
+    let mut log = repo.head()?.log_iter();
+    let entries = log.rev().map_err(ErrorExt::raise)?
+        .ok_or_else(|| message("HEAD has no checkout history").raise())?;
+    entries
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let from = entry.message.strip_prefix(b"checkout: moving from ")?;
+            Some(from[..from.find(" to ")?].as_bstr().to_owned())
+        })
+        .nth(number.saturating_sub(1))
+        .ok_or_else(|| message("No matching prior checkout").raise())
+}
+
+fn configured_push_mode(repo: &Repository) -> Result<gix::push::Default> {
+    let mut mode = gix::push::Default::default();
+    if let Some(values) = repo.config_snapshot().plumbing().strings("push.default") {
+        for value in values {
+            mode = gix::config::tree::Push::DEFAULT.try_into_default(value)?;
+        }
+    }
+    Ok(mode)
+}
+
+fn fetch_destination(repo: &Repository, remote: &gix::Remote<'_>, source: &BStr) -> Result<Option<gix::refs::FullName>> {
+    let specs = gix::refspec::MatchGroup::from_fetch_specs(remote.refspecs(gix::remote::Direction::Fetch).iter().map(|spec| spec.to_ref()));
+    let null_id = repo.object_hash().null();
+    let item = gix::refspec::match_group::Item { full_ref_name: source, target: &null_id, object: None };
+    specs.match_lhs(std::iter::once(item)).mappings.into_iter().find_map(|m| m.rhs)
+        .map(|name| gix::refs::FullName::try_from(name.into_owned()).map_err(ErrorExt::raise)).transpose()
+}
+
+fn upstream_name(repo: &Repository, reference: &gix::Reference<'_>) -> Result<gix::refs::FullName> {
+    use gix::remote::Direction::Fetch;
+    let source = repo.config_snapshot().plumbing().strings_by("branch", Some(reference.name().shorten()), "merge")
+        .and_then(|names| names.into_iter().next()).ok_or_else(|| message("No upstream merge ref is configured").raise())?;
+    if let Some(remote) = reference.remote(Fetch).transpose()?
+        && let Some(name) = fetch_destination(repo, &remote, source.as_bstr())? {
+        return Ok(name);
+    }
+    if reference.remote_name(Fetch).is_some_and(|remote| remote.as_bstr() == ".") {
+        return Ok(repo.find_reference(source.as_bstr())?.name().to_owned());
+    }
+    Err(message("No Git tracking ref matches the upstream").raise())
+}
+
+/// Resolve the local tracking ref for a push destination. Git compares the local
+/// refs for simple mode, including the remotes' fetch mappings.
+fn push_tracking_name(repo: &Repository, reference: &gix::Reference<'_>, mode: gix::push::Default) -> Result<gix::refs::FullName> {
+    use gix::push::Default as PushMode;
+    use gix::remote::Direction::Push;
+    let Some(remote) = reference.remote(Push).transpose()? else {
+        if matches!(mode, PushMode::Upstream) && reference.remote_name(Push).is_some_and(|name| name.as_bstr() == ".") {
+            return upstream_name(repo, reference);
+        }
+        return Err(message("No Git push remote is configured").raise());
+    };
+    if !remote.refspecs(Push).is_empty() {
+        return reference.remote_tracking_ref_name(Push).ok_or_else(|| message("No Git tracking branch is configured").raise())?;
+    }
+    let config = repo.config_snapshot();
+    let mirror = remote.name().and_then(|name| name.as_symbol())
+        .and_then(|name| config.boolean(format!("remote.{name}.mirror").as_str())).unwrap_or(false);
+    let mode = if mirror { PushMode::Current } else { mode };
+    match mode {
+        PushMode::Nothing => return Err(message("No destination for push.default=nothing").raise()),
+        PushMode::Upstream => return upstream_name(repo, reference),
+        _ => {}
+    }
+    let current = fetch_destination(repo, &remote, reference.name().as_bstr())?
+        .ok_or_else(|| message("No Git tracking ref matches the push destination").raise())?;
+    if matches!(mode, PushMode::Simple) && current != upstream_name(repo, reference)? {
+        return Err(message("The simple push and upstream tracking refs differ").raise());
+    }
+    Ok(current)
+}
+
+struct Revision<'repo> {
+    push_mode: gix::push::Default,
+    anchor_name: &'repo str,
+    selects_path: bool,
+    repo: &'repo Repository,
+    path_base: Option<&'repo Path>,
+    reference: Option<gix::Reference<'repo>>,
+    candidates: Vec<ObjectId>,
+    read_failure: RefCell<Option<gix::Error>>,
+}
+
+impl<'repo> Revision<'repo> {
+    fn anchor(&self) -> Result<Vec<ObjectId>> {
+        if let ([], Some(reference)) = (self.candidates.as_slice(), &self.reference) {
+            return Ok(vec![reference.clone().follow_to_object()?.detach()]);
+        }
+        Ok(self.candidates.clone())
+    }
+
+    fn read_object(&self, id: ObjectId) -> Result<Object<'repo>> {
+        rerail_prof::count("git.revision_object_reads", 1);
+        verified_object(self.repo, id).map_err(|error| {
+            let reason = match error.kind() {
+                std::io::ErrorKind::NotFound => "missing-object",
+                std::io::ErrorKind::InvalidData => "corrupt-object",
+                _ => "unreadable-object",
+            };
+            lookup_error(reason, format_args!("Git object {id}: {error}"))
+        })
+    }
+
+    fn read(&self, id: ObjectId) -> Result<Object<'repo>> {
+        self.read_object(id).inspect_err(|error| {
+            self.read_failure.borrow_mut().get_or_insert_with(|| lookup_error(failure_reason(error), failure_detail(error)));
+        })
+    }
+
+    fn peel(&self, id: ObjectId, kind: Option<Kind>) -> Result<Object<'repo>> {
+        peel_object(self.read(id)?, kind, |target| self.read(target))
+    }
+
+    fn navigate(&mut self, step: impl Fn(&Self, ObjectId) -> Result<ObjectId>) -> Result<()> {
+        let mut next = Vec::new();
+        let mut rejected = None;
+        for id in self.anchor()? {
+            match step(self, id) {
+                Ok(value) => next.push(value),
+                Err(error) => rejected = Some(error),
+            }
+        }
+        if next.is_empty() {
+            return Err(rejected
+                .unwrap_or_else(|| message("Git expression has no starting revision").raise()));
+        }
+        next.sort_unstable();
+        next.dedup();
+        self.candidates = next;
+        Ok(())
+    }
+
+    fn path<'path>(&self, path: &'path BStr) -> Result<std::borrow::Cow<'path, BStr>> {
+        // Only an explicit ./ or ../ is relative to the caller's worktree directory.
+        if path.starts_with(b"./") || path.starts_with(b"../") {
+            use std::borrow::Cow;
+            let base = self.path_base
+                .ok_or_else(|| message("Relative Git paths require a worktree").raise())?;
+            let relative = gix::path::from_bstr(Cow::Borrowed(path))?;
+            let full = gix::path::normalize_and_clean(Cow::Owned(base.join(relative)), Path::new(""))
+                .ok_or_else(|| message!("Git path {path:?} leaves the repository").raise())?;
+            Ok(gix::path::to_unix_separators_on_windows(gix::path::into_bstr(full)?))
+        } else {
+            Ok(path.into())
+        }
+    }
+
+    fn tree_path(&self, id: ObjectId, path: &BStr) -> Result<ObjectId> {
+        let directory = path.ends_with(b"/") || path.ends_with(b"/.");
+        let path = self.path(path)?;
+        let mut tree = self.peel(id, Some(Kind::Tree))?.into_tree();
+        if path.is_empty() {
+            return Ok(tree.id);
+        }
+        let mut segments = path.split(|byte| *byte == b'/').peekable();
+        while let Some(name) = segments.next() {
+            let tree_id = tree.id;
+            let entries = super::decode_tree(tree).map_err(|error| {
+                lookup_error("malformed-object", format_args!("Git tree {tree_id}: {error}"))
+            })?;
+            let index = entries.binary_search_by(|entry| entry.name.as_slice().cmp(name)).map_err(|_| {
+                lookup_error("missing-path", format_args!("Git path {path:?} does not exist in tree {tree_id}"))
+            })?;
+            let entry = &entries[index];
+            let target = entry.target;
+            let final_entry = segments.peek().is_none() || segments.clone().eq([&b""[..]]);
+            if (directory || !final_entry) && !entry.is_tree() {
+                return Err(lookup_error("wrong-object-kind", format_args!("Git path component in {path:?} is not a directory")));
+            }
+            if final_entry {
+                // rev-parse can name an absent blob or foreign gitlink from the recorded tree.
+                // A header suffices to validate a local target without inflating a large blob.
+                let expected = match entry.mode & 0o170000 {
+                    0o040000 => Kind::Tree,
+                    0o160000 => Kind::Commit,
+                    _ => Kind::Blob,
+                };
+                check_local_kind(self.repo, target, expected)?;
+                return Ok(target);
+            }
+            let object = self.read(target)?;
+            check_kind(target, object.kind, Kind::Tree)?;
+            tree = object.into_tree();
+        }
+        unreachable!("an empty path returned the root")
+    }
+
+    fn matching_commit(
+        &self,
+        tips: Vec<gix::Commit<'repo>>,
+        pattern: &BStr,
+        matcher: &MessagePattern,
+        negated: bool,
+    ) -> Result<ObjectId> {
+        let shallow = self.repo.shallow_commits()?;
+        let mut seen = HashSet::new();
+        let mut pending = gix::revwalk::PriorityQueue::new();
+        let mut order = 0;
+        let mut first_error = None;
+        let mut enqueue = |id, commit: Result<gix::Commit<'repo>>, pending: &mut gix::revwalk::PriorityQueue<_, _>| {
+            let candidate = commit.and_then(|commit| {
+                let time = commit_metadata(&commit)?.time()?.seconds;
+                Ok((time, commit))
+            });
+            match candidate {
+                Ok((time, commit)) => {
+                    pending.insert((time, std::cmp::Reverse(order)), commit);
+                    order += 1;
+                }
+                Err(error) => {
+                    eprintln!("Git message search skipped {id}: {}", failure_detail(&error));
+                    first_error.get_or_insert(error);
+                }
+            }
+        };
+        for commit in tips {
+            if seen.insert(commit.id) { enqueue(commit.id, Ok(commit), &mut pending); }
+        }
+        while let Some(commit) = pending.pop_value() {
+            if matcher.matches(commit.message_raw_sloppy()).map_err(|error| lookup_error("invalid-revision", error))? ^ negated {
+                return Ok(commit.id);
+            }
+            if shallow
+                .as_ref()
+                .is_none_or(|commits| commits.binary_search(&commit.id).is_err())
+            {
+                for parent in commit.parent_ids() {
+                    let id = parent.detach();
+                    if seen.insert(id) {
+                        enqueue(id, self.read_object(id).and_then(Object::try_into_commit), &mut pending);
+                    }
+                }
+            }
+        }
+        Err(first_error.unwrap_or_else(|| lookup_error("missing-revision", format_args!("No Git commit message matched {pattern:?}"))))
+    }
+}
+
+impl delegate::Revision for Revision<'_> {
+    fn find_ref(&mut self, name: &BStr) -> Result<()> {
+        self.reference = Some(self.repo.try_find_reference(name)?.ok_or_else(|| {
+            lookup_error("missing-revision", format_args!("No Git reference matches {name:?}"))
+        })?);
+        self.candidates.clear();
+        Ok(())
+    }
+
+    fn disambiguate_prefix(
+        &mut self,
+        prefix: gix::hash::Prefix,
+        _: Option<delegate::PrefixHint<'_>>,
+    ) -> Result<()> {
+        let kind = self.repo.object_hash();
+        let len = prefix.hex_len();
+        if self.anchor_name.contains('-') {
+            if let Some(reference) = self.repo.try_find_reference(self.anchor_name)? {
+                self.reference = Some(reference);
+                return Ok(());
+            }
+            let valid = self.anchor_name.rsplit_once("-g").is_some_and(|(base, hex)| {
+                hex.eq_ignore_ascii_case(&prefix.to_string()) && base.rsplit_once('-').is_some_and(|(name, distance)| {
+                    !name.is_empty() && !distance.is_empty() && distance.bytes().all(|b| b.is_ascii_digit())
+                })
+            });
+            if !valid { return Err(lookup_error("missing-revision", self.anchor_name)); }
+        }
+        if len < kind.len_in_hex()
+            && let Some(reference) = self.repo.try_find_reference(&prefix.to_string())?
+        {
+            self.reference = Some(reference);
+            return Ok(());
+        }
+        let mut padded = ObjectId::null(kind);
+        let bytes = prefix
+            .as_oid()
+            .as_bytes()
+            .get(..len.div_ceil(2))
+            .expect("gix parsed the prefix");
+        if bytes.len() > kind.len_in_bytes() {
+            return Err(message!("Git object prefix {prefix} is too long for {kind}").raise());
+        }
+        padded.as_mut_slice()[..bytes.len()].copy_from_slice(bytes);
+        let prefix = gix::hash::Prefix::new(&padded, len)?;
+        let mut candidates = HashSet::new();
+        self.repo
+            .objects
+            .lookup_prefix(prefix, Some(&mut candidates))?;
+        if len == kind.len_in_hex() && padded == ObjectId::empty_tree(kind) {
+            candidates.insert(padded);
+        }
+        if candidates.is_empty() {
+            return Err(lookup_error("missing-revision", format_args!("No Git object matches prefix {prefix}")));
+        }
+        self.candidates = candidates.into_iter().collect();
+        self.candidates.sort_unstable();
+        Ok(())
+    }
+
+    fn reflog(&mut self, query: delegate::ReflogLookup) -> Result<()> {
+        use delegate::ReflogLookup;
+        let mut reference = match &self.reference {
+            Some(reference) => reference.clone(),
+            None => match self.repo.head_ref()? {
+                Some(branch) => branch,
+                None => self.repo.find_reference("HEAD")?,
+            },
+        };
+        if !reference.log_exists()? {
+            reference.follow_to_object()?;
+        }
+        let mut log = reference.log_iter();
+        let mut entries = log
+            .rev()
+            .map_err(ErrorExt::raise)?
+            .ok_or_else(|| message("Git reference has no reflog").raise())?;
+        let value = match query {
+            ReflogLookup::Entry(index) => {
+                entries.nth(index).transpose()?.map(|entry| entry.new_oid)
+            }
+            ReflogLookup::Date(time) => {
+                let mut oldest = None;
+                for entry in entries {
+                    let entry = entry?;
+                    let id = entry.new_oid;
+                    if entry.signature.time.seconds <= time.seconds {
+                        oldest = Some(id);
+                        break;
+                    }
+                    oldest = Some(if entry.previous_oid.is_null() {
+                        id
+                    } else {
+                        entry.previous_oid
+                    });
+                }
+                oldest
+            }
+        }
+        .ok_or_else(|| message("No Git reflog entry matches").raise())?;
+        self.candidates = vec![value];
+        Ok(())
+    }
+
+    fn nth_checked_out_branch(&mut self, number: usize) -> Result<()> {
+        let name = previous_checkout(self.repo, number)?;
+        if let Some(reference) = self.repo.try_find_reference(name.as_bstr())? {
+            let target = reference.clone().follow_to_object()?.detach();
+            self.candidates = vec![self.peel(target, None)?.id];
+            self.reference = Some(reference);
+            return Ok(());
+        }
+        self.candidates = vec![ObjectId::from_hex(name.as_ref())?];
+        Ok(())
+    }
+
+    fn sibling_branch(&mut self, kind: delegate::SiblingBranch) -> Result<()> {
+        let mut reference = match &self.reference {
+            Some(reference) => reference.clone(),
+            None => self
+                .repo
+                .head_ref()?
+                .ok_or_else(|| message("HEAD has no branch").raise())?,
+        };
+        if reference.name() == "HEAD" {
+            reference.follow_to_object()?;
+        }
+        let tracking = match kind {
+            delegate::SiblingBranch::Upstream => upstream_name(self.repo, &reference)?,
+            delegate::SiblingBranch::Push => push_tracking_name(self.repo, &reference, self.push_mode)?,
+        };
+        self.find_ref(tracking.as_ref().as_bstr())
+    }
+}
+
+impl delegate::Kind for Revision<'_> {
+    fn kind(&mut self, _: spec::Kind) -> Result<()> {
+        Err(message("Git revision expressions must resolve to a single object").raise())
+    }
+}
+
+impl delegate::Navigate for Revision<'_> {
+    fn traverse(&mut self, traversal: delegate::Traversal) -> Result<()> {
+        use delegate::Traversal;
+        let shallow = self.repo.shallow_commits()?;
+        self.navigate(|revision, id| {
+            let mut commit = revision.peel(id, Some(Kind::Commit))?.into_commit();
+            let parent = |commit: &gix::Commit<'_>, number| {
+                if shallow
+                    .as_ref()
+                    .is_some_and(|commits| commits.binary_search(&commit.id).is_ok())
+                {
+                    return Err(message!("Shallow history ends at {}", commit.id).raise());
+                }
+                let id = commit_metadata(commit)?
+                    .parents()
+                    .nth(number)
+                    .ok_or_else(|| {
+                        message!("Git commit {} has no parent {}", commit.id, number + 1).raise()
+                    })?;
+                let object = revision.read(id)?;
+                check_kind(id, object.kind, Kind::Commit)?;
+                Ok(object.into_commit())
+            };
+            match traversal {
+                Traversal::NthParent(number) => Ok(parent(&commit, number - 1)?.id),
+                Traversal::NthAncestor(steps) => {
+                    for _ in 0..steps {
+                        commit = parent(&commit, 0)?;
+                    }
+                    Ok(commit.id)
+                }
+            }
+        })
+    }
+
+    fn peel_until(&mut self, kind: delegate::PeelTo<'_>) -> Result<()> {
+        use delegate::PeelTo;
+        self.selects_path |= matches!(kind, PeelTo::Path(_));
+        self.navigate(|revision, id| match kind {
+            PeelTo::ValidObject => Ok(revision.read(id)?.id),
+            PeelTo::RecursiveTagObject => Ok(revision.peel(id, None)?.id),
+            PeelTo::ObjectKind(kind) => Ok(revision.peel(id, Some(kind))?.id),
+            PeelTo::Path(path) => revision.tree_path(id, path),
+        })
+    }
+
+    fn find(&mut self, pattern: &BStr, negated: bool) -> Result<()> {
+        if pattern.is_empty() && !negated {
+            return self.navigate(|revision, id| Ok(revision.peel(id, Some(Kind::Commit))?.id));
+        }
+        let matcher = MessagePattern::new(pattern).map_err(|error| {
+            lookup_error("invalid-revision", format_args!("Invalid Git message pattern {pattern:?}: {error}"))
+        })?;
+        if !self.anchor()?.is_empty() {
+            return self.navigate(|revision, id| {
+                let commit = revision.peel(id, Some(Kind::Commit))?.into_commit();
+                revision.matching_commit(vec![commit], pattern, &matcher, negated)
+            });
+        }
+        let mut starts = Vec::new();
+        let mut first_error = None;
+        let mut collect_refs = || -> Result<()> {
+            for entry in self.repo.references()?.all()? {
+                let mut reference = match entry {
+                    Ok(reference) => reference,
+                    Err(error) => {
+                        eprintln!("Git message search skipped an unreadable ref: {error}");
+                        first_error.get_or_insert_with(|| lookup_error("invalid-revision", error));
+                        continue;
+                    }
+                };
+                let name = reference.name().as_bstr().to_owned();
+                starts.push((name, reference.follow_to_object().map(|id| id.detach())));
+            }
+            Ok(())
+        };
+        if let Err(error) = collect_refs() {
+            eprintln!("Git message search could not enumerate refs: {}", failure_detail(&error));
+            first_error.get_or_insert(error);
+        }
+        match self.repo.head().map(|head| head.id().map(gix::Id::detach)) {
+            Ok(None) => {}
+            Ok(Some(id)) => starts.push(("HEAD".into(), Ok(id))),
+            Err(error) => starts.push(("HEAD".into(), Err(error))),
+        }
+
+        // Git prepends each ref and then HEAD before its stable sort by commit date.
+        // Deduplicate in that order so a second ref at the same object keeps its precedence.
+        let mut tip_ids = HashSet::new();
+        let mut tips = Vec::new();
+        for (name, start) in starts.into_iter().rev() {
+            let result = start.and_then(|id| {
+                if tip_ids.insert(id) { self.peel(id, None).map(Some) } else { Ok(None) }
+            });
+            match result {
+                Ok(Some(object)) if object.kind == Kind::Commit => tips.push(object.into_commit()),
+                Ok(_) => {}
+                Err(error) => {
+                    let error = self.read_failure.borrow_mut().take().unwrap_or(error);
+                    eprintln!("Git message search skipped {name}: {}", failure_detail(&error));
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        let found = self.matching_commit(tips, pattern, &matcher, negated).map_err(|error| {
+            if failure_reason(&error) == "missing-revision" { first_error.unwrap_or(error) } else { error }
+        })?;
+        self.candidates = vec![found];
+        Ok(())
+    }
+
+    fn index_lookup(&mut self, path: &BStr, stage: u8) -> Result<()> {
+        let stage = match stage {
+            0 => gix::index::entry::Stage::Unconflicted,
+            1 => gix::index::entry::Stage::Base,
+            2 => gix::index::entry::Stage::Ours,
+            3 => gix::index::entry::Stage::Theirs,
+            _ => return Err(message("Git index stage is out of range").raise()),
+        };
+        let path = self.path(path)?;
+        let index = self.repo.index()?;
+        let entry = index
+            .entry_by_path_and_stage(&path, stage)
+            .ok_or_else(|| message!("Git index has no entry for {path:?} at {stage:?}").raise())?;
+        self.candidates = vec![entry.id];
+        Ok(())
+    }
+}
+
+impl spec::parse::Delegate for Revision<'_> {
+    fn done(&mut self) -> Result<()> {
+        self.candidates = self.anchor()?;
+        if self.candidates.len() > 1
+            && let Some(hint) = self.repo.config_snapshot().string("core.disambiguate")
+            && let Some(hint) =
+                gix::config::tree::Core::DISAMBIGUATE.try_into_object_kind_hint(hint)?
+        {
+            use gix::revision::spec::parse::ObjectKindHint;
+            let mut preferred = Vec::new();
+            for &id in &self.candidates {
+                let matches = match hint {
+                    ObjectKindHint::Commit => self.read(id)?.kind == Kind::Commit,
+                    ObjectKindHint::Tree => self.read(id)?.kind == Kind::Tree,
+                    ObjectKindHint::Blob => self.read(id)?.kind == Kind::Blob,
+                    ObjectKindHint::Committish => self.peel(id, Some(Kind::Commit)).is_ok(),
+                    ObjectKindHint::Treeish => self.peel(id, Some(Kind::Tree)).is_ok(),
+                };
+                if matches {
+                    preferred.push(id);
+                }
+            }
+            if !preferred.is_empty() {
+                self.candidates = preferred;
+            }
+        }
+        Ok(())
+    }
+}

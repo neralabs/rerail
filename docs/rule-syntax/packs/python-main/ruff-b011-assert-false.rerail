@@ -1,5 +1,4 @@
 .policy "ruff-b011-assert-false" revision 1
-.guests off
 .description "Raise AssertionError instead of assert False; assertions are stripped when Python runs with optimizations enabled."
 .language python
 .mode steer

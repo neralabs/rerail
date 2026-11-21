@@ -301,7 +301,7 @@ pub(super) struct Round<'v> {
     pub(super) undeclared: Vec<String>,
     pub(super) rules: Vec<Made<'v>>,
     pub(super) no_inline: Vec<String>,
-    /// Relations it makes nullary (decision 0513's pair caches' guards).
+    /// Relations it makes nullary (decision 0488's pair caches' guards).
     pub(super) nullary: Vec<String>,
 }
 

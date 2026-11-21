@@ -1,5 +1,4 @@
 .policy "ruff-d107-undocumented-public-init" revision 1
-.guests off
 .description "Add a docstring to the __init__ method of each public class, describing its arguments and side effects."
 .language python
 .mode steer

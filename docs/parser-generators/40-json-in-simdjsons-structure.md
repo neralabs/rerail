@@ -593,6 +593,57 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 52, done: a return two ways (decision 0548)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A container's return | `scope_end`: `d == 0` ends the walk, else `object[d]` | `match ret { 0, 1, 2, _ => refuse }`, and `keep_ret(0)` at the document's calls | `if s.depth == 0 { … } else if ret == 1 { … } else { … }`, no number kept for the document |
+
+## Step 51, done: a close that cannot fail (decision 0547)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node closed | `close`: two stores, no failure | `s.close::<…>(…)?`, the writer testing for an open node, the bounds and the room | `s.close::<…>(…);`, the writer asserting them |
+
+## Step 50, done: the end the stream's count, tested once (decision 0546)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The end | `next == index + count`, once, after the outer close | a token taken past the count, `t.start == s.len`, and `ACCEPT`'s `t.start == self.len` | no token taken, `if (t.next as usize == s.n)`, `ACCEPT` tests the open nodes alone |
+
+## Step 49, done: an empty container one leaf (decision 0545)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| `{}`, `[]` | `empty!`: the next token is the closer, so one leaf | `open16`, a call, the call's switch on `}`, `close`, the return | `if s.byte(starts[t.next]) == 0x7d { … s.leaf16(7, st, t.rec_end); … }`, else the open and the call |
+
+## Step 48, done: a node's open and leaf cannot fail (decision 0544)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node written | `open`, `leaf`: the columns hold `bound` nodes, reserved once | `s.open16(…)?`, `s.leaf16(…)?`, each a refusal where the writer failed, each `pending = 0` | `s.open16(…);`, `s.leaf16(…);`: the room reserved once, the nodes' count checked once (`fits`), no `pending` |
+
+## Step 47, done: a token one load and one add (decision 0543)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A token taken | `take!()`: one load, one add; the index ends in sentinel entries | the index clamped to the count, the end selected, `last_end` copied | `t.start = *starts.add(t.next * rs); t.next += 1;`, the stream ended in two entries of the file's length |
+| The last token's end | the `end` it holds | `t.last_end = t.rec_end` at every token | read from `rec_end` where no arm made it again (`,`, `:`); kept by the `}` and `]` arms before they make theirs |
+
+## Step 46, done: the token's state the rule's local (decision 0542)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The token's state | `walk`'s locals `next`, `v`, `end` | fields of `S`: `s.start`, `s.rec_end`, `s.next`, `s.last_end`, `s.code` | `T`, the rule's local (`let t = &mut T::NEW;`): `t.start`, `t.rec_end`, … |
+| A node's start | `open(…, start)`, `leaf(…, start, end)` | read from `self.start` | given: `s.open16(7, t.start)`, `s.leaf16(13, t.start, t.rec_end)` |
+
+## Step 45, done: one dispatch, its values named by the grammar (decision 0541)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| Dispatches | one `match label`, six labels | three nested `match d` loops, arms that only pass a value on | one `match d`, four values; the object's and the array's loops each entered once |
+| A value's name | `ObjectBegin`, `ArrayValue`, `ScopeEnd` | its place (`L::Token32`, `L::Span40`) | what the place does, from the grammar's names: `L::ObjectBegin`, `L::ArrayBegin`, `L::ArrayValue`, `L::End` |
+
 ## Step 44, done: a string's place its argument, a dispatch's value named (decision 0526)
 
 | | the lean parser | before | now |
@@ -605,16 +656,16 @@ where it has one `match label`; names of places, not of the grammar's meaning; t
 where it keeps locals; `token_all`'s clamp and end test per token where `take!()` is one load; a writer call per node
 that can fail; empty containers through the general path; the end tested at each token.
 
-## Step 43, done: a token's end made only where a word reads it (decision 0521)
+## Step 43, done: a token's end made only where a word reads it (decision 0538)
 
 | | the lean parser | before | now |
 |---|---|---|---|
 | A punctuation's end | none kept; an end computed where it is written | `s.rec_end = s.start + 1;` in every one-byte arm | only where a word reads it (`end_read`): `}` and `]`, not `,`, `:`, `{`, `[`, `"` |
 | The last token's end in a string | none | copied at the loop's head and after each content | only where a word after the closer reads it: in JSON, nowhere |
 
-Left: `s.part_at`, a field where the lean parser passes an argument (0521, "Left").
+Left: `s.part_at`, a field where the lean parser passes an argument (0538, "Left").
 
-## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0519)
+## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0537)
 
 These close the five gaps found when the generated JSON Rust was set beside simdjson's and the lean parser's:
 
@@ -626,10 +677,10 @@ These close the five gaps found when the generated JSON Rust was set beside simd
 | An error | a `Code`, after `cold_path()` | `Err(false)` | `refuse(why::…)`, `#[cold]`, its reason returned and named by the host |
 | The source's form | indented, labels named by state | flat, `'b21`, `'m129` | indented, `'token_130: loop`, `break 'to_close_22;` |
 
-The bound's formula, the reasons and the label scheme are the implementer's; 0519 lists what the tests hold and
-what they do not. Every run's calls are limited to 1,024 nested, the JIT's and the interpreter's too (the user; 0519).
+The bound's formula, the reasons and the label scheme are the implementer's; 0537 lists what the tests hold and
+what they do not. Every run's calls are limited to 1,024 nested, the JIT's and the interpreter's too (the user; 0537).
 
-## Step 41, done: the kinds' numbers constants (D7, decision 0516); the tape's reads written directly (0510)
+## Step 41, done: the kinds' numbers constants (D7, decision 0535); the tape's reads written directly (0534)
 
 **D7.** A direct run's node numbers are literals at their words, as the lean parser writes a kind's constant and
 simdjson a container's character. The generator takes the language whose numbers it writes
@@ -646,11 +697,11 @@ its language (`LANG`, the table's fingerprint), and its runs take that language:
 |---|---|---|---|
 | D7. A kind's code | a constant (`'['`, `'t'`) | `number16`: `numbers[k]` loaded every node, from the language given at run time | a literal at the word; a keyword's by a `match` of its word |
 
-**The tape's reads** (`tape_format/src/reads.rs`, 0510) are a hand-written reader of format 16 and 15. They are no
+**The tape's reads** (`tape_format/src/reads.rs`, 0534) are a hand-written reader of format 16 and 15. They are no
 longer the reads' CLIF translated, and a test holds them equal to the JIT's. The relations' and the numbering's Rust
 reads are still translated, and are next.
 
-## Step 40, done: one writer in Rust written directly, one stack (decision 0508)
+## Step 40, done: one writer in Rust written directly, one stack (decision 0533)
 
 Order items 2, 3 and 5 of step 38, and D2. The writer is one Rust source written directly,
 `tape_format/src/writer16.rs`, in simdjson's `tape_builder` and `tape_writer` shape:
@@ -674,9 +725,9 @@ references:
 
 Left: D7, the kinds' numbers as constants. A number is the language's code table's, given at run time (the tests
 make one per file from format 15's first-use table), so constants need one table per language, known when the
-Rust is generated. Done in step 41 (decision 0516).
+Rust is generated. Done in step 41 (decision 0535).
 
-## Step 39, done: the writer's per-node work written directly (decision 0505)
+## Step 39, done: the writer's per-node work written directly (decision 0532)
 
 Order item 1 of step 38. `rust_stream` writes `W16`, a direct run's writer, in the lean parser's `Walk` shape. Its
 state is a field of the walk, and `open16`, `leaf16`, `close` and `accept` call its methods. Next to the two
@@ -745,17 +796,17 @@ the tape with the JIT's and the reference's byte for byte (`aot_tests`, `tier2_w
 
 **Steps 35–37 re-decided by shape.**
 
-- **Step 35 (0527), one writer kept from one document to the next:** kept. simdjson keeps its `parser`, its
+- **Step 35 (0528), one writer kept from one document to the next:** kept. simdjson keeps its `parser`, its
   buffers allocated once; the lean parser reserves its columns once (`reserve_columns`).
-- **Step 36 (0493), the newline index from tier 1's bits:** kept. Neither reference has a newline index, but
-  simdjson's stage 1 makes, in its one pass over the bytes, every mask stage 2 needs. The amendment (0493 §5) is
+- **Step 36 (0529), the newline index from tier 1's bits:** kept. Neither reference has a newline index, but
+  simdjson's stage 1 makes, in its one pass over the bytes, every mask stage 2 needs. The amendment (0529 §5) is
   the lean lexer's shape: a token loop's tier 1 makes no mask, and its index is the scan's.
-- **Step 37 (0494), the per-node ops:** `w_leaf` as one op is kept: it is the lean parser's `leaf`, `open` and then
+- **Step 37 (0530), the per-node ops:** `w_leaf` as one op is kept: it is the lean parser's `leaf`, `open` and then
   its two writes. The other cuts (`settle` only where needed, `w_commit` hot, a node's block once an op) are steps
   inside the ops whose shape items 1–4 replace. They are superseded by this order (the ops' CLIF is no longer the generated Rust's source), not kept as reasons.
 - Their counts tables are withdrawn as reasons.
 
-## Step 37, in progress: the writer's per-node ops (decision 0494)
+## Step 37, in progress: the writer's per-node ops (decision 0530)
 
 The third of step 34's three changes. About two thirds of what was left was the writer's ops, called at every node:
 about 300 instructions a node, where simdjson writes one tape word a value. The cuts so far:
@@ -772,7 +823,7 @@ about 300 instructions a node, where simdjson writes one tape word a value. The 
 | Now | 38.4 | 34.6 |
 | simdjson | 5.8 | 14.2 |
 
-## Step 36, done: the newline index from tier 1's bits (decision 0493)
+## Step 36, done: the newline index from tier 1's bits (decision 0529)
 
 The second of step 34's three changes. Tier 1 now outputs the stream's `\n` bytes (`BlockProgram::newlines`), and the
 format 16 writer makes the newline index from those words (`newlines::index_of`, through `Writer::begin_with`), not by
@@ -784,7 +835,7 @@ Tier 1 went from 4.35 to 4.58 instructions a byte, for the one output more.
 
 Left from step 34: the writer's ops, which are most of what remains, against simdjson's tape writes.
 
-## Step 35, done: one writer from one document to the next (decision 0527)
+## Step 35, done: one writer from one document to the next (decision 0528)
 
 The first of step 34's three changes. Tier 2's format 16 run now writes into a writer the caller keeps, as simdjson's
 caller keeps its parser (`Parser::image16_in`). `Writer::begin` keeps each part's buffer and zeroes no room. Only the
@@ -1147,7 +1198,7 @@ it out (merged from the hub's tape branch, 664c1f8411), has no such copy: its ta
 writer moves only the last block's columns down and lays the side lists (`w_finish`).
 
 0434's writer is a set of ops written once in CLIF (`w_open`, `w_leaf`, `w_close`, `w_commit`,
-…), with Rust generated from them (`tape_format`'s `generated_writer`; since step 40, decision 0508, the writer's Rust is written directly, `writer16.rs`). The JIT's tier 2 writes
+…), with Rust generated from them (`tape_format`'s `generated_writer`; since step 40, decision 0533, the writer's Rust is written directly, `writer16.rs`). The JIT's tier 2 writes
 format 16 through them (0434's R17), but from its working rows: at each top-level close, a pass
 over the nodes since the last one opens each in the ops (`native_cpu_tape::pass`). That is a
 second walk over every node.

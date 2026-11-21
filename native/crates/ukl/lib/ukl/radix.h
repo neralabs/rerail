@@ -37,6 +37,16 @@
 #define UKL_RADIX_SPILL UKL_RADIX_THREADS
 #endif
 #define UKL_RADIX_GROUPS (UKL_RADIX_THREADS / UKL_RADIX_RG)
+// The tile's threads a thread of a narrower group runs (decision 0527 §3), at most: `UKL_RADIX_THREADS / lsz` of
+// them, a block between barriers looping over its own. The CPU's groups are narrow (each of a group's threads is a
+// coroutine its barriers switch); a GPU's are `UKL_RADIX_THREADS`, its code a thread each.
+#ifndef UKL_RADIX_VT_MAX
+#if defined(UKL_CPU)
+#define UKL_RADIX_VT_MAX 8u
+#else
+#define UKL_RADIX_VT_MAX 1u
+#endif
+#endif
 
 typedef struct UklRadixArgs {
     uint32_t n;
@@ -59,7 +69,7 @@ UKL_INLINE uint32_t ukl_radix_row(uint32_t tile, uint32_t k, uint32_t t) { retur
                    TGID0,    uint32_t,     tile, ,                                                                      \
                    LID0,     uint32_t,     t,    )                                                                      \
     {                                                                                                                   \
-        ukl_radix_hist_tile_##Suffix(keys, hist, args, h, tile, t);                                                              \
+        ukl_radix_hist_tile_##Suffix(keys, hist, args, h, tile, t, UKL_RADIX_THREADS);                                                              \
     }                                                                                                                   \
     DEFINE_KERNEL2(ukl, ukl_radix_##Suffix##_scatter,                                                                   \
                    ARGS,     UklRadixArgs, args,      ,                                                                 \
@@ -75,7 +85,7 @@ UKL_INLINE uint32_t ukl_radix_row(uint32_t tile, uint32_t k, uint32_t t) { retur
                    TGID0,    uint32_t,     tile,      ,                                                                 \
                    LID0,     uint32_t,     t,         )                                                                 \
     {                                                                                                                   \
-        ukl_radix_scatter_tile_##Suffix(keys, values, offsets, outKeys, outValues, args, counts, before, base, digits, tile, t __UKL_ARGS);\
+        ukl_radix_scatter_tile_##Suffix(keys, values, offsets, outKeys, outValues, args, counts, before, base, digits, tile, t, UKL_RADIX_THREADS __UKL_ARGS);\
     }
 
 #define UKL_RADIX_NAME(f) f##_u32

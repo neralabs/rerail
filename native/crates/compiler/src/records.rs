@@ -370,6 +370,14 @@ pub struct Reader {
     /// and bytes. Its tokens are the opener's byte, each part, each run of the bytes between,
     /// and the closer (`read_parts`). None: the region is one token.
     pub parts: Vec<ReadPart>,
+    /// The kind of its region's bytes between its parts (`else K`), where it is one of its own (a
+    /// string's text beside its closer `"`, decision 0509); None: each token's first byte's. Its
+    /// rows' start masks give it too (`Records::retags`, `part`).
+    pub content: Option<u8>,
+    /// Its closers' own kinds (decision 0509): a closer that begins with byte `.0` has kind `.1`,
+    /// where its byte begins a token outside (a template's `"` and a string's opener). Their rows'
+    /// start masks give them too (`Records::retags`, `part`).
+    pub closers: Vec<(u8, u8)>,
     /// Where its parts are split (decision 0323): by tier 1's token loop (`Split::Tier1`, its
     /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
     /// whole region, as a reader without parts gives it).
@@ -443,6 +451,12 @@ impl Reader {
     }
 }
 
+/// Whether retag `t` is a token's own kind that no reader gives and no part is (a `0x` beside a
+/// number, a `.5` beside the operators, decision 0509): the token loop reads its mask.
+pub fn own_retag(r: &Records, t: &Retag) -> bool {
+    !t.part && !r.readers.iter().any(|rd| rd.tags().any(|(k, _)| k == t.kind))
+}
+
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
 /// bytes, as a lexer reads an escape in a string; or, with `last`, through the first bit of that
 /// output at or after its start (`bytes` 0), as a lexer reads the name after Kotlin's `$`.
@@ -476,6 +490,9 @@ pub struct Retag {
     /// tokens begins with its byte: its word stays (a `$name`'s), and on the CPU the reader's walk
     /// says it, as the lean lexer's string reader says what it read.
     pub part: bool,
+    /// The bytes its row's tokens begin with (its own, before its kind's byte was moved): where a
+    /// token loop's arm reads it (decision 0509).
+    pub first: [u64; 4],
 }
 
 /// A region a reader reads (`Reader`): its opener's and closer's outputs; the last byte at
@@ -523,13 +540,13 @@ fn first_bit(outputs: &[Vec<u64>], o: u16, from: usize) -> Option<usize> {
 /// lasts, in order, as a lexer reads a string: the opener's byte; then from the byte after,
 /// the nearer of the closer's next bit and each part's next bit, the bytes before it a token
 /// of their own (the content's), a part its bytes, and on after it, until the closer, its
-/// bytes the last token. `Err` where the closer never comes (the file is refused).
-pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec<(usize, usize)>, ()> {
-    let a = reader.arms.first().ok_or(())?;
+/// bytes the last token. `None` where the closer never comes (the file is refused).
+pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Option<Vec<(usize, usize)>> {
+    let a = reader.arms.first()?;
     let mut out = vec![(s, s)];
     let mut at = s + 1;
     loop {
-        let c = first_bit(outputs, a.closer, at).ok_or(())?;
+        let c = first_bit(outputs, a.closer, at)?;
         let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));
         let to = part.map_or(c, |(e, ..)| e);
         if to > at {
@@ -537,17 +554,17 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
         }
         match part {
             Some((e, _, p)) => {
-                let l = p.last_at(e, outputs).ok_or(())?;
+                let l = p.last_at(e, outputs)?;
                 out.push((e, l));
                 at = l + 1;
             }
             None => {
                 let l = match a.last {
-                    Some(o) => first_bit(outputs, o, c).ok_or(())?,
+                    Some(o) => first_bit(outputs, o, c)?,
                     None => c.wrapping_add_signed(isize::from(a.off)),
                 };
                 out.push((c, l));
-                return Ok(out);
+                return Some(out);
             }
         }
     }
@@ -570,7 +587,11 @@ pub fn read_last(records: &Records, reader: &Reader, s: usize, bytes: &[u8], out
         loop {
             if x != 0 {
                 let c = 64 * q + x.trailing_zeros() as usize;
-                return Ok(c.wrapping_add_signed(isize::from(a.off)));
+                // A closer to its last (`ReadArm::last`, a `${`'s two bytes), as the walk ends it.
+                return match a.last {
+                    Some(o) => first_bit(outputs, o, c).ok_or(()),
+                    None => Ok(c.wrapping_add_signed(isize::from(a.off))),
+                };
             }
             q += 1;
             match w.get(q) {
@@ -690,7 +711,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
             let opens = reader.arms.first().is_some_and(|a| outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1));
             if reader.parts_in_tier1() && opens {
                 match read_parts(reader, s, outputs) {
-                    Ok(tokens) => {
+                    Some(tokens) => {
                         let l = tokens.last().map_or(s, |t| t.1);
                         for (a, b) in tokens {
                             starts.push(a as u32);
@@ -698,7 +719,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         }
                         at = l + 1;
                     }
-                    Err(()) => {
+                    None => {
                         read = true;
                         starts.push(s as u32);
                         lasts.push(s as u32);

@@ -1,5 +1,4 @@
 .policy "ruff-pyi004-patch-version-comparison" revision 1
-.guests off
 .description "Compare sys.version_info in a stub file against major and minor versions only; type checkers do not understand patch versions."
 .language python
 .mode steer

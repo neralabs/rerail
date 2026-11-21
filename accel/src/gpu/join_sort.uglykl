@@ -129,7 +129,7 @@ DEFINE_KERNEL2(join, col_top,
   out[3u + k + t] = len;
 }
 
-// The engine's sketch hash (`logic::bloom::hash`, setfix's `mix`).
+// splitmix64's finalizer: the hash of the engine's `logic::bloom`, so that the host reads the filter as its own.
 UKL_INLINE uint64_t join_bloom_hash(uint64_t x)
 {
   x ^= 0x9e3779b97f4a7c15ul;
@@ -140,10 +140,9 @@ UKL_INLINE uint64_t join_bloom_hash(uint64_t x)
   return x ^ (x >> 31);
 }
 
-// The column's distinct values into a blocked Bloom filter (`logic::bloom`, decision 0513): a thread a run (one a
-// distinct value), its key plus the base back to the value, five bits of one 64-bit word, set as the word's two
-// 32-bit halves with atomics (the same bytes as the host's words). `words` zeroed. p: the rows, the filter's 64-bit
-// words (a power of two), whether the base is the span's (`span[0]`); b0: the host's base.
+// Each run's key, its value the key plus the column's base, into a blocked Bloom filter of p1 (a power of two)
+// 64-bit words, two halves each: its word from the hash's bits 40 on, five bits of it from its low 30. The base is
+// the host's (b0), or with p2 the device's span (`col_base`). p0: the rows.
 DEFINE_KERNEL2(join, col_bloom,
                ROBUFFER, KEY_T,    rkeys, "[a.p0]",
                ROBUFFER, uint32_t, nruns, "[1]",
@@ -153,7 +152,8 @@ DEFINE_KERNEL2(join, col_bloom,
                GID0,     uint32_t, r,     )
 {
   if (r >= a.p0 || r >= nruns[0]) return;
-  uint64_t h = join_bloom_hash((uint64_t)rkeys[r] + (uint64_t)(a.p2 != 0u ? span[0] : a.b0));
+  int64_t base = a.p2 != 0u ? span[0] : a.b0;
+  uint64_t h = join_bloom_hash((uint64_t)rkeys[r] + (uint64_t)base);
   uint32_t w = (uint32_t)(h >> 40) & (a.p1 - 1u);
   uint32_t lo = 0u, hi = 0u;
   for (uint32_t i = 0u; i < 5u; i++) {

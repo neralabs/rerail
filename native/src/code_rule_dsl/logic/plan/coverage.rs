@@ -27,7 +27,7 @@ use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).
@@ -305,7 +305,9 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
-    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
+    // The relation's rows, whether a native stratum made it, and where each part ran.
+    type Lowered = (Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>);
+    let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<Lowered, String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it. The
         // probe's run holds it (decision 0442).
@@ -409,12 +411,18 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(had == text, "the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it", path.display());
+    if had != text {
+        let old: BTreeSet<&str> = had.lines().collect();
+        let new: BTreeSet<&str> = text.lines().collect();
+        let gone = old.difference(&new).copied().collect::<Vec<_>>().join("\n");
+        let came = new.difference(&old).copied().collect::<Vec<_>>().join("\n");
+        panic!("the executors' gaps by pack differ from {}: RERAIL_BLESS_COVERAGE=1 writes it\n--- ledger\n{gone}\n+++ now\n{came}", path.display());
+    }
 }
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -473,19 +481,35 @@ fn every_operation_runs_on_every_executor() {
     }
     let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
+        // The ledger's device column is measured, never written as "no Metal device" by a host without one.
+        assert!(metal(), "RERAIL_BLESS_COVERAGE writes the device column too: bless on a host with a Metal device");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
         packs_ledger(&all, &rows);
         return;
     }
     let had = std::fs::read_to_string(&path).unwrap_or_default();
-    // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
-    if had == rows {
-        packs_ledger(&all, &rows);
+    // A host with no Metal device measures the native column only: both sides are compared without the device's.
+    let measured = |text: &str| -> String {
+        if metal() {
+            return text.to_owned();
+        }
+        text.lines()
+            .map(|l| match l.splitn(4, '\t').collect::<Vec<_>>().as_slice() {
+                [name, native, _, rule] if !l.starts_with('#') => format!("{name}\t{native}\t{rule}\n"),
+                _ => format!("{l}\n"),
+            })
+            .collect()
+    };
+    let (compared, now) = (measured(&had), measured(&rows));
+    // The gaps by pack follow from the matrix (the ledger's, with its device column): compared once the matrix is as
+    // the ledger says.
+    if compared == now {
+        packs_ledger(&all, &had);
     }
-    if had != rows {
-        let old: BTreeSet<&str> = had.lines().collect();
-        let new: BTreeSet<&str> = rows.lines().collect();
+    if compared != now {
+        let old: BTreeSet<&str> = compared.lines().collect();
+        let new: BTreeSet<&str> = now.lines().collect();
         let gone: Vec<&&str> = old.difference(&new).collect();
         let came: Vec<&&str> = new.difference(&old).collect();
         panic!(
@@ -579,7 +603,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {

@@ -169,7 +169,7 @@ fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
 }
 
 fn program(name: &str) -> String {
-    crate::code_rule_dsl::logic::settings::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
+    crate::code_rule_dsl::logic::settings::program_text(&std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
 }
 
 /// Where `calls.rerail` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -1246,7 +1246,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/leg083");
-    let rule_src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
+    let rule_src = std::fs::read_to_string(std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rerail")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)
 at(p, s, \"lazy\") :- lazy_terminal(c), node(d, c, _, s, _), doc(d, p, _).

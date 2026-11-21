@@ -102,6 +102,4 @@ join row. W's Rust walked each file once. Open:
 
 **Metal (R7).** At `--metal-mb 2048` the rows equal the before run's (plus `rr_embed_req`): after, 76.3 s of CPU,
 26.3 s of wall and 1,123 G instructions; before, 37.0 s, 31.6 s and 478 G (load about 5). At the default 512 MB the
-run failed there: the derived relations' row blocks held the Metal budget, and the ast matcher wave was refused. On
-rr-align a run's row blocks are host memory the device reads through a wrap of their written extent (`Device::May`,
-decision 0435 §1), never Metal pool leases, so they hold none of the budget.
+run fails: the derived relations' row blocks hold the Metal budget, and the ast matcher wave is refused (Q379).

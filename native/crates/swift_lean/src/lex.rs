@@ -372,12 +372,11 @@ impl<'s> Lexer<'s> {
                     _ => break,
                 }
             }
-            if self.at(at) >= 0x80 {
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
-                        return Err(Refusal::Lex(at as u32));
-                    }
-                }
+            if self.at(at) >= 0x80
+                && let Some((c, _)) = decode(self.src, at)
+                && c.is_whitespace()
+            {
+                return Err(Refusal::Lex(at as u32));
             }
             let Some((end, block)) = self.comment(at)? else { return Ok((at, nl)) };
             let kind = if block { crate::K::MultilineComment } else { crate::K::Comment };
@@ -478,13 +477,12 @@ impl<'s> Lexer<'s> {
                         // White space past ASCII is refused (`skip`): the long way.
                         return Ok(Lexed::Slow);
                     }
-                    if c == b'/' {
-                        if let Some((end, block)) = self.comment(pos)? {
+                    if c == b'/'
+                        && let Some((end, block)) = self.comment(pos)? {
                             let kind = if block { crate::K::MultilineComment } else { crate::K::Comment };
                             extras.push((crate::tw::key(kind, 0, true), pos as u32, end as u32));
                             return Ok(Lexed::Extra(end));
                         }
-                    }
                 }
                 // Any other token from its first byte, as `token` reads it there.
                 let (kind, e, word, tick) = self.token_at(pos)?;
@@ -731,7 +729,7 @@ impl<'s> Lexer<'s> {
                 // A hex float: `0x` digits (`.` digits)? `p` exponent (only `0x`, not `0X`).
                 if c1 == b'x' {
                     let f = if self.at(e) == b'.' { self.digits(e + 1, &HEX) } else { Some(e) };
-                    if let Some(x) = f.and_then(|f| self.exponent(f, [b'p', b'P'])) {
+                    if let Some(x) = f.and_then(|f| self.exponent(f, *b"pP")) {
                         best = (T::Real, x);
                     }
                 }
@@ -740,22 +738,21 @@ impl<'s> Lexer<'s> {
             if let Some(e) = self.digits(s + 2, &OCT) {
                 best = (T::Oct, e);
             }
-        } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, &BIN) {
+        } else if c0 == b'0' && matches!(c1, b'b' | b'B')
+            && let Some(e) = self.digits(s + 2, &BIN) {
                 best = (T::Bin, e);
             }
-        }
         if best.1 == s {
             let e = self.digits(s, &DEC).expect("a digit");
             best = (T::Int, e);
-            if let Some(x) = self.exponent(e, [b'e', b'E']) {
+            if let Some(x) = self.exponent(e, *b"eE") {
                 best = (T::Real, x);
             }
-            if self.at(e) == b'.' {
-                if let Some(f) = self.digits(e + 1, &DEC) {
-                    let x = self.exponent(f, [b'e', b'E']).unwrap_or(f);
-                    best = (T::Real, x);
-                }
+            if self.at(e) == b'.'
+                && let Some(f) = self.digits(e + 1, &DEC)
+            {
+                let x = self.exponent(f, *b"eE").unwrap_or(f);
+                best = (T::Real, x);
             }
         }
         // A word byte right after the number: the lexer reads another token there (refused).

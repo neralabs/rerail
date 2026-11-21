@@ -18,7 +18,7 @@ the names' text and not their atoms.
 
 They do not. What a run keeps after lowering stays the store's, keyed by the store's atoms:
 - the kept plans (decisions 0038 and 0116);
-- the prepared plans (Q228);
+- the prepared plans (Q183);
 - the stored pipeline runs;
 - the memo.
 
@@ -36,7 +36,7 @@ Two things cross stores today, and both are keyed by something with no atoms in 
    the caller passes, so that security boundaries hold. No caller asks for plans from another project.
 3. **There is little to win.** Planning is 1-3% of a cold run's CPU (0361 step 5, corpus0 x B-now: 0.3 s of search
    and about 2.7 s of statistics out of 94 s). A new store's prepared plans are made from the facts at its first
-   run, with no store read (Q228's "made" count).
+   run, with no store read (Q183's "made" count).
 4. **The other way costs every key.** Rule hashes, helper names, identities and line keys would all be re-based on
    text: a name lookup at each atom of every hash, `line_key` included, which is computed at every plan.
 

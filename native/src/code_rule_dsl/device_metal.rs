@@ -20,12 +20,15 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
-/// This crate's own test binary, which the engine does not load: Metal is registered as the binary loads, as the
-/// engine registers it (`crate::install_devices`), so the device's tests run on the device.
+/// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
+/// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
+/// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         super::register();
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        crate::test_languages();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
@@ -108,8 +111,8 @@ impl SolverDevice for Metal {
         packed::metal_sort::install_guard();
     }
 
-    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
-        joins::column_stats(cols, k, words).map_err(Refused::Failed)
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
+        joins::column_stats(cols, k).map_err(Refused::Failed)
     }
 }
 

@@ -3,6 +3,8 @@ use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 
 use crate::launch;
 
@@ -17,20 +19,22 @@ use crate::launch;
 pub fn metal_buffer_limit() -> usize {
     rerail_accel::budget::metal()
 }
-
-/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held. The
-/// compiled pipelines are the store of compiled kernels' (`rerail_accel::gpu::kernels`, decision 0395). A
-/// reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build's ledger is its
-/// thread's (`test_pool`).
-#[cfg(not(any(test, feature = "test-hooks")))]
+/// The device's state on this machine (decision 0442: the machine's): the pool's ledger and the most it held, and
+/// the allocations' lock. The compiled pipelines are the store of compiled kernels'
+/// (`rerail_accel::gpu::kernels`, decision 0395).
+/// A reservation holds the ledger it charged, so its drop on any thread goes back to it. A test build off macOS has
+/// none of it: its ledgers are its threads' (`test_pool`), and only Metal's driver is weighed under the lock.
+#[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
 #[derive(Default)]
 pub(crate) struct DeviceState {
     pool: Arc<AtomicUsize>,
     peak: Arc<AtomicUsize>,
+    #[cfg(target_os = "macos")]
+    allocation: Mutex<()>,
 }
 
-#[cfg(not(any(test, feature = "test-hooks")))]
-fn state() -> Arc<DeviceState> {
+#[cfg(any(target_os = "macos", not(any(test, feature = "test-hooks"))))]
+pub(crate) fn state() -> Arc<DeviceState> {
     rerail_context::machine::<DeviceState>()
 }
 
@@ -46,8 +50,43 @@ fn pool_peak() -> Arc<AtomicUsize> {
     Arc::clone(&state().peak)
 }
 
+/// Whether the driver refuses a buffer of `length` more: past the device's largest buffer, or past the OS's working
+/// set for the device (`recommendedMaxWorkingSetSize`) with what the driver holds. Not past the Metal budget: the
+/// driver's figure counts every buffer Metal knows of, the no-copy wraps of the run's host blocks (row blocks, tapes,
+/// journals) with them, which are the host budget's pages, not device memory the budget bounds. Compared with the
+/// budget, a 1-node wave's buffer was refused with 337 MB of a 2 GB budget free (the driver at 3.7 GB, the pool's own
+/// at 1.7 GB; t62, Q203). The budget is the pool's ledger and leases, checked where they are reserved (`acquire`,
+/// `make_room`).
+#[cfg(target_os = "macos")]
+fn driver_refuses(device: &metal::DeviceRef, length: usize) -> bool {
+    let length = length as u64;
+    let driver = driver_bytes(device);
+    if rerail_prof::on() && driver.saturating_add(length) > metal_buffer_limit() as u64 {
+        rerail_prof::count("capacity.driver_past_budget", 1);
+    }
+    length > device.max_buffer_length() || driver.saturating_add(length) > working_set(device)
+}
+
+/// The OS's working set for the device: what it can hold resident at once.
+#[cfg(target_os = "macos")]
+fn working_set(device: &metal::DeviceRef) -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(bytes) = test_pool::working_set() {
+        return bytes;
+    }
+    device.recommended_max_working_set_size()
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::test_pool;
+/// What the Metal driver has allocated for the device (a test build's: `test_pool::driver_bytes`).
+#[cfg(all(target_os = "macos", not(any(test, feature = "test-hooks"))))]
+fn driver_bytes(device: &metal::DeviceRef) -> u64 {
+    device.current_allocated_size()
+}
+
+#[cfg(all(target_os = "macos", any(test, feature = "test-hooks")))]
+use test_pool::driver_bytes;
 #[cfg(any(test, feature = "test-hooks"))]
 use test_pool::{pool, pool_peak};
 
@@ -98,7 +137,7 @@ pub fn peak_mb() -> usize {
 }
 
 /// What the Metal driver says it has allocated for the device, in MB: none where nothing opened the device (it is
-/// not opened to read it), and none on a backend other than Metal.
+/// not opened to read it), and none off macOS (Metal's count).
 pub fn driver_mb() -> usize {
     #[cfg(target_os = "macos")]
     {
@@ -286,6 +325,19 @@ impl HostMapped {
 
     fn over(region: MappedRegion) -> Result<Self, Error> {
         let device = crate::lane::device()?;
+        // Metal's driver refuses past the OS's working set for the device; the budget is weighed where the
+        // reservation was taken, never against the driver's count (Q203, `driver_refuses`).
+        #[cfg(target_os = "macos")]
+        if let Some(metal) = rerail_accel::gpu::shared::opened_device() {
+            let st = state();
+            let _allocation = st.allocation.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if driver_refuses(metal, region.length) {
+                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("TEMPO_HOST_MAPPED_REJECT bytes={} driver={}", region.length, driver_bytes(metal));
+                }
+                return Err(Error::BackendCapacity);
+            }
+        }
         // SAFETY: the mapping is held with the buffer, and its holder waits for the commands that use it.
         let buffer = unsafe { rerail_device::device::wrap_host_memory(device, region.pointer.as_ptr(), region.length) }.map_err(|e| {
             if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
@@ -358,6 +410,33 @@ pub fn pipelines_compiled_here() -> usize {
 #[cfg(test)]
 mod memory_budget_tests {
     use super::*;
+
+    /// Q203: the run's host pages wrapped for the device (row blocks, tapes: no-copy buffers) are the host budget's,
+    /// not device memory the Metal budget bounds. With the driver holding them past the budget, a buffer within the
+    /// budget is still given; the driver's figure refuses only past the OS's working set for the device.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_pages_wrapped_past_the_budget_leave_the_budgets_buffers() {
+        use metal::MTLResourceOptions;
+        let Some(device) = crate::METAL_DEVICE.as_ref() else { return };
+        test_pool::measure_driver();
+        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
+        let len = (metal_buffer_limit() + (64 << 20)).div_ceil(page) * page;
+        // An anonymous mapping, never touched: the host's pages, wrapped as a run's row blocks are.
+        let host = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+        assert_ne!(host, libc::MAP_FAILED);
+        let wrap = device.new_buffer_with_bytes_no_copy(host.cast_const(), len as u64, MTLResourceOptions::StorageModeShared, None);
+        assert!(driver_bytes(device) > metal_buffer_limit() as u64, "the driver counts the wrap: {} MB", driver_bytes(device) >> 20);
+        let given = HostMapped::zeroed::<u8>(1 << 20);
+        assert!(given.is_ok(), "a 1 MB buffer within the budget, the driver at {} MB of a {} MB budget", driver_bytes(device) >> 20, metal_buffer_limit() >> 20);
+        drop(given);
+        // Past the working set the driver's figure refuses.
+        test_pool::set_working_set(Some(driver_bytes(device) + (1 << 19)));
+        assert_eq!(HostMapped::zeroed::<u8>(1 << 20).err(), Some(Error::BackendCapacity), "past the working set");
+        test_pool::set_working_set(None);
+        drop(wrap);
+        unsafe { libc::munmap(host, len) };
+    }
 
     /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
     /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.

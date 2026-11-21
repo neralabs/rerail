@@ -4,6 +4,8 @@
 //! owner) run again in a child process of this test binary ([`in_child`]), since the environment
 //! and the installed setup belong to the whole process.
 
+#[allow(unused_imports)]
+use crate::source_tree::Canonical as _;
 use super::opener::{self, OpenError};
 use super::pool;
 use super::setup::{self, GitSetup};
@@ -26,7 +28,7 @@ fn temporary(name: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
-    path.canonicalize().unwrap()
+    path.canonical().unwrap()
 }
 
 fn git_output(directory: &Path, arguments: &[&str], env: &[(&str, &str)]) -> std::process::Output {
@@ -414,7 +416,7 @@ fn git_check_ignore(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {
     let text = String::from_utf8(output.stdout).unwrap();
     let fields = text.split('\0').collect::<Vec<_>>();
     fields
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|record| {
             let (source, line, pattern) = (record[0], record[1], record[2]);
             if source.is_empty() || pattern.starts_with('!') {
@@ -436,7 +438,7 @@ fn git_check_ignore(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {
 }
 
 fn comparable(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    path.canonical().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn matcher_answers(work: &Path, paths: &[&str]) -> Vec<IgnoreAnswer> {
@@ -714,7 +716,7 @@ fn read_damaged(work: &Path, outcomes: &mut Outcomes, label: &str) {
     let ignored = text
         .split('\0')
         .collect::<Vec<_>>()
-        .chunks_exact(4)
+        .as_chunks::<4>().0.iter()
         .map(|record| !record[0].is_empty() && !record[2].starts_with('!'))
         .collect::<Vec<_>>();
     if ignored != engine {

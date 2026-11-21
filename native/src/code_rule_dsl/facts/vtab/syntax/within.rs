@@ -234,7 +234,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
             return out;
@@ -260,7 +260,7 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         let mut out = Vec::new();
         if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
             return out;
@@ -427,7 +427,7 @@ impl Within {
             });
             found.extend(p.nodes().map(|(_, id)| match near[id as usize] {
                 rerail_tape_format::tape::NONE => file_local::NONE,
-                a => base + p.local_of_node(a as u32),
+                a => base + p.local_of_node(a),
             }));
         }
         self.solved_from(&found, inside)
@@ -459,7 +459,7 @@ impl Within {
 
     /// Its solve and those of `more`, the axis over a chunk's tape values (decision 0431 §8), made on the device in
     /// one relation: its rows, then each one's of `more`, as the device binds a layered source's (`values::Layered`).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn solved_with(&self, more: &[&Within]) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
@@ -526,7 +526,7 @@ impl Within {
         let p = &self.batch.docs[doc];
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
-        let slot = p.facts.kind(p.node(local as u32)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let slot = p.facts.kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
         self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
@@ -538,7 +538,7 @@ impl Within {
 
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
-        let id = p.node(local as u32) as usize;
+        let id = p.node(local) as usize;
         (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
@@ -782,7 +782,7 @@ impl Within {
 
 impl Source for Within {
     /// A document's rows are its nodes' (an axis never leaves its document), in the row space `value` reads: the
-    /// batch's solve, where each node row's pairs are its run (decision 0504). The span mode's rows are made by lookup
+    /// batch's solve, where each node row's pairs are its run (decision 0494). The span mode's rows are made by lookup
     /// and have no such space: `None`.
     fn rows_of_documents(&self, docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         if !self.solvable() {

@@ -128,6 +128,27 @@ fn json_fixed() -> Vec<String> {
     docs
 }
 
+/// The system's loader: a library opened and kept, and its symbols.
+mod loader {
+    use std::ffi::{c_char, c_void};
+    #[cfg(unix)]
+    pub unsafe fn open(path: *const c_char) -> *mut c_void {
+        unsafe { libc::dlopen(path, libc::RTLD_NOW) }
+    }
+    #[cfg(unix)]
+    pub unsafe fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void {
+        unsafe { libc::dlsym(h, name) }
+    }
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        #[link_name = "LoadLibraryA"]
+        pub fn open(path: *const c_char) -> *mut c_void;
+        #[link_name = "GetProcAddress"]
+        pub fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void;
+    }
+}
+
 /// The sources built into one library, each a module with its entry `rerail_tier2_entry_{k}`; the entries, in order.
 fn build(sources: &[String]) -> Vec<Entry> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -135,25 +156,26 @@ fn build(sources: &[String]) -> Vec<Entry> {
     // A directory a set of sources: the loader gives back the library already loaded at a path.
     let dir = std::env::temp_dir().join(format!("rerail-ladder-aot-{}-{:x}", std::process::id(), std::hash::Hasher::finish(&h)));
     std::fs::create_dir_all(&dir).expect("a directory");
-    let (rs, lib) = (dir.join("ladder.rs"), dir.join("libladder.dylib"));
+    let (rs, lib) = (dir.join("ladder.rs"), dir.join(format!("ladder.{}", std::env::consts::DLL_EXTENSION)));
     let mut text = String::new();
     for (k, src) in sources.iter().enumerate() {
         text.push_str(&format!("mod s{k} {{\n{src}\n}}\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn rerail_tier2_entry_{k}(ctx: u64) -> u64 {{\n    unsafe {{ s{k}::tier2_entry(ctx) }}\n}}\n"));
     }
     std::fs::write(&rs, text).expect("writes");
-    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
+    // With its debug assertions: a walk's invariants the reserved writer leaves unchecked (`rust_stream::reserved`).
+    let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-C", "debug-assertions", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
     let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
     // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
     let entries = unsafe {
-        let h = libc::dlopen(path.as_ptr(), libc::RTLD_NOW);
-        assert!(!h.is_null(), "dlopen");
+        let h = loader::open(path.as_ptr());
+        assert!(!h.is_null(), "loading {}", lib.display());
         (0..sources.len())
             .map(|k| {
                 let name = std::ffi::CString::new(format!("rerail_tier2_entry_{k}")).expect("a name");
-                let f = libc::dlsym(h, name.as_ptr());
-                assert!(!f.is_null(), "dlsym");
-                std::mem::transmute::<*mut libc::c_void, Entry>(f)
+                let f = loader::symbol(h, name.as_ptr());
+                assert!(!f.is_null(), "rerail_tier2_entry_{k} in {}", lib.display());
+                std::mem::transmute::<*mut std::ffi::c_void, Entry>(f)
             })
             .collect()
     };
@@ -233,7 +255,7 @@ fn grammars_rust_tapes_are_the_jits() {
             // The grammar's documents and its language, before its Rust: the language is every key a direct run writes
             // (`rust_stream::direct_entries`), then every other key the documents' tapes hold (format 15's tables,
             // joined), as the engine's language holds every key of its grammar, and the source's numbers are its
-            // literals (decision 0516).
+            // literals (decision 0535).
             let docs = documents(&c, &name, set);
             let mut keys: Vec<rerail_tape_format::tape::Entry> = rust_stream::direct_entries(&c.native, w16, t16).unwrap_or_default();
             for doc in &docs.0 {

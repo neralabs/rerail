@@ -149,7 +149,7 @@ pub struct AtomsW {
     raw: Raw,
     /// Where it writes back without a shared mapping (WASI): the block lives in memory there. `None` for a block in
     /// anonymous memory.
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     file: Option<std::fs::File>,
     /// How its write-backs reach the disk (`sync`, decision 0481).
     flush: Flush,
@@ -163,14 +163,14 @@ impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
     pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64, flush: Flush) -> io::Result<AtomsW> {
         let need = Self::need(cap, bytes_cap);
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         let block = Block::file(path, kind::ATOMS, need)?;
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let block = Block::anon(kind::ATOMS, need);
         let w = AtomsW {
             raw: Self::lay_out(&block, first, tag, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?),
             flush,
         };
@@ -185,7 +185,7 @@ impl AtomsW {
         AtomsW {
             raw: Self::lay_out(&block, first, 0, cap, bytes_cap),
             block: std::sync::Arc::new(block),
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: None,
             // Never written to a file: nothing to wait for.
             flush: Flush::None,
@@ -236,7 +236,7 @@ impl AtomsW {
         let mut w = AtomsW {
             block: std::sync::Arc::new(block),
             raw,
-            #[cfg(not(unix))]
+            #[cfg(not(any(unix, windows)))]
             file: Some(std::fs::OpenOptions::new().read(true).write(true).open(path)?),
             flush,
         };
@@ -356,9 +356,9 @@ impl AtomsW {
     /// `Synced`, on the disk (the dirty pages written back, then the file flushed: a barrier on macOS, `fdatasync`
     /// elsewhere); otherwise the OS's to write. Without shared mappings, the block's bytes are written to its file.
     pub fn sync(&self) -> io::Result<()> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         return self.block.sync_mapped(self.flush);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             use std::io::{Seek, Write};
             let Some(mut f) = self.file.as_ref() else { return Ok(()) };
@@ -382,11 +382,11 @@ impl AtomsW {
             std::ptr::write_volatile(&mut h.state, FROZEN);
         }
         self.sync()?;
-        #[cfg(unix)]
-        if let Some(f) = self.block.mapped_file() {
-            f.set_len(len)?;
-        }
-        #[cfg(not(unix))]
+        // On Windows once the block's last view goes, if no reader's maps the file then (`truncate_file`); its tail
+        // takes no disk meanwhile, the file being sparse.
+        #[cfg(any(unix, windows))]
+        self.block.truncate_file(len)?;
+        #[cfg(not(any(unix, windows)))]
         if let Some(f) = &self.file {
             f.set_len(len)?;
         }
@@ -614,9 +614,10 @@ impl AtomsDir {
 type AtomicI64Ref = std::sync::atomic::AtomicI64;
 type AtomicU64Ref = std::sync::atomic::AtomicU64;
 
-/// The string of `id` in the directory at `dir` (host addresses): `None` for an id none of its runs holds. The
-/// atoms reads written directly (decision 0517): the run holding `id` found by a binary search of the runs' first ids,
-/// as the reads in CLIF (`atoms_at`, `atoms_len`, the JIT's and the kernels') find it; a test holds the two equal.
+/// The string of `id` in the directory at `dir` (host addresses), as the CLIF's `atoms_len` and `atoms_at` read it
+/// (the kernels' and the JIT's): the last run whose first id is at most `id`, if `id` is below its end; its string
+/// ends at `ends[id - from]` and begins where the one before ends (`0` for the run's first). Id 0 is the empty
+/// string; `None` for an id none of its runs holds.
 ///
 /// # Safety
 /// `dir` is a directory made for the host (`AtomsDir::new` with host addresses), whose blocks are mapped.
@@ -624,37 +625,28 @@ pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
     if id == 0 {
         return Some(&[]);
     }
-    // SAFETY: the caller's: a host directory, its spans' offsets host addresses' differences.
+    // SAFETY: the caller's: a live directory, its spans in this address space, its runs' blocks mapped.
     unsafe {
         let root = &*dir.cast::<AtomsDirRoot>();
-        let entries = root.entries.as_ptr();
-        // The last run whose first id is at most `id`, if `id` is below its end.
-        let (mut lo, mut hi) = (0u32, root.n as u32);
-        while lo < hi {
-            let middle = lo.wrapping_add(hi) >> 1;
-            if (*entries.add(middle as usize)).first <= id {
-                lo = middle + 1;
-            } else {
-                hi = middle;
-            }
-        }
-        let e = &*entries.add(lo.checked_sub(1)? as usize);
+        let entries = std::slice::from_raw_parts(root.entries.as_ptr(), root.n as usize);
+        let k = entries.partition_point(|e| e.first <= id);
+        let e = entries.get(k.checked_sub(1)?)?;
         if id >= e.end {
             return None;
         }
-        // Its string ends at `ends[id - from]` and begins where the one before it ends (`0` for the run's first).
-        let i = id.wrapping_sub(e.from) as usize;
+        let i = (id - e.from) as usize;
         let ends = e.ends.as_ptr();
-        let (start, end) = (if i == 0 { 0 } else { *ends.add(i - 1) }, *ends.add(i));
-        Some(std::slice::from_raw_parts(e.strings.as_ptr().wrapping_add(start as usize), end.wrapping_sub(start) as u32 as usize))
+        let end = *ends.add(i) as usize;
+        let start = if i == 0 { 0 } else { *ends.add(i - 1) as usize };
+        Some(std::slice::from_raw_parts(e.strings.as_ptr().add(start), end - start))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// Decision 0478 step 2b: an id's string read through the directory, by the host's read written directly
-    /// (`str_in`, decision 0517), is the block's own, in every run: a run that begins past its block's first id (a
-    /// pending block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
+    /// Decision 0478 step 2b: an id's string read through the directory, by the host's read (`str_in`, the CLIF's
+    /// `atoms_at` and `atoms_len` written directly), is the block's own, in every run: a run that begins past its block's first id (a pending
+    /// block whose first atoms were stored since) too. Id 0 is the empty string; an id no run holds has none.
     #[test]
     fn the_directorys_reads_find_every_atom_where_its_block_holds_it() {
         use super::{AtomRead, AtomsDir, AtomsW, str_in};
@@ -766,7 +758,8 @@ mod tests {
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }
-        // Frozen: the file shrinks to what it holds, and still reads.
+        // Frozen: the file shrinks to what it holds, and still reads. (Windows truncates it once no view maps it.)
+        drop((v, old));
         again.sync().unwrap();
         let before = std::fs::metadata(&path).unwrap().len();
         again.freeze().unwrap();

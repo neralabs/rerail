@@ -33,10 +33,6 @@ The engine already has the operator: a lattice relation keeps one value a key an
 2. **The rewrite.** F's value column becomes the order's lattice, and F's rule drops `!L`. L loses its declaration
    and rules when nothing else reads it. Nothing changes in `.rerail`. `RERAIL_FIRST=off` leaves the shape as written,
    for measuring.
-   On rr-align a statement is its tape's node, read in place (decision 0276, stage 6 A), so the rewrite is what the
-   lowering reads past (`rr::lower::first::Firsts`): L's statements are left out, F's value column is read as the
-   lattice, and F's `!L` literal is not read. "Nothing else reads it" is the module's: no other statement names L
-   (an `.output`, an aggregate's body, a relation given as an argument), and L's rules do not read L.
 3. **Unbounded lattices need `widen k` only where they recurse.** A key's value changes once a batch when no rule of
    the relation reads it back, so nothing widens (`front::finish_checks_given`). The check before refused every
    unbounded lattice relation.

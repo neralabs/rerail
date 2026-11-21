@@ -25,7 +25,7 @@ fn generate() {
     let (widths, tag) = c.parser.tier2.widths_tag();
     let two = rust_stream::rust_source_at(&native, widths, tag).unwrap_or_else(|e| panic!("tier 2 to Rust: {e}"));
     let (widths16, tag16) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    // The language's shipped table (`f16::lang`): the run's node numbers are its, literals in the source (decision 0516).
+    // The language's shipped table (`f16::lang`): the run's node numbers are its, literals in the source (decision 0535).
     let lang = rerail_tape_format::f16::lang(tag16).expect("rr's format 16 table");
     let sixteen = rust_stream::rust_source_16(&native, widths16, tag16, lang).unwrap_or_else(|e| panic!("tier 2 in format 16 to Rust: {e}"));
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));

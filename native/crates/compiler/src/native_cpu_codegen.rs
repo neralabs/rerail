@@ -52,23 +52,10 @@ pub fn options() -> std::sync::Arc<Options> {
     rerail_context::local::<Options>()
 }
 
-/// The target's own Cranelift flags, for every builder of ours: on x86-64 the frame pointer kept, which Cranelift's
-/// tail calls there need (its emitter asserts it); Arm's tail calls do not, and its code keeps the register.
-#[cfg(target_arch = "x86_64")]
-pub const TARGET_FLAGS: [(&str, &str); 1] = [("preserve_frame_pointers", "true")];
-#[cfg(not(target_arch = "x86_64"))]
-pub const TARGET_FLAGS: [(&str, &str); 0] = [];
-
-/// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`; more results than registers
-/// through a return area (as tier 2's, `native_cpu_stream`), which changes no function whose results fit; the
-/// target's flags (`TARGET_FLAGS`).
+/// The JIT builder for tier 1 and the rows: the JIT's defaults, with `optimize_tier1`.
 pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
-    let mut flags = vec![("enable_multi_ret_implicit_sret", "true")];
-    if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) {
-        flags.push(("opt_level", "speed"));
-    }
-    flags.extend(TARGET_FLAGS);
-    cranelift_jit::JITBuilder::with_flags(&flags, cranelift_module::default_libcall_names()).map_err(Box::new)
+    let flags: &[(&str, &str)] = if options().optimize_tier1.load(std::sync::atomic::Ordering::Relaxed) { &[("opt_level", "speed")] } else { &[] };
+    cranelift_jit::JITBuilder::with_flags(&rerail_clif::jit::flags(flags), cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
 /// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm

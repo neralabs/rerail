@@ -53,10 +53,10 @@ const NO_ADDRESS: u64 = 1 << 40;
 #[derive(Clone, Copy)]
 struct PpBatch {
     hb: u64,
-    /// The contexts' table's row bytes: a context's slot `j` is `j` rows on (0408, L2).
-    cs: u64,
     count: u32,
     pad: u32,
+    /// The contexts' table's row bytes: a context's slot `j` is `j` rows on (0408, L2).
+    cs: u64,
 }
 // SAFETY: plain integers, no padding.
 unsafe impl rerail_device::Pod for PpBatch {}
@@ -149,8 +149,8 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
         let slots = runnable.first().map_or(0, |p| p.ctx_bytes().len() / 8);
         let mut table = vec![0u64; slots * runnable.len()];
         for (k, p) in runnable.iter().enumerate() {
-            for (j, w) in p.ctx_bytes().chunks_exact(8).enumerate() {
-                table[j * runnable.len() + k] = u64::from_le_bytes(w.try_into().expect("8 bytes"));
+            for (j, w) in p.ctx_bytes().as_chunks::<8>().0.iter().enumerate() {
+                table[j * runnable.len() + k] = u64::from_le_bytes(*w);
             }
         }
         let bytes = table.len() * 8;
@@ -179,8 +179,7 @@ fn laid_out(kernel: &Kernel, jobs: &[Job<'_>], workers: usize, size: usize) -> R
         .buffer("results", results.device_buffer())
         .buffer("ticket", ticket.device_buffer())
         .buffer("heap", arena.device_buffer())
-        // The contexts' table's row bytes (`cs`): a context's slot `j` is `8 j` rows on.
-        .value("p", &PpBatch { hb, cs: stride, count, pad: 0 })
+        .value("p", &PpBatch { hb, count, pad: 0, cs: stride })
         .groups([groups as u64, 1, 1], [group as u64, 1, 1]);
     let gpu_seconds = command.run()?.device;
     let words: Vec<u64> = results.read(runnable.len().max(1));

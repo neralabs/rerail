@@ -138,7 +138,7 @@ pub fn shipped_image(key: HashKey) -> Option<crate::code_rule_dsl::logic::progra
 pub type ImageFound = (crate::code_rule_dsl::logic::program_image::SharedBytes, Option<SourceId>);
 
 /// The program image under `key`, read where it is held (decision 0464): in the shipped bundle's mapping, else the
-/// store's, mapped from its segment or loaded from its row at 16 bytes; never copied.
+/// store's, mapped from its segment (every object is in one); never copied.
 pub fn read_image(store: Option<&ContentStore>, key: HashKey) -> Option<ImageFound> {
     read_images(store, &[key]).pop().flatten()
 }

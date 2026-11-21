@@ -1,5 +1,4 @@
 .policy "ruff-pt013-pytest-incorrect-pytest-import" revision 1
-.guests off
 .description "Import pytest as a plain module, without an alias or from-imports, and access its members through it; this keeps usage consistent across tests."
 .language python
 .mode steer

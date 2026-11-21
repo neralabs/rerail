@@ -1,5 +1,4 @@
 .policy "ruff-pyi003-unrecognized-version-info-check" revision 1
-.guests off
 .description "Compare sys.version_info in stub files only against tuples of integers, or its major version against an integer; type checkers do not understand other forms."
 .language python
 .mode steer

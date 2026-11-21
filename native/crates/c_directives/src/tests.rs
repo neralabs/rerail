@@ -1,10 +1,13 @@
 use super::*;
 
-/// No device here that runs a block program (none at all, or SIMD groups not of 32 lanes:
-/// `block_program::ready`): a test's device half is left out.
+/// The device's reads of `files`: none where there is no device (a Linux host without a GPU); any other error fails.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(crate) fn no_device() -> bool {
-    rerail_metal::block_program::ready().is_err()
+fn on_device(c: &Compiled, files: &[&[u8]], what: &str) -> Option<Vec<Option<Read>>> {
+    match c.metal_read(files) {
+        Ok(m) => Some(m),
+        Err(rerail_compiler::Error::UnsupportedBackend) => None,
+        Err(e) => panic!("the device runs {what}: {e:?}"),
+    }
 }
 
 /// The lean scan's rows of `src`: its reference.
@@ -177,7 +180,7 @@ fn directives_read_as_the_lean_scan_reads_them() {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let files: Vec<&[u8]> = cases.iter().map(|s| s.as_bytes()).collect();
-        let metal = if no_device() { Vec::new() } else { c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}")) };
+        let metal = c.metal_read(&files).unwrap_or_else(|e| panic!("the device runs the batch: {e:?}"));
         for (src, m) in cases.iter().zip(metal) {
             assert_eq!(m, c.read(src.as_bytes()), "Metal, {src:?}");
         }
@@ -201,7 +204,8 @@ fn the_corpus_reads_the_same_or_is_refused() {
     let c = compiled_or_panic();
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same_n, mut refused, mut differ) = (0, 0, Vec::new());
-    // The other backends', against Cranelift's: files whose rows differ (the device's where it runs: macOS and Linux).
+    // The other backends', against Cranelift's: files whose rows differ (the device's where its lane runs: macOS and
+    // Linux).
     let mut interp = Vec::new();
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut metal = Vec::new();
@@ -218,7 +222,7 @@ fn the_corpus_reads_the_same_or_is_refused() {
                 interp.push(p.display().to_string());
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            if c.metal_read(&[&src]).unwrap_or_else(|e| panic!("the device runs {}: {e:?}", p.display()))[0] != cl {
+            if on_device(c, &[&src], &p.display().to_string()).is_some_and(|m| m[0] != cl) {
                 metal.push(p.display().to_string());
             }
             match cl {
@@ -276,6 +280,9 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
         assert!(same(&got, src.as_bytes(), false));
         assert_eq!(c.interpreter_read(src.as_bytes()), Some(got.clone()), "the interpreter");
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        assert!(no_device() || c.metal_read(&[src.as_bytes()]).unwrap_or_else(|e| panic!("the device runs it: {e:?}"))[0] == Some(got), "Metal");
+        if let Some(m) = on_device(c, &[src.as_bytes()], "it") {
+            assert_eq!(m[0], Some(got), "Metal");
+        }
     }
 }
+

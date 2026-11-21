@@ -3,7 +3,7 @@
 // slab residency placed them: `data` is the first document's slab, the others reached from it by
 // the slabs' addresses (0353 step 4, 0471), and `files` their views (`DocView`, the residency's
 // layout). The tape is read through the reads
-// written once in CLIF (`<ukl/reads/tape.h>`, decision 0310), each node where it lies: nothing is
+// written once in CLIF (decision 0310; `<ukl/reads/tape.h>`, their kernels' copy, 0524), each node where it lies: nothing is
 // decoded into another array. Every size a pass needs is made on the device (counts, a prefix
 // sum, and the next dispatch's arguments).
 //
@@ -44,16 +44,20 @@ UKL_INLINE int64_t pf_src(PpFile f) { return pf_at(f) + (int64_t)f.source; }
 // A file's document's first byte, 16-byte aligned in its slab: where its names' words are read from.
 UKL_INLINE UKL_GLOBAL const uint64_t* pf_words(UKL_GLOBAL const uint8_t* data, PpFile f) { return (UKL_GLOBAL const uint64_t*)(data + pf_at(f)); }
 
+// The tape's reads are calls (`UKL_CALLED`), compiled once: inlined at each of their ~600 sites
+// (12 KB of code for a start, 46 KB for an end, the stated starts' decode), they made the setup
+// kernel 14 MB of code and its Metal back end's compile minutes.
+//
 // Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
 // have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
-UKL_INLINE uint32_t node_key(Tape t, uint32_t i) {
+UKL_CALLED uint32_t node_key(Tape t, uint32_t i) {
     UKL_GLOBAL const uint16_t* c = (UKL_GLOBAL const uint16_t*)(t.codes + 24u * clif_tape_number(t.d, (UKL_GLOBAL const uint32_t*)t.v, i));
     return ((uint32_t)(c[0])) | ((uint32_t)(c[1])) << 10;
 }
 UKL_INLINE uint32_t node_kind(Tape t, uint32_t i) { return node_key(t, i) & 0x3ffu; }
-UKL_INLINE uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_INLINE uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_INLINE uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_CALLED uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_CALLED uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_CALLED uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
 // The line (from 0) of byte `x` of the file: by its tape's newline index.
 UKL_INLINE uint32_t tape_line_of(Tape t, uint32_t x) { return clif_tape_line(t.d, (UKL_GLOBAL const uint32_t*)t.v, x); }
 
@@ -344,7 +348,7 @@ UKL_INLINE void pp_guards(PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint3
 // Each directive's name key (0: none): a `#define`'s or `#undef`'s name, an `#ifdef`'s,
 // `#ifndef`'s, or (in a chain) `#elifdef`'s or `#elifndef`'s operand, where the first token after
 // its word is an identifier: the key the names pass gave that leaf. One thread a row.
-// What a `#pragma` does (decision 0487 §3), by its first word as the spike's `pragma` reads it:
+// What a `#pragma` does (decision 0467 §3), by its first word as the spike's `pragma` reads it:
 // `once`, and `push_macro` or `pop_macro` with `( "name"` after it.
 #define A_NONE (0u)
 #define A_ONCE (1u)

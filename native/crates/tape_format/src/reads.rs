@@ -1,4 +1,4 @@
-//! The tape's reads in Rust, written directly (decision 0510): what this crate's readers (`F16`, `F16Z`, `F15`,
+//! The tape's reads in Rust, written directly (decision 0534): what this crate's readers (`F16`, `F16Z`, `F15`,
 //! `StoredPresence`) read a node with. The reads in CLIF (`rerail_clif::reads`, decision 0310) are the JIT's and
 //! the kernels'; these read the same bytes the same way, and a test holds every read of every node equal to the
 //! JIT's (`f16::tests::the_rust_reads_are_the_jits`).
@@ -459,54 +459,55 @@ pub fn has_kind(t: &[u8], v: &TapeView, block: u32, kind: u32) -> u32 {
     ((word_at(t, at, k) >> (kind & 63)) & 1) as u32
 }
 
-/// An LZ4 length of `nibble`: 15 is followed by bytes added to it, the last under 255, up to the source's end.
-fn lz4_length(src: &[u8], nibble: u32, s: &mut usize) -> u32 {
-    let mut n = nibble;
-    if n == 15 {
-        while let Some(&byte) = src.get(*s) {
-            n = n.wrapping_add(u32::from(byte));
-            *s += 1;
-            if byte != 255 {
-                break;
+/// LZ4's block format, `t[from..to]`, decoded into `dst[..len]`: the bytes decoded, `len` for a whole block. The one
+/// decoder (decision 0353 step 4b): the CLIF's `tape_lz4` (`z_lz4`, the JIT's and the kernels'), written directly, the
+/// same steps and the same stops. A length's extension bytes are read one a step while the block has them; a
+/// sequence whose literals pass `len` or `to`, whose match has no offset, reaches before `dst` or passes `len`, ends
+/// the decode where the sequence began writing.
+pub fn lz4(t: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) -> usize {
+    let (to, len) = (to.min(t.len()), len.min(dst.len()));
+    // A length of `nibble`: 15 is followed by bytes added to it, the last under 255.
+    let length = |nibble: u8, s: &mut usize| -> usize {
+        let mut n = u32::from(nibble);
+        if n == 15 {
+            while *s < to {
+                let b = t[*s];
+                *s += 1;
+                n = n.wrapping_add(u32::from(b));
+                if b != 255 {
+                    break;
+                }
             }
         }
-    }
-    n
-}
-
-/// LZ4's block format, `src`, decoded into `dst[..len]` (decision 0353 step 4b's piece of a 16z tape): the bytes
-/// decoded, `len` for a whole block. The reads' decoder in CLIF (`z_lz4`: the JIT's `tape_lz4`, and the kernels' in
-/// their 16z blocks, `tape_z_block`) stops where this does: a sequence whose literals lie past the destination or the source, a block's last literals with no
-/// match after, a match of offset 0, back past the destination's start or past its end (decision 0463: a length the
-/// block states past its own bytes reads nothing after them). A match's bytes are copied in runs of its period's
-/// multiples, each run of bytes already written. `dst` holds `len` bytes.
-pub fn lz4(src: &[u8], dst: &mut [u8], len: usize) -> usize {
-    let dst = &mut dst[..len];
-    let (mut s, mut d) = (0usize, 0usize);
-    while let Some(&t) = src.get(s) {
+        n as usize
+    };
+    let (mut s, mut d) = (from, 0);
+    while s < to {
+        let token = t[s];
         s += 1;
-        let lit = lz4_length(src, u32::from(t >> 4), &mut s) as usize;
-        if d + lit > len || s + lit > src.len() {
+        let lit = length(token >> 4, &mut s);
+        if d + lit > len || s + lit > to {
             return d;
         }
-        dst[d..d + lit].copy_from_slice(&src[s..s + lit]);
+        dst[d..d + lit].copy_from_slice(&t[s..s + lit]);
         (s, d) = (s + lit, d + lit);
-        let Some(&[lo, hi]) = src.get(s..s + 2).map(|o| <&[u8; 2]>::try_from(o).expect("two bytes")) else {
+        // A match's two offset bytes, else the block's last literals ended it.
+        if s + 2 > to {
             return d;
-        };
+        }
+        let off = usize::from(u16::from_le_bytes([t[s], t[s + 1]]));
         s += 2;
-        let off = usize::from(u16::from_le_bytes([lo, hi]));
-        let m = lz4_length(src, u32::from(t & 15), &mut s).wrapping_add(4) as usize;
+        let m = length(token & 15, &mut s) + 4;
         if off == 0 || off > d || d + m > len {
             return d;
         }
-        // Each run from `p` back, `p` the most multiple of the offset the bytes written reach.
-        let mut done = 0;
-        while done < m {
-            let p = (off + done) / off * off;
-            let k = (m - done).min(p);
-            dst.copy_within(d + done - p..d + done - p + k, d + done);
-            done += k;
+        if off >= m {
+            dst.copy_within(d - off..d - off + m, d);
+        } else {
+            // A match that overlaps its own output repeats the `off` bytes before it.
+            for k in d..d + m {
+                dst[k] = dst[k - off];
+            }
         }
         d += m;
     }

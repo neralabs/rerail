@@ -22,24 +22,26 @@
 pub mod alloc;
 pub mod atoms;
 pub mod block;
+pub mod bloom;
 pub mod chunk;
 pub mod col;
 #[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
 pub mod free;
-/// A relation's reads in UKL, from their CLIF (`rerail_clif::relation`), for every kernel that reads a relation in
-/// its block (decision 0325): the library's header, which a kernel source including it is preprocessed with (the
-/// device layer's programs; decision 0440 §3.3). The host reads a relation through its types' methods, written
-/// directly (decision 0517).
+/// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
+/// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
+/// which a kernel source including it is preprocessed with (the device layer's programs; decision 0440 §3.3).
 pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
+pub mod ledger;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
 pub mod refs;
+pub mod region;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
