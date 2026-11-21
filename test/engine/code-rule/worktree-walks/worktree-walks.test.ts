@@ -845,8 +845,8 @@ describe("a walk of the other worktrees with change notices", () => {
     // The walk the command asked for took the notices before this one came.
     expect(audited(watching)).toEqual([]);
     // No event of the session asks for a walk from here on: the notice pump asks for the walk that records the write,
-    // which waits as long as the walk before it took (the walks' gap) and then reads. On a loaded Windows runner that
-    // outlasted the 5 s this case once waited, so it waits for the session's next audit itself.
+    // which waits as long as the walk before it took (the walks' gap) and then reads, so the case waits for the
+    // session's next audit, not for a set time.
     const delivered = nextAudit(watching);
     watch.release(w3);
     await delivered;
