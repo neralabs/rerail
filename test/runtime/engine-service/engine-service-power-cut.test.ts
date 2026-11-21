@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
-import type { AdapterEvent, CodeRuleAuditor } from "../../../src/engine/index.js";
+import { resetRepositoryHistory, type AdapterEvent, type CodeRuleAuditor } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { addRemote } from "../../../src/runtime/remote-config.js";
 import { RemoteOutbox } from "../../../src/runtime/remote-outbox.js";
@@ -167,9 +167,14 @@ function storedEvents(databasePath: string): Array<{ sequence: number; eventId: 
 }
 
 /** The session's history as the dashboard pages it (`GET /api/sessions/{id}/events`), each event's id, kind and payload. */
-async function history(databasePath: string, sessionId: string): Promise<Array<{ eventId: string; kind: string; payload: unknown }>> {
-  const page = await dashboard(databasePath, `/api/sessions/${sessionId}/events`) as { events: Array<{ eventId: string; kind: string; payload: unknown }> };
-  return page.events.map(({ eventId, kind, payload }) => ({ eventId, kind, payload }));
+async function history(databasePath: string, sessionId: string): Promise<Array<{ eventId: string; kind: string; observedAt: number; payload: unknown }>> {
+  const page = await dashboard(databasePath, `/api/sessions/${sessionId}/events`) as { events: Array<{ eventId: string; kind: string; observedAt: number; payload: unknown }> };
+  return page.events.map(({ eventId, kind, observedAt, payload }) => ({ eventId, kind, observedAt, payload }));
+}
+
+/** The record of lost events the session's history holds: its time and what it says. */
+async function lostRecords(databasePath: string, sessionId: string): Promise<Array<{ observedAt: number; payload: unknown }>> {
+  return (await history(databasePath, sessionId)).filter(event => event.kind === "events-lost").map(({ observedAt, payload }) => ({ observedAt, payload }));
 }
 
 /** How many of the last lines of the ledger of `sessionId` come from the line of `eventId` on. */
@@ -207,18 +212,20 @@ const runningChecks = (sessionId: string) => (database: Database.Database): bool
 describe("the records a power cut leaves, once the next daemon has started", () => {
   // The check's start reached the disk, its finish did not: today it reads as running until the session's evaluator
   // opens again, and for a session that never opens again, for good.
-  it("closes as interrupted a check whose finish the cut took, its daemon gone", { timeout: 120_000 }, async () => {
+  it("closes as interrupted a check whose finish the cut took, its daemon gone, and leaves its finished ones", { timeout: 120_000 }, async () => {
     const { root, databasePath, checkout } = await records();
     const { start, writes } = events(checkout);
     const daemon = await daemonProcess(root, databasePath);
     await daemon.send(start("s"));
     await writes(daemon.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
+    await writes(daemon.send, "s", "t2", join(checkout, "a.ts"), "export const a = 2;\n");
     await daemon.stop();
-    cutPower(databasePath, latestCommitWhere(databasePath, runningChecks("s")));
+    cutPower(databasePath, latestCommitWhere(databasePath, database => runningChecks("s")(database)
+      && (database.prepare("SELECT count(*) AS n FROM audits WHERE session_id = 's' AND status = 'completed'").get() as { n: number }).n === 1));
     await nextDaemon(root, databasePath);
     const { audits } = await dashboard(databasePath, "/api/audits?sessionId=s") as { audits: Array<{ status: string; finishedAt: number | null }> };
-    expect(audits.map(audit => audit.status)).toEqual(["interrupted"]);
-    expect(audits[0]!.finishedAt).not.toBeNull();
+    expect(audits.map(audit => audit.status).sort()).toEqual(["completed", "interrupted"]);
+    expect(audits.every(audit => audit.finishedAt !== null)).toBe(true);
   });
 
   // A check of a session another daemon still runs is that daemon's to finish.
@@ -290,14 +297,16 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       await daemon.send(start("s"));
       for (const text of ["one", "two", "three"]) await daemon.send(prompt("s", text));
       await daemon.stop();
+      const [two, three] = recordedAt(databasePath, ["s:two", "s:three"]);
       cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
       const next = await nextDaemon(root, databasePath);
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
       const kept = await history(databasePath, "s");
       expect(kept.map(event => event.eventId)).toEqual(expect.arrayContaining(["s:one", "s:four"]));
-      expect(kept.filter(event => event.kind === "events-lost").map(event => event.payload)).toEqual([
-        expect.objectContaining({ count: 2, kinds: { "user-prompt": 2 }, firstEventId: "s:two", lastEventId: "s:three" }),
-      ]);
+      expect(await lostRecords(databasePath, "s")).toEqual([{
+        observedAt: three,
+        payload: { count: 2, kinds: { "user-prompt": 2 }, firstEventId: "s:two", lastEventId: "s:three", firstObservedAt: two, lastObservedAt: three },
+      }]);
       const { gaps } = await dashboard(databasePath, "/api/sessions/s") as { gaps: { lostEvents: number } };
       expect(gaps.lostEvents).toBe(2);
     });
@@ -314,9 +323,61 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")), { [ledger.path]: ledger.lines });
       const next = await nextDaemon(root, databasePath);
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
-      expect((await history(databasePath, "s")).filter(event => event.kind === "events-lost").map(event => event.payload)).toEqual([
+      expect((await lostRecords(databasePath, "s")).map(record => record.payload)).toEqual([
         expect.objectContaining({ count: 1, firstEventId: "s:two", lastEventId: "s:two" }),
       ]);
+    });
+
+    // A ledger an older build wrote dates none of its events: that build waited for the disk at every commit, so its
+    // rows went only by a person's reset or scrub.
+    it("takes no event of a ledger an older build wrote for lost", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout, storageRoot } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
+      const { path } = await ledgerLinesFrom(storageRoot, "s", "s:two");
+      const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+      // An older build's event line names the event alone.
+      await writeFile(path, lines.map(line => `${JSON.stringify(line.type === "event" ? { type: "event", eventId: line.eventId } : line)}\n`).join(""));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "three"));
+      expect(await lostRecords(databasePath, "s")).toEqual([]);
+    });
+
+    // `rerail reset` deletes a session's history and keeps the row of a session still open: its ledger still lists every
+    // event. No row of any is there, as when a power cut took them all, and nothing tells the two apart.
+    it("takes no event a reset deleted for lost", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      const database = new Database(databasePath, { readonly: true });
+      const { repositoryId } = database.prepare("SELECT repository_id AS repositoryId FROM sessions WHERE session_id = 's'").get() as { repositoryId: string };
+      database.close();
+      expect(resetRepositoryHistory(databasePath, repositoryId)).toMatchObject({ openSessions: 1 });
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "three"));
+      expect(await lostRecords(databasePath, "s")).toEqual([]);
+    });
+
+    it("writes one record of a stretch however often the session opens before a later event's row", async () => {
+      const { databasePath, checkout } = await records();
+      const session = { host: "claude-code" as const, sessionId: "s", cwd: checkout };
+      const lost = [{ eventId: "s:two", kind: "user-prompt", observedAt: 2 }, { eventId: "s:three", kind: "call", observedAt: 3 }];
+      for (let open = 0; open < 2; open += 1) {
+        const store = new SqliteSessionStore(databasePath);
+        store.openSession(session);
+        store.recordLostEvents(session, lost);
+        store.close();
+      }
+      expect(await lostRecords(databasePath, "s")).toEqual([{
+        observedAt: 3, payload: { count: 2, kinds: { "user-prompt": 1, call: 1 }, firstEventId: "s:two", lastEventId: "s:three", firstObservedAt: 2, lastObservedAt: 3 },
+      }]);
     });
 
     // `rerail status` says hooks run but nothing was recorded since a hook failure later than the time of the newest event

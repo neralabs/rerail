@@ -320,7 +320,7 @@ export function violationCounts(s) {
 
 /** What the session's whole transcript says it missed, from the daemon (`GET /api/sessions/{id}`); zeros until it answers. */
 const gapsOf = s => data.sessionDetail.get(s.sessionId)?.gaps
-  ?? { droppedEvents: 0, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0 };
+  ?? { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0 };
 
 /** Session events its host never delivered, from the `events-dropped` records anywhere in the session. */
 export const droppedEvents = s => gapsOf(s).droppedEvents;

@@ -454,3 +454,52 @@ describe("machineId", () => {
     expect(real.readdirSync(home).filter(name => name.startsWith("machine-id"))).toEqual(["machine-id"]);
   });
 });
+
+describe("event numbers a remote has taken", () => {
+  const sent = () => sink.requests.flatMap(request => request.records).filter(record => record.type === "event").map(record => record.eventId);
+  const session = { host: "claude-code" as const, sessionId: "fresh", cwd: "/work/app" };
+  const sequenceOf = (path: string, eventId: string): number => {
+    const database = new Database(path, { readonly: true });
+    try {
+      return (database.prepare("SELECT sequence FROM events WHERE event_id = ?").get(eventId) as { sequence: number }).sequence;
+    } finally {
+      database.close();
+    }
+  };
+  /** Moves the home's database aside, as Rerail's refusal of an unreadable file tells a person to: the outbox stays. */
+  const moveAside = (): void => {
+    for (const suffix of ["", "-wal", "-shm"]) if (real.existsSync(`${databasePath()}${suffix}`)) real.renameSync(`${databasePath()}${suffix}`, `${databasePath()}.aside${suffix}`);
+  };
+
+  // Its first events took the numbers the remote's cursor had passed, and were never sent.
+  it("numbers the first event of a database started fresh past the remote's cursor, so the outbox sends it", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    const store = new SqliteSessionStore(databasePath());
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    expect(sent()).toContain("first");
+  });
+
+  it("leaves the numbering of a database the outbox does not read as it is", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const other = join(home, "other.sqlite");
+    const store = new SqliteSessionStore(other);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "elsewhere" } }, session);
+    store.close();
+    expect(sequenceOf(other, "first")).toBe(1);
+  });
+
+  it("numbers events as before beside an outbox it cannot read", () => {
+    real.writeFileSync(join(home, "remote-outbox.sqlite"), "not a database");
+    const store = new SqliteSessionStore(databasePath());
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "hello" } }, session);
+    store.close();
+    expect(sequenceOf(databasePath(), "first")).toBe(1);
+  });
+});

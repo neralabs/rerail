@@ -44,9 +44,10 @@ function handedOut(database: RerailDatabase): number {
 export function keepEventNumbersPastRemotes(database: RerailDatabase, databasePath: string): void {
   const taken = takenByRemotes(databasePath);
   if (taken === 0 || handedOut(database) >= taken) return;
+  // Under the write lock: `sqlite_sequence` holds no row for a table until its first insert, and two writers each adding
+  // one would leave two.
   database.$client.transaction(() => {
-    if (handedOut(database) >= taken) return;
-    const moved = database.$client.prepare("UPDATE sqlite_sequence SET seq = ? WHERE name = 'events'").run(taken).changes;
+    const moved = database.$client.prepare("UPDATE sqlite_sequence SET seq = max(seq, ?) WHERE name = 'events'").run(taken).changes;
     if (moved === 0) database.$client.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('events', ?)").run(taken);
   }).immediate();
 }

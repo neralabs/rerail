@@ -456,7 +456,7 @@ function timelineEntry(row: {
   if ((row.kind === "call" || row.kind === "result") && row.tool !== null) entry.tool = row.tool;
   if (row.kind === "result" && row.failed === 1) entry.failed = true;
   if (row.kind === "steering-delivered" && row.ruleIds !== null) entry.ruleIds = JSON.parse(row.ruleIds) as string[];
-  if ((row.kind === "events-dropped" || row.kind === "events-lost") && row.count !== null) entry.count = row.count;
+  if (row.kind === "events-dropped" && row.count !== null) entry.count = row.count;
   if ((row.kind === "source-discovery-pending" || row.kind === "code-rules-pending") && row.boundary !== null) entry.boundary = row.boundary;
   if (row.kind === "rule-coverage" && row.activeRuleCount !== null) entry.activeRuleCount = row.activeRuleCount;
   return entry;
