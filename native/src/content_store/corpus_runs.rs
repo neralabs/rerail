@@ -610,6 +610,42 @@ impl ContentStore {
         })
     }
 
+    /// The manifests a run whose every read is as it was would record again (a whole-run cutoff's, decision 0547),
+    /// for `owner`: of `root`'s, per lane the newest manifest of each of `plans` (the recorded run's), its run and
+    /// time moved and the owner's acquisition its membership, as an identical manifest's are when recorded
+    /// (`record_corpus_run_retaining`). How many; none when they are gone (collected) or the owner may no longer
+    /// publish.
+    pub fn own_recorded_manifests(&self, root: &str, plans: &[[u8; 32]], owner: &super::analysis_scope::AnalysisOwner, now: i64) -> StoreResult<usize> {
+        let plans_json = serde_json::to_string(&plans.iter().map(|p| hex(p)).collect::<Vec<_>>()).expect("text");
+        self.immediate_transaction(|tx| {
+            owner.acquire(tx)?;
+            if !owner.current(tx)? {
+                return Ok(0);
+            }
+            let manifests: Vec<i64> = tx
+                .prepare_cached(
+                    "SELECT max(manifest_id) FROM corpus_manifests WHERE root_id=(SELECT root_id FROM corpus_roots WHERE path=?2) \
+                     AND plan_digest IN (SELECT unhex(value) FROM json_each(?1)) GROUP BY plan_digest, lane",
+                )?
+                .query_map(params![&plans_json, root], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            for manifest in &manifests {
+                let run: i64 = tx.query_row_cached("UPDATE corpus_state SET run=run+1 WHERE singleton=1 RETURNING run", [], |r| r.get(0))?;
+                tx.execute_cached("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE manifest_id=?3", params![run, now, manifest])?;
+                tx.execute_cached(
+                    "INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run) VALUES (?1,?2,?3,?4,?5) \
+                     ON CONFLICT(scope,manifest_id) DO UPDATE SET (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run) \
+                     WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)",
+                    (owner.membership(), manifest, owner.acquired_at(), owner.acquisition, run),
+                )?;
+            }
+            if !manifests.is_empty() {
+                tx.prepare_cached("UPDATE corpus_plans SET live=1 WHERE plan_digest IN (SELECT unhex(value) FROM json_each(?1))")?.execute([&plans_json])?;
+            }
+            Ok(manifests.len())
+        })
+    }
+
     /// Whether corpus collection has work: a new manifest to decide on, or a decision's rows not yet collected.
     pub fn corpus_collection_due(&self) -> StoreResult<bool> {
         Ok(self.corpus_due()? != 0)

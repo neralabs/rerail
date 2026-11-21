@@ -2430,6 +2430,12 @@ const TAPE_RUNS: usize = 4;
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
 #[allow(clippy::too_many_arguments)]
+/// The root a manifest names: the fact root of a snapshot, else the canonical path.
+pub(super) fn manifest_root(root: &Path) -> String {
+    crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| dunce::canonicalize(root).ok()).unwrap_or_else(|| root.to_path_buf()).to_string_lossy().into_owned()
+}
+
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
@@ -2437,9 +2443,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     let scope = owner.as_ref().map(|owner| owner.scope.clone())
         .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
         .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
-    let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| dunce::canonicalize(root).ok()).unwrap_or_else(|| root.to_path_buf());
-    let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
+    let (root, sources, also, relations) = (manifest_root(root), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
     // A batch collects at its first run alone: the last batch's final manifest names all that batch's plans then. Later,
