@@ -1354,7 +1354,7 @@ impl Batch {
                 let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
                 let free = home.block.reserved().saturating_sub(home.block.used());
                 let why = format!(
-                    "device.moved in a block: {} block, {} columns keyed by {:?}, {}, {}, {} indexes there ({} of other rows), {} of {} MB left",
+                    "device.moved in a block: {} block, {} columns keyed by {:?}, {}, {}, {} indexes there ({} of other rows: {}), {} of {} MB left",
                     if home.is_shared() { "a shared" } else { "its own" },
                     rel.cols,
                     cols,
@@ -1362,6 +1362,11 @@ impl Batch {
                     if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
                     r.nindex.load(std::sync::atomic::Ordering::Relaxed).min(9),
                     (0..r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).filter(|&i| r.indexes.as_slice().get(i).is_some_and(|ix| ix.rows.len() != rel.rows)).count().min(9),
+                    // Each entry's key, `o` an order (decision 0478 step 5b), `?` not built.
+                    r.indexes.as_slice().iter().take(r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).map(|ix| {
+                        let k: Vec<String> = ix.key[..(ix.ncols as usize).min(8)].iter().map(u16::to_string).collect();
+                        format!("[{}]{}", k.join(","), if ix.ncols == 0 { "?" } else if ix.ordered != 0 { "o" } else { "" })
+                    }).collect::<Vec<_>>().join(" "),
                     if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
                     (home.block.reserved() >> 20).next_power_of_two(),
                 );

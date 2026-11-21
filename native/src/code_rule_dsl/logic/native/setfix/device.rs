@@ -1657,7 +1657,14 @@ impl<'p> Run<'p> {
                     let right = self.rels[k].as_ref().map(|(r, ix)| (&**r, ix.as_deref()));
                     let cap_in = self.caps[i];
                     if self.caps[o] == 0 {
-                        self.caps[o] = self.guess(k, cap_in, right.map_or(0, |r| r.0.rows), &own.growth);
+                        // A view chosen by constants is read over its source's every row (`reads_source`): its rows
+                        // are the view's own, which the constants choose. Sized by its source's, a scan's table held
+                        // every row of `child` (the join scratch held at most rose from 93 to 141 MB, ab116).
+                        let nr = match &s.kind {
+                            Kind::Atom { rel, .. } | Kind::Witness { rel, .. } if !self.consts[k].is_empty() => rel.len(),
+                            _ => right.map_or(0, |r| r.0.rows),
+                        };
+                        self.caps[o] = self.guess(k, cap_in, nr, &own.growth);
                     }
                     let cap = self.caps[o];
                     if 8 * self.plan.nslots.max(1) * cap > table_max() {
@@ -2813,6 +2820,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             batch.place_rows(mj::Rows::Table(&rows), n, None, &no_counts, &ident, dst, had).map_err(|e| format!("{e:?}"))?;
             grown.push((h, n));
             let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
+            // The round's new rows a second time, as its delta: the head's rows `had..` (0353 step 6, "a round's new
+            // rows are the relation's delta range"), counted for that step.
+            crate::code_rule_dsl::prof::count("device.delta written again (a set head's new rows), bytes", 8 * k * n);
             batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
             own.delta.insert(h, Rc::new(delta));
             rows_held.push(rows);
@@ -2846,6 +2856,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             any = true;
             let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
             let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
+            crate::code_rule_dsl::prof::count("device.delta written again (a lattice head's changed rows), bytes", 8 * k * n);
             batch.copy_rows(mj::Rows::Table(&changed), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
             own.delta.insert(h, Rc::new(delta));
             rows_held.push(changed);
