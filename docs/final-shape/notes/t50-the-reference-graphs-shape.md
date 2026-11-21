@@ -536,6 +536,16 @@ for 23 K rows, the index over `st_pos` built on its first probe) are gone, the o
 3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
 unchanged.
 
+### Step 5, first part: the walk runs as a keyed closure, in one wave (decision 0523)
+
+The recursive `walk` line cost 968 ns a row on `all`. On s1000 its step clocks covered 63 of its 388 ms, so the guess
+was the waves: a scope level a wave, each with its runs and lazily built indexes. 0098's closure form now takes a
+walk whose rest reads the row's other columns, and several recursive probes along one column. It runs them as a
+worklist by depth in one wave. Rows are unchanged on `all`. The gain is small: 3.264 → 3.253 T instructions, the
+lookup 12.92 → 12.61 s. The keyed steps take about what the recursive line took (422 ms on s1000). So the cost is the
+climb's probes (`bound_in`, `gbefore`, the nearest axis, about 200 ns each), not the waves. The operator's second
+part, answering a read at the climb's end without making `walk`'s rows, is next.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines

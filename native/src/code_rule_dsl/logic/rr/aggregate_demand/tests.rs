@@ -351,24 +351,29 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 }
 
 /// A guard that reads a key only through a comparison (`byte(q, 92)` with `q = p - 1`) restricts the demand too: the
-/// demand of "the last byte before p that is not a backslash", asked where the byte before p is a backslash, is those
+/// demand of an aggregate that reads `p` in its body, asked where the byte before p is a backslash, is those
 /// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
+/// "The last byte before p that is not a backslash" (`j < p`) is a bounded aggregate (decision 0511): one fold of the
+/// group a probe, with no context of the probes and so no demand.
 #[test]
 fn a_guard_reached_through_a_comparison_restricts_the_demand() {
-    let p = rr::parse(
-        r#"
-.decl byte(i: number, v: number)
-.input byte
-.decl odd(p: number)
-.output odd
-odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
-"#,
-    )
-    .unwrap();
+    let parse = |agg: &str| {
+        rr::parse(&format!(
+            ".decl byte(i: number, v: number)\n.input byte\n.decl odd(p: number)\n.output odd\n\
+             odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : {{ {agg} }}, @sub(p, m) = 3.\n"
+        ))
+        .unwrap()
+    };
+    let p = parse("byte(j, v), v != p, j < 100");
     let demand = p.rules.iter().find(|r| r.head.rel.starts_with("rr_demand_agg")).unwrap_or_else(|| panic!("no demand: {p:?}"));
     assert!(
         demand.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == "byte" && matches!(&a.args[1], front::Term::Int(92)))),
         "the demand reads every byte: {demand}"
     );
     front::strata(&p).unwrap();
+    let bounded = parse("byte(j, v), v != 92, j < p");
+    assert!(!bounded.rules.iter().any(|r| r.head.rel.starts_with("rr_demand_agg") || r.head.rel.starts_with("rr_ctx")), "a bounded aggregate: {bounded:?}");
+    let odd = bounded.rules.iter().find(|r| r.head.rel == "odd").unwrap();
+    assert!(odd.body.iter().any(|l| matches!(l, Literal::Agg { op: front::AggOp::Bounded { max: true, strict: true, .. }, .. })), "{odd}");
+    front::strata(&bounded).unwrap();
 }

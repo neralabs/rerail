@@ -485,6 +485,74 @@ fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
     assert!(waved == semi, "the closure after its wave gives semi-naive's rows");
 }
 
+/// The keyed closure (decision 0523): the scope walk's shape. A walk climbs one column along an edge while a test of
+/// the row's other columns holds (`!bound(s, x)`), and a second step climbs on where another does (`late(n, x, s)`).
+/// It runs in one wave, each row's steps tested as the row is made, and gives semi-naive's rows and a search's.
+#[test]
+fn a_keyed_walk_along_an_edge_runs_as_a_closure_in_one_wave() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    // Scopes as a tree: each scope's parent.
+    let up = [(2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 7)];
+    // The names each scope binds.
+    let bound = [(1, 100), (3, 200), (5, 100), (8, 300)];
+    // A read (n, x) and the scope it starts in; one read starts in two scopes.
+    let starts = [(1000, 100, 4), (1001, 200, 4), (1002, 100, 6), (1003, 300, 7), (1004, 400, 8), (1005, 200, 8), (1005, 200, 3)];
+    // A read that goes on past a scope that binds its name.
+    let late = [(1001, 200, 3)];
+    let rows = |semi_naive: bool| -> (Vec<(i64, i64, i64)>, String) {
+        let db = connection();
+        db.execute_batch("CREATE TABLE st(c0, c1, c2); CREATE TABLE up(c0, c1); CREATE TABLE bound(c0, c1); CREATE TABLE late(c0, c1, c2); CREATE TABLE walk(c0, c1, c2);").unwrap();
+        for (a, b, c) in starts {
+            db.execute("INSERT INTO st VALUES (?1, ?2, ?3)", [a, b, c]).unwrap();
+        }
+        for (a, b, c) in late {
+            db.execute("INSERT INTO late VALUES (?1, ?2, ?3)", [a, b, c]).unwrap();
+        }
+        for (a, b) in up {
+            db.execute("INSERT INTO up VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        for (a, b) in bound {
+            db.execute("INSERT INTO bound VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        let src = |t: &str, cols: &str, ty: &str| format!("t:b:{}:{}:{ty}", hex(t), hex(cols));
+        let seed = format!("pos {} v0 v1 v2\nhead v0 v1 v2", src("st", "c0, c1, c2", "iii"));
+        let step = format!("pos d0 v0 v1 v2\nneg {} v2 v1\npos {} v2 v3\nhead v0 v1 v3", src("bound", "c0, c1", "ii"), src("up", "c0, c1", "ii"));
+        let past = format!("pos d0 v0 v1 v2\npos {} v0 v1 v2\npos {} v2 v3\nhead v0 v1 v3", src("late", "c0, c1, c2", "iii"), src("up", "c0, c1", "ii"));
+        super::setfix::closure::semi_naive_here(semi_naive);
+        super::setfix::open(&db, &format!("name keyed\nrel walk iii empty\nseed 0 {}\njoin 0 0 {}\njoin 0 0 {}", hex(&seed), hex(&step), hex(&past))).unwrap();
+        super::setfix::closure::semi_naive_here(false);
+        let report = super::setfix::run(&db, "keyed", 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        let mut got: Vec<(i64, i64, i64)> =
+            db.prepare("SELECT c0, c1, c2 FROM walk").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        super::setfix::close(&db, "keyed").unwrap();
+        got.sort();
+        (got, report)
+    };
+    // By search: from each start, up while the scope does not bind the name, or the read is late there.
+    let mut want = Vec::new();
+    for (n, x, s0) in starts {
+        let mut s = s0;
+        loop {
+            want.push((n, x, s));
+            let on = !bound.contains(&(s, x)) || late.contains(&(n, x, s));
+            match up.iter().find(|e| e.0 == s) {
+                Some(&(_, p)) if on => s = p,
+                _ => break,
+            }
+        }
+    }
+    want.sort();
+    want.dedup();
+    let (semi, semi_report) = rows(true);
+    assert_eq!(semi, want, "semi-naive is the search");
+    let waves = |r: &str| r.split(' ').nth(1).unwrap().parse::<u32>().unwrap();
+    assert!(waves(&semi_report) > 2, "semi-naive climbs a scope a wave: {semi_report}");
+    let (keyed, report) = rows(false);
+    assert_eq!(keyed, semi, "the keyed closure gives semi-naive's rows");
+    assert_eq!(waves(&report), 1, "the keyed closure runs in one wave: {report}");
+}
+
 /// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
 /// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
 #[test]

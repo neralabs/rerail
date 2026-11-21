@@ -5667,6 +5667,11 @@ impl InRel {
     /// For a key of several columns of a derived relation (no view), the chain (`chains`) of one of them whose
     /// postings are short, as `lead` takes a source's own index: (the chain, the key column it is on). `None` when
     /// no column's chain holds every row or each is long.
+    /// A key column whose own chain gives a probe few candidates, to be checked against the other keys: its values'
+    /// mean rows (`n / ndv`) and the mean a probe meets when probes fall as the rows do (`sq / n`, each value's rows
+    /// weighted by its rows) both at most `LEAD_MATCHES`. A skewed column fails the second: `bound_in(s, x)` led by
+    /// `s` gives about 8 a scope on average, but a module scope binds hundreds, and the probes that climb a scope chain
+    /// are the ones that reach it (t50 step 5). Such a key reads the sorted order over all its columns.
     fn chain_lead(&self, cols: &[usize]) -> Option<(usize, usize)> {
         const LEAD_MATCHES: usize = 8;
         if self.view.is_some() || cols.len() < 2 || self.n == 0 {
@@ -5677,8 +5682,10 @@ impl InRel {
             .filter_map(|(j, &c)| {
                 let i = self.chains.iter().position(|ix| ix.cols.first() == Some(&c))?;
                 let ix = &self.chains[i];
-                let ndv = self.sketches.get(c).map_or(0, Sketch::ndv);
-                (ix.rows() >= self.n && ndv > 0).then(|| (self.n.div_ceil(ndv), i, j))
+                let sketch = self.sketches.get(c)?;
+                let ndv = sketch.ndv();
+                let met = (sketch.sq() as usize).div_ceil(self.n);
+                (ix.rows() >= self.n && ndv > 0).then(|| (self.n.div_ceil(ndv).max(met), i, j))
             })
             .filter(|&(m, _, _)| m <= LEAD_MATCHES)
             .min()
@@ -6884,8 +6891,16 @@ fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[
 /// the first time) and gives the next value, or `None` to stop. One context for every value (a closure's search of
 /// its edges, node after node), not one per value.
 fn run_join_each(j: &JoinRule, store: &Store, syms: &mut Interner, y: usize, next: &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>) -> Result<u64> {
+    let mut one = |out: &mut Vec<i64>, v: &mut [i64]| next(out).map(|x| v[0] = x).is_some();
+    run_join_each_row(j, store, syms, &[y], &mut one)
+}
+
+/// The join's rows for each binding of slots `ys` in turn, collected: `next` is handed the previous binding's rows
+/// (empty the first time) and writes the next binding's values, one per slot of `ys`, or returns false to stop. One
+/// context for every binding (a keyed closure's steps, row after row: decision 0523).
+fn run_join_each_row(j: &JoinRule, store: &Store, syms: &mut Interner, ys: &[usize], next: &mut dyn FnMut(&mut Vec<i64>, &mut [i64]) -> bool) -> Result<u64> {
     let mut out = Vec::new();
-    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((y, next)), None)
+    run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((ys, next)), None)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6902,7 +6917,7 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
 
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
-                    paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>, mut limited: Option<&mut Limited>) -> Result<u64> {
+                    paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vec<i64>, &mut [i64]) -> bool)>, mut limited: Option<&mut Limited>) -> Result<u64> {
     // The limit `run` handed this walk (decision 0206). A walk for each value, or from a level's pairs, runs
     // unlimited.
     let limit = limited.as_mut().and_then(|l| l.limit.take()).filter(|_| each.is_none() && paired.is_none());
@@ -6920,10 +6935,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }) {
         // The per-binding driver also records empty answers (closure adjacency,
         // for example). Drain it even though this join cannot emit any rows.
-        if let Some((_, next)) = each {
+        if let Some((ys, next)) = each {
             let out = collect.expect("a join run for each value collects");
             out.clear();
-            while next(out).is_some() { out.clear(); }
+            let mut vals = vec![0i64; ys.len()];
+            while next(out, &mut vals) { out.clear(); }
         }
         return Ok(0);
     }
@@ -7943,14 +7959,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
-        (Some((y, next)), ..) => loop {
-            let out = cx.collect.as_deref_mut().expect("a join run for each value collects");
-            let Some(v) = next(out) else { break };
-            out.clear();
-            slots[y] = v;
-            go(&mut cx, 0, &mut slots);
-            if cx.error.is_some() || cx.stop { break; }
-        },
+        (Some((ys, next)), ..) => {
+            let mut vals = vec![0i64; ys.len()];
+            loop {
+                let out = cx.collect.as_deref_mut().expect("a join run for each value collects");
+                if !next(out, &mut vals) { break }
+                out.clear();
+                for (&y, &v) in ys.iter().zip(&vals) { slots[y] = v; }
+                go(&mut cx, 0, &mut slots);
+                if cx.error.is_some() || cx.stop { break; }
+            }
+        }
         // The first two steps' pairs from a level's batch: each left row binds the first atom's slots (its rows
         // passed its tests already), each right row is checked as the walk checks it and binds the second's.
         (None, Some(p), Some(Step::Atom { src: Src::In(r0, _), binds: b0, .. }), Some(Step::Atom { src: Src::In(r1, _), keys: k1, binds: b1, tests: t1, .. })) => {

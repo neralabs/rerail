@@ -118,9 +118,12 @@ fn matcher_atom_exports_captures() {
 
 #[test]
 fn named_errors() {
-    let unbounded = parse(".decl hi(n: node, v: max<>)\n");
-    assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
-    assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
+    // A lattice of unbounded height needs `widen k` where its relation reads itself back (decision 0515): one
+    // that no rule of its own reads changes once a batch.
+    let recursive = ".decl lo(n: node, v: number)\n.decl hi(n: node, v: max<>)\nhi(n, v) :- lo(n, v).\nhi(n, v) :- hi(n, v), lo(n, _).\n";
+    assert_eq!(parse(recursive).unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
+    assert!(parse(&recursive.replacen("max<>)", "max<>) widen 4", 1)).is_ok());
+    assert!(parse(".decl hi(n: node, v: max<>)\n").is_ok(), "read back by no rule of its own");
 
     // A min over symbols reduced their ids, not their text (python/references.rr picked a route at random).
     let symbols = ".decl p(a: number, s: symbol)\n.decl q(a: number, s: symbol)\n.decl n(a: number, s: number)\n.decl r(a: number, s: number)\n";

@@ -24,11 +24,18 @@
 //! - a component past `MAX_DENSE` nodes (or past the bits budget, `MAX_BITS`) is walked on the host: a search from
 //!   each start node in it, once per start. That reads each start's reach once, which semi-naive reads once per row.
 //!
+//! **The keyed form (decision 0523).** A walk whose rest also reads the row's other columns (`!bound_in(s, x)`: the
+//! scope a name is looked up in, and the name), and a walk of several recursive probes along the same column (a second
+//! step that climbs on where another test holds), have no reach per node: a node's successors depend on the row. They
+//! run as a worklist instead: the seeds, then each probe's rest for every row made at the last depth, with all of the
+//! row's slots bound, until a depth makes no new row. That is the climb W's lookup does for each reference, read from
+//! the rule. It needs no rounds of the component (a wave, its runs and lazy indexes, its delta): one wave in all.
+//!
 //! The form runs in two halves around its launches (`prepare`, `finish`), so a stratum can wait for them while the
 //! other strata of its level prepare theirs: the launches of a level then go to the executor as one batch (a device
 //! wave, decision 0095 §5, `lanes::wave`).
 
-use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each};
+use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each, run_join_each_row};
 use crate::code_rule_dsl::logic::lanes::prof;
 use rerail_accel::{Bits, Kernel, Output};
 use rustc_hash::FxHashMap as HashMap;
@@ -40,11 +47,94 @@ const PACK: usize = 1_024;
 /// The most bits a closure's launches hold at once (128 MB): past it, the largest pieces are walked on the host.
 const MAX_BITS: u64 = 1 << 30;
 
-/// A recognized closure: the walking column, the probe's rest as a join from `y` to `z`, and the slot of `y`.
+/// A recognized closure: the walking column, the probe's rest as a join from `y` to `z`, and the slot of `y`. Keyed
+/// (decision 0523): each recursive probe's rest instead, run per row (`keyed`); `rest` and `y` are then unused.
 pub(super) struct Closure {
     col: usize,
     rest: JoinRule,
     y: usize,
+    keyed: Vec<Keyed>,
+}
+
+/// One recursive probe of a keyed closure: its rest as a join to the new value `z`, run with every column's slot
+/// (`slots`, by column) bound to a row's values.
+pub(super) struct Keyed {
+    rest: JoinRule,
+    slots: Vec<usize>,
+}
+
+/// A recursive probe read as a walk: the walking column, each column's slot, the new value's slot, and whether the
+/// rest reads another column's slot (it is then keyed).
+struct Walk<'a> {
+    col: usize,
+    slot_of: Vec<usize>,
+    z: usize,
+    rest: &'a [Step],
+    keyed: bool,
+}
+
+/// Whether probe `j` of relation 0 (of `k` columns) is a walk: its delta atom first, a distinct slot in every column,
+/// the head the same slots but one column's, which is a slot the rest binds; the rest reads the relation nowhere.
+fn walk_of(j: &JoinRule, k: usize) -> Option<Walk<'_>> {
+    let Some(Step::Atom { src: Src::Delta(0), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
+    if !keys.is_empty() || !tests.is_empty() || binds.len() != k {
+        return None;
+    }
+    let mut slot_of = vec![usize::MAX; k];
+    for &(c, s) in binds {
+        slot_of[c] = s;
+    }
+    if slot_of.contains(&usize::MAX) || (1..k).any(|i| slot_of[..i].contains(&slot_of[i])) {
+        return None;
+    }
+    if j.out.len() != k {
+        return None;
+    }
+    let mut col = None;
+    for (c, o) in j.out.iter().enumerate() {
+        let Term::Slot(s) = o else { return None };
+        if *s != slot_of[c] {
+            if col.is_some() || slot_of.contains(s) {
+                return None;
+            }
+            col = Some((c, *s));
+        }
+    }
+    let (col, z) = col?;
+    let others: Vec<usize> = (0..k).filter(|&c| c != col).map(|c| slot_of[c]).collect();
+    let rest = &j.steps[1..];
+    let mut used = Vec::new();
+    for s in rest {
+        if reads(s, 0) {
+            return None;
+        }
+        step_slots(s, &mut used);
+    }
+    if !used.contains(&z) {
+        return None;
+    }
+    let keyed = used.iter().any(|s| others.contains(s));
+    Some(Walk { col, slot_of, z, rest, keyed })
+}
+
+/// A rest as its own join, to the new value `z`.
+fn rest_join(rest: &[Step], z: usize, nslots: usize) -> JoinRule {
+    let rest = JoinRule {
+        steps: rest.to_vec(),
+        out: vec![Term::Slot(z)],
+        nslots,
+        multi: Vec::new(),
+        counts: (0..rest.len()).map(|_| Default::default()).collect(),
+        fused: (0..rest.len()).map(|_| None).collect(),
+        forms: (0..rest.len()).map(|_| Default::default()).collect(),
+        spec: 0,
+        probes: Vec::new(),
+        passed_over: Default::default(),
+        step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
+        from: (0..rest.len()).collect(),
+        plan_steps: rest.len(),
+    };
+    JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest }
 }
 
 /// Every slot a step reads or binds.
@@ -118,73 +208,29 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     let k = store.rels[0].k;
     drop(store);
-    let mut probe = None;
+    let mut walks = Vec::new();
     for p in &c.probes {
         match (&p.body, p.delta) {
             (Body::Join(_), SEED) => {}
-            (Body::Join(j), 0) if p.head == 0 && probe.is_none() => probe = Some(j),
+            (Body::Join(j), 0) if p.head == 0 => walks.push((walk_of(j, k)?, j.nslots)),
             _ => return None,
         }
     }
-    let j = probe?;
-    // The delta atom first, a distinct slot in every column.
-    let Some(Step::Atom { src: Src::Delta(0), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
-    if !keys.is_empty() || !tests.is_empty() || binds.len() != k {
+    let col = walks.first()?.0.col;
+    if walks.iter().any(|(w, _)| w.col != col) {
         return None;
     }
-    let mut slot_of = vec![usize::MAX; k];
-    for &(c, s) in binds {
-        slot_of[c] = s;
+    // One walk whose rest reads only the walking column: the reach per node.
+    if let [(w, nslots)] = &walks[..] && !w.keyed {
+        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new() });
     }
-    if slot_of.contains(&usize::MAX) || (1..k).any(|i| slot_of[..i].contains(&slot_of[i])) {
+    // Keyed (decision 0523): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
+    if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
         return None;
     }
-    // The head: the same slots, but one column's, which is a slot of the rest.
-    if j.out.len() != k {
-        return None;
-    }
-    let mut col = None;
-    for (c, o) in j.out.iter().enumerate() {
-        let Term::Slot(s) = o else { return None };
-        if *s != slot_of[c] {
-            if col.is_some() || slot_of.contains(s) {
-                return None;
-            }
-            col = Some((c, *s));
-        }
-    }
-    let (col, z) = col?;
-    let y = slot_of[col];
-    // The rest names no other column's slot, and reads `r` nowhere.
-    let others: Vec<usize> = (0..k).filter(|&c| c != col).map(|c| slot_of[c]).collect();
-    let rest = &j.steps[1..];
-    let mut used = Vec::new();
-    for s in rest {
-        if reads(s, 0) {
-            return None;
-        }
-        step_slots(s, &mut used);
-    }
-    if used.iter().any(|s| others.contains(s)) || !used.contains(&z) {
-        return None;
-    }
-    let rest = JoinRule {
-        steps: rest.iter().map(|s| s.clone()).collect(),
-        out: vec![Term::Slot(z)],
-        nslots: j.nslots,
-        multi: Vec::new(),
-        counts: (0..rest.len()).map(|_| Default::default()).collect(),
-        fused: (0..rest.len()).map(|_| None).collect(),
-        forms: (0..rest.len()).map(|_| Default::default()).collect(),
-        spec: 0,
-        probes: Vec::new(),
-        passed_over: Default::default(),
-        step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
-        from: (0..rest.len()).collect(),
-        plan_steps: rest.len(),
-    };
-    let rest = JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest };
-    Some(Closure { col, rest, y })
+    let keyed = walks.iter().map(|(w, nslots)| Keyed { rest: rest_join(w.rest, w.z, *nslots), slots: w.slot_of.clone() }).collect();
+    let (w, nslots) = &walks[0];
+    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -219,12 +265,17 @@ pub(super) struct Prepared {
     /// The relation keeps levels (decision 0090): its rows are made by distance on the host (`by_distance`), with no
     /// launches.
     levels: bool,
+    /// A keyed closure's run (decision 0523), done in the first half: the rows it made and its depths.
+    keyed: Option<(usize, usize)>,
 }
 
 /// The first half: the distinct start nodes, the edges out of every node reached (the rest, searched once per
 /// node), then the reach graph's components, and the pieces' launches. `None` when the search fails: the caller then
 /// runs semi-naive from the seeds.
 pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
+    if !cl.keyed.is_empty() {
+        return keyed(cl, store, syms);
+    }
     let h = prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
     let mut index: HashMap<i64, u32> = HashMap::default();
@@ -271,11 +322,69 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
         if !levels {
             prof::count("closure", "closures by chains alone", 1);
         }
-        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new(), levels });
+        return Some(Prepared { nodes, index, adj, at: Vec::new(), pieces: Vec::new(), launches: Vec::new(), levels, keyed: None });
     }
     let _h = prof::host("closure", "encode: components, pieces, adjacency");
     let (at, pieces, launches) = partition(&adj);
-    Some(Prepared { nodes, index, adj, at, pieces, launches, levels: false })
+    Some(Prepared { nodes, index, adj, at, pieces, launches, levels: false, keyed: None })
+}
+
+/// The keyed closure (decision 0523): from the seeds, each depth's rows run every probe's rest with the row's slots
+/// bound, and the rows they make that are new are the next depth's. A relation that keeps levels (decision 0090) is
+/// left to semi-naive (`None`), which gives each row its depth.
+fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
+    let _h = prof::host("closure", "keyed: each depth's rows through the steps");
+    if store.rels[0].level.len() == store.rels[0].n && store.rels[0].n > 0 {
+        return None;
+    }
+    let k = store.rels[0].k;
+    let mut frontier: Vec<i64> = Vec::new();
+    {
+        let rel = &store.rels[0];
+        for id in 0..rel.n {
+            if !rel.dead(id as u32) {
+                frontier.extend_from_slice(&rel.row(id));
+            }
+        }
+    }
+    let (mut rows, mut depths) = (0usize, 0usize);
+    let mut made: Vec<i64> = Vec::new();
+    while !frontier.is_empty() {
+        depths += 1;
+        made.clear();
+        let n = frontier.len() / k;
+        for kp in &cl.keyed {
+            let mut i = 0;
+            run_join_each_row(&kp.rest, store, syms, &kp.slots, &mut |out: &mut Vec<i64>, vals: &mut [i64]| {
+                if i > 0 {
+                    let row = &frontier[(i - 1) * k..i * k];
+                    for &z in out.iter() {
+                        let at = made.len();
+                        made.extend_from_slice(row);
+                        made[at + cl.col] = z;
+                    }
+                }
+                if i == n {
+                    return false;
+                }
+                vals.copy_from_slice(&frontier[i * k..(i + 1) * k]);
+                i += 1;
+                true
+            })
+            .ok()?;
+        }
+        frontier.clear();
+        let rel = &mut store.rels[0];
+        for row in made.chunks(k) {
+            if rel.push(row) {
+                frontier.extend_from_slice(row);
+                rows += 1;
+            }
+        }
+    }
+    prof::count("closure", "keyed closures", 1);
+    prof::count("closure", "keyed closure depths", depths as u64);
+    Some(Prepared { nodes: Vec::new(), index: HashMap::default(), adj: Vec::new(), at: Vec::new(), pieces: Vec::new(), launches: Vec::new(), levels: false, keyed: Some((rows, depths)) })
 }
 
 /// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and
@@ -384,6 +493,9 @@ fn partition(adj: &[Vec<u32>]) -> (Vec<At>, Vec<Vec<u32>>, Vec<Kernel>) {
 /// The second half: each seed row with its column replaced by every node of its start's reach, from the chains, the
 /// pieces' bit rows (`outs`, one per launch) and the host's searches.
 pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut Store) -> Option<Ran> {
+    if let Some((rows, depths)) = p.keyed {
+        return Some(Ran { nodes: 0, rows, how: format!("keyed steps over {depths} depths") });
+    }
     if p.levels {
         return Some(by_distance(cl, &mut store.rels[0], &p.index, &p.nodes, &p.adj));
     }

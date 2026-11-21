@@ -75,6 +75,10 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
     "RERAIL_NODE_IDS",
+    // The `.rr` lowering's shapes left as written: a bounded aggregate as an as-of fold (decision 0511), the first of
+    // a group as a lattice relation (decision 0515).
+    "RERAIL_ASOF",
+    "RERAIL_FIRST",
     // Identical relations merged (`combining::same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
 ];
