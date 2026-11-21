@@ -815,8 +815,8 @@ export class CheckoutCatalogs {
 
   /**
    * Lets go of what `user`, a session that closed, asked for ahead of any call (`prepare`): each catalog built for it
-   * alone that nothing else asked for is dropped, one building for it alone is not kept, and its rules still waiting
-   * on the line of rules built ahead never compile.
+   * alone that nothing else asked for is dropped, one building for it alone is not kept, and each of its rules still
+   * waiting on the line of rules built ahead that no open session is left to ask for never compiles.
    */
   releaseAhead(user: object): void {
     for (const entry of this.#entries.values()) releasedFor(entry, user);
