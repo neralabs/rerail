@@ -8804,8 +8804,8 @@ impl<'a> Run<'a, '_> {
             return Ok(Native::Ran);
         }
         // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
-        // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
-        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves). Only a stratum whose
+        // hogql): its relation is a view of the input's columns, read in place (`hold_view_in_place`), and no
+        // component copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves). Only a stratum whose
         // program makes it a view (`written`): one whose other rules join relations empty this run (`cparam`: a
         // file-local export's copy and a cross-file rule) is derived, kept, and maintained.
         if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())

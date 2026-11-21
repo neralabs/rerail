@@ -303,7 +303,7 @@ pub trait Source: Send + Sync {
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
     /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
-    /// column): a reader of the source's rows in its row order probes by it (`setfix::hold_view`).
+    /// column): a view of the source's columns held in place probes by it (`setfix::hold_view_in_place`).
     fn keys_rows(&self, _column: usize) -> bool {
         false
     }
@@ -1729,7 +1729,7 @@ impl Source for Relation {
         true
     }
     /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
-    /// a view of the relation's rows probes it here (`setfix::hold_view`), with no index of its own.
+    /// a view of the relation's rows probes it here (`setfix::hold_view_in_place`), with no index of its own.
     fn keys_rows(&self, column: usize) -> bool {
         self.ordered[column] == Some(self.len())
     }
