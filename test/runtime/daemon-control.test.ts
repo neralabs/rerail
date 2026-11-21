@@ -927,8 +927,9 @@ describe("a state file Windows left behind", () => {
     }));
     const signals: Array<string | number | undefined> = [];
     let running = true;
+    const limits: number[] = [];
     const machine: DaemonMachine = {
-      ...olderEngine(OLDER_STARTED_AT - 600),
+      ...olderEngine(OLDER_STARTED_AT - 600, limits),
       kill: (_pid, signal) => {
         if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         signals.push(signal);
@@ -938,6 +939,9 @@ describe("a state file Windows left behind", () => {
     };
     await writeFile(stateFile, JSON.stringify(state));
     expect(await stopDaemon(home, machine)).toBe("stopped");
+    // The stop's lookup reads the start within the stop's own 10 s, not a hook's 2 s: `rerail install --remove` reads
+    // it through Windows PowerShell, which can take longer, and a start not read would drop the record.
+    expect(limits[0]).toBeGreaterThan(2_000);
     expect(asked).toEqual(["/healthz"]);
     expect(signals.filter(signal => signal !== 0)).toEqual(["SIGTERM"]);
     expect(existsSync(stateFile)).toBe(false);
