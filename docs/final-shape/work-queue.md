@@ -8954,6 +8954,23 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   fence before the number lacked); 24 of 24 runs pass on the m1max, and rerail-device-metal on Linux (70). Theirs'
   items Q353 and Q354, each twice, are Q384 and Q385 for their second copies.
 
+### Q415. (Q392 on Typing-support) The forest's classification level on the CPU backend decodes weights 5× (Linux)
+
+- **Found** (2026-11-20, testing the Windows port): `randomforest_kernels_grid::tests::one_level_on_the_device_matches_the_host_kernels`
+  fails with `RERAIL_GPU=cpu` on Linux: decodeRows gives each row a weight of 5/1024 where the host's is 1/1024
+  (the encoder's `weight_bits` is 5). It fails so at 221c95be00, before the port, and passes on CUDA and on OpenCL
+  (the GB10's and an Intel Arc's); the regression variant passes on the CPU backend. So the CPU backend binds or
+  runs the classification decode otherwise than the GPUs: its argument rows (`rows.rs`) or the shim.
+- **Done when** the test passes on the CPU backend, by the backend's fix, not the test's.
+
+### Q416. (Q393 on Typing-support) test-remote: a Windows command past a length fails in ssh's multiplexer
+
+- **Found** (2026-11-20): to win1, a command of `cargo --config "env.RERAIL_OPENCL_SUBGROUPS='0'" test --features
+  test-hooks --lib -- gpu::join --nocapture` fails every time with `mm_send_fd: sendmsg: Message too long` and the
+  connection "lost"; the same with a 9-character `--config` passes, as does the long one with shorter flags. A
+  Windows job also passes no environment (`RERAIL_GPU`, the OpenCL switches): only cargo's `--config env.K='V'`.
+- **Done when** a Windows job takes a long command, and an environment as a Linux one does.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
