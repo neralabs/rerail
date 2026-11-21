@@ -158,6 +158,10 @@ impl Docs {
         }
         d
     }
+    /// Document `i`'s module as the corpus names it; none is built for it.
+    pub fn module(&self, i: usize) -> Option<&str> {
+        self.slots[i].input.module()
+    }
     /// Document `i`'s place in its host, a guest's; none is built for it.
     pub fn guest(&self, i: usize) -> Option<&Arc<Guest>> {
         self.slots[i].input.guest()
@@ -383,9 +387,14 @@ pub(super) struct Rows {
     pub(super) template: Vec<Arc<Relation>>,
     /// How each relation's first column names its row's document.
     pub(super) by: Vec<ByDocument>,
+    /// Each relation's other columns that hold a node of the row's own document (`d << 32 | …`): a matcher's node
+    /// captures (`AstWave::node_columns`). A probe of one makes the documents its values name, as one of `by`'s does.
+    also: Vec<Vec<usize>>,
     /// Each relation's column of its document's own path (`doc(d, path, …)`), if it has one: a read of it by a
     /// path is routed to that path's document (`Batch::keys_of_paths`), as one by the document's key is.
     path_column: Vec<Option<usize>>,
+    /// The same for its document's module (`doc(d, _, module)`, `Batch::keys_of_modules`).
+    module_column: Vec<Option<usize>>,
     /// How many of `names` are the batch's relations (`Made::relations`), which a program's derived relations replace;
     /// the `match_all` and the matchers' follow.
     pub(super) relations: usize,
@@ -414,19 +423,25 @@ struct State {
 /// or `g` always a document's key; other names are ambiguous (`p` is `token`'s node and `ast_match`'s pattern), so
 /// such a relation is not routed: any read of it makes every document. A group's rows of a routed relation name its
 /// own documents there, so a probe of that column makes the documents it names alone; a group whose rows name
-/// another fails, named.
+/// another fails, named. A guest's relations of its place in its host (`parsed`, `sub_tape`: `guests::HOST_ROUTED`)
+/// name the host's node, and a probe of it makes the host's guests (`Host`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ByDocument {
     /// The document's key (`doc(d, …)`, `guest(g, …)`), in this column.
     Key(usize),
     /// A node's or a span's id, `d << 32 | …`, in this column.
     Id(usize),
+    /// A host's node, `h << 32 | …`, in this column, of a row a guest of `h` makes (decision 0055).
+    Host(usize),
     /// Not routed.
     No,
 }
 
 impl ByDocument {
-    fn of(columns: &[String]) -> Self {
+    fn of(name: &str, columns: &[String]) -> Self {
+        if super::guests::HOST_ROUTED.contains(&name) {
+            return Self::Host(0);
+        }
         match columns.first().map(String::as_str) {
             Some("d" | "g") => Self::Key(0),
             Some("n") => Self::Id(0),
@@ -434,24 +449,38 @@ impl ByDocument {
         }
     }
     /// The column of a row's document's own path, in a relation of the document's key and its path (`doc`).
-    fn path_column(columns: &[String]) -> Option<usize> {
-        match Self::of(columns) {
-            Self::Key(_) => columns.iter().position(|c| c == "path"),
+    fn path_column(name: &str, columns: &[String]) -> Option<usize> {
+        Self::named_column(name, columns, "path")
+    }
+    /// The column of a row's document's module, in a relation of the document's key and its module (`doc`).
+    fn module_column(name: &str, columns: &[String]) -> Option<usize> {
+        Self::named_column(name, columns, "module")
+    }
+    fn named_column(name: &str, columns: &[String], column: &str) -> Option<usize> {
+        match Self::of(name, columns) {
+            Self::Key(_) => columns.iter().position(|c| c == column),
             _ => None,
         }
     }
-    /// The column that names the document.
+    /// The column a probe of is routed: the one that names the row's document, or its host's.
     fn column(self) -> Option<usize> {
         match self {
-            Self::Key(c) | Self::Id(c) => Some(c),
+            Self::Key(c) | Self::Id(c) | Self::Host(c) => Some(c),
             Self::No => None,
         }
     }
-    /// The key of the document `value` (of `column`) names, if it names one.
+    /// The column that names the row's own document.
+    fn own_column(self) -> Option<usize> {
+        match self {
+            Self::Key(c) | Self::Id(c) => Some(c),
+            Self::Host(_) | Self::No => None,
+        }
+    }
+    /// The key of the document `value` (of `column`) names, if it names one: the row's own, or its host's.
     fn document(self, value: i64) -> Option<u32> {
         match self {
             Self::Key(_) => u32::try_from(value).ok(),
-            Self::Id(_) => u32::try_from(value >> 32).ok().filter(|_| value >= 0),
+            Self::Id(_) | Self::Host(_) => u32::try_from(value >> 32).ok().filter(|_| value >= 0),
             Self::No => None,
         }
     }
@@ -480,7 +509,8 @@ impl Rows {
     /// The rows of a batch of `documents`, a group making `names` (`template`'s). `prior`: the relations of the batch
     /// it grows from (decision 0431 §6), complete, by name, whose documents (`prior_docs`, indexes in this batch) are
     /// its first group: each relation goes on from that one's.
-    pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vec<usize>)>) -> Self {
+    /// `node_columns`: each relation's other columns of nodes of the row's own document, by name (`Rows::also`).
+    pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vec<usize>)>, node_columns: &HashMap<String, Vec<usize>>) -> Self {
         let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone() };
         if let Some((rels, docs)) = prior {
             let mut ranges = Vec::with_capacity(names.len());
@@ -495,10 +525,12 @@ impl Rows {
             }
             state.groups.push(Arc::new(Group { docs, ranges }));
         }
-        let by = template.iter().map(|t| ByDocument::of(&Source::columns(t.as_ref()))).collect();
+        let by: Vec<ByDocument> = names.iter().zip(&template).map(|(n, t)| ByDocument::of(n, &Source::columns(t.as_ref()))).collect();
         let distinct = names.iter().map(|_| OnceLock::new()).collect();
-        let path_column = template.iter().map(|t| ByDocument::path_column(&Source::columns(t.as_ref()))).collect();
-        Self { state: parking_lot::Mutex::new(state), names, template, by, path_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
+        let path_column = names.iter().zip(&template).map(|(n, t)| ByDocument::path_column(n, &Source::columns(t.as_ref()))).collect();
+        let module_column = names.iter().zip(&template).map(|(n, t)| ByDocument::module_column(n, &Source::columns(t.as_ref()))).collect();
+        let also = names.iter().zip(&by).map(|(n, b)| node_columns.get(n).map_or_else(Vec::new, |cs| cs.iter().copied().filter(|&c| Some(c) != b.column()).collect())).collect();
+        Self { state: parking_lot::Mutex::new(state), names, template, by, also, path_column, module_column, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new(), distinct }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
@@ -571,18 +603,31 @@ impl Batch {
             return Err(StoreError::Invalid(format!("a group of a batch made the relations {names:?}, not the batch's {:?} (decision 0494)", self.rows.names)));
         }
         let keys: BTreeSet<u32> = docs.iter().map(|&i| self.docs.key(i)).collect();
-        for ((name, r), &by) in named.iter().zip(&self.rows.by) {
-            let Some(c) = by.column() else { continue };
-            if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| keys.contains(&k))) {
-                return Err(StoreError::Invalid(format!(
-                    "{name}: a row's column {c} ({}) names a document outside its group {keys:?}, which a probe of it would not make (decision 0494)",
-                    Source::value(r, row, c)
-                )));
+        // The hosts of the group's guests, which a `Host` column names.
+        let hosts: BTreeSet<u32> = docs.iter().filter_map(|&i| self.docs.guest(i).map(|g| g.host)).collect();
+        for ((name, r), (&by, also)) in named.iter().zip(self.rows.by.iter().zip(&self.rows.also)) {
+            // A host's node is routed (and checked) only where no tape value's rows stand at places (`guests_of`).
+            let checked = match by {
+                ByDocument::Host(_) if self.guests_of().is_none() => None,
+                ByDocument::Host(c) => Some((c, &hosts, by)),
+                _ => by.column().map(|c| (c, &keys, by)),
+            };
+            for (c, within, by) in checked.into_iter().chain(also.iter().map(|&c| (c, &keys, ByDocument::Id(c)))) {
+                if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| within.contains(&k))) {
+                    return Err(StoreError::Invalid(format!(
+                        "{name}: a row's column {c} ({}) names a document outside its group {keys:?} (hosts {hosts:?}), which a probe of it would not make (decision 0494)",
+                        Source::value(r, row, c)
+                    )));
+                }
             }
         }
         Ok(named.into_iter().map(|(_, r)| r).collect())
     }
 
+    /// Whether every document's rows are made.
+    pub(super) fn is_complete(&self) -> bool {
+        self.rows.complete.get().is_some()
+    }
     /// Every relation, every document's rows made: those unmade as one group.
     pub(super) fn complete(&self) -> &[Arc<Relation>] {
         if let Some(c) = self.rows.complete.get() {
@@ -627,6 +672,48 @@ impl Batch {
         Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
     }
 
+    /// The keys of the documents whose `doc` rows' modules' atoms are `values` (a read of `doc` by its module): each
+    /// file's module (`syntax::doc_module`, from its path and the corpus's name for it) interned once, none made. A
+    /// tape value has no `doc` row. `None` where they could not be.
+    fn keys_of_modules(&self, values: &[i64]) -> Option<Vec<u32>> {
+        let by = self
+            .by_module
+            .get_or_init(|| {
+                let core = self.shape == Shape::Core;
+                let files: Vec<usize> = (0..self.docs.len()).filter(|&i| !self.docs.guest(i).is_some_and(|g| matches!(g.made, super::Made::Tape { .. }))).collect();
+                let modules: Vec<String> = files.iter().map(|&i| super::doc_module(self.docs.path(i), self.docs.module(i), core)).collect();
+                let atoms = self.atoms.intern_all(&modules.iter().map(String::as_str).collect::<Vec<_>>()).ok()?;
+                let mut by: HashMap<i64, Vec<u32>> = HashMap::new();
+                for (&i, a) in files.iter().zip(atoms) {
+                    by.entry(i64::from(a)).or_default().push(self.docs.key(i));
+                }
+                Some(by)
+            })
+            .as_ref()?;
+        Some(values.iter().filter_map(|v| by.get(v)).flatten().copied().collect())
+    }
+
+    /// Each host's guests, by key (decision 0055), from the documents' places, none made: what a probe of a guest's
+    /// row by its host's node makes (`ByDocument::Host`). `None` where a tape value is among them (decision 0431),
+    /// whose rows stand at places in many hosts.
+    fn guests_of(&self) -> Option<&HashMap<u32, Vec<u32>>> {
+        self.guests_of
+            .get_or_init(|| {
+                let mut of: HashMap<u32, Vec<u32>> = HashMap::new();
+                for i in 0..self.docs.len() {
+                    let Some(g) = self.docs.guest(i) else { continue };
+                    match g.made {
+                        super::Made::Host => of.entry(g.host).or_default().push(self.docs.key(i)),
+                        super::Made::Tape { .. } => return None,
+                        // A value document has no host, and no row of a place.
+                        super::Made::Parse { .. } | super::Made::Splice { .. } => {}
+                    }
+                }
+                Some(of)
+            })
+            .as_ref()
+    }
+
     fn groups_of(&self, keys: impl IntoIterator<Item = u32>) -> Vec<Arc<Group>> {
         let docs: BTreeSet<usize> = keys.into_iter().filter_map(|k| self.docs.position(k)).collect();
         let docs: Vec<usize> = docs.into_iter().collect();
@@ -640,6 +727,9 @@ impl Batch {
 
     /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+        if self.rows.complete.get().is_none() {
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || "the batch's vocabulary (a text test)".to_owned());
+        }
         self.complete();
         let shared = self.shared.lock();
         (shared.strings.clone(), shared.atoms.clone())
@@ -660,6 +750,9 @@ impl MadeRows {
     }
     /// What a read reads once every document is made: the relation, whole.
     fn target(&self) -> &dyn Source {
+        if self.batch.rows.complete.get().is_none() {
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || self.batch.rows.names[self.rel].clone());
+        }
         &*self.batch.complete()[self.rel]
     }
     /// `target`, if every document is made.
@@ -674,10 +767,20 @@ impl MadeRows {
     /// their groups' ranges: `None` for a column that names no document (by its key, or `doc`'s by its path).
     fn routed(&self, column: usize, values: &[i64], keep: impl Fn(&Relation, usize) -> bool) -> Option<(Arc<Relation>, Vec<usize>)> {
         let by = self.by();
-        let keys: Vec<u32> = if by.column() == Some(column) {
+        let keys: Vec<u32> = if by.column() == Some(column) && matches!(by, ByDocument::Host(_)) {
+            // A host's node: the guests of the documents named, which make the rows.
+            let guests = self.batch.guests_of()?;
+            values.iter().filter_map(|&v| by.document(v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
+        } else if by.column() == Some(column) {
             values.iter().filter_map(|&v| by.document(v)).collect()
+        } else if self.batch.rows.also[self.rel].contains(&column) {
+            // A node of the row's own document: every value must name one of the batch's, or the read is not routed
+            // (a row of a document left unmade could hold it).
+            values.iter().map(|&v| ByDocument::Id(column).document(v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
         } else if self.batch.rows.path_column[self.rel] == Some(column) {
             self.batch.keys_of_paths(values)?
+        } else if self.batch.rows.module_column[self.rel] == Some(column) {
+            self.batch.keys_of_modules(values)?
         } else {
             profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], by.column()));
             return None;
@@ -868,7 +971,7 @@ impl Source for MadeRows {
             if g.docs.iter().all(|i| at.contains(i)) {
                 rows.extend(range);
             } else {
-                let c = by.column()?;
+                let c = by.own_column()?;
                 rows.extend(range.filter(|&row| by.document(Source::value(r.as_ref(), row, c)).is_some_and(|k| docs.contains(&k))));
             }
         }
@@ -892,7 +995,7 @@ impl Source for MadeRows {
         let mut rows = Vec::new();
         for g in groups {
             rows.extend(g.ranges[self.rel].clone().filter(|&row| {
-                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.column().is_none_or(|c| by.document(Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
+                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.own_column().is_none_or(|c| by.document(Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
             }));
         }
         Some(rows)
@@ -963,7 +1066,7 @@ impl Source for MadeRows {
         }
         // A range of the column that names a document, within known bounds: its documents' keys, each made.
         if let (Some((lo, _)), Some((hi, _))) = (_lower, _upper)
-            && self.by().column() == Some(_column)
+            && self.by().own_column() == Some(_column)
             && let (Some(first), Some(last)) = (self.by().document(lo), self.by().document(hi))
         {
             let keys = self.batch.docs.keys().iter().copied().filter(|k| (first..=last).contains(k));

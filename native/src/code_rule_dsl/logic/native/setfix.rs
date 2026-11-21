@@ -3956,8 +3956,42 @@ pub enum Ver {
     Plus,
 }
 
-pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
+/// `ids`: the source's rows a view of some rows reads, in order (`None`: every row). A view filtered by constants
+/// (`eqs`) finds them on its first scan (`View::ids`), not when it is opened: its probes check the filters
+/// themselves (`find`), so a source made on lookup (a batch's relation, decision 0494) makes only the documents
+/// its probes name.
+pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<OnceLock<Vec<u32>>>, eqs: Vec<(usize, i64)> }
 impl View {
+    /// Its rows' places in the source, a view of some rows': found when first asked, for a filtered one.
+    fn ids(&self) -> Option<&[u32]> {
+        self.ids.as_ref().map(|ids| ids.get_or_init(|| self.filtered()).as_slice())
+    }
+    /// Whether it is a view of some rows whose rows were found, none.
+    fn known_empty(&self) -> bool {
+        self.ids.as_ref().and_then(OnceLock::get).is_some_and(Vec::is_empty)
+    }
+    /// Its rows: every row of its source, or those `ids` names.
+    fn len(&self) -> usize {
+        self.ids().map_or(self.src.len(), <[u32]>::len)
+    }
+    /// The source's rows that pass every filter, through the source's index of one filtered column where it has one.
+    fn filtered(&self) -> Vec<u32> {
+        let src = &self.src;
+        let eqs = &self.eqs;
+        let Some(&first) = eqs.first() else { return (0..src.len() as u32).collect() };
+        let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(first);
+        // The roofline's work: each candidate's filter values read.
+        match src.lookup(c, &[v]) {
+            Some(cands) => {
+                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
+                cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect()
+            }
+            None => {
+                charge(Unit::Value, (src.len() * eqs.len()) as u64);
+                src.filter_eq(eqs)
+            }
+        }
+    }
     /// Whether the view reads every row of its source (no constant filters chose its rows).
     pub fn whole(&self) -> bool {
         self.ids.is_none()
@@ -4039,7 +4073,7 @@ impl<'a> RowRef<'a> {
         match self {
             RowRef::Flat(r) => r[c],
             RowRef::Rows(r, id, k) => r.value(id, k, c),
-            RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
+            RowRef::View(v, id) => v.src.value(v.ids().map_or(id, |ids| ids[id] as usize), v.cols[c]),
             RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
             RowRef::Read(vals, _) => vals[c],
         }
@@ -4050,7 +4084,7 @@ impl<'a> RowRef<'a> {
     #[inline]
     pub fn read_need(self, need: u64) -> RowRef<'a> {
         let (v, row) = match self {
-            RowRef::View(v, id) => (v, v.ids.as_ref().map_or(id, |ids| ids[id] as usize)),
+            RowRef::View(v, id) => (v, v.ids().map_or(id, |ids| ids[id] as usize)),
             RowRef::Source(v, row) => (v, row),
             other => return other,
         };
@@ -4081,7 +4115,7 @@ impl<'a> RowRef<'a> {
     #[inline]
     pub fn read(self) -> RowRef<'a> {
         let (v, row) = match self {
-            RowRef::View(v, id) => (v, v.ids.as_ref().map_or(id, |ids| ids[id] as usize)),
+            RowRef::View(v, id) => (v, v.ids().map_or(id, |ids| ids[id] as usize)),
             RowRef::Source(v, row) => (v, row),
             other => return other,
         };
@@ -5735,7 +5769,7 @@ impl InRel {
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
     pub fn len(&self) -> usize {
-        match &self.view { Some(v) if v.ids.is_none() => v.src.len(), _ => self.n }
+        match &self.view { Some(v) => v.len(), None => self.n }
     }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
@@ -5802,8 +5836,8 @@ impl InRel {
                 // Over its rows with no dead marks (shared, not copied), so a view's ids are the relation's own: a
                 // source of it would number its live rows, and a row gone is not among them.
                 let every = InRel::held(self.rows.shared(self.n), self.n, self.types.clone(), Vec::new());
-                let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(ids), eqs: Vec::new() };
-                let n = view.ids.as_ref().map_or(0, Vec::len);
+                let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new() };
+                let n = view.len();
                 Some(Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: self.types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None }))
             }
         }
@@ -5813,7 +5847,7 @@ impl InRel {
     pub fn picked(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, ids: Vec<u32>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
         let k = names.len();
         let n = ids.len();
-        let view = View { src, cols: (0..k).collect(), ids: Some(ids), eqs: Vec::new() };
+        let view = View { src, cols: (0..k).collect(), ids: Some(OnceLock::from(ids)), eqs: Vec::new() };
         let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
         rel.source(names)
     }
@@ -6159,7 +6193,8 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
                 keep(&rel);
                 return Ok(rel);
             }
-            let n = view.ids.as_ref().map_or(0, Vec::len);
+            // A filtered view's rows are counted on its first scan (`InRel::len`), not here.
+            let n = 0;
             let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
             loaded(0, thread_cpu() - c0, 0);
             if env_set!("RDL_PROFILE") {
@@ -6191,8 +6226,8 @@ fn bound_rows(conn: impl Scoped, sql: &str, types: &[u8], syms: &mut Interner) -
     let conn = conn.db();
     let Some((cols, table)) = sql.strip_prefix("SELECT ").and_then(|s| s.split_once(" FROM ")) else { return Ok(None) };
     let Some(v) = table.starts_with("main.").then(|| view(conn, table, cols)).flatten() else { return Ok(None) };
-    let ids: Box<dyn Iterator<Item = usize>> = match &v.ids { Some(ids) => Box::new(ids.iter().map(|&r| r as usize)), None => Box::new(0..v.src.len()) };
-    let mut rows = Vec::with_capacity(v.ids.as_ref().map_or(v.src.len(), Vec::len));
+    let ids: Box<dyn Iterator<Item = usize>> = match v.ids() { Some(ids) => Box::new(ids.iter().map(|&r| r as usize)), None => Box::new(0..v.src.len()) };
+    let mut rows = Vec::with_capacity(v.len());
     for r in ids {
         let mut row = Vec::with_capacity(types.len());
         for (&c, &t) in v.cols.iter().zip(types) {
@@ -6232,22 +6267,8 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
         let (c, v) = f.split_once(" = ")?;
         eqs.push((column(c)?, v.trim().parse::<i64>().ok()?));
     }
-    let ids = if eqs.is_empty() {
-        None
-    } else {
-        let (c, v) = eqs.iter().copied().find(|&(c, _)| src.indexed(c)).unwrap_or(eqs[0]);
-        // The roofline's work: each candidate's filter values read.
-        match src.lookup(c, &[v]) {
-            Some(cands) => {
-                charge(Unit::Value, (cands.len() * eqs.len()) as u64);
-                Some(cands.into_iter().filter(|&r| eqs.iter().all(|&(c, v)| src.value(r, c) == v)).map(|r| r as u32).collect())
-            }
-            None => {
-                charge(Unit::Value, (src.len() * eqs.len()) as u64);
-                Some(src.filter_eq(&eqs))
-            }
-        }
-    };
+    // A filtered view's rows are found on its first scan (`View::ids`).
+    let ids = (!eqs.is_empty()).then(OnceLock::new);
     Some(View { src, cols, ids, eqs })
 }
 
@@ -7181,9 +7202,9 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
 
 /// Whether a positive atom of `j` reads an input relation known to be empty, so the whole conjunction is: the CPU's
 /// walk then returns at once (`run_join_in_each`), and the device encodes nothing for it (`device::run`, `submit`).
-/// A lazy view's length is not known without enumerating it, so a view is not known empty.
+/// A lazy view's length is not known without enumerating it, so a view is known empty only once its rows were found.
 pub fn reads_empty_input(j: &JoinRule) -> bool {
-    j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some())))
+    j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if r.view.as_ref().map_or(r.n == 0, View::known_empty)))
 }
 
 #[allow(clippy::too_many_arguments)]

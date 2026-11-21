@@ -41,6 +41,13 @@ fn hex(digest: &[u8; 32]) -> String {
 
 /// The documents a guest's host is found among (decision 0055): a batch's (`made::Docs`, each made when first read,
 /// decision 0494), which hold the documents of the batches it grew from (decision 0431 §6).
+/// A guest's relations of its place in its host (decision 0055): their first column is the host's node, and a guest
+/// makes their rows (`made::ByDocument::Host`).
+pub(super) const HOST_ROUTED: &[&str] = &["parsed", "sub_tape"];
+
+/// The guests' relations' other columns of a node of the guest itself (`made::Rows::also`): `parsed`'s root.
+pub(super) const OWN_NODES: &[(&str, &[usize])] = &[("parsed", &[2])];
+
 pub(super) trait Hosts {
     /// The projection of the document of key `key`.
     fn host(&self, key: u32) -> Option<&Projected>;

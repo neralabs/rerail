@@ -92,6 +92,17 @@ impl AstWave for Wave {
     ) -> StoreResult<Vec<(String, Relation)>> {
         matched(tapes, at, self, binding, atoms)
     }
+    /// A capture's column holds nodes of the matched document (`captured_rows`' `global`), unless the atom's rule
+    /// `transform`s it into text (a symbol).
+    fn node_columns(&self) -> Vec<(String, Vec<usize>)> {
+        self.list
+            .iter()
+            .map(|m| {
+                let transformed = |name: &str| m.captor.grammar.transform.as_ref().is_some_and(|t| t.contains(name));
+                (m.rel.clone(), m.captures.iter().enumerate().filter(|(_, c)| !transformed(c)).map(|(i, _)| i + 1).collect())
+            })
+            .collect()
+    }
 }
 
 /// A chunk's matcher wave as one launch of the executor (decision 0107), as every other dispatch: priced by its tape

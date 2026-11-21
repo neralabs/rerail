@@ -9104,7 +9104,7 @@ fn run_observed_within(
                 let how = HitBuild { root: &root, label: &label, tapes: None, keep_tapes, unpackaged };
                 hit_document(&how, at, &path, module.clone(), source, frame.as_ref()).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path}: no document (not UTF-8)"))
             };
-            Some(syntax::Input::Pending(Arc::new(syntax::Pending::new(key, h.path.clone(), tag, kept.digest, kept.size, Box::new(make)))))
+            Some(syntax::Input::Pending(Arc::new(syntax::Pending::new(key, h.path.clone(), tag, kept.digest, kept.size, h.module.clone(), Box::new(make)))))
         };
         let (mut pending, mut eager): (Vec<syntax::Input>, Vec<CorpusHit>) = (Vec::new(), Vec::new());
         for h in hits {

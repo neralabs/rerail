@@ -769,14 +769,16 @@ pub struct Pending {
     tag: u8,
     digest: [u8; 32],
     size: FactsSize,
+    /// Its module as the corpus names it (`Document::module`), which a read of `doc` by module routes by.
+    module: Option<Arc<str>>,
     make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>,
     made: OnceLock<Document>,
     failed: OnceLock<String>,
 }
 
 impl Pending {
-    pub fn new(key: u32, path: String, tag: u8, digest: [u8; 32], size: FactsSize, make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>) -> Self {
-        Self { key, path, tag, digest, size, make, made: OnceLock::new(), failed: OnceLock::new() }
+    pub fn new(key: u32, path: String, tag: u8, digest: [u8; 32], size: FactsSize, module: Option<Arc<str>>, make: Box<dyn Fn() -> Result<Document, String> + Send + Sync>) -> Self {
+        Self { key, path, tag, digest, size, module, make, made: OnceLock::new(), failed: OnceLock::new() }
     }
 
     /// The document, made if it is not. One that fails to be made is a text with no node, its failure kept
@@ -787,7 +789,7 @@ impl Pending {
                 eprintln!("RERAIL_PARSE_TRACE pending {}:\n{}", self.path, std::backtrace::Backtrace::force_capture());
             }
             let made = (self.make)().and_then(|d| {
-                if d.key == self.key && d.digest == self.digest && d.guest.is_none() {
+                if d.key == self.key && d.digest == self.digest && d.guest.is_none() && d.module == self.module {
                     Ok(d)
                 } else {
                     Err(format!("{}: made when first read, it is not the document the documents' table keeps (key {} for {}, its digest another, Q332)", self.path, d.key, self.key))
@@ -840,6 +842,13 @@ impl Input {
         match self {
             Input::Made(d) => crate::code_rule_dsl::facts::core::facts_tag(&d.facts),
             Input::Pending(p) => p.tag,
+        }
+    }
+    /// Its module as the corpus names it (`Document::module`); none is made for it.
+    pub fn module(&self) -> Option<&str> {
+        match self {
+            Input::Made(d) => d.module.as_deref(),
+            Input::Pending(p) => p.module.as_deref(),
         }
     }
     /// Its place in its host, a guest's; a pending document is a file's own tree.
@@ -1022,6 +1031,17 @@ pub fn kind_name(f: &Facts, id: u32) -> &'static str {
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
 /// the crate root under `crate` (`src/lib.rs` and `src/main.rs` are `crate`, `src/a/mod.rs` and
 /// `src/a.rs` are `crate.a`).
+/// A file's `doc` row's module (core.rerail): the one the corpus names, else its path's dotted name for a Python or
+/// Rust file, and "" for any other in the core shape.
+pub(super) fn doc_module(path: &str, named: Option<&str>, core: bool) -> String {
+    let dotted = path.ends_with(".py") || path.ends_with(".pyi") || path.ends_with(".rs");
+    match named {
+        Some(m) => m.to_owned(),
+        None if core && !dotted => String::new(),
+        None => module(path),
+    }
+}
+
 pub fn module(rel: &str) -> String {
     if let Some(rs) = rel.strip_suffix(".rs") {
         let rs = rs.rsplit_once("src/").map_or(rs, |(_, r)| r);
@@ -1858,6 +1878,10 @@ pub struct Batch {
     given_rows: OnceLock<HashMap<String, usize>>,
     /// Its documents' keys by their paths' atoms (`keys_of_paths`), once a read by a path asked.
     by_path: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
+    /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
+    by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
+    /// Each host's guests' keys (`Batch::guests_of`), once a read by a host's node asked.
+    guests_of: OnceLock<Option<HashMap<u32, Vec<u32>>>>,
     /// What every group of the batch, and of the batches it grows into, makes its rows with (`Shared`).
     shared: Arc<parking_lot::Mutex<Shared>>,
     /// A tape value's batch alone (decision 0431 §8): the chunk's batch it is admitted to, whose documents hold its
@@ -2997,6 +3021,9 @@ impl Batch {
         let shape = projection.shape;
         let last = grown.last.clone();
         if let Some(last) = &last {
+            if !last.is_complete() {
+                crate::code_rule_dsl::logic::profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || "the batch grows (decision 0431 §6)".to_owned());
+            }
             last.complete();
             if let Some(why) = last.docs.failure() {
                 return Err(StoreError::Invalid(why));
@@ -3115,9 +3142,11 @@ impl Batch {
             metal,
             atoms: store.atoms_handle(),
             wave,
-            rows: made::Rows::new(n, Vec::new(), Vec::new(), Vec::new(), None),
+            rows: made::Rows::new(n, Vec::new(), Vec::new(), Vec::new(), None, &HashMap::new()),
             given_rows: OnceLock::new(),
             by_path: OnceLock::new(),
+            guests_of: OnceLock::new(),
+            by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
         };
@@ -3138,7 +3167,15 @@ impl Batch {
             (Some(last), Some(at)) => Some((last.rows.whole(), at)),
             _ => None,
         };
-        batch.rows = made::Rows::new(n, names, template, statics, prior.as_ref().map(|(whole, at)| (whole, at.clone())));
+        let node_columns: HashMap<String, Vec<usize>> = batch
+            .wave
+            .as_ref()
+            .map(|(m, _)| m.node_columns())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(guests::OWN_NODES.iter().map(|&(name, cols)| (name.to_owned(), cols.to_vec())))
+            .collect();
+        batch.rows = made::Rows::new(n, names, template, statics, prior.as_ref().map(|(whole, at)| (whole, at.clone())), &node_columns);
         let batch = Arc::new(batch);
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.keys().to_vec(), Arc::downgrade(&batch)));
@@ -3337,13 +3374,8 @@ impl Batch {
             // A tape value (decision 0431) is no file's: no `doc` row, no module or package.
             let tape_value = d.guest.as_deref().is_some_and(|g| matches!(g.made, Made::Tape { .. }));
             let py_file = !tape_value && (d.path.ends_with(".py") || d.path.ends_with(".pyi"));
-            let dotted = py_file || d.path.ends_with(".rs");
             let named = d.module.as_deref();
-            let module = match named {
-                Some(m) => m.to_owned(),
-                None if core && !dotted => String::new(),
-                None => module(&d.path),
-            };
+            let module = doc_module(&d.path, named, core);
             if !tape_value {
                 doc.push([key, string(&d.path) as i64, string(&module) as i64]);
             }
@@ -4520,6 +4552,11 @@ pub trait AstWave: Send + Sync {
         binding: crate::code_rule_dsl::facts::nearest::Binding,
         atoms: &crate::content_store::atoms::Atoms,
     ) -> StoreResult<Vec<(String, Relation)>>;
+    /// Each matcher's relation and its columns past `n` that hold a node of the row's own document (its node
+    /// captures, not a `transform`'s text): a probe of one makes the documents its values name (decision 0494).
+    fn node_columns(&self) -> Vec<(String, Vec<usize>)> {
+        Vec::new()
+    }
 }
 
 /// A program's matchers, as the engine compiled them; none by default.
@@ -4535,6 +4572,10 @@ impl Matchers {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    /// `AstWave::node_columns`.
+    pub fn node_columns(&self) -> Vec<(String, Vec<usize>)> {
+        self.0.as_ref().map_or_else(Vec::new, |wave| wave.node_columns())
     }
 }
 
