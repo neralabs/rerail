@@ -420,12 +420,14 @@ describe("a tool call while rules are built ahead", () => {
 });
 
 describe("a session that ends while it builds rules ahead", () => {
-  it("compiles none of the rules still waiting to be built for it alone", async () => {
+  it("compiles none of the rules still waiting to be built for it alone, and writes no line on stderr that they were not", async () => {
     const setup = await nestedAndSibling({ session: "rcwsession", nested: ["rcwa", "rcwb"], sibling: [] });
     const runtime = setup.open();
     const session = { host: "claude-code" as const, sessionId: "ends", cwd: setup.folder };
     const released = Promise.withResolvers<void>();
     compiles.hold = { id: "rcwa-needle", released: released.promise };
+    const written: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(chunk => (written.push(String(chunk)), true));
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await runtime.codeRulesOpened(session.sessionId);
@@ -439,10 +441,13 @@ describe("a session that ends while it builds rules ahead", () => {
       await vi.waitFor(() => expect(compiles.offThreadDone).toContain("rcwa-needle"), { timeout: 10_000, interval: 10 });
       await queuedWorkRan();
       expect(compiles.offThreadIds).not.toContain("rcwb-needle");
+      // Letting go of the waiting rule ends the build the session asked for, which no one open is left to read about.
+      expect(written.filter(line => line.includes("rules not built ahead"))).toEqual([]);
     } finally {
       released.resolve();
       compiles.hold = undefined;
       await runtime.dispose();
+      stderr.mockRestore();
     }
   }, 60_000);
 });

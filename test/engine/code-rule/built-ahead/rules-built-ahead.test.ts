@@ -184,7 +184,7 @@ describe("rules a session builds ahead", () => {
     expect(written).toContain(`rerail: rules not built ahead for ${gone}: its record cannot be read\n`);
   });
 
-  it("say on stderr why when the session's checkouts cannot be read, or a build of one fails", async () => {
+  it("say on stderr why when the session's checkouts cannot be read, or a build of one fails, and not for a call's build", async () => {
     const { used, catalogs, open } = await sessionWithNested();
     const written = stderrLines();
     const editedBy = vi.spyOn(catalogs, "checkoutsEditedBy").mockImplementation(() => {
@@ -197,13 +197,18 @@ describe("rules a session builds ahead", () => {
 
     editedBy.mockReturnValue([used]);
     const prepare = catalogs.prepare.bind(catalogs);
-    vi.spyOn(catalogs, "prepare").mockImplementation(async (root, aheadFor) => {
-      if (root === used && aheadFor !== undefined) throw new Error("its rules cannot be read");
+    const failingPrepare = vi.spyOn(catalogs, "prepare").mockImplementation(async (root, aheadFor) => {
+      if (root === used) throw new Error(aheadFor === undefined ? "a call's rules cannot be read" : "its rules cannot be read");
       await prepare(root, aheadFor);
     });
     const failing = open();
     await failing.openWorkspace("failing");
     await failing.rulesBuiltAhead();
     expect(written).toContain(`rerail: rules not built ahead for ${used}: its rules cannot be read\n`);
+
+    // A call's build that fails is left to its lane's open, which reports it there.
+    await failing.prepareRules([join(used, "api", "x.py")]);
+    expect(failingPrepare).toHaveBeenCalledWith(used, undefined);
+    expect(written.filter(line => line.includes("a call's rules cannot be read"))).toEqual([]);
   });
 });
