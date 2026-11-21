@@ -313,6 +313,27 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches most of a stratum derives it again: {:?}", big.report.cross_again);
 }
 
+/// R4: a line inserted moves every node after it (`node`'s `start` and `end`), and no node's kind: a stratum that
+/// reads nodes' kinds alone is maintained, its delta the rows the lines added (`plan::unchanged_as_read`). Its every
+/// moved node was a change to it: ep2's one-line edit derived 391 strata again past the threshold, 66 over `kind`.
+#[test]
+fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // One file holds most nodes, so its nodes moved are most of `node`'s rows.
+    let big: String = (0..60).map(|i| format!("def f{i}():\n    pass\n")).collect();
+    // `used_kind` reads `kind` in the cross part, past a join of two files' rows, as `width` reads `child`.
+    let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- uses(_, f), kind(f, k).\n.output used_kind\n");
+    let outputs: Vec<&'static str> = KIND_OUTPUTS.iter().copied().chain(["used_kind"]).collect();
+    let mut s = Session::new("r4-moved", &program, &outputs, &[("a.py", big.as_str()), ("b.py", "from a import f1\ndef g():\n    pass\n")]);
+    s.run();
+    // A line inserted in the first function's body, as ep2's: every node after it moves, and no child's index but
+    // the function's own.
+    s.write("a.py", &big.replacen("def f0():\n", "def f0():\n    x = 1\n", 1));
+    let moved = s.edit("a line inserted above every node but one function's");
+    assert!(!moved.report.cross_again.contains_key(maintain::THRESHOLD), "R4: a line inserted is maintained: {:?}", moved.report.cross_again);
+    assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
+}
+
 /// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. Each line is led by its
 /// driver's delta, a negated read's too: its delta read positively first, the body planned with its variables bound.
 /// Left where the plan tested it, a negated read's line walked its other reads whole (the data layer's 2-file edit
@@ -470,4 +491,48 @@ fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     let again: usize = r.cross_again.values().sum();
     assert_eq!(r.cross_maintained.2, again, "R9: every stratum derived again has its reason");
     assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_skipped + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_skipped, r.cross_maintained, &r.cross_again));
+}
+
+/// Q421: a view of an input's columns (`kind`, `docof` of `node`) is never kept as rows (0353), cold or after an edit,
+/// on the kept frames' route and in a session: `retain::after` refuses a view by the program's rules
+/// (`Cut::views`) whatever form a run held it in, and the maintain mode holds it as a view.
+#[test]
+fn an_edit_keeps_no_rows_of_an_inputs_view() {
+    const P: &str = r#"
+.decl doc(d: number, path: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input doc, node, child, field, text
+.decl kind(n: node, k: symbol)
+kind(n, k) :- node(_, n, k, _, _).
+.decl docof(n: node, d: number)
+docof(n, d) :- node(d, n, _, _, _).
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl named(x: symbol, d: number)
+named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), docof(m, d), kind(m, _).
+.output named
+"#;
+    let mut s = Session::new("q361", P, &["named"], &[("a.py", "def f():\n    pass\n"), ("b.py", "f()\n")]);
+    let views = |s: &Session, f: &str, when: &str| {
+        let kept: Vec<String> = crate::content_store::kept_facts::by_relation(&s.dir.join(f))
+            .unwrap()
+            .into_iter()
+            .filter(|((r, _), _)| r == "kind" || r == "docof")
+            .map(|((r, w), (n, rows, _))| format!("{r}/{w}: {n} entries, {rows} rows"))
+            .collect();
+        assert!(kept.is_empty(), "{when}: {f} keeps rows of a view: {kept:?}");
+    };
+    s.run_kept();
+    views(&s, "kept-frames.sqlite", "cold");
+    s.write("b.py", "f()\nf()\n");
+    s.run_kept();
+    views(&s, "kept-frames.sqlite", "after an edit");
+    s.run();
+    views(&s, "kept.sqlite", "a session's first run");
+    s.write("b.py", "f()\n");
+    s.run();
+    views(&s, "kept.sqlite", "a session's edit");
 }

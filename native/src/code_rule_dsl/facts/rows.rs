@@ -73,6 +73,12 @@ pub fn moved() -> (u64, u64) {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
+/// The least block of a relation alone in it outside a run (`Part::try_new_with`'s `unowned`): its address space,
+/// whose pages are taken as they are written, so that its tail and its tables (a key map, its pending rows) grow in
+/// it as in a run's open block (decision 0384), where a block of twice its first rows moved its tail out at once and
+/// left its tables behind. A thousand of them reserve 64 GiB, not the 16 TiB a run's size each did.
+const UNOWNED_ROOM: usize = 64 << 20;
+
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
@@ -380,9 +386,14 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
 /// may read it in place (a pool slab when one is spare), a CPU run's never (Q58); its relations are made and
 /// dropped, so it keeps a free list.
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
+    lease_room(bytes.max(life.block_bytes()))
+}
+
+/// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
+fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -1084,12 +1095,18 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
+        // Outside a run and a chunk (a session's work between its runs, decision 0442) the open block is no one's: a
+        // value of its own each time it is asked for, so every relation leased a block of the run's size, 16 GiB of
+        // address space where blocks reserve it (decision 0445), held while it lived. A session's 1,000 one-document
+        // batches' relations reserved all of it (mmap refused at 256 TiB). It is alone in a block of its room, with
+        // room for its tail to double, and at least `UNOWNED_ROOM`.
+        let unowned = !alone && chunk.is_none() && crate::code_rule_dsl::logic::profile::run_own().is_none();
         let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone => {
-                    let block = lease_exact(need + extra, life)?;
+                _ if alone || unowned => {
+                    let block = if unowned { lease_room((2 * need + MARGIN).max(UNOWNED_ROOM))? } else { lease_exact(need + extra, life)? };
                     let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }, life));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));

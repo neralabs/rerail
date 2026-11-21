@@ -105,23 +105,30 @@ impl Memory {
         }
     }
 
-    /// The bytes idle buffers may hold, with `need` more about to be leased: what `budgets` leave past the ledger,
-    /// the live leases and the admissions' reservations. Never the driver's count, which counts every no-copy wrap
-    /// of host memory again (decision 0435 §2).
-    fn idle_room(&self, budgets: &crate::budget::Budgets, need: usize) -> usize {
-        budgets.metal().saturating_sub(other() + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
+    /// The bytes idle buffers may hold, with `need` more about to be leased: what the budget leaves past the ledger
+    /// (`other`, its bytes now) and this memory's live leases and reservations. Never the driver's count, which counts
+    /// every no-copy wrap of host memory again (decision 0435 §2). It reads nothing of the thread's run: a lease
+    /// dropped on a thread with none (a pool's job after its run, decision 0442) asks it too.
+    fn idle_room(&self, budgets: &crate::budget::Budgets, other: usize, need: usize) -> usize {
+        budgets.metal().saturating_sub(other + self.live.load(std::sync::atomic::Ordering::Relaxed) + self.reserved.load(std::sync::atomic::Ordering::Relaxed) + need)
     }
 
     /// Releases idle buffers until they fit what `budgets` leave with `need` more leased (`Pool::trim`).
     fn trim(&self, budgets: &crate::budget::Budgets, need: usize) {
-        let room = self.idle_room(budgets, need);
+        let room = self.idle_room(budgets, other(), need);
         self.pool.lock().expect("the pool").trim(room, self.slab_idle_limit());
     }
 }
 
 /// What the ledger of `rerail-metal` reserves now.
 fn other() -> usize {
-    OTHER_RESERVED.get().map_or(0, |f| f())
+    other_ledger().map_or(0, |l| l.load(std::sync::atomic::Ordering::Acquire))
+}
+
+/// The ledger of `rerail-metal` this thread's run counts against (its machine's; a test thread's own), once its
+/// reader is set.
+fn other_ledger() -> Option<std::sync::Arc<std::sync::atomic::AtomicUsize>> {
+    OTHER_RESERVED.get().map(|f| f())
 }
 
 
@@ -428,6 +435,9 @@ pub struct Pooled {
     /// return to the pool (`Back`) waits for that work, whoever holds the lease and whether or not they remember.
     /// None for a buffer whose memory the host cannot reach (it is no block's, and its command buffer retains it).
     held: Option<rerail_blocks::ledger::Tracked<Option<Back>>>,
+    /// The ledger of `rerail-metal` its lease counted against (`other_ledger`), which its return trims the pool by:
+    /// taken where it was leased, as `on` is, so a drop on a thread with no run reads no machine's.
+    other: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// A lease's buffer on its way back to the pool, once no queued work reaches it (`Pooled::held`).
@@ -435,6 +445,8 @@ struct Back {
     on: std::sync::Arc<Memory>,
     budgets: std::sync::Arc<crate::budget::Budgets>,
     buffer: DeviceBuffer,
+    /// Its lease's ledger (`Pooled::other`).
+    other: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Drop for Back {
@@ -449,7 +461,7 @@ impl Drop for Back {
             p.held_slabs += class;
         }
         p.idle.entry(class).or_default().push((at, b));
-        let room = self.on.idle_room(&self.budgets, 0);
+        let room = self.on.idle_room(&self.budgets, self.other.as_ref().map_or(0, |l| l.load(std::sync::atomic::Ordering::Acquire)), 0);
         p.trim(room, self.on.slab_idle_limit());
     }
 }
@@ -459,7 +471,7 @@ impl Pooled {
     fn of(buffer: DeviceBuffer, keep: bool, fresh: bool) -> Pooled {
         let base = buffer.contents().cast::<u8>();
         let held = (!base.is_null()).then(|| rerail_blocks::ledger::Tracked::new(None, base, buffer.length() as usize));
-        Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(buffer), keep, fresh, owner: 0, held }
+        Pooled { on: dev(), budgets: crate::budget::budgets(), buffer: Some(buffer), keep, fresh, owner: 0, held, other: other_ledger() }
     }
 
     /// The lease's buffer as Metal's (the pool is Metal's while `get` is: the process's device is Metal).
@@ -680,7 +692,7 @@ impl Drop for Pooled {
         }
         // Released to the device instead (`release`): its command buffers retain it. Else back to the pool once no
         // queued work reaches it: the next lease's host writes are never ordered before a queued kernel's reads.
-        let back = self.keep.then(|| Back { on: self.on.clone(), budgets: self.budgets.clone(), buffer: b });
+        let back = self.keep.then(|| Back { on: self.on.clone(), budgets: self.budgets.clone(), buffer: b, other: self.other.clone() });
         match self.held.take() {
             Some(mut held) => *held = back,
             None => drop(back),
@@ -717,7 +729,7 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
     }
     p.made += 1;
     // A new buffer: idle ones give way to it first, so the budget holds both.
-    p.trim(st_.idle_room(&crate::budget::budgets(), class), st_.slab_idle_limit());
+    p.trim(st_.idle_room(&crate::budget::budgets(), other(), class), st_.slab_idle_limit());
     drop(p);
     traced_new(class);
     let b = crate::score::phase("new buffer", || rerail_device::device::alloc_uninitialized_array_sync::<u8>(shared.device, class));
@@ -727,10 +739,11 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
 
 /// What else holds the device's budget beside relational work (the buffer pool's reservations, `rerail-metal`'s
 /// ledger): set by its owner, which this crate cannot depend on.
-static OTHER_RESERVED: OnceLock<fn() -> usize> = OnceLock::new();
+static OTHER_RESERVED: OnceLock<fn() -> std::sync::Arc<std::sync::atomic::AtomicUsize>> = OnceLock::new();
 
-/// Sets the reader of what else holds the Metal budget (`lease_within`).
-pub fn set_other_reserved(reader: fn() -> usize) {
+/// Sets the reader of what else holds the Metal budget (`lease_within`): the ledger the calling thread's run counts
+/// against, which a lease keeps (`Pooled`).
+pub fn set_other_reserved(reader: fn() -> std::sync::Arc<std::sync::atomic::AtomicUsize>) {
     let _ = OTHER_RESERVED.set(reader);
 }
 

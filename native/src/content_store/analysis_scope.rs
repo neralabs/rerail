@@ -273,6 +273,10 @@ impl AnalysisRun {
     /// acquisition is written by its first write, which the store's writer applies behind the run (its manifest's,
     /// then its publication's, `finish`).
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
+        super::hazards::around_the_run(|| Self::begin_now(store, scope, id, acquired_at))
+    }
+
+    fn begin_now(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
         let lease = store.hold_collection()?;
         let identity = store.identity();
         let read = |f: &dyn Fn(&rusqlite::Connection) -> StoreResult<i64>| -> StoreResult<i64> {
@@ -307,6 +311,10 @@ impl AnalysisRun {
     /// staged memberships), as an item of its own (decision 0547). This waits for the writer: the outcome is the
     /// caller's answer. A failed publication leaves the run open, to be finished again.
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
+        super::hazards::around_the_run(|| self.finish_now(succeeded))
+    }
+
+    fn finish_now(&mut self, succeeded: bool) -> StoreResult<()> {
         if self.lease.is_none() {
             return Ok(());
         }

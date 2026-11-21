@@ -2193,7 +2193,6 @@ type KeptRoot = (String, PathBuf, PathBuf, Option<(u8, u64)>);
 ///   root (`watch_above`), so one under none is of a name no run uses;
 /// - a revision constant after the last manifest that owns its derivation goes away;
 /// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
-///
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
