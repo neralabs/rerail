@@ -1,1 +1,0 @@
-Starting Rerail in a repository with many worktrees no longer makes the daemon run Git once per worktree for every session working there. On a busy Windows machine those Git processes kept the daemon from answering hooks for a minute or more, so events went unrecorded.

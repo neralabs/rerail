@@ -1,1 +1,0 @@
-`rerail daemon stop` ends a daemon that does not answer only when it holds this home's lock as its recorded holder or started no later than the time `daemon.json` records. A killed daemon's record whose process id a later program took is removed, that program left running. Otherwise the stop ends nothing, keeps the record and says how to check.

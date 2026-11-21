@@ -27,6 +27,7 @@ export {
   installPackVersions,
   newerPackVersions,
   npmPackStore,
+  PACK_FALLBACK_TAG,
   packsLeftOutByCore,
   parsePackVersions,
   type PackDiscovery,
