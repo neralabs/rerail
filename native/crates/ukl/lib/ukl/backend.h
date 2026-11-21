@@ -520,3 +520,13 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 #ifndef ukl_poll_yield
 #define ukl_poll_yield() ((void)0)
 #endif
+
+// The device's clock in nanoseconds, for a measurement's trace: CUDA's global timer. 0 where the backend gives a kernel
+// no clock (Metal, OpenCL C).
+#ifndef ukl_clock_ns
+#if defined(UKL_CUDA)
+UKL_INLINE uint64_t ukl_clock_ns(void) { uint64_t t; asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t)); return t; }
+#else
+#define ukl_clock_ns() ((uint64_t)0)
+#endif
+#endif

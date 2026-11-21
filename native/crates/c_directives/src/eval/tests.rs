@@ -1216,6 +1216,29 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap_or(f64::NAN))).collect();
     let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
+    // `RERAIL_PP_STAGES_ALL`: every phase's cost (best of 3), to the run's end; with `RERAIL_PP_TRACE` and
+    // `RERAIL_PP_TRACE_ALL`, a traced run first names each phase's line.
+    // `RERAIL_PP_STOPS`: the run stopped at each of the given phases (best of 9).
+    if let Ok(stops) = std::env::var("RERAIL_PP_STOPS") {
+        let best9 = |stop: u32| (0..9).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let t: Vec<String> = stops.split(',').map(|k| format!("{k}:{:.0}", best9(k.parse().unwrap()))).collect();
+        eprintln!("STOPS {} whole {:.0}", t.join(" "), best9(u32::MAX));
+    }
+    if std::env::var_os("RERAIL_PP_STAGES_ALL").is_some() {
+        let best3 = |stop: u32| (0..3).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let whole = best3(u32::MAX);
+        let (mut prev, mut near) = (best3(1), 0);
+        eprintln!("STOPK whole {whole:.1} us");
+        for k in 1..4000u32 {
+            let t = best3(k + 1);
+            eprintln!("STOPK {k} {:.1}", t - prev);
+            prev = t;
+            near = if t >= whole * 0.995 { near + 1 } else { 0 };
+            if near >= 8 {
+                break;
+            }
+        }
+    }
 }
 
 /// R8 of decision 0467 (and R10 of 0448): the corpus preprocessed on the device, each file its

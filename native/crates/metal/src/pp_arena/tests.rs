@@ -486,6 +486,8 @@ fn the_grid_is_the_devices_resident_count() {
             assert!(r.groups <= bound && r.groups >= 1, "{r:?} against the bound {bound}");
             assert_eq!(groups(), r.groups.min(GROUPS_MOST), "the resident count, capped");
         }
+        // No cores given: the backend's own answer where it has one (decision 0568: CUDA's occupancy), else unknown.
+        None if residency().known == rerail_device::grid::Known::Api => assert_eq!(groups(), residency().groups.min(GROUPS_MOST), "the backend's answer, capped"),
         None => assert_eq!(groups(), GROUPS_UNKNOWN),
     }
 }

@@ -7,10 +7,12 @@
 //!
 //! - **No CUDA at build time.** The driver (`libcuda`, Windows' `nvcuda.dll`) and NVRTC are opened at run time; without them there is no
 //!   device (`CudaDevice::system_default` is `None`), as on a Mac without Metal.
-//! - **Buffers are pinned, mapped host memory** (`cuMemHostAlloc`): the host reads and writes them in place
-//!   (`contents`), as Metal's shared storage, and kernels read them where they are. On a unified device (GB10) that
-//!   is as fast as device memory (0440 §2: 0.97x); on a discrete card it reads over the bus, which is correct and
-//!   slow: placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
+//! - **Buffers are host memory, mapped**: the host reads and writes them in place (`contents`), as Metal's shared
+//!   storage, and kernels read them where they are. On a device that reads pageable memory through the host's page
+//!   tables (a GB10's ATS) a block is the host's own pages; elsewhere it is pinned (`cuMemHostAlloc`). On a GB10 the
+//!   pinned path's atomics and fences are slow: a grid barrier of 32 groups 24-42 µs on it, 0.7-1.4 µs on the host's
+//!   pages (decision 0580). On a discrete card the pinned memory reads over the bus, which is correct and slow:
+//!   placing blocks in device memory there is the block directory's work (0440 §7.2, step 10).
 //! - **Arguments without reflection.** UKL's CUDA shim emits beside each kernel the text of its rows
 //!   (`Name__ukl_params`) and each row's type's size, alignment and kind (`Name__ukl_rows`), and for each `args`
 //!   structure its fields' names and a kernel that measures its layout (`Type__ukl_layout`). They give the same
@@ -331,7 +333,7 @@ impl Drop for Allocation {
     }
 }
 
-/// A pinned block of a size class, free.
+/// A block of a size class, free: the host's pages or pinned memory (`alloc_uninitialized_array_sync`).
 struct Block {
     host: *mut u8,
     dev: DevPtr,
@@ -404,6 +406,12 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
     sweep_pending(device.current());
     let reused = POOL.lock().unwrap().get_mut(&class).and_then(Vec::pop);
     let Block { host, dev } = reused.unwrap_or_else(|| {
+        // The host's pages where the device reads them through its page tables (decision 0580): a pinned block's
+        // atomics and fences take a slow path there. `RERAIL_CUDA_PINNED` keeps pinned blocks, a measurement aid.
+        if device.pageable && std::env::var_os("RERAIL_CUDA_PINNED").is_none() {
+            let host = crate::os::map_zeroed(class as usize).expect("the host's pages for a CUDA block");
+            return Block { host, dev: host as DevPtr };
+        }
         let a = device.current();
         let mut host = std::ptr::null_mut();
         must(unsafe { (a.cu_mem_host_alloc)(&mut host, class as usize, CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP) }, "cuMemHostAlloc");

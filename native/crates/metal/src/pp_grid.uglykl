@@ -29,7 +29,11 @@
 // that ends the kernel leaves it by `PX_QUIT`: a return in the kernel, a false in a phase
 // function (`px_drain`), which gives its phase count back.
 #define PX_QUIT return
-#define TICK() if (++phase == stop) PX_QUIT
+// A trace (`STOP` at `PP_TRACE_ON`): each phase's source line and the device's clock (`ukl_clock_ns`), written by the
+// grid's first thread at the phase's tick into `GRID`'s words past the grid's 8.
+#define PP_TRACE_ON 0xffffffffu
+#define PP_TRACE_N 2048u
+#define TICK() if (stop == PP_TRACE_ON && g.group == 0u && g.lid == 0u && phase < PP_TRACE_N) { uint64_t t_ = ukl_clock_ns(); g.ctl[8u + 3u * phase] = __LINE__; g.ctl[9u + 3u * phase] = (uint32_t)t_; g.ctl[10u + 3u * phase] = (uint32_t)(t_ >> 32); } if (++phase == stop) PX_QUIT
 #define BARRIER() TICK(); if (!ukl_grid_barrier(g, &tg->flag)) PX_QUIT
 // Scans sharing their barriers (`ukl_grid_scans`): `JOB(k, …)` each, then `SCANS(k)`.
 #define JOB(j, n_, in_, out_, total_) jobs[j].n = (n_); jobs[j].in = C32(in_); jobs[j].out = C32(out_); jobs[j].total = C32(total_)
