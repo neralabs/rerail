@@ -3151,9 +3151,12 @@ export class CodeRuleBridge {
    * last pass when they vouch for the rest (`SessionNotices`); every other pass reads the whole folder.
    */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
-    const ignores = await discovery.ignoreFiles.ignoresOf(discovery.git, discovery.root);
+    const whole = readsWholeFolder(discovery, checkpoint);
+    // Read beside the walk, as the pass begins: Git names the files once a session, so a whole pass, the session's
+    // first among them, never waits for it; one that may read by notices waits, for files Git has named.
+    const ignores = discovery.ignoreFiles.ignoresOf(discovery.git, discovery.root);
     // Taken before the walk: a write made from here on is a notice for the next pass.
-    const reads = discovery.notices.begin(readsWholeFolder(discovery, checkpoint), ignores);
+    const reads = discovery.notices.begin(whole, whole ? undefined : await ignores);
     const worktrees = this.#syncWorktrees(discovery);
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
@@ -3167,7 +3170,7 @@ export class CodeRuleBridge {
     if (this.#abandoned(discovery)) return;
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
     // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
-    discovery.notices.ended(seen, { linked: reads.linked, files: scan.sources.size });
+    discovery.notices.ended(seen, { linked: reads.linked, files: scan.sources.size }, await ignores);
     // Reconcile changes to already-observed files made during the initial traversal.
     if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }

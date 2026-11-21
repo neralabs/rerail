@@ -770,7 +770,7 @@ export class SessionNotices {
   #seen: WorktreeRead | undefined;
   /** Whether the next pass reads the whole folder. */
   #whole = true;
-  /** What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass began (`begin`). */
+  /** What told Git to ignore beyond the folder's `.gitignore` files as the last whole pass began (`ended`). */
   #ignores: string | undefined;
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
@@ -817,28 +817,34 @@ export class SessionNotices {
   }
 
   /**
-   * What the pass that begins now reads: the whole folder when `#readsWhole` says so, when `ignores` (the text of the
-   * files that tell Git what to ignore beyond the folder's `.gitignore` files: `info/exclude`, `core.excludesFile` and
-   * the configuration naming it, `WorktreeLook.ignores`) is not what it was as the last whole pass began, since no
-   * notice in the folder tells of a change to those, or when the paths to read reach the bound (`#noticed`); else the
-   * paths notices named since the last pass and the linked files. A whole pass watches the folder again first when its
-   * watch is down, so a write made while it runs is a notice. Until `ended`, the next pass reads whole: one that stops
-   * midway leaves unread what it took.
+   * What the pass that begins now reads: the whole folder when `#readsWhole` says so, when `ignores` (what tells Git to
+   * ignore beyond the folder's `.gitignore` files now) moved since the last whole pass (`#ignoresMoved`), or when the
+   * paths to read reach the bound (`#noticed`); else the paths notices named since the last pass and the linked files.
+   * A whole pass watches the folder again first when its watch is down, so a write made while it runs is a notice.
+   * Until `ended`, the next pass reads whole: one that stops midway leaves unread what it took.
    */
   begin(whole: boolean, ignores?: string): SessionReads {
     this.#collect();
     const began = this.#now();
-    const paths = this.#readsWhole(whole || ignores !== this.#ignores, began) ? undefined : this.#noticed();
+    const paths = this.#readsWhole(whole || this.#ignoresMoved(ignores), began) ? undefined : this.#noticed();
     this.#began = began;
     this.#paths = new Set();
     this.#whole = true;
     // A pass of noticed paths reads fewer paths than the bound, so it notes them all.
     const linked = new LinkedFiles(this.#looks);
     if (paths !== undefined) return { whole: false, paths, linked };
-    this.#ignores = ignores;
     this.#seen = undefined;
     this.#open();
     return { whole: true, linked };
+  }
+
+  /**
+   * Whether `ignores` is not what the last whole pass began with (`WorktreeLook.ignores`: `info/exclude`,
+   * `core.excludesFile` and the configuration naming it), since no notice in the folder tells of a change to those;
+   * undefined, Git did not name them now. Before a whole pass ended with them known, nothing has moved.
+   */
+  #ignoresMoved(ignores: string | undefined): boolean {
+    return this.#ignores !== undefined && ignores !== this.#ignores;
   }
 
   /**
@@ -882,13 +888,15 @@ export class SessionNotices {
   /**
    * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
    * (on Linux the watch follows its folders) and the period runs from as it began, one that read only noticed paths with
-   * nothing. `found`: the files with another name it found, and how many files it looked at.
+   * nothing. `found`: the files with another name it found, and how many files it looked at. `ignores`: what told Git
+   * to ignore beyond the folder's `.gitignore` files as it began (`begin`).
    */
-  ended(seen: WorktreeRead | undefined, found: SessionFound): void {
+  ended(seen: WorktreeRead | undefined, found: SessionFound, ignores?: string): void {
     if (seen === undefined) {
       this.#endedNoticed(found.linked);
       return;
     }
+    this.#ignores = ignores;
     this.#walkedAt = this.#began;
     this.#looks = found.files + seen.folders.size;
     this.#linked = found.linked.keep(this.#looks);
