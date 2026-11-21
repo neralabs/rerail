@@ -1,11 +1,11 @@
-//! The tape's reads in Rust, written directly (decision 0509): what this crate's readers (`F16`, `F16Z`, `F15`,
+//! The tape's reads in Rust, written directly (decision 0510): what this crate's readers (`F16`, `F16Z`, `F15`,
 //! `StoredPresence`) read a node with. The reads in CLIF (`rerail_clif::reads`, decision 0310) are the JIT's and
 //! the kernels'; these read the same bytes the same way, and a test holds every read of every node equal to the
 //! JIT's (`f16::tests::the_rust_reads_are_the_jits`).
 //!
 //! A read takes the bytes the view's offsets count from, the view, and a document-local node. Every load is a
 //! slice's: a load past the bytes is a corrupt tape, and panics. Every value read is held where a reader's next
-//! step needs it held (decision 0403): a size is at least 1, a span lies in the source, a parent's step moves back.
+//! step needs it held (decision 0463): a size is at least 1, a span lies in the source, a parent's step moves back.
 
 use rerail_clif::view::TapeView;
 
@@ -91,7 +91,7 @@ pub mod f16 {
 
     /// Node `i`'s value in side list `k` (0 codes' low parts, 1 slots, 2 gaps, 3 lengths), the node listed: its
     /// part, its block's run of offsets, a search of them for its low byte. Every offset is held to the part's end
-    /// (decision 0403).
+    /// (decision 0463).
     #[cold]
     #[inline(never)]
     fn side(t: &[u8], v: &TapeView, k: usize, i: u32) -> u64 {
@@ -136,7 +136,7 @@ pub mod f16 {
         get(t, v, 0, i)
     }
 
-    /// The node's subtree's size: at least 1, whatever the slot holds, so every hop by sizes moves on (0403).
+    /// The node's subtree's size: at least 1, whatever the slot holds, so every hop by sizes moves on (0463).
     #[inline(always)]
     pub fn size(t: &[u8], v: &TapeView, i: u32) -> u32 {
         let s = get(t, v, 0, i);
@@ -198,13 +198,13 @@ pub mod f16 {
         (x & 0xffff_ffff) + (x >> 32)
     }
 
-    /// The node's start, held to the source (decision 0403).
+    /// The node's start, held to the source (decision 0463).
     #[inline(always)]
     pub fn start(t: &[u8], v: &TapeView, i: u32) -> u32 {
         start_stated(t, v, i).min(v.source_len)
     }
 
-    /// The node's end, held between its start and the source's end (decision 0403).
+    /// The node's end, held between its start and the source's end (decision 0463).
     #[inline(always)]
     pub fn end(t: &[u8], v: &TapeView, i: u32) -> u32 {
         let start = start(t, v, i);
@@ -226,7 +226,7 @@ pub mod f16 {
 
     /// The node's parent, or `NONE` at the root: the node before is the parent (an inner node), or a leaf naming
     /// the previous sibling or, every `K`-th sibling, the parent. A step of 1 to `j` back, else the slot is no
-    /// tape's and the walk ends (decision 0403).
+    /// tape's and the walk ends (decision 0463).
     pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
         let mut j = i;
         while j != 0 {
@@ -358,7 +358,7 @@ pub mod f15 {
         if w == 2 { u16_at(t, column, i.wrapping_mul(2)) } else { u32_at(t, column, i.wrapping_mul(4)) }
     }
 
-    /// The node's subtree's size, at least 1 (decision 0403).
+    /// The node's subtree's size, at least 1 (decision 0463).
     #[inline(always)]
     pub fn size(t: &[u8], v: &TapeView, i: u32) -> u32 {
         cell(t, v.columns[1], width(v, 0), i).max(1)
@@ -384,19 +384,19 @@ pub mod f15 {
         start_stated(t, v, from).wrapping_add(cell(t, v.columns[4], width(v, 2), i))
     }
 
-    /// The node's start, held to the source (decision 0403).
+    /// The node's start, held to the source (decision 0463).
     #[inline(always)]
     pub fn start(t: &[u8], v: &TapeView, i: u32) -> u32 {
         start_stated(t, v, i).min(v.source_len)
     }
 
-    /// The node's end, held between its start and the source's end (decision 0403).
+    /// The node's end, held between its start and the source's end (decision 0463).
     #[inline(always)]
     pub fn end(t: &[u8], v: &TapeView, i: u32) -> u32 {
         end_stated(t, v, i).max(start(t, v, i)).min(v.source_len)
     }
 
-    /// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes (decision 0403).
+    /// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes (decision 0463).
     #[inline(always)]
     fn hop(v: &TapeView, c: u32, size: u32) -> u32 {
         c.wrapping_add(size).max(c.wrapping_add(1)).min(v.nodes)

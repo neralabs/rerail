@@ -19,7 +19,7 @@ function per CLIF block graph, its locals `v0`, `v1`, … and a checked pointer 
    - a block's column, a value with its escape to the side list, a checkpoint, and the gaps summed by folding a
      word are each one small function;
    - the side list's search and the newline index's select are `#[cold]`, as the JIT keeps them calls.
-   The reads hold each value where the next step needs it held, as the CLIF does (decision 0403): a size is at
+   The reads hold each value where the next step needs it held, as the CLIF does (decision 0463): a size is at
    least 1, spans lie in the source, a parent's step moves back.
 2. **The JIT holds them equal.** `f16::tests::the_rust_reads_are_the_jits` compares every read the crate has with
    the CLIF read the JIT compiled: every node of a format 16 tape whose side lists are all in use (size, number,

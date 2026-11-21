@@ -10,7 +10,7 @@ use rerail_metal::block_program;
 
 /// Each JSON grammar's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
 /// CPU interpreter on every document: its outputs, and its extracted positions where tier 1 accepts
-/// it (decision 0452). A step whose program needs
+/// it (decision 0411). A step whose program needs
 /// a form generated MSL lacks (`block_program::missing_form`: a fixed point, a back fill or load)
 /// is refused by that name and counted, not compared; most steps run.
 #[test]
@@ -35,7 +35,7 @@ fn every_grammar_on_metal_equals_the_interpreter() {
         let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
         // A file tier 1 refuses (an error, an escape: its totals' flag) never reaches tier 2, and its tokens' lasts are
         // not defined there: the CPU makes them by the gaps, Metal keeps the extract, and the proof that they are
-        // equal excuses every place past a fallback bit (decision 0452, R5). Its outputs are compared, not its
+        // equal excuses every place past a fallback bit (decision 0411, R5). Its outputs are compared, not its
         // extracts.
         let accepted = want.totals.iter().all(|&t| t == 0);
         if got.outputs != want.outputs || (accepted && got.positions != want.positions) {
