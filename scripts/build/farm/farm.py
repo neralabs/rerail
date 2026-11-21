@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 51
+VERSION = 52
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1615,6 +1615,10 @@ def agent_exec(job):
     text = cleaner()
     if text:
         job = dict(job, cleaner=text)
+    guard = os.path.join(os.path.dirname(os.path.realpath(__file__)), "gpu-guard")
+    if os.path.isfile(guard):
+        # A Mac host's GPU watchdog: the agent starts it (farm-agent, `ensure_gpu_guard`).
+        job = dict(job, gpu_guard=open(guard).read())
     job.setdefault("max_target_gb", config()["max_target_gb"])
     return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 

@@ -124,7 +124,10 @@ host, so a command never reads another's files. A host may be a Linux machine: i
 Metal one, a `--tree` run or a `--fetch`), and the command is then a Linux build and run, as CI's; its line
 says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. Some hosts are VMs (guests) that run only
 while used: a command that would wait for a slot starts one, and takes it once it is up (seconds to a
-minute), unless a slot frees first; idle guests stop on their own (`scripts/build/farm/guests`). It also compiles this Mac's library
+minute), unless a slot frees first; idle guests stop on their own (`scripts/build/farm/guests`). On a Mac host, the farm kills its
+own GPU-using processes when the GPU or WindowServer stops answering for 15 s (macOS restarts the
+Mac at 120 s); the command's output then says `the farm's GPU watchdog killed ...`. That is a test
+holding the GPU too long, not a flaky host: bound its launches (the farm's README, "The GPU watchdog"). It also compiles this Mac's library
 crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 

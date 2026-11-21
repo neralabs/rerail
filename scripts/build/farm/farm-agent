@@ -842,6 +842,59 @@ def sweep(job):
         lock.close()
 
 
+GPU_GUARD = os.path.join(FARM, "gpu-guard")
+
+
+def ensure_gpu_guard(text):
+    """On a Mac: starts the GPU watchdog (scripts/build/farm/gpu-guard, its text sent with the job)
+    unless one runs, and holds its `users` lock shared while this command runs, so it stays. Returns
+    the lock's file (held until this process exits)."""
+    import fcntl
+    os.makedirs(GPU_GUARD, exist_ok=True)
+    path = os.path.join(GPU_GUARD, "gpu-guard.py")
+    try:
+        old = open(path).read()
+    except OSError:
+        old = None
+    if old != text:
+        with open(path + ".part", "w") as f:
+            f.write(text)
+        os.rename(path + ".part", path)
+    users = open(os.path.join(GPU_GUARD, "users"), "a+")
+    fcntl.flock(users, fcntl.LOCK_SH)
+    # This agent's pid: the guard takes every process under it for the farm's (removed at the end).
+    os.makedirs(os.path.join(GPU_GUARD, "agents"), exist_ok=True)
+    open(os.path.join(GPU_GUARD, "agents", str(os.getpid())), "w").close()
+    with open(os.path.join(GPU_GUARD, "lock"), "a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            running = False
+        except BlockingIOError:
+            running = True
+    if not running:
+        with open(os.path.join(GPU_GUARD, "guard.err"), "a") as err:
+            subprocess.Popen(["/usr/bin/python3", "-I", path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=err, start_new_session=True)
+    return users
+
+
+def gpu_kills_of(pid, since):
+    """The GPU watchdog's kills of processes under `pid` (this command) since `since`."""
+    found = []
+    try:
+        for line in open(os.path.join(GPU_GUARD, "kills.log")):
+            try:
+                k = json.loads(line)
+            except ValueError:
+                continue
+            if k.get("time", 0) >= since and pid in k.get("ancestors", []):
+                found.append(k)
+    except OSError:
+        pass
+    return found
+
+
 def watchdog(job):
     while True:
         sweep(job)
@@ -892,6 +945,13 @@ def run_command(job):
     except (ValueError, OSError) as e:
         print(f"farm-agent: the open-file limit stays {soft}: {e}", file=sys.stderr, flush=True)
     argv = [m(a) for a in job["argv"]]
+    global GPU_USERS
+    started = time.time()
+    if MACOS and job.get("gpu_guard"):
+        try:
+            GPU_USERS = ensure_gpu_guard(job["gpu_guard"])
+        except OSError as e:
+            print(f"farm-agent: no GPU watchdog: {e}", file=sys.stderr, flush=True)
     windows = None
     if job.get("windows"):
         try:
@@ -922,6 +982,16 @@ def run_command(job):
     if job.get("target"):
         threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
+    if MACOS:
+        try:
+            os.remove(os.path.join(GPU_GUARD, "agents", str(os.getpid())))
+        except OSError:
+            pass
+        for k in gpu_kills_of(proc.pid, started):
+            print(f"farm-agent: the farm's GPU watchdog killed {os.path.basename(k['path'])} (pid {k['pid']}): "
+                  f"{k.get('why')}; macOS restarts a Mac whose WindowServer stops for 120 s "
+                  f"(scripts/build/farm/README.md, \"The GPU watchdog\")",
+                  file=sys.stderr, flush=True)
     if windows:
         for p in (windows["script"], windows["launcher"]):
             try:

@@ -48,6 +48,7 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
+| `gpu-guard` | a Mac host's GPU watchdog: kills the farm's GPU users when the GPU or WindowServer stalls ("The GPU watchdog") |
 | `cargo-linux` | cargo for the Linux hosts' target, from this Mac ("Building for the Linux hosts here") |
 | `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
@@ -649,6 +650,35 @@ on a Mac). The load average is shown but means little on a Mac: it counts thread
 and macOS's background work, and an M3 about a third idle showed a load 31 over its cores. Until
 farm 33 `status` printed "cores to spare" (cores less the load average), and an agent read a
 negative figure as a full machine and waited 9 minutes before giving up on a run (2026-11-18).
+
+## The GPU watchdog
+
+macOS restarts a Mac whose WindowServer has not checked in for 120 s (a kernel panic: "userspace
+watchdog timeout: no successful checkins from WindowServer"). Farm commands' Metal work did that to
+this Mac and to a farm Mac on 2026-11-20: WindowServer's main thread waited in the GPU driver,
+first behind one test's command buffers of minutes, then behind seven test processes of three
+checkouts at once. Nothing on a command line says whether it uses the GPU (the engine opens Metal
+from many places, without `metal` in the command), so no rule about which commands go where keeps
+a Mac safe. The watch is on the machine instead.
+
+Each Mac host runs `gpu-guard` while it has farm commands: farm-agent starts it with a command
+(its text is sent with each one, as the cleaner's is), and it stops 15 minutes after the last. A
+probe it compiles there (the Xcode's `swiftc`) checks every 2 s that the GPU finishes a one-thread
+compute dispatch and that WindowServer answers a client (the window list), timing each from a
+thread of its own, so a step that blocks in the driver counts too. When either has not finished for
+15 s, every process holding the GPU (ioreg's `AGXDeviceUserClient`) that is the farm's is killed,
+and again every 10 s while the stall lasts: its program is under the farm's directory (a test
+binary in a farm target directory, a program `--tree` sent), or it runs under a farm-agent's
+command. No other process is ever touched. The command's output then names what was killed and
+why (`farm-agent: the farm's GPU watchdog killed ...`), and the host's
+`~/Library/Caches/rerail-farm/gpu-guard/` keeps `guard.log` (stalls, checks over 2 s, kills) and
+`kills.log`.
+
+A busy GPU alone trips neither check: macOS time-slices the GPU between processes, and a dispatch
+of 2^18 spinning threads filling an M3 MacBook Pro's GPU for 10 s did not delay the probe's (2026-11-20). So
+the watchdog acts on the stall that precedes the panic, not on load; it cannot make a test that
+holds the GPU for minutes pass, only keep the Mac up and say which program it was. Bounding each
+launch's GPU time is the tests' work.
 
 ## This Mac's disk floor
 
