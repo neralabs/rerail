@@ -3893,6 +3893,7 @@ dependencies = [
  "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
+ "rerail-rust-stream",
  "rerail-simd8",
 ]
 
@@ -4563,6 +4564,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-rust-stream",
  "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
@@ -4760,6 +4762,7 @@ dependencies = [
  "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-stream",
  "rerail-tape-format",
 ]
 
@@ -4854,6 +4857,17 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-rust-stream"
+version = "0.1.0"
+dependencies = [
+ "rerail-clif",
+ "rerail-compiler",
+ "rerail-cpu-block",
+ "rerail-rust-stream",
+ "rerail-tape-format",
 ]
 
 [[package]]

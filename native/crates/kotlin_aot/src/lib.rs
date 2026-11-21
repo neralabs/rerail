@@ -25,7 +25,9 @@ use rerail_compiler::native_ir;
 #[cfg(feature = "generated")]
 use rerail_cpu_block::native_cpu_block;
 #[cfg(feature = "generated")]
-use rerail_cpu_stream::{native_cpu_stream, rust_stream};
+use rerail_cpu_stream::native_cpu_stream;
+#[cfg(feature = "generated")]
+use rerail_rust_stream::rust_stream;
 
 /// Tier 1's source from `c` (`rust_block`), as the build script writes it.
 #[cfg(feature = "generated")]

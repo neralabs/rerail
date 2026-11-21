@@ -331,7 +331,7 @@ impl<'a> Gen<'a> {
 
     fn header(&self, out: &mut String) {
         out.push_str(
-            "//! Tier 1 of the grammar, written from its block program by `rerail_compiler::rust_block`\n\
+            "//! Tier 1 of the grammar, written from its block program by `rerail_rust_stream::rust_block`\n\
              //! (decision 0451), in the lean lexer's two stages: stage 1 (`masks`) a 64-byte block a\n\
              //! step, the masks the token loop and tier 2 read a word a block each; stage 2 (`tokens`)\n\
              //! the token loop, a token's end by its first byte's rule and its record by its kind, its\n\

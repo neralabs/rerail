@@ -903,3 +903,11 @@ pub const fn id_slots(classes: usize) -> usize {
 }
 /// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
 pub const MAX_CLASSES: usize = 4;
+
+/// No code for a key yet (`id_of`).
+pub const NO_CODE: i64 = 0xffff;
+
+/// The flags of a value that did not fit its width (`Mem::Wide`): an offset, a tail (or an end
+/// before the last descendant's start, from the last descendant).
+pub const WIDE_OFF: i64 = 1;
+pub const WIDE_TAIL: i64 = 2;

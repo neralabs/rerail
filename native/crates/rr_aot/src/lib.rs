@@ -36,7 +36,9 @@ use rerail_compiler::native_ir;
 #[cfg(feature = "generated")]
 use rerail_cpu_block::native_cpu_block;
 #[cfg(feature = "generated")]
-use rerail_cpu_stream::{clif_rust, native_cpu_stream, rust_stream};
+use rerail_cpu_stream::{clif_rust, native_cpu_stream};
+#[cfg(feature = "generated")]
+use rerail_rust_stream::rust_stream;
 
 /// Which tiers run the ahead-of-time build.
 #[derive(Clone, Copy, Debug)]

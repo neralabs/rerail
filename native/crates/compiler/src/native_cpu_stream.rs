@@ -307,9 +307,9 @@ pub struct CompiledStream {
     /// Of `own_calls`, the calls of a step on the working rows (`TableFns`' `blocks`, `commit`, `uncode`, `finish`, and a
     /// format 16 run's `pass` and `retag`): none in a direct format 16 run (`direct`).
     pub row_calls: usize,
-    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`rust_stream::direct_keys`).
+    /// A format 16 run whose nodes go to the writer's ops at their words, with no row (`stream_facts::direct_keys`).
     pub direct: bool,
-    /// Its most nodes open (`rust_stream::open_bound`): the writer's stack reserved for them up front, so the Rust's
+    /// Its most nodes open (`stream_facts::open_bound`): the writer's stack reserved for them up front, so the Rust's
     /// run checks the stack's room once, where it starts.
     pub open_bound: Option<u64>,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
@@ -702,7 +702,7 @@ fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cp
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
 #[allow(clippy::too_many_arguments)]
-fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, output: usize, bytewise: Option<&crate::native_cpu_bytes::Bytewise<'_>>, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -780,7 +780,7 @@ fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::
 /// token are cut from the test; they reach no earlier place. A token of 16 bytes or fewer is
 /// checked in its arm (`token_check_short`); this is the rest.
 #[allow(clippy::too_many_arguments)]
-fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, start: Value, limit: Value, next: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     use crate::program::LocalOp as L;
     let bytes = (e.ctx)(f, BYTES);
     let consts = crate::native_cpu_block::Consts::make(f);
@@ -857,7 +857,7 @@ fn token_check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::pro
 /// A check that reads before its token (decision 0428) loads from `back` bytes before it, and
 /// takes the tokens' ends there (`ended`, `ended_word`).
 #[allow(clippy::too_many_arguments)]
-fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
+fn token_check_short(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, bytes: Value, len: Value, start: Value, n: Value, ended: Option<Value>) -> Value {
     let consts = crate::native_cpu_block::Consts::make(f);
     let (from, pre) = frame_begin(f, start, c.back);
     let at = f.ins().iadd(bytes, from);
@@ -903,7 +903,7 @@ struct Back {
 }
 
 /// Op `k`'s byte set's bits over the window (`LocalOp::Bytes`), from its table's classes.
-fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
+fn token_bytes(f: &mut FunctionBuilder<'_>, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, k: usize) -> Value {
     match form.class_of[&k] {
         (_, 0) => f.ins().iconst(types::I64, 0),
         (ti, bits) => {
@@ -970,7 +970,7 @@ fn ended_word(f: &mut FunctionBuilder<'_>, lasts: Value, stride: Value, next: Va
 }
 
 /// Table `ti`'s classes of the window's bytes, a vector each, made once.
-fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
+fn token_classes(f: &mut FunctionBuilder<'_>, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], tables: &mut std::collections::HashMap<usize, Vec<Value>>, ti: usize) -> Vec<Value> {
     if let Some(t) = tables.get(&ti) {
         return t.clone();
     }
@@ -1018,7 +1018,7 @@ fn token_carried(c: &crate::program::LocalCheck) -> Vec<usize> {
 #[allow(clippy::too_many_arguments)]
 /// On one vector, the masks of a check's byte sets (`Bytes` ops, by op), made together
 /// (`bitmasks16`): one split of the bytes into nibbles, each table once, one tree of adds.
-fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
+fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vector: Value, tables: &mut std::collections::HashMap<usize, Vec<Value>>) -> std::collections::HashMap<usize, Value> {
     use crate::program::LocalOp as L;
     let sets: Vec<(usize, usize, u8)> = (0..c.ops.len()).filter(|&k| matches!(c.ops[k], L::Bytes(_))).map(|k| (k, form.class_of[&k].0, form.class_of[&k].1)).filter(|&(_, _, bits)| bits != 0).collect();
     let zero16 = {
@@ -1039,7 +1039,7 @@ fn token_sets(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form:
 
 /// `made_in`: the byte sets' masks (`token_sets`), where the caller made them.
 #[allow(clippy::too_many_arguments)]
-fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
+fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, form: &crate::stream_facts::WordForm, consts: &crate::native_cpu_block::Consts, vectors: &[Value], first: Option<Value>, left: Value, file_left: Value, before: Option<(&[usize], &[Value])>, cin: Option<(&[usize], &[Value])>, back: Option<Back>, made_in: Option<std::collections::HashMap<usize, Value>>) -> Vec<Value> {
     use crate::program::LocalOp as L;
     // Each table's classes of the window's bytes, made once.
     let mut tables: std::collections::HashMap<usize, Vec<Value>> = std::collections::HashMap::new();
@@ -1157,7 +1157,7 @@ fn token_window(f: &mut FunctionBuilder<'_>, c: &crate::program::LocalCheck, for
 /// What `local_word` reads: the check's classes, the file, the mask's word `w`; each op's value
 /// at a word (by its distance from `w`), each word's classes and the tables, made once.
 struct LocalWords<'a> {
-    form: &'a crate::rust_stream::WordForm,
+    form: &'a crate::stream_facts::WordForm,
     bytes: Value,
     len: Value,
     w: Value,
@@ -1792,7 +1792,7 @@ fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u
 }
 
 /// What the node words need to write the tape as it stands at the end (`TableFns`): whether
-/// rows carry marks (`head`, `rust_stream::marks`: a wrap, `WRAPPED`; a dropped row taken out
+/// rows carry marks (`head`, `stream_facts::marks`: a wrap, `WRAPPED`; a dropped row taken out
 /// from among its children, `DROPPED_IN`), the tape's widths, the functions.
 #[derive(Clone, Copy)]
 struct Table<'a> {
@@ -1803,7 +1803,7 @@ struct Table<'a> {
     split: Option<(&'a SplitParts, &'a crate::block_native::BlockNative)>,
     /// The records `TOKEN` makes from each token's start (`Fetch`, page 40).
     fetch: Option<&'a Fetch>,
-    /// A format 16 run whose every node's key is known at its word (`rust_stream::direct_keys`): each node word's key
+    /// A format 16 run whose every node's key is known at its word (`stream_facts::direct_keys`): each node word's key
     /// bits from the words after it, by its place. Each node then goes to the writer's ops at its word, with no row.
     direct: Option<&'a [(u32, u32)]>,
 }
@@ -3756,8 +3756,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).
     let fetch = fetch_of(native)?;
-    let direct = if sixteen { crate::rust_stream::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
-    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
+    let direct = if sixteen { crate::stream_facts::direct_keys(native, widths_tag.0, widths_tag.1) } else { None };
+    let table = Table { inner: crate::stream_facts::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()), fetch: fetch.as_deref(), direct: direct.as_deref() };
     let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     let row_fns: Vec<u32> = [&table_fns.blocks, &table_fns.commit, &table_fns.uncode, &table_fns.finish].into_iter().chain(table_fns.sixteen.iter().flat_map(|s| [&s.pass, &s.retag])).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -4989,7 +4989,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                     // classes of the bytes: the end's mask is the last op's.
                                     let mut both = c.clone();
                                     both.ops.push(crate::program::LocalOp::Bytes(*not_c));
-                                    let form = crate::rust_stream::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
+                                    let form = crate::stream_facts::word_form(&both.ops).map_err(|_| Error::UnsupportedBackend)?;
                                     let len_v = (env.ctx)(&mut f, LEN);
                                     let at = f.ins().iadd(bytes, start);
                                     let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, 0);
@@ -5582,7 +5582,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                 }
                 Op::Check { check } => {
                     let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
-                    let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
+                    let form = crate::stream_facts::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
                     // A token's check reads no mask: its function at every token of the kind.
                     let output = if c.token { 0 } else { native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)? };
                     // The mask from the bytes where they make it: the check's function reads it
@@ -6507,7 +6507,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::rust_stream::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).

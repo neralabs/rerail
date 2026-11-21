@@ -24,7 +24,7 @@
 // The program's counts and paddings (`block_native`) and the token loop's marks (`records`), the front end's,
 // under the names the lowering's callers read.
 pub use crate::block_native::{BACK, FRONT, counted};
-pub use crate::records::{blank_bits, blank_marks, loop_marks};
+pub use crate::records::{blank_bits, blank_marks, lazy_code_bits, lazy_coded, lazy_marks, loop_marks};
 // Tier 1's record tables (`record_tables`), the front end's.
 pub use crate::record_tables::*;
 use crate::Error;
@@ -6144,41 +6144,6 @@ const GAP_FLAG: i64 = 1 << 62;
 /// cleared by the refill. Without it, a refill whose cursor's block the token before started in
 /// reads the next block: that one's starts are spent. Past every mark's bit.
 const REREAD_FLAG: i64 = i64::MIN;
-
-/// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
-/// `(mark, output)`, a gap mark made from the bytes (no `else escape`, not the extras'). The
-/// token loop makes none of their gaps; tier 2 reads the mask from the grammar token before to
-/// the token, as the lean parser asks whether a token is on a line only where a statement asks
-/// it (`on_line`), and reads a JSON document's bytes only where it takes one. A mark with token
-/// tests too (`lazy_coded`) keeps them in the code, as a lexer marks what it reads: tier 2
-/// takes its bit there first. Metal and the interpreter set them in the codes: the compiler
-/// chooses by the target, the GPU's tier 1 making every mark at once.
-pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
-    // A mark with tests and an `unless after` stays the loop's: the word before holds its
-    // tests' hits too. So does one a token pattern's `without` reads (`Records::read`).
-    let coded = lazy_coded(r);
-    let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
-    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.read >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
-}
-
-/// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
-/// CPU's tier 1 sets none of them, where Metal and the interpreter do. None without records.
-pub fn lazy_code_bits(block: &crate::block_native::BlockNative) -> u32 {
-    let Some(r) = block.records.as_ref() else {
-        return 0;
-    };
-    let bw = crate::native_cpu_bytes::Bytewise::of(block);
-    lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
-}
-
-/// The marks of `lazy_marks` with token tests too: their tests' hits are in the code (the
-/// token loop's), their gaps tier 2's.
-pub fn lazy_coded(r: &crate::records::Records) -> u32 {
-    r.checks.iter().fold(0, |a, c| match c.then {
-        crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
-        crate::records::CheckThen::Escape | crate::records::CheckThen::Cut => a,
-    })
-}
 
 /// The marks of `marks` with a bit in the file's bytes `a ..= b` (none where `a > b`), as bits
 /// `1 << mark`. In the block in registers (`regs`, its first byte `base`) when `a` is in it, `b`

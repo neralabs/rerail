@@ -7,17 +7,18 @@ description = "Kotlin's Bitlex parser built ahead of time: the JIT's Cranelift I
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-kotlin-parser/test-hooks", "rerail-context/test-hooks", "rerail-kotlin-lean/test-hooks"]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-rust-stream/test-hooks", "rerail-kotlin-parser/test-hooks", "rerail-context/test-hooks", "rerail-kotlin-lean/test-hooks"]
 # The generated tiers: the build script writes the parser's code as Rust and this crate compiles
 # it. Off by default, so a workspace build or test leaves them out:
 # `cargo test -p rerail-kotlin-aot --features generated --profile profiling`.
-generated = ["dep:rerail-compiler", "dep:rerail-cpu-stream", "dep:rerail-kotlin-parser", "dep:rerail-context"]
+generated = ["dep:rerail-compiler", "dep:rerail-cpu-stream", "dep:rerail-rust-stream", "dep:rerail-kotlin-parser", "dep:rerail-context"]
 
 [dependencies]
 rerail-context = { path = "../context" }
 rerail-compiler = { path = "../compiler" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-cpu-stream = { path = "../cpu_stream" }
+rerail-rust-stream = { path = "../rust_stream" }
 # The generated tier 1's block loop, on simdjson's backends as the lean lexer's (`kotlin_lean`'s `block.rs`).
 rerail-simd8 = { path = "../simd8" }
 rerail-kotlin-parser = { path = "../kotlin_parser" }
@@ -27,6 +28,7 @@ rerail-kotlin-lean = { path = "../kotlin_lean" }
 rerail-context = { path = "../context", optional = true }
 rerail-compiler = { path = "../compiler", optional = true }
 rerail-cpu-stream = { path = "../cpu_stream", optional = true }
+rerail-rust-stream = { path = "../rust_stream", optional = true }
 rerail-kotlin-parser = { path = "../kotlin_parser", optional = true }
 
 [dev-dependencies]

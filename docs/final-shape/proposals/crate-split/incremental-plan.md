@@ -405,11 +405,9 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     addresses and switch trees (`table_address`, `dispatch`) into `native_cpu_codegen`. Each tier re-exports what
     moved under its old name. `BlockProgram::compile_rows` became `native_cpu_rows::compile_program`.
   - **`pp_words` is the front end's**: `rir_asm` validates a program by it, and Metal's pp runs read it.
-  - **`rust_stream` is live in the JIT.** Its `facts` decides where the JIT's format 16 runs pass nodes directly
+  - **`rust_stream` was live in the JIT.** Its `facts` decided where the JIT's format 16 runs pass nodes directly
     (`direct_keys`, `open_bound`, `marks`, `word_form`), and parser_tests checks that the JIT is direct exactly where
-    the Rust is. `facts` also refuses programs for the Rust backend's own limits. So it stays with the stream tier, as
-    do `rust_block` (it reads `rust_stream`'s names) and `clif_rust` (tier 1's source from a `Parser`). Cutting it out
-    first means separating the JIT's direct-run facts from the Rust backend's acceptance.
+    the Rust is. So it stayed with the stream tier at first. Step 4b (below) cut it out.
   - **No backend trait was needed.** Every caller of a tier is above it (the parser crates: rr-parser, c-directives,
     kotlin, lang-json, the AOT crates, parser_tests), so each upward reference was cut by moving the item down. A
     registry would have no lower caller to serve.
@@ -430,3 +428,39 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       checkout has not pulled (`pyflakes/F601.py`, the Python pack's upstream sources). One,
       `a_patterns_block_program_runs_alike_on_every_executor`, failed for the device's capacity under the parallel
       run and passes alone.
+- **Step 4b** (2026-11-21): the Rust lowering is its own crate, and the JIT reads only the front end.
+
+  | crate | holds | lines |
+  |---|---|---:|
+  | `rerail-compiler` (the front end) | as in step 4, and `stream_analysis`, `stream_facts`, `record_tables`, `native_cpu_clusters` | 22.0k |
+  | `rerail-cpu-block` | as in step 4 | 13.0k |
+  | `rerail-cpu-stream` | `native_cpu_stream`, `native_cpu_tape`, `clif_rust`, `ladder`, `tier2_on` (and the tier tests) | 12.9k |
+  | `rerail-rust-stream` | `rust_stream`, `rust_block` | 6.0k |
+
+  - **The analyses that emit no code moved down.** From `native_cpu_stream` they went to `stream_analysis`:
+    successors, `callee`, `phases`, `bounds`, `calls_on_stack`, `fetch_of`, `split_parts`, `shared_runs`, the run's
+    state slots (`Mem`) and `refusal`. Tier 1's `RecordTables`, which `fetch_of` reads, went to `record_tables`,
+    `lazy_marks` to `records`, and `native_cpu_clusters`, which reads only those, to the front end whole.
+  - **`rust_stream`'s `facts` split in two.** `stream_facts::facts` gives the program's facts and refuses it with
+    the reasons `rust_stream` named. That covers its one-function form (`OneFn`), `stacked`, `coded`, `key_after`,
+    the records tier 2 makes (`Fetched`) and the parts' checks (`part_facts`). It is the front end's, with
+    `direct_keys`, `direct_entries`, `open_bound`, `marks` and `word_form`. `rust_stream::Facts` holds those facts
+    (by `Deref`) and the Rust's own: the names, the methods, the empty containers, the last ends.
+  - **The JIT's gate is unchanged.** The one place the facts read the Rust's code plan was `part_facts`, through
+    `reads_code`, which walks `succ`, and `succ` takes a switch's successors from `switch_plan`'s arms. But
+    `reads_code` never expands a switch: a fresh switch ends the walk, and any other is a read. It also skips part
+    words, and the Rust's other cases (`empties`, `strings`) are empty when `facts` runs. So the front end walks the
+    words' own successors (`word_succ`) there. `part_facts` and `reads_code` take the successor function: the Rust's
+    calls during emission pass its `succ`, so what they find is as before.
+    `grammars_rust_tapes_are_the_jits` (the JIT direct exactly where the Rust is) passes.
+  - **Dependencies.** `rerail-rust-stream` reads the front end, tier 1's lowering (a local check's mask is the
+    JIT's window function, translated) and `rerail-clif` (`Shape`, `translate`). It does not read
+    `rerail-cpu-stream`, and `rerail-cpu-stream` does not read it, so an edit to either rebuilds only its own crate
+    and the crates above it. `clif_rust`'s `rust_source` writes a compiled `Parser`'s own IR as Rust, so it stays
+    with the JIT. The parsers read `native_cpu_clusters` from the front end. The tape constants `NO_CODE`,
+    `WIDE_OFF` and `WIDE_TAIL` are `stream_analysis`'s, re-exported by `native_cpu_tape`.
+  - Tests (cargo nextest, spark1; `cargo check --tests --workspace` clean on Linux; the device, Metal, tier 2 and
+    parser crates check on a Mac mini; the AOT crates check with `generated`):
+    - The compiler's crates, rust-stream, parser_tests, rr-parser, lang-json, kotlin, c-directives and the AOT
+      crates: 332 pass.
+    - After `native_cpu_clusters` moved, those of them that read it: 307 pass.

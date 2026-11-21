@@ -38,7 +38,7 @@ fn simdjson_form() -> Compiled {
 /// literals there, and no node word of the grammar is left without one.
 fn language_of(c: &Compiled, files: &[&[u8]]) -> rerail_tape_format::f16::Lang {
     let (widths, tag) = c.parser.sixteen().expect("a format 16 tier 2").widths_tag();
-    let mut keys: Vec<rerail_tape_format::tape::Entry> = rerail_cpu_stream::rust_stream::direct_entries(&c.native, widths, tag).unwrap_or_default();
+    let mut keys: Vec<rerail_tape_format::tape::Entry> = rerail_rust_stream::rust_stream::direct_entries(&c.native, widths, tag).unwrap_or_default();
     for f in files {
         let Ok(image) = c.parser.image(f) else { continue };
         let (_, table) = rerail_tape_format::tape::f15_columns(&image).expect("a format 15 tape");
@@ -313,7 +313,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     let (jit, mut aot) = (simdjson_form(), simdjson_form());
     let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
     let (widths, tag) = aot.parser.tier2.widths_tag();
-    let source = rerail_cpu_stream::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
+    let source = rerail_rust_stream::rust_stream::rust_source_at(&native, widths, tag).expect("tier 2 as Rust");
     // Its code read line by line, each line's indent left out (`flat`): the tests read the code, not its layout.
     let src = flat(&source);
     // A number is read once, as `parse_number` reads it: each arm of a number's first bytes calls one method, written
@@ -427,7 +427,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(s16.direct && s16.row_calls == 0, "the JIT's format 16 run: direct {}, {} calls of a step on the rows", s16.direct, s16.row_calls);
     assert_eq!(s16.tape(1000).held(), [0, 0], "the direct run's tape: no format 15 buffer, no working row");
     let lang = language_of(&jit, &inputs.iter().map(Vec::as_slice).collect::<Vec<_>>());
-    let src16 = rerail_cpu_stream::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
+    let src16 = rerail_rust_stream::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
     if let Ok(dir) = std::env::var("RERAIL_DUMP_TIER2") {
         std::fs::write(std::path::Path::new(&dir).join("simdjson16.rs"), &src16).expect("writes the source");
     }
@@ -464,7 +464,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end)?;\n"), "a `}}` keeps the value's end before it makes its own");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
     // number (`rust_stream::UNNUMBERED`).
-    let unnumbered = src16.matches(rerail_cpu_stream::rust_stream::UNNUMBERED).count();
+    let unnumbered = src16.matches(rerail_rust_stream::rust_stream::UNNUMBERED).count();
     assert_eq!(unnumbered, 0, "node words with no number in the language");
     // An empty object or array one leaf (`rust_stream::empties`, decision 0545), as the lean parser's `empty!`: each
     // opener's arm looks at the next token first, and where it is the closer writes a leaf, takes the closer and goes
@@ -602,7 +602,7 @@ fn simdjson_form_against_simdjson() {
     let native = rerail_compiler::native_ir::lower(&aot.program, 0, 0).expect("lowers");
     let (widths16, tag16) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
     let lang = language_of(&jit, &files.iter().map(|(_, f)| f.as_slice()).collect::<Vec<_>>());
-    let src16 = rerail_cpu_stream::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
+    let src16 = rerail_rust_stream::rust_stream::rust_source_16(&native, widths16, tag16, &lang).expect("tier 2 writing format 16, as Rust");
     // SAFETY: the Rust of this program's tier 2 in format 16, on the format 16 run's harness.
     unsafe { aot.parser.sixteen_mut().expect("a format 16 tier 2").set_entry(aot_entry(&src16), 4) };
     // The process's instructions retired (`native_cpu_codegen::retired`: macOS's count, zero elsewhere).
@@ -1028,7 +1028,7 @@ fn json_tier2_by_word() {
     std::fs::write(format!("{dir}/{name}.words"), words).expect("writes");
     // Tier 2 as generated Rust, to read beside simdjson's stage 2: the structured backend's
     // (`rust_stream`), and the compiler's own IR as Rust (`rerail_clif::rust`).
-    let rust = rerail_cpu_stream::rust_stream::rust_source(&native).unwrap_or_else(|e| format!("// not generated: {e}\n"));
+    let rust = rerail_rust_stream::rust_stream::rust_source(&native).unwrap_or_else(|e| format!("// not generated: {e}\n"));
     std::fs::write(format!("{dir}/{name}.rs"), rust).expect("writes");
     let t2 = &c.parser.tier2;
     let ir = rerail_cpu_stream::clif_rust::translate(&t2.ir, &[(t2.entry_id, "tier2")], &[]).unwrap_or_else(|e| format!("// not translated: {e}\n"));
