@@ -284,3 +284,19 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   providers.
 - **Moving the files** into the crates (after this plan): one step for the whole tree, at a quiet point for the
   other branches.
+
+## Log
+
+- **Step 1a** (2026-11-21): `rerail-registry` (`native/crates/registry`), an ordinary crate with no dependencies.
+  It provides `Registry<K, V>` (keyed, in registration order) and `Slot<V>` (one provider). A second registration
+  of a key is refused, naming both providers: comparing providers by their bytes is unsound for `&dyn` (vtables
+  differ across codegen units, and zero-sized statics may share an address), so there is no "same provider again"
+  no-op. Instead, boot's `install` runs once a process, and the test load hooks call it. Registration after `seal`
+  is refused, and a missing key names the registry and what it holds. Tests: 5 of 5 (`cargo test -p
+  rerail-registry`, on a farm host).
+- **Found for step 1b**: the engine's composition (`code_rule_dsl::install_languages`, about 300 lines and 40
+  registrations) also registers the engine's own modules: `prefilter` (the tapes' SQL functions, the prefilter
+  image, the frontier audit), `functors`, `facts::vtab::syntax::ast_wave` (which reads the engine's
+  `waves::findings`) and the syntax-only adapters (C, C++, C#, CSS, Go, HTML, Java, Kotlin, Markdown, Scala,
+  Swift). So `rerail-boot` takes them with it. Steps 1 and 3 become one: boot holds the composition and the
+  engine's glue, and the engine keeps napi and the CLI.

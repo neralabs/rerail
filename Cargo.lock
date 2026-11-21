@@ -4435,6 +4435,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-registry"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-rr"
 version = "0.1.0"
 dependencies = [
