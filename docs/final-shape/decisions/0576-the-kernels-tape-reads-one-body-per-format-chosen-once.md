@@ -66,6 +66,10 @@ format 16's reads alone.
    (`UKL_COLD`): 39 s for that kernel (the reads stubbed too: 21 s). Calling the reads themselves instead (format
    16's side-list read, its line select, the parents) made the join kernels up to 7x slower (`rows_copy` 18 →
    120 s): the reads stay inlined into the readers that call them.
+10. **And the interpreter's task, once.** The sweep ran a task in three places, each the whole interpreter inlined
+   (`run_task_in`); it is called, and so are the interpreter's helpers inlined most (the captures' lookups, 14 and
+   28 copies; the queue's insert; the arenas' reservations, 28; the lazy blocks' check, 10; the NFA's closure and
+   find; the Lua class): the interpreter alone 21.8 → 12.9 s (`clc build`), the sweep 25 s alone.
 
 ## Measured
 
@@ -84,5 +88,9 @@ interpreters); "> N" a compile still running when the bound ended it.
 | the label passes, 15 / 16 | | 42.6 s / 206 s | 46.1 s / 164 s | 49.6 s / 54.9 s |
 | every fixed kernel | > 460 s | > 460 s | > 460 s | 279 s |
 
-None of this is yet a kernel compiled in seconds: the sweep, the join kernels' view reads and the interpreter's own
-body (21 s without a tape read) are next.
+With the task and the helpers called (§10), 4 at a time: the interpreter 27 s (15) and 29 s (16), the resident
+interpreter 28 s and 29 s, the sweep 29 s and 38 s, the label passes 50 s and 69 s; the join kernels as before
+(`stage_scatter` 50 s, `witness_count` 47 s); every fixed kernel in 183 s.
+
+None of this is yet a kernel compiled in seconds: the join kernels, the label passes and the interpreter's own body
+(its opcodes' switch, 27 KB) are next.
