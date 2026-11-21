@@ -201,7 +201,32 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([blocking.answer, walk.answer]).toEqual([{ ...blocking.answer, status: 0, stdout: "top.txt\0" }, ["top.txt"]]);
   }, 60_000);
 
-  // Windows has no pipe in a folder.
+  // Windows has no pipe in a folder. Git waits on each pipe to the call's time limit, and Rerail's reads before it wait on none.
+  it.skipIf(process.platform === "win32").each(["HEAD", "commondir"])("and end at the call's time limit, holding no thread, where the checkout's Git folder holds a pipe as its %s", async name => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    runGit(work, ["ls-files", "-z", "--modified"]);
+    const placed = join(work, ".git", name);
+    await rm(placed, { force: true });
+    execFileSync("mkfifo", [placed]);
+
+    const answers = [runGit(work, AUDIT_DIFF, { timeout: 2_000 }), await runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 2_000 })];
+
+    expect(answers.map(answer => [answer.status, (answer.error as NodeJS.ErrnoException | undefined)?.code])).toEqual([[null, "ETIMEDOUT"], [null, "ETIMEDOUT"]]);
+  }, 60_000);
+
+  it.skipIf(process.platform === "win32")("and end at the call's time limit, holding no thread, where a submodule's index is a pipe", async () => {
+    const root = await folder();
+    const work = await changedSubmodule(root);
+    const index = join(work, ".git", "modules", "sub", "index");
+    await rm(index);
+    execFileSync("mkfifo", [index]);
+
+    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF, { timeout: 2_000 });
+
+    expect([audit.status, (audit.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "ETIMEDOUT"]);
+  }, 60_000);
+
   it.skipIf(process.platform === "win32")("and list a checkout's config whose worktree config is a pipe, which Git does not open here, holding no thread on it", async () => {
     const root = await folder();
     const work = await repository(root, "work", { "top.txt": "top\n" });

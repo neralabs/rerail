@@ -17,7 +17,7 @@
 import {
   accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats,
 } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
 
@@ -160,12 +160,26 @@ const SPLIT_INDEX_LINK = Buffer.from("link", "latin1");
 /**
  * Whether the index file at `index` records no submodule, read in process so that no Git starts to list it: its bytes
  * hold no gitlink's mode word ({@link GITLINK_MODE}), so none of its entries is one, and no split index's `link`
- * signature. An index that holds those bytes anywhere, in a time, an object id or a path too, and one that cannot be
- * read are left to Git's listing ({@link GITLINK_LISTING}), which then answers as before.
+ * signature. An index that holds those bytes anywhere, in a time, an object id or a path too, and one that is no file
+ * that can be read are left to Git's listing ({@link GITLINK_LISTING}), which then answers as before. It opens without
+ * waiting, as {@link openedFile} does, so a pipe put there holds none of the process's threads.
  */
 export async function recordsNoSubmodule(index: string): Promise<boolean> {
-  const bytes = await readFile(index).catch(() => undefined);
+  const bytes = await fileBytes(index);
   return bytes !== undefined && !bytes.includes(GITLINK_MODE) && !bytes.includes(SPLIT_INDEX_LINK);
+}
+
+/** The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read. */
+async function fileBytes(path: string): Promise<Buffer | undefined> {
+  const handle = await open(path, READ_WITHOUT_WAITING).catch(() => undefined);
+  if (handle === undefined) return undefined;
+  try {
+    return (await handle.stat()).isFile() ? await handle.readFile() : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The variables with which Git finds a repository's Git folder, worktree or index otherwise than from its folder. */
@@ -607,19 +621,42 @@ function namesNoDriver(path: string): boolean {
  * pipe put there holds no thread.
  */
 function configText(path: string): string | undefined {
-  let file: number;
+  const file = openedFile(path);
+  if (typeof file !== "number") return file === "absent" ? "" : undefined;
   try {
-    // Windows has no O_NONBLOCK, and no pipe in a folder.
-    file = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "" : undefined;
-  }
-  try {
-    return fstatSync(file).isFile() ? readWithin(file, MAX_READ_CONFIG_BYTES)?.toString("latin1") : undefined;
+    return readWithin(file, MAX_READ_CONFIG_BYTES)?.toString("latin1");
   } catch {
     return undefined;
   } finally {
     closeSync(file);
+  }
+}
+
+/** How Rerail opens a file of a Git folder to read it: without waiting (Windows has no O_NONBLOCK, and no pipe in a folder). */
+const READ_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * The file at `path` opened to read, without waiting: a pipe a writer put there opens at once and, as no file, is not
+ * read, so it holds no thread, where Git's own read of it would wait to the call's time limit. "absent" when there is
+ * nothing at `path`, else undefined when it cannot be opened or is not a file.
+ */
+function openedFile(path: string): number | "absent" | undefined {
+  let file: number;
+  try {
+    file = openSync(path, READ_WITHOUT_WAITING);
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : undefined;
+  }
+  if (isFile(file)) return file;
+  closeSync(file);
+  return undefined;
+}
+
+function isFile(file: number): boolean {
+  try {
+    return fstatSync(file).isFile();
+  } catch {
+    return false;
   }
 }
 
@@ -655,18 +692,17 @@ function validHead(path: string): boolean {
   return text !== undefined && (/^ref:[ \t\n\r]*refs\//u.test(text) || /^[0-9a-fA-F]{40}/u.test(text));
 }
 
-/** The first bytes of `path`, as many as Git reads of a `HEAD` (255); undefined when it cannot be read. */
+/** The first bytes of `path`, as many as Git reads of a `HEAD` (255); undefined when it is no file that can be read. */
 function headText(path: string): string | undefined {
+  const file = openedFile(path);
+  if (typeof file !== "number") return undefined;
   try {
-    const file = openSync(path, "r");
-    try {
-      const head = Buffer.alloc(255);
-      return head.toString("latin1", 0, readSync(file, head));
-    } finally {
-      closeSync(file);
-    }
+    const head = Buffer.alloc(255);
+    return head.toString("latin1", 0, readSync(file, head));
   } catch {
     return undefined;
+  } finally {
+    closeSync(file);
   }
 }
 
@@ -717,11 +753,16 @@ function statOf(path: string): Stats | undefined {
   }
 }
 
+/** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */
 function textOf(path: string): string | undefined {
+  const file = openedFile(path);
+  if (typeof file !== "number") return undefined;
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(file, "utf8");
   } catch {
     return undefined;
+  } finally {
+    closeSync(file);
   }
 }
 
