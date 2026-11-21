@@ -321,17 +321,17 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(!arms.is_empty(), "the numbers' arms");
     for arm in &arms {
         let first = arm.lines().nth(1).unwrap_or("");
-        assert!(first.trim() == "s.number(st)?;", "a number's arm calls the number's method: {first}");
+        assert!(first.trim() == "s.number(st, t)?;", "a number's arm calls the number's method: {first}");
     }
-    let number = src.split("fn number(&mut self, st: u32) -> R {").nth(1).expect("the number's method");
+    let number = src.split("fn number(&mut self, st: u32, t: &mut T) -> R {").nth(1).expect("the number's method");
     assert!(src.matches("fn number(").count() == 1 && number.lines().take(3).any(|l| l.trim().starts_with("match s.run_") && l.contains("_check_")), "the number read once, in one method");
     // Each word written once, a method each arm calls (decision 0518): one string loop (`string`, as the lean
     // parser's), one atom test (`atom`), called from each place a value is read.
     // The string is given the opener's place, as the lean parser's `string(v)`: no field the opener's arm sets.
-    for m in ["fn string(&mut self, mut at: u32) -> R {", "fn atom(&self, st: u32) -> u32 {"] {
+    for m in ["fn string(&mut self, mut at: u32, t: &mut T) -> R {", "fn atom(&self, st: u32) -> u32 {"] {
         assert_eq!(src.matches(m).count(), 1, "one method: {m}");
     }
-    assert!(src.matches("s.string(s.start + 1)?;").count() >= 3 && src.matches("s.atom(st)").count() >= 2, "the methods called from each place");
+    assert!(src.matches("s.string(t.start + 1, t)?;").count() >= 3 && src.matches("s.atom(st)").count() >= 2, "the methods called from each place");
     assert!(!src.contains("part_at"), "the place a string's next part is at is the method's own");
     assert_eq!(src.matches("s.part_stop(").count(), 1, "one string loop");
     // One dispatch a value, as `walk_document`'s `switch (*value)`: no variable saying which
@@ -342,6 +342,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
     let rules = src.match_indices("\nfn r").filter(|&(at, _)| src[at + 5..].starts_with(|c: char| c.is_ascii_digit())).count();
     assert!(rules == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    // The token's state the one rule's local, as `walk`'s `next`, `v` and `end`: not the run's fields.
+    let state = src.split("\nstruct S {").nth(1).and_then(|s| s.split("\n}\n").next()).expect("the run's state");
+    assert!(src.contains("fn r0(s: &mut S) -> Result<bool, u32> {\nlet t = &mut T::NEW;") && !state.contains("start: u32") && !state.contains("rec_end") && !state.contains("last_end"), "the token's state a local of the rule");
     // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
     // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
     // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
@@ -354,29 +357,29 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         // A call's one after is a return's place only where a `RETURN` gives `again`.
         .filter(|_| native.structural.iter().any(|w| matches!(w.operation, rerail_compiler::native_ir::StructuralOperation::Return { again: true })))
         .collect();
-    let kind_paths = src.matches("if s.rec_end == 0 && !s.at_end {").count() + src.matches("if s.rec_end == 0 && !(s.start == s.len) {").count();
+    let kind_paths = src.matches("if t.rec_end == 0 && !t.at_end {").count() + src.matches("if t.rec_end == 0 && !(t.start == s.len) {").count();
     assert_eq!(kind_paths, again.len(), "the kind path only where a call returns: {again:?}");
     // The `\u` checks only after a `u`, as simdjson's `\u` work: every call of them in the arm of
     // the escape `\u`; every other escape goes past them.
     let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
-    let calls = src.matches("s.check_1()?;").count();
-    assert!(calls > 0 && src.matches(&format!("{u} => {{\ns.check_1()?;")).count() == calls, "the \\u checks in the \\u arm alone");
+    let calls = src.matches("s.check_1(t)?;").count();
+    assert!(calls > 0 && src.matches(&format!("{u} => {{\ns.check_1(t)?;")).count() == calls, "the \\u checks in the \\u arm alone");
     // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
     // the last token, and the value switches refuse its byte, as simdjson's switch the index past
     // its last. No `at_end` field is read.
-    assert!(!src.contains("s.at_end") && !src.contains("self.at_end") && !src.contains("if (s.start == s.len) { return refuse("), "no end test where the switch refuses the end");
+    assert!(!src.contains("t.at_end") && !src.contains("if (t.start == s.len) { return refuse("), "no end test where the switch refuses the end");
     // No record field written that no word reads: no `live` (no marks), no `rec_end = 0` (no
     // kind path), and the code only where the escapes' word `match` reads it; the atoms write
     // their leaves with their kinds, as simdjson's `case 't'` its tape word.
-    let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("s.code = ")).collect();
-    assert!(code_writes.iter().all(|l| l.starts_with("s.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
+    let code_writes: Vec<&str> = src.lines().filter(|l| l.starts_with("t.code = ")).collect();
+    assert!(code_writes.iter().all(|l| l.starts_with("t.code = S::CODES2[")) && !code_writes.is_empty(), "code written where no word reads it: {code_writes:?}");
     assert!(!src.contains("live =") && !src.contains("rec_end = 0;") && !src.contains("s.word_kind()") && !src.contains("rec_end == 0"), "a field written that no word reads");
     // A string as `copy_and_find`: 32 bytes a step, the stop's kind from the masks (no byte read
     // again), a content part then its stop in the same pass, and no test of a one-byte token's
     // length after it is set.
     let parts = src.matches("let (i, closer) = s.part_stop(at)?;").count();
-    assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= s.rec_end"), "a string's stops as copy_and_find's");
+    assert!(parts > 0 && src.contains("p += 32;") && !src.contains("matches!(s.byte(i)") && src.matches("}\nif closer {").count() == parts && !src.contains("!= t.rec_end"), "a string's stops as copy_and_find's");
     // Each node's code written as it is made (`code_now`), no commit pass over the nodes after.
     let made = src.matches("s.open(").count() + src.matches("s.leaf::<").count();
     assert!(!src.contains("self.commit(") && src.matches("s.code_now(").count() == made, "each node's code as it is made");
@@ -437,13 +440,13 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
     // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
     let flat16 = flat(&src16);
-    assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32) -> R {"), "a direct run's string is given the opener's place");
+    assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32, t: &mut T) -> R {"), "a direct run's string is given the opener's place");
     assert_eq!(src16.matches("match d {").count(), 1, "a direct run's one dispatch");
     for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
         let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {byte}");
         for arm in arms {
-            assert_eq!(arm.starts_with("s.rec_end = s.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
+            assert_eq!(arm.starts_with("t.rec_end = t.start + 1;"), made, "{byte}'s arm makes its end only where it is read: {}", &arm[..arm.len().min(80)]);
         }
     }
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its

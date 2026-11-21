@@ -593,6 +593,13 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 46, done: the token's state the rule's local (decision 0542)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The token's state | `walk`'s locals `next`, `v`, `end` | fields of `S`: `s.start`, `s.rec_end`, `s.next`, `s.last_end`, `s.code` | `T`, the rule's local (`let t = &mut T::NEW;`): `t.start`, `t.rec_end`, … |
+| A node's start | `open(…, start)`, `leaf(…, start, end)` | read from `self.start` | given: `s.open16(7, t.start)`, `s.leaf16(13, t.start, t.rec_end)` |
+
 ## Step 45, done: one dispatch, its values named by the grammar (decision 0541)
 
 | | the lean parser | before | now |
