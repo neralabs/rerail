@@ -473,26 +473,34 @@ function hookHealthLines(home: string): string[] {
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
+  if (lookup.status !== "running" || lookup.older === true) return printDaemonWithoutHealth(lookup);
+  printDaemon({ state: lookup.state, health: lookup.health });
+  return lookup.health.healthy === false ? 5 : 0;
+}
+
+/**
+ * What `rerail status` says of a daemon it has no health of, and the exit code: 3 when none runs, 4 for one that is
+ * alive and not answering, refused the capability, or runs a release before the engine's proof, which is asked nothing.
+ */
+function printDaemonWithoutHealth(lookup: DaemonLookup): number {
   if (lookup.status === "absent") {
     if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
+  process.stdout.write(`${daemonWithoutHealthLine(lookup)}\n`);
+  return 4;
+}
+
+/** The line {@link printDaemonWithoutHealth} prints for a daemon that is alive: a running one is an older daemon. */
+function daemonWithoutHealthLine(lookup: Exclude<DaemonLookup, { status: "absent" }>): string {
   if (lookup.status === "unresponsive") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
   }
   if (lookup.status === "refused") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.`;
   }
-  // A daemon of a release before the engine's proof is asked nothing, so it has no health to print.
-  if (lookup.older === true) {
-    process.stdout.write(`${olderDaemonMessage(lookup.state)}\n`);
-    return 4;
-  }
-  printDaemon({ state: lookup.state, health: lookup.health });
-  return lookup.health.healthy === false ? 5 : 0;
+  return olderDaemonMessage(lookup.state);
 }
 
 /**

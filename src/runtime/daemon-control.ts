@@ -747,7 +747,12 @@ async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, ma
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
   const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait);
-  return answer === "no-proof" && !(signalable && predatesProof(state.version)) ? "gone" : PROOF_VERDICT[answer];
+  return answer === "no-proof" ? noProofVerdict(state, signalable) : PROOF_VERDICT[answer];
+}
+
+/** What an engine with no proof to give makes of `state`'s daemon: read on only for a signalable pid's pre-proof record. */
+function noProofVerdict(state: DaemonState, signalable: boolean): ProofVerdict {
+  return signalable && predatesProof(state.version) ? PROOF_VERDICT["no-proof"] : "gone";
 }
 
 /** The first release whose engine gives the proof. */
