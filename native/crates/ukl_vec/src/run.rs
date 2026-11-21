@@ -125,7 +125,8 @@ impl Run<'_> {
     }
 
     fn konst(&self, n: usize) -> u64 {
-        u64::from(self.v.w(n, 1)) | u64::from(self.v.w(n, 2)) << 32
+        let p = self.v.p(n);
+        u64::from(p[1]) | u64::from(p[2]) << 32
     }
 
     fn func(&self, id: u32) -> R<usize> {
@@ -137,52 +138,53 @@ impl Run<'_> {
     /// Node `n`'s value in thread `t`.
     fn val(&self, t: &mut Th, n: usize) -> R<u64> {
         let v = &self.v;
+        let p = v.p(n);
         Ok(match v.kind(n) {
             Kind::Const => self.konst(n),
-            Kind::Local => t.fp + u64::from(v.w(n, 0)),
-            Kind::Shared => self.shared + u64::from(v.w(n, 0)),
-            Kind::Global => self.data + u64::from(v.w(n, 0)),
+            Kind::Local => t.fp + u64::from(p[0]),
+            Kind::Shared => self.shared + u64::from(p[0]),
+            Kind::Global => self.data + u64::from(p[0]),
             Kind::Load => {
                 let a = self.val(t, v.child(n, 0))?;
                 // SAFETY: the kernel's address (its buffers', frames' and threadgroup memory's are the dispatch's).
-                unsafe { ops::load(M(v.w(n, 0)), a) }
+                unsafe { ops::load(M(p[0]), a) }
             }
             Kind::Store => {
                 let a = self.val(t, v.child(n, 0))?;
                 let x = self.val(t, v.child(n, 1))?;
-                unsafe { ops::store(M(v.w(n, 0)), a, x) };
+                unsafe { ops::store(M(p[0]), a, x) };
                 x
             }
             Kind::Zero => {
                 let a = self.val(t, v.child(n, 0))?;
-                unsafe { std::ptr::write_bytes(a as usize as *mut u8, 0, v.w(n, 1) as usize) };
+                unsafe { std::ptr::write_bytes(a as usize as *mut u8, 0, p[1] as usize) };
                 a
             }
             Kind::Copy => {
                 let d = self.val(t, v.child(n, 0))?;
                 let s = self.val(t, v.child(n, 1))?;
-                unsafe { std::ptr::copy(s as usize as *const u8, d as usize as *mut u8, v.w(n, 0) as usize) };
+                unsafe { std::ptr::copy(s as usize as *const u8, d as usize as *mut u8, p[0] as usize) };
                 d
             }
             Kind::Bin => {
                 let a = self.val(t, v.child(n, 0))?;
                 let b = self.val(t, v.child(n, 1))?;
-                ops::bin(Op::of(v.w(n, 0)), M(v.w(n, 1)), a, b).map_err(|e| Error(e.to_string()))?
+                ops::bin(Op::of(p[0]), M(p[1]), a, b).map_err(|e| Error(e.to_string()))?
             }
             Kind::Un => {
                 let a = self.val(t, v.child(n, 0))?;
-                ops::un(Op::of(v.w(n, 0)), M(v.w(n, 1)), a)
+                ops::un(Op::of(p[0]), M(p[1]), a)
             }
             Kind::Cast => {
                 let a = self.val(t, v.child(n, 0))?;
-                ops::cast(M(v.w(n, 0)), M(v.w(n, 1)), a)
+                ops::cast(M(p[0]), M(p[1]), a)
             }
             Kind::Cond => {
                 let c = self.val(t, v.child(n, 0))?;
                 self.val(t, v.child(n, if c != 0 { 1 } else { 2 }))?
             }
             Kind::Logic => {
-                let and = v.w(n, 0) != 0;
+                let and = p[0] != 0;
                 let a = self.val(t, v.child(n, 0))? != 0;
                 if a != and { u64::from(a) } else { u64::from(self.val(t, v.child(n, 1))? != 0) }
             }
@@ -199,9 +201,9 @@ impl Run<'_> {
                 self.call(t, n, &args)?
             }
             Kind::Builtin => {
-                let b = Builtin::of(v.w(n, 0));
+                let b = Builtin::of(p[0]);
                 if b.syncs() {
-                    return Err(Error(format!("{} run by one thread: the cut missed it", self.name(v.w(n, 3)))));
+                    return Err(Error(format!("{} run by one thread: the cut missed it", self.name(p[3]))));
                 }
                 let mut a = [0u64; 3];
                 for (k, c) in v.children(n).enumerate() {
@@ -227,7 +229,8 @@ impl Run<'_> {
 
     fn update_at(&self, n: usize, a: u64, x: u64) -> u64 {
         let v = &self.v;
-        let (op, lm, om, post) = (Op::of(v.w(n, 0)), M(v.w(n, 1)), M(v.w(n, 2)), v.w(n, 3) != 0);
+        let p = v.p(n);
+        let (op, lm, om, post) = (Op::of(p[0]), M(p[1]), M(p[2]), p[3] != 0);
         // SAFETY: the kernel's address.
         let old = unsafe { ops::load(lm, a) };
         let r = ops::bin(op, om, ops::cast(lm, om, old), x).unwrap_or(0);
@@ -239,7 +242,8 @@ impl Run<'_> {
     /// A call's frame: pushed, its parameters written from `args`; the callee's node.
     fn enter(&self, t: &mut Th, n: usize, args: &[u64]) -> R<(usize, u64, u64)> {
         let v = &self.v;
-        let f = self.func(v.w(n, 0))?;
+        let p = v.p(n);
+        let f = self.func(p[0])?;
         let (saved_fp, saved_sp) = (t.fp, t.sp);
         let fp = t.sp.next_multiple_of(16);
         let frame = u64::from(v.w(f, 1));
@@ -259,10 +263,11 @@ impl Run<'_> {
 
     /// A call's frame popped: its result (an aggregate's copied to the caller's frame).
     fn leave(&self, t: &mut Th, n: usize, saved: (u64, u64)) -> u64 {
+        let p = self.v.p(n);
         (t.fp, t.sp) = saved;
-        let m = M(self.v.w(n, 1));
+        let m = M(p[1]);
         if m.is_agg() {
-            let to = t.fp + u64::from(self.v.w(n, 2));
+            let to = t.fp + u64::from(p[2]);
             unsafe { std::ptr::copy(t.ret as usize as *const u8, to as usize as *mut u8, m.bytes() as usize) };
             to
         } else {
@@ -279,7 +284,8 @@ impl Run<'_> {
     /// A builtin that does not sync, in thread `t`.
     fn builtin(&self, t: &Th, n: usize, b: Builtin, a: [u64; 3]) -> R<u64> {
         let v = &self.v;
-        let m = M(v.w(n, 1));
+        let p = v.p(n);
+        let m = M(p[1]);
         let d = a[0] as usize;
         let dim = |x: [u32; 3], or: u32| if d < 3 { x[d] } else { or };
         Ok(match b {
@@ -341,20 +347,21 @@ impl Run<'_> {
                 }
             }
             Builtin::As => {
-                let from = M(v.w(n, 4));
+                let from = M(p[4]);
                 ops::norm(m, a[0] & mask(from))
             }
             Builtin::Min | Builtin::Max => {
                 let less = ops::bin(Op::Lt, m, a[0], a[1]).unwrap_or(0) != 0;
                 if less == (b == Builtin::Min) { a[0] } else { a[1] }
             }
-            _ => return Err(Error(format!("{} run by one thread", self.name(v.w(n, 3))))),
+            _ => return Err(Error(format!("{} run by one thread", self.name(p[3])))),
         })
     }
 
     /// Statement `n` in thread `t`.
     fn exec(&self, t: &mut Th, n: usize) -> R<Flow> {
         let v = &self.v;
+        let p = v.p(n);
         Ok(match v.kind(n) {
             Kind::Block => {
                 for c in v.children(n) {
@@ -400,7 +407,7 @@ impl Run<'_> {
                 Flow::Normal
             }
             Kind::Return => {
-                if v.w(n, 0) != 0 {
+                if p[0] != 0 {
                     t.ret = self.val(t, v.child(n, 0))?;
                 }
                 Flow::Return
@@ -446,6 +453,7 @@ impl Run<'_> {
 
     fn gexec(&self, g: &mut G, n: usize, act: &[u32]) -> R<()> {
         let v = &self.v;
+        let p = v.p(n);
         match v.kind(n) {
             Kind::Block => {
                 let mut live = act.to_vec();
@@ -506,7 +514,7 @@ impl Run<'_> {
                 }
             }
             Kind::Return => {
-                let x = if v.w(n, 0) != 0 { self.gchild(g, v.child(n, 0), act)? } else { vec![0; g.th.len()] };
+                let x = if p[0] != 0 { self.gchild(g, v.child(n, 0), act)? } else { vec![0; g.th.len()] };
                 for &t in act {
                     let th = &mut g.th[t as usize];
                     th.ret = x[t as usize];
@@ -523,6 +531,7 @@ impl Run<'_> {
 
     fn gval(&self, g: &mut G, n: usize, act: &[u32]) -> R<Vec<u64>> {
         let v = &self.v;
+        let p = v.p(n);
         let k = v.kind(n);
         match k {
             Kind::Cond => {
@@ -536,7 +545,7 @@ impl Run<'_> {
                 return Ok(b);
             }
             Kind::Logic => {
-                let and = v.w(n, 0) != 0;
+                let and = p[0] != 0;
                 let mut a = self.gchild(g, v.child(n, 0), act)?;
                 let rest: Vec<u32> = act.iter().copied().filter(|&t| (a[t as usize] != 0) == and).collect();
                 if !rest.is_empty() {
@@ -579,7 +588,7 @@ impl Run<'_> {
                 }
             }
             Kind::Builtin => {
-                let b = Builtin::of(v.w(n, 0));
+                let b = Builtin::of(p[0]);
                 if b.syncs() {
                     self.meet(g, n, b, act, &xs, &mut out)?;
                 } else {
@@ -593,22 +602,22 @@ impl Run<'_> {
                 for &t in act {
                     let x = |i: usize| xs[i][t as usize];
                     out[t as usize] = match k {
-                        Kind::Load => unsafe { ops::load(M(v.w(n, 0)), x(0)) },
+                        Kind::Load => unsafe { ops::load(M(p[0]), x(0)) },
                         Kind::Store => {
-                            unsafe { ops::store(M(v.w(n, 0)), x(0), x(1)) };
+                            unsafe { ops::store(M(p[0]), x(0), x(1)) };
                             x(1)
                         }
                         Kind::Zero => {
-                            unsafe { std::ptr::write_bytes(x(0) as usize as *mut u8, 0, v.w(n, 1) as usize) };
+                            unsafe { std::ptr::write_bytes(x(0) as usize as *mut u8, 0, p[1] as usize) };
                             x(0)
                         }
                         Kind::Copy => {
-                            unsafe { std::ptr::copy(x(1) as usize as *const u8, x(0) as usize as *mut u8, v.w(n, 0) as usize) };
+                            unsafe { std::ptr::copy(x(1) as usize as *const u8, x(0) as usize as *mut u8, p[0] as usize) };
                             x(0)
                         }
-                        Kind::Bin => ops::bin(Op::of(v.w(n, 0)), M(v.w(n, 1)), x(0), x(1)).map_err(|e| Error(e.to_string()))?,
-                        Kind::Un => ops::un(Op::of(v.w(n, 0)), M(v.w(n, 1)), x(0)),
-                        Kind::Cast => ops::cast(M(v.w(n, 0)), M(v.w(n, 1)), x(0)),
+                        Kind::Bin => ops::bin(Op::of(p[0]), M(p[1]), x(0), x(1)).map_err(|e| Error(e.to_string()))?,
+                        Kind::Un => ops::un(Op::of(p[0]), M(p[1]), x(0)),
+                        Kind::Cast => ops::cast(M(p[0]), M(p[1]), x(0)),
                         Kind::Comma => x(1),
                         Kind::Update => self.update_at(n, x(0), x(1)),
                         k => return Err(Error(format!("a {k:?} node that syncs"))),
@@ -621,7 +630,8 @@ impl Run<'_> {
 
     /// A sync point met by the threads `act`: the barrier rule checked, and the operation's values.
     fn meet(&self, g: &mut G, n: usize, b: Builtin, act: &[u32], xs: &[Vec<u64>], out: &mut [u64]) -> R<()> {
-        let site = self.v.w(n, 3);
+        let p = self.v.p(n);
+        let site = p[3];
         let mut at = vec![false; g.th.len()];
         for &t in act {
             at[t as usize] = true;

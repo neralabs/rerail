@@ -392,6 +392,7 @@ impl<'t> View<'t> {
         self.v.is_empty()
     }
 
+    #[inline(always)]
     pub fn kind(&self, i: usize) -> Kind {
         Kind::of((self.v.key(i) & 0x3ff) as u16)
     }
@@ -401,7 +402,14 @@ impl<'t> View<'t> {
         (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f == SYNCS
     }
 
+    /// Node `i`'s payload, its words from its start (a visit's reads, its start found once).
+    #[inline(always)]
+    pub fn p(&self, i: usize) -> &'t [u32] {
+        &self.words[self.v.start(i) as usize..]
+    }
+
     /// Node `i`'s payload word `k`.
+    #[inline(always)]
     pub fn w(&self, i: usize, k: usize) -> u32 {
         self.words[self.v.start(i) as usize + k]
     }
@@ -422,6 +430,11 @@ impl<'t> View<'t> {
 
     /// Node `i`'s `k`-th child.
     pub fn child(&self, i: usize, k: usize) -> usize {
-        self.v.children(i).nth(k).expect("a kernel tape node's child")
+        // Children follow their parent in preorder, each after the one before's subtree.
+        let mut c = i + 1;
+        for _ in 0..k {
+            c += self.v.size(c);
+        }
+        c
     }
 }

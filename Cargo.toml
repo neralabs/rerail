@@ -72,6 +72,11 @@ opt-level = 3
 [profile.dev.package.rerail-go-lean]
 opt-level = 3
 
+# The UKL interpreter (`rerail-ukl-vec`, decision 0567): a step per node of a kernel per thread of every launch on
+# the CPU's interpreted path, optimized as the lean parsers are, so the library's tests run in seconds.
+[profile.dev.package.rerail-ukl-vec]
+opt-level = 3
+
 # The lean C and C++ parser (`rerail-c-lean`), the same: a step per token of every C and C++ file.
 [profile.dev.package.rerail-c-lean]
 opt-level = 3
