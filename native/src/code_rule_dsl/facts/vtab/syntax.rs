@@ -321,7 +321,7 @@ pub struct LongTexts {
 
 impl LongTexts {
     fn new(nodes: Arc<dyn Source>, batch: &Arc<Batch>) -> Self {
-        let docs = batch.docs.keys().iter().enumerate().map(|(i, &k)| (k, i)).collect();
+        let docs = batch.docs.keys().enumerate().map(|(i, k)| (k, i)).collect();
         Self { nodes, batch: Arc::clone(batch), docs }
     }
 
@@ -2991,7 +2991,7 @@ impl Batch {
         batch.rows = made::Rows::new(n, names, template, statics, prior.as_ref().map(|(whole, at)| (whole, at.clone())));
         let batch = Arc::new(batch);
         #[cfg(any(test, feature = "test-hooks"))]
-        BATCHES.lock().push((batch.docs.keys().to_vec(), Arc::downgrade(&batch)));
+        BATCHES.lock().push((batch.docs.keys().collect::<Vec<u32>>(), Arc::downgrade(&batch)));
         if !alone {
             grown.last = Some(Arc::clone(&batch));
             return Ok((batch, None));
@@ -3411,9 +3411,9 @@ impl Batch {
         self.rows.makes()
     }
 
-    /// The node view's row offsets by document: every document's projection made.
-    pub fn nodes(&self) -> &[usize] {
-        self.offsets(View::Node)
+    /// The node view's first rows by document.
+    pub fn nodes(&self) -> made::Firsts<'_> {
+        self.firsts(View::Node)
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
@@ -3421,45 +3421,56 @@ impl Batch {
     pub fn chunk(&self) -> &device_chunk::Chunk {
         self.chunk.get_or_init(|| device_chunk::build(self))
     }
-    /// The view's rows' offsets by document, from each document's count of them (decision 0494): made on the first
-    /// read, every document's projection made for it.
-    fn offsets(&self, view: View) -> &[usize] {
-        // Each document's counts: those given (the documents' table's), else its made projection's.
-        let counted = |count: &dyn Fn(made::ViewCounts) -> usize| {
-            let mut offsets = Vec::with_capacity(self.docs.len() + 1);
-            offsets.push(0);
-            for i in 0..self.docs.len() {
-                offsets.push(offsets.last().unwrap() + count(self.docs.counts(i)));
+    /// The view's first rows by document (decision 0494), in the batch's views' directory (decision 0353 step 3 on the
+    /// CPU): written once, for every view, from each document's counts (those given, the documents' table's, else
+    /// its made projection's) on the first read of any.
+    pub(super) fn firsts(&self, view: View) -> made::Firsts<'_> {
+        use rerail_clif::view_reads::{ROWS, ViewDir};
+        self.offsets.counted.get_or_init(|| {
+            let dir = self.docs.dir().cast_mut();
+            let (wants_field, wants_sibling) = (self.projection.wants("field"), self.projection.wants("next_sibling"));
+            let mut at = [0u32; ROWS];
+            let n = self.docs.len();
+            let row32 = |v: usize| u32::try_from(v).expect("a view's rows past u32");
+            for i in 0..=n {
+                // SAFETY: the directory `made::directory` wrote in the batch's block; row `i` is one of its, written
+                // by this alone (its search layer's keys are read beside it, field by field).
+                unsafe {
+                    if i == n {
+                        std::ptr::addr_of_mut!((*dir).ends).write(at);
+                        break;
+                    }
+                    let rows = ViewDir::block_rows(dir);
+                    std::ptr::addr_of_mut!((*rows.add(i)).rows).write(at);
+                }
+                let [nodes, fielded, siblings, locs] = self.docs.counts(i).map(|c| c as usize);
+                let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
+                // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, then siblings.
+                let by = [own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[3]];
+                for k in 0..ROWS {
+                    at[k] = row32(at[k] as usize + by[k]);
+                }
             }
-            offsets
-        };
-        let o = &self.offsets;
-        let [nodes, fielded, siblings, locs] = [0, 1, 2, 3];
-        match view {
-            View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => o.nodes.get_or_init(|| counted(&|c| c[nodes] as usize)),
-            View::Child => o.children.get_or_init(|| counted(&|c| (c[nodes] as usize).saturating_sub(1))),
-            View::Field => o.fields.get_or_init(|| counted(&|c| if self.projection.wants("field") { c[fielded] as usize } else { 0 })),
-            View::Sibling => o.siblings.get_or_init(|| counted(&|c| if self.projection.wants("next_sibling") { c[siblings] as usize } else { 0 })),
-            View::Loc(_) => o.locs.get_or_init(|| counted(&|c| c[locs] as usize)),
-        }
+            // SAFETY: as above.
+            unsafe { std::ptr::addr_of_mut!((*dir).counted).write(1) };
+        });
+        made::Firsts::new(&self.docs, slot_of(view))
     }
     /// The document and its row index of `row`.
     /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
     /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
     /// wrong document. The search per row was 13 s of the pack's cold run.
     pub fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
-        let offsets = self.offsets(view);
-        let key = offsets.as_ptr() as usize;
+        let firsts = self.firsts(view);
+        // The memo: this thread's last document of this directory's view (step 3 passes the executor's own).
+        let key = self.docs.addr() ^ slot_of(view);
         let doc = LOCATED.with(|h| {
             let (k, d) = h.get();
-            if k == key && d + 1 < offsets.len() && offsets[d] <= row && row < offsets[d + 1] {
-                return d;
-            }
-            let d = offsets.partition_point(|&o| o <= row) - 1;
+            let d = firsts.doc_of(row, if k == key { d as u32 } else { rerail_clif::view_reads::NO_DOC });
             h.set((key, d));
             d
         });
-        (&self.docs[doc], row - offsets[doc])
+        (&self.docs[doc], row - firsts.at(doc))
     }
     /// The documents of file `file`'s programs (decision 0431 §4).
     fn programs_of(&self, file: u32) -> impl Iterator<Item = usize> + '_ {
@@ -3470,16 +3481,13 @@ impl Batch {
     fn doc(&self, d: i64) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
         let key = self.docs.addr();
-        let hit = DOC.with(|h| {
+        // The memo, as `locate`'s: the directory's search tries it first.
+        DOC.with(|h| {
             let (k, i) = h.get();
-            (k == key && i < self.docs.len() && self.docs.key(i) == d).then_some(i)
-        });
-        if hit.is_some() {
-            return hit;
-        }
-        let i = self.docs.position(d)?;
-        DOC.with(|h| h.set((key, i)));
-        Some(i)
+            let found = self.docs.position_from(d, if k == key { i as u32 } else { rerail_clif::view_reads::NO_DOC })?;
+            h.set((key, found));
+            Some(found)
+        })
     }
     /// The document index and node of id `n`.
     pub fn node(&self, n: i64) -> Option<(usize, u32)> {
@@ -3515,12 +3523,12 @@ impl Batch {
             View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
         }?;
-        Some(self.offsets(view)[doc] + within)
+        Some(self.firsts(view).at(doc) + within)
     }
     /// The rows of nodes with ids in `lo..=hi`.
     fn between(&self, view: View, lo: i64, hi: i64) -> Vec<usize> {
         let mut rows = Vec::new();
-        let first = self.docs.keys().partition_point(|&k| i64::from(k) < lo >> 32);
+        let first = if lo >> 32 <= 0 { 0 } else if lo >> 32 > i64::from(u32::MAX) { self.docs.len() } else { self.docs.first_from((lo >> 32) as u32) };
         for doc in first..self.docs.len() {
             let base = i64::from(self.docs.key(doc)) << 32;
             if base > hi {
@@ -3638,8 +3646,8 @@ impl Source for Viewed {
     fn python_batch(&self)->Option<Arc<Batch>> {Some(Arc::clone(&self.batch))}
     /// A view's rows are in document order (decision 0494): a document's lie at its offset, counted.
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
-        let offsets = self.batch.offsets(self.view);
-        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets[i]..offsets[i + 1]).collect())
+        let offsets = self.batch.firsts(self.view);
+        Some(docs.iter().filter_map(|&k| self.batch.docs.position(k)).flat_map(|i| offsets.at(i)..offsets.at(i + 1)).collect())
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
@@ -3687,7 +3695,7 @@ impl Source for Viewed {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
-        *self.batch.offsets(self.view).last().unwrap()
+        self.batch.firsts(self.view).total()
     }
     /// A node's document or column found from its id (`docof`, `col`: 4 and 3.5 derived lookups), a parent's
     /// children listed (`child` 2, `field` 1.7): decision 0312. The rest about one.
@@ -3812,11 +3820,11 @@ impl Source for Viewed {
     /// Document by document, with no search for each row's document. (A merge had left this in `impl Viewed`,
     /// where the trait's per-row scan, a document search for each row, shadowed it.)
     fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         let mut out = Vec::new();
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, eqs.iter().map(|&(c, _)| c), |i, value| {
+            let base = offsets.at(doc);
+            self.each_row(p, offsets.at(doc + 1) - base, eqs.iter().map(|&(c, _)| c), |i, value| {
                 if eqs.iter().all(|&(c, v)| value(c) == v) {
                     out.push((base + i) as u32);
                 }
@@ -3825,18 +3833,18 @@ impl Source for Viewed {
         out
     }
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         out.reserve(self.len() * columns.len());
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            self.each_row(p, offsets[doc + 1] - offsets[doc], columns.iter().copied(), |_, value| out.extend(columns.iter().map(|&c| value(c))));
+            self.each_row(p, offsets.at(doc + 1) - offsets.at(doc), columns.iter().copied(), |_, value| out.extend(columns.iter().map(|&c| value(c))));
         }
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         let mut row = vec![0i64; columns.len()];
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
+            let base = offsets.at(doc);
+            self.each_row(p, offsets.at(doc + 1) - base, columns.iter().copied(), |i, value| {
                 for (o, &c) in row.iter_mut().zip(columns) {
                     *o = value(c);
                 }
@@ -3845,17 +3853,17 @@ impl Source for Viewed {
         }
     }
     fn for_rows_in(&self, range: std::ops::Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         let mut row = vec![0i64; columns.len()];
         let mut go = true;
         // The documents the range holds: from the one holding its first row.
-        let first = offsets.partition_point(|&o| o <= range.start).saturating_sub(1);
+        let first = if range.start >= offsets.total() { offsets.len() } else { offsets.doc_of(range.start, rerail_clif::view_reads::NO_DOC) };
         for (doc, p) in self.batch.docs.iter().enumerate().skip(first) {
-            let base = offsets[doc];
+            let base = offsets.at(doc);
             if !go || base >= range.end {
                 break;
             }
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
+            self.each_row(p, offsets.at(doc + 1) - base, columns.iter().copied(), |i, value| {
                 if !go || !range.contains(&(base + i)) {
                     return;
                 }
@@ -3873,7 +3881,7 @@ impl Source for Viewed {
             return false;
         }
         let docs: rustc_hash::FxHashSet<i64> = keys.iter().map(|k| k >> 32).collect();
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         let mut row = vec![0i64; columns.len()];
         let mut go = true;
         for (doc, p) in self.batch.docs.iter().enumerate() {
@@ -3883,8 +3891,8 @@ impl Source for Viewed {
             if !docs.contains(&i64::from(p.key)) {
                 continue;
             }
-            let base = offsets[doc];
-            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied().chain([column]), |i, value| {
+            let base = offsets.at(doc);
+            self.each_row(p, offsets.at(doc + 1) - base, columns.iter().copied().chain([column]), |i, value| {
                 if !go || !keys.contains(&value(column)) {
                     return;
                 }
@@ -3907,11 +3915,11 @@ impl Source for Viewed {
         if !own || self.batch.docs.iter().any(|p| p.key == 0) {
             return self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
         }
-        let offsets = self.batch.offsets(self.view);
+        let offsets = self.batch.firsts(self.view);
         let node = matches!(self.view, View::Node) && column == 0;
         for (doc, p) in self.batch.docs.iter().enumerate() {
             let d = if node { p.file } else { p.key };
-            for r in offsets[doc]..offsets[doc + 1] {
+            for r in offsets.at(doc)..offsets.at(doc + 1) {
                 each(r, i64::from(d));
             }
         }
@@ -3959,7 +3967,7 @@ impl Viewed {
                 rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
             } else if Some(column) == self.parent() {
                 if v == -1 && matches!(self.view, View::Tape) {
-                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes()[doc]));
+                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes().at(doc)));
                 } else if let Some((doc, local)) = b.node(v) {
                     b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
                 }
@@ -3971,23 +3979,23 @@ impl Viewed {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
                 rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
             } else if matches!(self.view, View::Core) && column == 0 {
-                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes()[doc]..b.nodes()[doc + 1]));
+                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes().at(doc)..b.nodes().at(doc + 1)));
             } else if matches!(self.view, View::Node) && column == 0 {
                 // A file's rows, then its programs' (decision 0431 §4).
                 let Ok(file) = u32::try_from(v) else { continue };
                 for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
-                    rows.extend(b.nodes()[doc]..b.nodes()[doc + 1]);
+                    rows.extend(b.nodes().at(doc)..b.nodes().at(doc + 1));
                 }
             } else if matches!(self.view, View::Core) && column == 1 {
                 // A tape node of each document that has it as a node; the statement filters `d`.
                 let Ok(t) = u32::try_from(v) else { continue };
                 for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
                     if let Some(local) = p.ranks().local(Item::Node, t) {
-                        rows.push(b.nodes()[doc] + local as usize);
+                        rows.push(b.nodes().at(doc) + local as usize);
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes()[doc as usize] + local as usize));
+                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes().at(doc as usize) + local as usize));
             } else {
                 return None;
             }
@@ -4562,7 +4570,7 @@ impl Grower {
             self.tested = tested;
             return Ok((out, batch));
         };
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes().last().copied().unwrap_or(0) as u64);
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, batch.nodes().total() as u64);
         // An admitted value's relations are a part of the chunk's (`admitted`), never merged into its own.
         let made::Made { relations, matched, waved: _, read: _, strings_from } = made;
         let mut out: Vec<(String, Arc<dyn Source>)> = Vec::new();
@@ -4625,7 +4633,7 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
                 Some((n.clone(), Arc::clone(s), kind))
             })
             .collect();
-        let keys: Vec<u32> = batch.docs.keys().to_vec();
+        let keys: Vec<u32> = batch.docs.keys().collect::<Vec<u32>>();
         drop(_nearest);
         stored_spike::run(&db, &read, &keys);
         return out_with_within(out, &batch, binding);
@@ -4812,6 +4820,18 @@ pub fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Sized), d
 }
 
 // cratify: `tests` is rerail-engine's (it mounts it)
+
+/// A view's slot in the directory's first rows (`view_reads::ROWS`' order): the views over the nodes share the `node`
+/// view's, the `Loc` views theirs.
+fn slot_of(view: View) -> usize {
+    match view {
+        View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order => 0,
+        View::Child => 1,
+        View::Field => 2,
+        View::Loc(_) => 5,
+        View::Sibling => rerail_clif::view_reads::SIBLING,
+    }
+}
 
 thread_local! {
     /// `Batch::locate`'s hint: the offsets array (its address) and the document last found in it.

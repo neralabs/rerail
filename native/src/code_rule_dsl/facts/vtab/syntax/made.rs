@@ -22,11 +22,34 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     [p.len(), p.fielded(), p.after_siblings(), p.locs()]
 }
 
+/// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
+/// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
+/// (`Batch::firsts`), and the reads layer when its views are read in place (`device_chunk::views_in_place`). Its
+/// offset in the block.
+pub(super) fn directory(block: &Block, keys: impl Iterator<Item = u32>, n: usize) -> usize {
+    use rerail_clif::view_reads::{ViewDir, ViewRow};
+    let rows: *mut ViewRow = block.alloc_t(n.max(1));
+    let dir: *mut ViewDir = block.alloc_t(1);
+    let mut k = 0;
+    for key in keys.take(n) {
+        // SAFETY: row `k` of the rows just allocated in `block`.
+        unsafe { rows.add(k).write(ViewRow { key, ..Default::default() }) };
+        k += 1;
+    }
+    assert_eq!(k, n, "a key for every document");
+    let at = block.offset_of(dir);
+    // SAFETY: the directory just allocated in `block`.
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, rows: block.offset_of(rows) as u64, ..Default::default() }) };
+    at
+}
+
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
     /// Shared with the batches it grows into (decision 0431 §6): a document is made once, whichever reads it first.
     slots: Vec<Arc<Slot>>,
-    keys: Vec<u32>,
+    /// The views' directory's offset in the batch's block (`view_reads::ViewDir`, decision 0353 step 3 on the CPU):
+    /// its search layer, each document's key from the start and its first rows once counted (`Batch::firsts`).
+    dir: usize,
     tags: Vec<u8>,
     /// Each document's views' counts, where given (the documents' table's).
     given: Vec<Option<ViewCounts>>,
@@ -65,38 +88,38 @@ pub(super) struct Context {
 impl Docs {
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
     pub(super) fn new(documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let keys: Vec<u32> = documents.iter().map(|d| d.key).collect();
         let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
-        let given = keys.iter().map(|k| given.get(k).copied()).collect();
+        let given = documents.iter().map(|d| given.get(&d.key).copied()).collect();
+        let dir = directory(&context.block, documents.iter().map(|d| d.key), documents.len());
         let slots = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
-        Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }
+        Self { slots, dir, tags, given, context, made: AtomicUsize::new(0) }
     }
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
     /// is returned for `prior`'s, in its order.
     pub(super) fn grown(prior: &Docs, documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<usize>) {
-        let added = Self::new(documents, context, given);
-        let Self { slots: new_slots, keys: new_keys, tags: new_tags, given: new_given, context, .. } = added;
+        let new_tags: Vec<u8> = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
+        let new_given: Vec<Option<ViewCounts>> = documents.iter().map(|d| given.get(&d.key).copied()).collect();
+        let new_slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         let n = prior.slots.len() + new_slots.len();
-        let (mut slots, mut keys, mut tags, mut given, mut at) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(prior.slots.len()));
+        let (mut slots, mut tags, mut given, mut at) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(prior.slots.len()));
         let (mut i, mut j) = (0, 0);
         while i < prior.slots.len() || j < new_slots.len() {
-            if j == new_slots.len() || (i < prior.slots.len() && prior.keys[i] < new_keys[j]) {
+            if j == new_slots.len() || (i < prior.slots.len() && prior.key(i) < new_slots[j].input.key) {
                 at.push(slots.len());
                 slots.push(Arc::clone(&prior.slots[i]));
-                keys.push(prior.keys[i]);
                 tags.push(prior.tags[i]);
                 given.push(prior.given[i]);
                 i += 1;
             } else {
                 slots.push(Arc::clone(&new_slots[j]));
-                keys.push(new_keys[j]);
                 tags.push(new_tags[j]);
                 given.push(new_given[j]);
                 j += 1;
             }
         }
-        (Self { slots, keys, tags, given, context, made: AtomicUsize::new(0) }, at)
+        let dir = directory(&context.block, slots.iter().map(|s| s.input.key), slots.len());
+        (Self { slots, dir, tags, given, context, made: AtomicUsize::new(0) }, at)
     }
     /// Whether every document's views' counts were given: the views' row space is known with none made.
     pub fn given_all(&self) -> bool {
@@ -116,12 +139,32 @@ impl Docs {
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
-    /// Document `i`'s key, made or not.
+    /// Document `i`'s key, made or not: its directory row's.
     pub fn key(&self, i: usize) -> u32 {
-        self.keys[i]
+        assert!(i < self.slots.len(), "document {i} of {}", self.slots.len());
+        // SAFETY: the directory `new` made in the batch's block, which the context holds; row `i` is one of its.
+        unsafe { rerail_clif::view_reads::ViewDir::key_of(self.dir(), i as u32) }
     }
-    pub fn keys(&self) -> &[u32] {
-        &self.keys
+    /// Every document's key, in order.
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
+        (0..self.slots.len()).map(|i| self.key(i))
+    }
+    /// The views' directory, in the batch's block.
+    pub fn dir(&self) -> *const rerail_clif::view_reads::ViewDir {
+        self.context.block.ptr::<rerail_clif::view_reads::ViewDir>(self.dir).cast_const()
+    }
+    /// Its offset in the batch's block.
+    pub fn dir_at(&self) -> usize {
+        self.dir
+    }
+    /// The first document whose key is `key` or past it.
+    pub fn first_from(&self, key: u32) -> usize {
+        let (mut lo, mut hi) = (0, self.slots.len());
+        while lo < hi {
+            let m = (lo + hi) / 2;
+            if self.key(m) < key { lo = m + 1 } else { hi = m }
+        }
+        lo
     }
     /// Document `i`'s tape tag (`Facts::tag`), made or not.
     pub fn tag(&self, i: usize) -> u8 {
@@ -129,7 +172,13 @@ impl Docs {
     }
     /// The index of the document of key `key`.
     pub fn position(&self, key: u32) -> Option<usize> {
-        self.keys.binary_search(&key).ok()
+        self.position_from(key, rerail_clif::view_reads::NO_DOC)
+    }
+    /// `position`, the document `memo` tried first (the directory's search, `ViewDir::doc_of_key`).
+    pub fn position_from(&self, key: u32, memo: u32) -> Option<usize> {
+        // SAFETY: as `key`.
+        let d = unsafe { rerail_clif::view_reads::ViewDir::doc_of_key(self.dir(), key, memo) };
+        (d != rerail_clif::view_reads::NO_DOC).then_some(d as usize)
     }
     /// What document `i` is made from: its facts, tape, path and place.
     pub fn input(&self, i: usize) -> &Document {
@@ -159,9 +208,9 @@ impl Docs {
     pub(super) fn fail(&self, why: String) {
         self.context.failure.lock().get_or_insert(why);
     }
-    /// The address the read hints are keyed by (`Batch::doc`).
+    /// The address the read memos are kept by (`Batch::doc`): its directory's.
     pub(super) fn addr(&self) -> usize {
-        self.slots.as_ptr() as usize
+        self.dir() as usize
     }
     /// Document `i`, made if it is not.
     pub(super) fn made(&self, i: usize) -> &MadeDoc {
@@ -296,14 +345,54 @@ impl DoubleEndedIterator for DocsIter<'_> {
 
 impl ExactSizeIterator for DocsIter<'_> {}
 
-/// The views' row offsets by document: each made from the documents' counts on its first read.
+/// Whether the views' first rows are in the directory (`Batch::firsts`): written once, from the documents' counts,
+/// on the first read of any view's rows.
 #[derive(Default)]
 pub(super) struct Offsets {
-    pub(super) nodes: OnceLock<Vec<usize>>,
-    pub(super) children: OnceLock<Vec<usize>>,
-    pub(super) fields: OnceLock<Vec<usize>>,
-    pub(super) siblings: OnceLock<Vec<usize>>,
-    pub(super) locs: OnceLock<Vec<usize>>,
+    pub(super) counted: OnceLock<()>,
+}
+
+/// A view's first rows by document, read in the batch's views' directory (decision 0353 step 3 on the CPU): document
+/// `i`'s at `at(i)`, the view's rows in all at `at(len)` (`total`).
+#[derive(Clone, Copy)]
+pub struct Firsts<'a> {
+    dir: *const rerail_clif::view_reads::ViewDir,
+    k: usize,
+    n: usize,
+    _batch: std::marker::PhantomData<&'a Docs>,
+}
+
+impl Firsts<'_> {
+    /// Over `docs`' directory, view slot `k` (`view_reads::ROWS`' order), its first rows written.
+    pub(super) fn new(docs: &Docs, k: usize) -> Firsts<'_> {
+        Firsts { dir: docs.dir(), k, n: docs.len(), _batch: std::marker::PhantomData }
+    }
+    /// Document `i`'s first row (`i == len()`: the rows in all).
+    #[inline]
+    pub fn at(&self, i: usize) -> usize {
+        assert!(i <= self.n, "document {i} of {}", self.n);
+        // SAFETY: the directory of the documents this borrows, its first rows written (`Batch::firsts`).
+        unsafe { rerail_clif::view_reads::ViewDir::first_of(self.dir, self.k, i as u32) as usize }
+    }
+    /// The view's rows in all.
+    #[inline]
+    pub fn total(&self) -> usize {
+        self.at(self.n)
+    }
+    /// How many documents.
+    pub fn len(&self) -> usize {
+        self.n
+    }
+    /// Document `i`'s rows.
+    pub fn range(&self, i: usize) -> std::ops::Range<usize> {
+        self.at(i)..self.at(i + 1)
+    }
+    /// The document whose rows hold `row`, `memo` tried first (the directory's search, `ViewDir::doc_of_row`).
+    #[inline]
+    pub fn doc_of(&self, row: usize, memo: u32) -> usize {
+        // SAFETY: as `at`.
+        unsafe { rerail_clif::view_reads::ViewDir::doc_of_row(self.dir, self.k as u32, row as u32, memo) as usize }
+    }
 }
 
 /// What a group made: the rows `Batch::make_rows` made for some documents, before they are bound, each relation's
@@ -949,7 +1038,7 @@ impl Source for MadeRows {
             && self.by().column() == Some(_column)
             && let (Some(first), Some(last)) = (self.by().document(lo), self.by().document(hi))
         {
-            let keys = self.batch.docs.keys().iter().copied().filter(|k| (first..=last).contains(k));
+            let keys = self.batch.docs.keys().filter(|k| (first..=last).contains(k));
             let groups = self.batch.groups_of(keys.collect::<Vec<_>>());
             let r = self.batch.made_so_far(self.rel);
             let within = |v: i64| _lower.is_none_or(|(lo, inc)| if inc { v >= lo } else { v > lo }) && _upper.is_none_or(|(hi, inc)| if inc { v <= hi } else { v < hi });

@@ -195,39 +195,37 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
-    build_dir(&chunk.block, &docs_of(batch, [0; 9]))
+    // The batch's own directory (`made::directory`, its first rows `Batch::firsts`): its reads layer filled in.
+    build_dir(&chunk.block, &docs_of(batch, [0; rerail_clif::view_reads::ROWS]), DirAt::Batch(batch.docs.dir_at()))
 }
 
-/// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
+/// One document of a views' directory: its projection, its dialect, and its first row in each view (`ROWS`' order).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct DirDoc<'a> {
     p: &'a super::Projected,
     dialect: &'a super::Dialect,
-    rows: [u32; 9],
+    rows: [u32; rerail_clif::view_reads::ROWS],
 }
 
-/// `batch`'s documents in a directory, each view's rows past `past` of that view.
+/// `batch`'s documents in a directory, each view's rows past `past` of that view: their first rows, read in the
+/// batch's directory (`Batch::firsts`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn docs_of(batch: &Batch, past: [u32; 9]) -> Vec<DirDoc<'_>> {
-    let (nodes, children, fields, locs) = (batch.offsets(View::Node), batch.offsets(View::Child), batch.offsets(View::Field), batch.offsets(View::Loc(Place::Line)));
+fn docs_of(batch: &Batch, past: [u32; rerail_clif::view_reads::ROWS]) -> Vec<DirDoc<'_>> {
+    batch.firsts(View::Node);
+    let firsts: [super::made::Firsts<'_>; rerail_clif::view_reads::ROWS] = std::array::from_fn(|k| super::made::Firsts::new(&batch.docs, k));
     batch
         .docs
         .iter()
         .enumerate()
-        .map(|(i, p)| {
-            let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
-            let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc];
-            DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
-        })
+        .map(|(i, p)| DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|k| past[k] + firsts[k].at(i) as u32) })
         .collect()
 }
 
-/// Each view's rows of `batch` (`VIEWS`' order).
+/// Each view's rows of `batch` (`ROWS`' order).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn rows_of(batch: &Batch) -> [u32; 9] {
-    let last = |v: View| batch.offsets(v).last().map_or(0, |&r| r as u32);
-    let (n, loc) = (last(View::Node), last(View::Loc(Place::Line)));
-    [n, last(View::Child), last(View::Field), n, n, loc, loc, loc, loc]
+fn rows_of(batch: &Batch) -> [u32; rerail_clif::view_reads::ROWS] {
+    batch.firsts(View::Node);
+    std::array::from_fn(|k| super::made::Firsts::new(&batch.docs, k).total() as u32)
 }
 
 /// The views' directory of a chunk's batch and the tape values admitted inside its fixpoint (decision 0431 §8,
@@ -236,27 +234,64 @@ fn rows_of(batch: &Batch) -> [u32; 9] {
 /// a tape is not where the device reads it.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
-    let mut docs = docs_of(batch, [0; 9]);
+    let mut docs = docs_of(batch, [0; rerail_clif::view_reads::ROWS]);
     let mut past = rows_of(batch);
     for v in values {
         docs.extend(docs_of(v, past));
         let more = rows_of(v);
         past = std::array::from_fn(|k| past[k] + more[k]);
     }
-    build_dir(&batch.block, &docs)
+    build_dir(&batch.block, &docs, DirAt::Layered(past))
 }
 
-/// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
+/// Where `build_dir` writes a directory.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
+#[derive(Clone, Copy)]
+enum DirAt {
+    /// The batch's own (`made::directory`), at this offset: its keys and first rows written, its reads layer not.
+    Batch(usize),
+    /// A new one, of a layered source's documents, each view's rows in all these.
+    Layered([u32; rerail_clif::view_reads::ROWS]),
+}
+
+/// The directory of `docs` in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
+/// `into`, a batch's own directory (`made::directory`), its keys and first rows written: its reads layer is filled in,
+/// field by field, beside the readers of its search layer. Else (a layered source's documents) it is made whole.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], into: DirAt) -> Option<ViewsInPlace> {
     use crate::code_rule_dsl::tape::placed;
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     // Made whether or not a device is open (decision 0353 step 3 on the CPU): the host reads it too.
     let device = placed::device();
     let n = docs.len();
-    let rows: *mut ViewRow = b.alloc_t(n.max(1));
-    let dir: *mut ViewDir = b.alloc_t(1);
+    let (rows, dir): (*mut ViewRow, *mut ViewDir) = match into {
+        DirAt::Batch(at) => {
+            let dir = b.ptr::<ViewDir>(at);
+            // SAFETY: the batch's directory, in `b`; its header's search fields, written before any reader.
+            let (rows, ndocs) = unsafe { (b.ptr::<ViewRow>((*dir).rows as usize), (*dir).ndocs) };
+            assert_eq!(ndocs as usize, n, "the batch's directory holds its documents");
+            (rows, dir)
+        }
+        DirAt::Layered(_) => (b.alloc_t(n.max(1)), b.alloc_t(1)),
+    };
+    // Row `i`'s reads layer; made whole (its key and first rows too) where the directory is new.
+    let put = |i: usize, row: &ViewRow| {
+        let at = rows.wrapping_add(i);
+        // SAFETY: row `i` of the directory's rows, in `b`; where it is the batch's, the fields its search layer's
+        // readers read (`key`, `rows`) are not written.
+        unsafe {
+            if let DirAt::Batch(_) = into {
+                (&raw mut (*at).entry).write(row.entry);
+                (&raw mut (*at).tape).write(row.tape);
+                (&raw mut (*at).lines).write(row.lines);
+                (&raw mut (*at).homes).write(row.homes);
+                (&raw mut (*at).view).write(row.view);
+            } else {
+                at.write(*row);
+            }
+        }
+    };
     // The homes the documents' tapes and lines lie in (`ViewHome`), each once, in the order first named.
     let mut homes: Vec<placed::HomeOf> = Vec::new();
     let mut home = |h: placed::HomeOf| -> (u32, u64, bool) {
@@ -284,7 +319,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let mut row = ViewRow { rows: first_rows, ..Default::default() };
+        let mut row = ViewRow { key: p.key, rows: first_rows, ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
@@ -312,8 +347,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
                 Err(why) => {
                     crate::code_rule_dsl::prof::count(why, 1);
                     locs = false;
-                    // SAFETY: row `i` of the rows just allocated in `b`.
-                    unsafe { rows.add(i).write(row) };
+                    put(i, &row);
                     continue;
                 }
             };
@@ -345,8 +379,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             }
             entries.push(entry);
         }
-        // SAFETY: row `i` of the rows just allocated in `b`.
-        unsafe { rows.add(i).write(row) };
+        put(i, &row);
     }
     // The 16z documents' cache, in a block of its own (one more home: its reads write it, the batch's block they do
     // not), shared by every reader of the views on either executor: its entry size in each one's view, its reads
@@ -362,9 +395,8 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         // SAFETY: the cache's bytes, just allocated in its block, read by no reader yet.
         spec.init(unsafe { std::slice::from_raw_parts_mut(block.ptr::<u8>(at), spec.bytes()) }).expect("a cache's room of its size");
         for &i in &zrows {
-            // SAFETY: row `i`, written above in `b`.
-            let row = unsafe { &mut *rows.add(i) };
-            (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
+            // SAFETY: row `i`'s view, written above in `b`, read by no reader of the search layer.
+            unsafe { ((*rows.add(i)).view.columns[3], (*rows.add(i)).view.columns[4]) = (spec.entry_bytes() as u32, 1) };
         }
         let buffer = device.and_then(|d| block.device_buffer(d).ok());
         crate::code_rule_dsl::facts::vtab::ZCache { block, at, len: spec.bytes(), buffer }
@@ -382,8 +414,19 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(0, |d| d.0) }) };
     }
     let at = b.offset_of(dir);
-    // SAFETY: the directory just allocated in `b`.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| u64::from(k) + 1) }) };
+    let (nhomes, homes_off, cache_k) = (homes.len() as u32, b.offset_of(homes_at) as u64, cache_home.map_or(0, |k| u64::from(k) + 1));
+    // SAFETY: the directory in `b`: the batch's, its reads layer's header fields alone (its search layer's readers
+    // read the others); else just allocated, made whole, each view's end the rows past its last document.
+    unsafe {
+        match into {
+            DirAt::Batch(_) => {
+                (&raw mut (*dir).nhomes).write(nhomes);
+                (&raw mut (*dir).homes).write(homes_off);
+                (&raw mut (*dir).cache).write(cache_k);
+            }
+            DirAt::Layered(ends) => dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes, rows: b.offset_of(rows) as u64, homes: homes_off, cache: cache_k, ends, counted: 1, pad: 0 }),
+        }
+    }
     // The device's: the block's buffer made after the last allocation, so it covers them, and each 16z view's cache
     // offset, the cache's device address less its tape's (the kernels read the view where it lies).
     let mut buffers = Vec::new();
@@ -394,10 +437,12 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         let device_of = |k: u32| homes[k as usize].device.as_ref().map_or(0, |d| d.0);
         if let Some(k) = cache_home {
             for &i in &zrows {
-                // SAFETY: row `i`, written above in `b`.
-                let row = unsafe { &mut *rows.add(i) };
-                let rel = device_of(k).wrapping_sub(device_of(row.homes[0]) + row.tape) as i64;
-                (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
+                // SAFETY: row `i`'s reads layer, written above in `b`.
+                unsafe {
+                    let row = rows.add(i);
+                    let rel = device_of(k).wrapping_sub(device_of((*row).homes[0]) + (*row).tape) as i64;
+                    ((*row).view.side[0], (*row).view.side[1]) = (rel as u32, (rel >> 32) as u32);
+                }
             }
         }
         buffers.push(buffer);
@@ -502,9 +547,9 @@ fn build_in(batch: &Batch) -> Chunk {
             (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
-            (*d).node_row = batch.nodes()[i] as u32;
-            (*d).child_row = batch.offsets(View::Child)[i] as u32;
-            (*d).field_row = batch.offsets(View::Field)[i] as u32;
+            (*d).node_row = batch.nodes().at(i) as u32;
+            (*d).child_row = batch.firsts(View::Child).at(i) as u32;
+            (*d).field_row = batch.firsts(View::Field).at(i) as u32;
             (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
@@ -546,9 +591,9 @@ fn build_in(batch: &Batch) -> Chunk {
     // SAFETY: the root, just allocated; its spans point into `b`.
     unsafe {
         (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = *batch.nodes().last().unwrap_or(&0) as u32;
-        (*root).children = *batch.offsets(View::Child).last().unwrap_or(&0) as u32;
-        (*root).fields = *batch.offsets(View::Field).last().unwrap_or(&0) as u32;
+        (*root).nodes = batch.nodes().total() as u32;
+        (*root).children = batch.firsts(View::Child).total() as u32;
+        (*root).fields = batch.firsts(View::Field).total() as u32;
         Span::set(&raw const (*root).docs, docs, batch.docs.len());
     }
     let at = b.offset_of(root);
@@ -605,7 +650,7 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
         }
-        let rows = batch.offsets(View::Loc(Place::Line));
+        let rows = batch.firsts(View::Loc(Place::Line));
         let b = &chunk.block;
         // SAFETY: the root `build` wrote; its document table.
         let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
@@ -626,7 +671,7 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
                 }
                 std::ptr::copy_nonoverlapping(starts.as_ptr(), ls, starts.len());
                 let d = docs.add(i);
-                (*d).loc_row = rows[i] as u32;
+                (*d).loc_row = rows.at(i) as u32;
                 (*d).locs = locs;
                 Span::set(&raw const (*d).spans, sp, 2 * (locs - len) as usize);
                 Span::set(&raw const (*d).lines, ls, starts.len());

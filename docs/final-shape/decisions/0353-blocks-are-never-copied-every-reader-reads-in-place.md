@@ -830,14 +830,32 @@ Tests:
 - `the_kernels_directory_searches_are_the_hosts`: the device's against the host's, for every row of every view,
   every key and keys of none, with each memo.
 
-**Step 2, the CPU's searches (next).** `Batch::doc` runs before documents are made (decision 0494), and
-`Batch::locate` reads offsets made from the documents' counts alone. So the directory comes in two layers:
-- **The search layer**, made from keys and counts the first time the batch is asked: each row's key and first row
-  in every view, `child`'s sibling view among them. It replaces `made::Offsets` and the key search over
-  `made::Docs`.
-- **The reads layer**: each row's entry, tape and view, written when its document is made.
+**Step 2, the CPU's searches (2026-11-21).** `Batch::doc` runs before documents are made (decision 0494), and
+`Batch::locate` reads first rows made from the documents' counts alone. So the batch's one directory is written in
+two layers:
+- **The search layer.** Each row's key, written when the batch's documents are known (`made::directory`, from
+  `Docs::new` and `Docs::grown`), and each view's first rows (`ViewRow::rows`, ten slots: the nine views of
+  `VIEWS` and `child`'s sibling view), written once from the counts on the first read of any (`Batch::firsts`).
+  The header's `ends` holds each view's rows in all. `made::Docs` keeps no keys of its own (`Docs::key` reads the
+  row), and `made::Offsets` holds no vectors: `made::Firsts` reads a view's slot in the directory.
+- **The reads layer.** Each row's entry, homes, tape, lines and view, and the header's homes and cache, written into
+  the same directory when the device or the reads ask for it (`build_dir`), field by field beside the search
+  layer's readers. A layered source's directory (`views_over`, a fixpoint's admitted values) is still made whole,
+  apart, from its batches' first rows.
 
-`locate` and `doc` then take their callers' memo in place of the `DOC` and `LOCATED` thread-locals.
+`Batch::doc` is `ViewDir::doc_of_key`, and `Batch::locate` is `ViewDir::doc_of_row`, on the CPU. The memo each
+passes is still held in the `DOC` and `LOCATED` thread-locals: `Source::value` has no cursor to carry it yet. Step 3
+passes the executor's memo through the scans and probes and deletes both.
+
+Tests: `the_directorys_searches_are_the_jits` checks that the device's directory is the batch's (one directory, its
+offset `Docs::dir_at`), and the lazy-probe tests (`a_probe_makes_the_document_it_names_alone`,
+`a_batch_made_by_group_holds_the_eager_batchs_rows`) read the search layer before any document is made.
+
+Cold hogql still gives 1,629 findings, at 89.4 B and 91.2 B instructions (step 1: 88.4 B and 88.1 B; this Mac at a
+load of about 33). On Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`,
+`a_views_index_is_in_its_block_for_every_thread`, `views_made_on_the_device_are_the_hosts_rows` and
+`a_view_made_on_the_device_is_made_at_each_stratum`. The mini could not build: its Xcode license is not agreed to.
+
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

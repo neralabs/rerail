@@ -11,7 +11,8 @@ typedef struct ViewRow {
     uint64_t tape;
     uint64_t lines;
     uint32_t homes[2];
-    uint32_t rows[9];
+    uint32_t key;
+    uint32_t rows[10];
     uint32_t view[32];
 } ViewRow;
 typedef struct ViewHome {
@@ -25,12 +26,15 @@ typedef struct ViewDir {
     uint64_t rows;
     uint64_t homes;
     uint64_t cache;
+    uint32_t ends[10];
+    uint32_t counted;
+    uint32_t pad;
 } ViewDir;
-UKL_STATIC_ASSERT(sizeof(ViewRow) == 200, "ViewRow: size");
+UKL_STATIC_ASSERT(sizeof(ViewRow) == 208, "ViewRow: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == 24, "ViewRow.homes");
-UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 68, "ViewRow.view");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 76, "ViewRow.view");
 UKL_STATIC_ASSERT(sizeof(ViewHome) == 16, "ViewHome: size");
-UKL_STATIC_ASSERT(sizeof(ViewDir) == 40, "ViewDir: size");
+UKL_STATIC_ASSERT(sizeof(ViewDir) == 88, "ViewDir: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == 32, "ViewDir.cache");
 UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }

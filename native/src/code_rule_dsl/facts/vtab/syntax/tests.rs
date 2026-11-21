@@ -654,10 +654,10 @@ fn within_with_both_given_is_an_interval_test() {
     let store = ContentStore::open(&temp("within-holds")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(3).collect();
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes().last().unwrap();
+    let nodes = batch.nodes().total();
     let place = |r: usize| {
-        let doc = batch.nodes().partition_point(|&o| o <= r) - 1;
-        (doc, r - batch.nodes()[doc])
+        let doc = batch.nodes().doc_of(r, rerail_clif::view_reads::NO_DOC);
+        (doc, r - batch.nodes().at(doc))
     };
     use crate::code_rule_dsl::facts::vtab::Source;
     // A sample of nodes against every node (8,398 nodes: every pair is 70 M tests).
@@ -705,7 +705,7 @@ fn within_holds_exactly_the_contained_pairs() {
         docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false });
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes().last().unwrap();
+    let nodes = batch.nodes().total();
     let id = |r: usize| batch.id(r);
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
@@ -714,8 +714,8 @@ fn within_holds_exactly_the_contained_pairs() {
     // Read once: the reference loop below visits every pair.
     let rows: Vec<_> = (0..nodes)
         .map(|r| {
-            let doc = batch.nodes().partition_point(|&o| o <= r) - 1;
-            let (p, local) = (&batch.docs[doc], r - batch.nodes()[doc]);
+            let doc = batch.nodes().doc_of(r, rerail_clif::view_reads::NO_DOC);
+            let (p, local) = (&batch.docs[doc], r - batch.nodes().at(doc));
             let (start, end) = p.facts.span(p.node(local as u32));
             (p.key, local, p.size(local) as usize, axes[doc][local] as usize, start, end)
         })
@@ -803,7 +803,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     assert!(broken.errors().iter().any(|&id| broken.flags(id) & 8 != 0), "broken.py has ERROR nodes");
     docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None, unpackaged: false });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes().last().unwrap();
+    let nodes = batch.nodes().total();
     let id = |r: usize| batch.id(r);
     // (document, local, size) and kind atom of node row r.
     let at = |r: usize| {
@@ -818,7 +818,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
     // among them.
     let mut set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    set.extend((batch.nodes()[4]..nodes).map(kind));
+    set.extend((batch.nodes().at(4)..nodes).map(kind));
     set.sort_unstable();
     set.dedup();
     // Each row's place and membership read once: the brute force below is quadratic in the rows.
@@ -1866,7 +1866,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     let store = ContentStore::open(&temp("axes-len")).unwrap();
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes().last().unwrap();
+    let nodes = batch.nodes().total();
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
@@ -1879,7 +1879,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
         ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
     ];
     // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
-    let new_from = batch.nodes()[2];
+    let new_from = batch.nodes().at(2);
     let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
     for (name, source) in sources {
         let len = source.len();
@@ -2488,6 +2488,8 @@ fn the_directorys_searches_are_the_jits() {
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let chunk = batch.chunk();
     let views = device_chunk::views_in_place(&batch, chunk).expect("a directory");
+    // One directory: the batch's, its search layer's and its reads layer's (no second one made for the device).
+    assert_eq!(views.at, batch.docs.dir_at(), "the views' directory is the batch's");
     let jit = rerail_clif::jit::Reads::new();
     type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
     type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
@@ -2505,7 +2507,7 @@ fn the_directorys_searches_are_the_jits() {
         for r in 0..last {
             for memo in [0, n / 2, n - 1, n, NO_DOC] {
                 // SAFETY: as `dir`.
-                let host = unsafe { dir.doc_of_row(k, r, memo) };
+                let host = unsafe { ViewDir::doc_of_row(dir, k, r, memo) };
                 assert_eq!(by_row(d, k, r, memo), host, "view {k}, row {r}, memo {memo}");
                 let next = rows.get(host as usize + 1).map_or(u32::MAX, |e| e.rows[k as usize]);
                 assert!(rows[host as usize].rows[k as usize] <= r && r < next || host + 1 == n, "view {k}, row {r}: document {host}");
@@ -2516,7 +2518,7 @@ fn the_directorys_searches_are_the_jits() {
     for key in 0..45 {
         for memo in [0, 2, n, NO_DOC] {
             // SAFETY: as `dir`.
-            let host = unsafe { dir.doc_of_key(key, memo) };
+            let host = unsafe { ViewDir::doc_of_key(dir, key, memo) };
             assert_eq!(by_key(d, key, memo), host, "key {key}, memo {memo}");
             let expect = batch.docs.iter().position(|p| p.key == key).map_or(NO_DOC, |i| i as u32);
             assert_eq!(host, expect, "key {key}");
@@ -2583,7 +2585,7 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
         }
     }
     // SAFETY: as `dir`.
-    let want: Vec<u32> = asks.iter().map(|&[op, a, r, memo]| unsafe { if op == 0 { dir.doc_of_row(a, r, memo) } else { dir.doc_of_key(a, memo) } }).collect();
+    let want: Vec<u32> = asks.iter().map(|&[op, a, r, memo]| unsafe { if op == 0 { ViewDir::doc_of_row(dir, a, r, memo) } else { ViewDir::doc_of_key(dir, a, memo) } }).collect();
     let source = format!("#include <ukl/backend.h>\n#include <ukl/reads/relation.h>\n{KERNEL}");
     let program = rerail_gpu::kernels::program("dir_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the directory's searches compile: {e}"));
     let probe = program.function("dir_probe").unwrap();
