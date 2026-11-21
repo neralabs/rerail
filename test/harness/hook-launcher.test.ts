@@ -127,6 +127,13 @@ describe("hook launcher", () => {
     expect(stderr).toContain("rerail hook:");
   });
 
+  // Under another node the hook runs in a second launcher, which a native crash or an out-of-memory abort ends before it
+  // can answer: the first answers for it.
+  it("answers {} and exits 0 for a hook that ends the second launcher before its exit handlers run", async () => {
+    const { status, stdout, stderr } = await launch("runs", 'process.kill(process.pid, "SIGKILL");');
+    expect({ status, stdout }, stderr).toEqual({ status: 0, stdout: "{}\n" });
+  });
+
   it("answers {} and exits 0 when the recorded node cannot be started", async () => {
     const { status, stdout, stderr } = await launch("cannot-run");
     expect(stdout).toBe("{}\n");
