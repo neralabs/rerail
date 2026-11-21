@@ -853,12 +853,13 @@ interface RemoteSource {
  * cannot be read or named.
  */
 /**
- * {@link remoteSource}; where it names none while no engine owner of its Git reads stands, the owner, which names the
- * system files, is made first as Git processes no thread waits on ({@link learnGitAccess}), and the source read again.
+ * {@link remoteSource}; where it names none for a checkout placed from its files that the user owns while no engine
+ * owner of its Git reads stands, the owner, which names the system files, is made first as Git processes no thread
+ * waits on ({@link learnGitAccess}), and the source read again.
  */
 async function remoteSourceWithoutBlocking(root: string, options: GitReadOptions): Promise<RemoteSource | undefined> {
   const source = remoteSource(root);
-  if (source !== undefined || standingGitAccess() !== undefined) return source;
+  if (source !== undefined || standingGitAccess() !== undefined || placementInputs(resolve(root))?.owned !== true) return source;
   await learnGitAccess(options);
   return remoteSource(root);
 }
