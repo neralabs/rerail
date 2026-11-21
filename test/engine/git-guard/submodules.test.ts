@@ -230,6 +230,9 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const root = await folder();
     // The folder above holds a repository of its own, whose index records no submodule.
     git(root, "init", "--quiet");
+    await writeFile(join(root, "outer.txt"), "outer\n");
+    git(root, "add", "outer.txt");
+    git(root, "commit", "--quiet", "-m", "outer");
     const source = await repository(root, "source", { "inner.txt": "one\n" });
     const work = await repository(root, "work", { "top.txt": "top\n" });
     git(work, "submodule", "add", "--quiet", source, "sub");
