@@ -9,7 +9,8 @@ use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
 /// Each JSON grammar's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
-/// CPU interpreter on every document: outputs and extracted positions. A step whose program needs
+/// CPU interpreter on every document: its outputs, and its extracted positions where tier 1 accepts
+/// it (decision 0452). A step whose program needs
 /// a form generated MSL lacks (`block_program::missing_form`: a fixed point, a back fill or load)
 /// is refused by that name and counted, not compared; most steps run.
 #[test]
@@ -32,7 +33,12 @@ fn every_grammar_on_metal_equals_the_interpreter() {
     for (f, got) in files.iter().zip(&run.files) {
         let k = run_on[f.program];
         let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
-        if got.outputs != want.outputs || got.positions != want.positions {
+        // A file tier 1 refuses (an error, an escape: its totals' flag) never reaches tier 2, and its tokens' lasts are
+        // not defined there: the CPU makes them by the gaps, Metal keeps the extract, and the proof that they are
+        // equal excuses every place past a fallback bit (decision 0452, R5). Its outputs are compared, not its
+        // extracts.
+        let accepted = want.totals.iter().all(|&t| t == 0);
+        if got.outputs != want.outputs || (accepted && got.positions != want.positions) {
             let outs: Vec<usize> = (0..want.outputs.len()).filter(|&o| got.outputs.get(o) != want.outputs.get(o)).collect();
             let pos: Vec<usize> = (0..want.positions.len()).filter(|&o| got.positions.get(o) != want.positions.get(o)).collect();
             differ.push(format!("{}: outputs {outs:?}, extracts {pos:?} differ: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
