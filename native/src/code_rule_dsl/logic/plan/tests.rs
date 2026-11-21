@@ -2618,6 +2618,38 @@ fn the_search_prices_the_steps_past_a_bound_head_as_one_witness() {
     assert!(work < 2_000.0, "a row a document through each step: {work} {order:?}");
 }
 
+/// The greedy order is taken without a search only at its price as the walk runs it (`witnessed`), not at one witness
+/// a step. ep2 (corpus0, 300 files) after the hub's hiding bound: `x(d) :- dem(d), nd(d, s), gp(v, s, l), k(d)`, a
+/// document shown where one of its nodes places a guest. The greedy order must join `nd` before `gp` (no cross product
+/// while a connected step remains) and priced `nd` past the bound head at a row a document; but `gp` is empty, so no
+/// node is a witness and the walk read every node of each document: 400,983 rows a chunk in 329 programs' strata, 131 M
+/// rows of the run. Priced so, the greedy order costs more than a search, and the search reads `gp` first.
+#[test]
+fn a_greedy_order_is_taken_at_its_witnessed_price() {
+    let p = parse(".decl dem(d: number)\n.decl nd(d: number, s: number)\n.decl gp(v: number, s: number, l: number)\n.decl k(d: number)\n.decl x(d: number)\nx(d) :- dem(d), nd(d, s), gp(v, s, l), k(d).\n.output x\n").unwrap();
+    let mut model = bare_model(&p);
+    // A later chunk's: 40 documents of 1,742 nodes each, no guest place.
+    for (rel, rows, cols) in [
+        ("dem", 40.0, vec![(40.0, 1.0)]),
+        ("nd", 69_690.0, vec![(40.0, 1_742.25), (69_690.0, 1.0)]),
+        ("gp", 0.0, vec![(1.0, 1.0), (1.0, 1.0), (1.0, 1.0)]),
+        ("k", 40.0, vec![(40.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 69_690.0;
+    // Led by the demand's wave, as the stratum's probe of it is planned.
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), Some(0)).unwrap();
+    let order: Vec<String> = order.iter().map(|s| lit_at(&p, 0, s.at)).collect();
+    let at = |name: &str| order.iter().position(|l| l.starts_with(name)).unwrap_or(usize::MAX);
+    assert!(at("gp(") < at("nd("), "the empty guest places before the documents' nodes: {order:?} at {work}");
+}
+
+
 /// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
 /// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
 #[test]

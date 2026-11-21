@@ -4542,6 +4542,30 @@ impl Model {
             }
             (done == full_mask).then_some((work, rows, order, bound, rest))
         };
+        // `RERAIL_PLAN_SHOW=<head>` (dev): what the planner knows of each atom where it orders the head's rules: the
+        // search's, and a greedy order's taken without a search.
+        let shown = std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head())));
+        let show_atoms = |what: &str| {
+            eprintln!("plan show {} {what} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
+            for &j in &joins {
+                let Some(a) = b.atom(j) else { continue };
+                let rel = b.rel(a);
+                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
+                eprintln!(
+                    "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
+                    b.show_atom(a),
+                    self.derived.contains(rel),
+                    self.stats.held.contains(rel),
+                    self.view_src.contains_key(rel),
+                    self.stats.card.get(rel),
+                    self.stats.lazy.0.contains_key(rel),
+                    self.stats.solving.contains(rel),
+                    self.stats.prior_later.contains(rel),
+                    self.stats.col.get(&(rel.to_owned(), sql_col(rel, 0))),
+                    cols.join("; ")
+                );
+            }
+        };
         let (probe, greedy_first) = rerail_prof::code_rule_dsl::logic::profile::setting(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
         // Greedy first (decision 0123 §7; `RERAIL_PLAN_GREEDY_FIRST=off` searches as before): its order where its work
@@ -4561,6 +4585,15 @@ impl Model {
         let cheap_greedy = (started.is_none() && greedy_first && !cx.wide && fixed.is_none() && joins.len() >= 3 && joins.len() <= GREEDY)
             .then(|| greedy(&mut candidates))
             .flatten()
+            // Priced as the walk runs it (`price`: `witnessed` over the tail past the bound head), as a start is, not
+            // at `step`'s one witness a step: a tail whose rows hold no witness reads every one of them. ep2's hiding
+            // bound, `fzk($d) :- demand($d), node($d, $s, …), guest_place(_, $s, …)`, must join `node` before the
+            // unconnected `guest_place`; with no guest place, priced at a row a document (80), it read every node of
+            // each (400,983 rows a chunk, 131 M in the run's 329 programs).
+            .and_then(|g| {
+                let (work, rows, _) = price(&g.2, &mut candidates).ok()?;
+                Some((work, rows, g.2, g.3, g.4))
+            })
             .filter(|g| g.0 <= search_rows(b, first));
         if started.is_none() {
             run_counts().searches[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -4569,6 +4602,10 @@ impl Model {
             best_of.insert(full_mask, g);
         } else if let Some(g) = cheap_greedy {
             super::profile::decision("plan cache (decision 0038)", || "greedy first: its work under a search's".into());
+            if shown {
+                show_atoms("greedy first");
+                eprintln!("plan show   greedy work {:.1} rows {:.1}: {}", g.0, g.1, b.shown(&g.2).join(" , "));
+            }
             best_of.insert(full_mask, g);
         } else if joins.len() > joins::greedy_limit(GREEDY, cx.wide) || n_vars > 128 {
             if let Some(g) = greedy(&mut candidates) {
@@ -4870,26 +4907,8 @@ impl Model {
             Some((cell.work, cell.rows, order, bound, rest))
         };
         // `RERAIL_PLAN_SHOW=<head>` (dev): the search's cells of one and two joins, and the full order's, as priced.
-        if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
-            eprintln!("plan show {} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
-            for &j in &joins {
-                let Some(a) = b.atom(j) else { continue };
-                let rel = b.rel(a);
-                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
-                eprintln!(
-                    "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
-                    b.show_atom(a),
-                    self.derived.contains(rel),
-                    self.stats.held.contains(rel),
-                    self.view_src.contains_key(rel),
-                    self.stats.card.get(rel),
-                    self.stats.lazy.0.contains_key(rel),
-                    self.stats.solving.contains(rel),
-                    self.stats.prior_later.contains(rel),
-                    self.stats.col.get(&(rel.to_owned(), sql_col(rel, 0))),
-                    cols.join("; ")
-                );
-            }
+        if shown {
+            show_atoms("search");
             for (m, c) in cells.iter().enumerate().filter_map(|(m, c)| c.as_ref().map(|c| (m as u64, c))) {
                 if m.count_ones() <= 5 || m == full_mask {
                     let lits: Vec<String> = (0..joins.len()).filter(|&i| m >> i & 1 == 1).map(|i| b.atom(joins[i]).map_or_else(|| format!("#{}", joins[i]), |a| b.show_atom(a))).collect();
