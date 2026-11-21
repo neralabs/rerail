@@ -553,6 +553,23 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toEqual([]);
   }, 60_000);
 
+  it("two calls at once on Git 2.25.1 say why once", async () => {
+    const root = await folder();
+    const asked = join(root, "version-asked");
+    // Each start answers its version only once both calls are asking it, so each call asks before either keeps the answer.
+    const waits = `echo >> '${asked}'; while [ "$(grep -c '' '${asked}')" -lt 2 ]; do sleep 0.05; done;`;
+    vi.stubEnv("PATH", `${await olderGit(root, "2.25.1", waits)}${delimiter}${process.env.PATH ?? ""}`);
+    vi.resetModules();
+    const { runGitWithoutBlocking } = await import("../../../src/engine/git.js");
+    const { work } = await checkoutWithDriver(root);
+    const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const answers = await Promise.all([runGitWithoutBlocking(work, AUDIT_DIFF), runGitWithoutBlocking(work, AUDIT_DIFF)]);
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toHaveLength(1);
+  }, 60_000);
+
   /** git.ts as the daemon loads it, with `first` then `second` first on `PATH`; then `first` found gone and `second` kept. */
   async function replacedGit(root: string, first: string, second: string): Promise<{ git: typeof import("../../../src/engine/git.js"); replace: () => Promise<void> }> {
     const [one, two] = [join(root, "one"), join(root, "two")];

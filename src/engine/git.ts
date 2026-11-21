@@ -1359,11 +1359,14 @@ function knownGuardGit(): GuardGit | undefined {
  * `asked`, kept for the Git at `executable`, the one asked: by default the Git this process runs once it answered,
  * which for a blocking call is the one that answered, the one found again for it included. Kept only while the Git
  * this process runs is still that one: a Git found again during the question may be the one that answered, so none is
- * kept, and the next call asks the Git it runs.
+ * kept, and the next call asks the Git it runs. Where another call kept one for that Git while this one asked, that one
+ * stays and is returned, so the process says why it is too old once.
  */
 function keptGuardGit(asked: GuardGit | undefined, executable = readerGit(undefined)): GuardGit | undefined {
-  if (asked !== undefined && executable !== undefined && readerGit(undefined) === executable) guardGits.set(executable, asked);
-  return asked;
+  if (asked === undefined || executable === undefined || readerGit(undefined) !== executable) return asked;
+  const kept = guardGits.get(executable) ?? asked;
+  guardGits.set(executable, kept);
+  return kept;
 }
 
 /** {@link GuardGit} from `git version` asked in `cwd`; undefined when Git did not answer, so a later call asks again. */
