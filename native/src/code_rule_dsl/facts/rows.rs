@@ -848,8 +848,15 @@ impl Part {
     /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
     /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
+        Part::for_device_indexed(k, rows, 1)
+    }
+
+    /// `for_device` with room for `indexes` indexes of its rows, one for each key its readers probe it by (a
+    /// recursive component's relation, decision 0353 step 6): no key of those copies it.
+    pub fn for_device_indexed(k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
-        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         let part = Part::try_new_with(Life::Device, k, rows, index, false)?;
         // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };

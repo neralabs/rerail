@@ -166,6 +166,9 @@
                 assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
                 // Written in place into the head's block (decision 0325 step 4): none read back.
                 assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
+                // Its total is probed by `v1` (the left rule) and made distinct of by both columns, each round: its
+                // block has room for both indexes, so neither copies it (decision 0353 step 6, `DevIndex::moved`).
+                assert!(r.sorts > 0 && r.moved == 0, "every round's indexes in their relations' blocks: {r:?}");
             }
             super::super::close(&db, "dev_rec").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();

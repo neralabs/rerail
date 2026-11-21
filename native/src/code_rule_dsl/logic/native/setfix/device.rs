@@ -1532,6 +1532,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         // Built here, or found the relation's own already (decision 0325 step 5).
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        rep.moved += u32::from(ix.copied());
         e.bytes += ix.bytes();
         e.indexes.push((key, ix.clone()));
         Ok((dev, Some(ix), place))
@@ -2628,9 +2629,41 @@ struct Own {
     total: HashMap<usize, Rc<mj::DevRel>>,
     delta: HashMap<usize, Rc<mj::DevRel>>,
     sorts: HashMap<(usize, bool, Vec<usize>), Rc<mj::DevIndex>>,
+    /// Each relation's keys (`delta`: its last round's), every one a stage of the component's plans probes it by, and
+    /// a set head's total's every column (its new rows made distinct of it): its relations are made with room for an
+    /// index of each, so no probe copies them (decision 0353 step 6, `DevIndex::moved`).
+    keys: HashMap<(usize, bool), Vec<Vec<usize>>>,
 }
 
 impl Own {
+    /// `rel`'s keys (`Own::keys`) gathered from the component's plans; `all` the heads whose totals are made distinct
+    /// of by every column.
+    fn keyed<'a>(plans: impl Iterator<Item = &'a Plan>, all: impl Iterator<Item = (usize, usize)>) -> HashMap<(usize, bool), Vec<Vec<usize>>> {
+        let mut keys: HashMap<(usize, bool), Vec<Vec<usize>>> = HashMap::new();
+        let mut add = |at: (usize, bool), cols: Vec<usize>| {
+            let ks = keys.entry(at).or_default();
+            if !cols.is_empty() && !ks.contains(&cols) {
+                ks.push(cols);
+            }
+        };
+        for plan in plans {
+            for s in &plan.stages {
+                if let Kind::Own { rel, delta, cols } = &s.kind {
+                    add((*rel, *delta), cols.clone());
+                }
+            }
+        }
+        for (h, k) in all {
+            add((h, false), (0..k).collect());
+        }
+        keys
+    }
+
+    /// How many indexes relation `rel`'s (`delta`: its last round's) has room for.
+    fn room(&self, rel: usize, delta: bool) -> usize {
+        self.keys.get(&(rel, delta)).map_or(1, |k| k.len().max(1))
+    }
+
     /// Relation `rel`'s rows (`delta`: its last round's) and their sort by `cols`, encoded into `batch` the first
     /// time a round asks; `None` when it has no rows.
     fn get(&mut self, rel: usize, delta: bool, cols: &[usize], batch: &mut mj::Batch, rep: &mut Report) -> Result<Option<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>)>, String> {
@@ -2648,6 +2681,7 @@ impl Own {
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        rep.moved += u32::from(ix.copied());
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }
@@ -2812,6 +2846,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
+    let set_heads = heads.iter().filter(|&&h| store.rels[h].device_lattice().is_none()).map(|&h| (h, store.rels[h].k));
+    own.keys = Own::keyed(seeds.iter().chain(deltas).map(|r| r.0), set_heads);
     // A lattice head folds each round by key on the device (decision 0124), into its one relation through its key map
     // in its block (decision 0384 step 5).
     let mut lattices: HashMap<usize, LatHead> = HashMap::new();
@@ -2967,12 +3003,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 lv.resize(had, 0);
                 lv.resize(had + n, rounds as u32);
             }
-            let total = mj::DevRel::empty(k, had + n).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
+            let total = mj::DevRel::empty_indexed(k, had + n, own.room(h, false)).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
             if let Some(old) = own.total.get(&h) {
                 batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
             }
             batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
-            let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
+            let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
             batch.copy_rows(mj::Rows::Table(&rows), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
             old.extend(own.total.insert(h, Rc::new(total)));
             own.delta.insert(h, Rc::new(delta));
@@ -3007,7 +3043,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             }
             any = true;
             let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-            let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
+            let delta = mj::DevRel::empty_indexed(k, n, own.room(h, true)).map_err(|e| format!("{e:?}"))?;
             batch.copy_rows(mj::Rows::Table(&changed), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
             own.delta.insert(h, Rc::new(delta));
             rows_held.push(changed);

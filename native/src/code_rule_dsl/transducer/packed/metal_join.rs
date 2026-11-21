@@ -2185,7 +2185,13 @@ impl DevRel {
     /// A relation of the device's own, of `cols` columns and `rows` rows, in a block of the device's
     /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
-        let part = crate::code_rule_dsl::facts::rows::Part::for_device(cols, rows).map_err(|_| Error::BackendCapacity)?;
+        DevRel::empty_indexed(cols, rows, 1)
+    }
+
+    /// `empty` with room in its block for `indexes` indexes (`Part::for_device_indexed`): one for each key its readers
+    /// probe it by, so none of them copies it (`Batch::index`).
+    pub(in crate::code_rule_dsl) fn empty_indexed(cols: usize, rows: usize, indexes: usize) -> Result<DevRel, Error> {
+        let part = crate::code_rule_dsl::facts::rows::Part::for_device_indexed(cols, rows, indexes).map_err(|_| Error::BackendCapacity)?;
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
@@ -2481,6 +2487,11 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
+    /// Whether it copied its relation, whose block had no room for it (`moved`, 0353 step 6).
+    pub(in crate::code_rule_dsl) fn copied(&self) -> bool {
+        self.moved.is_some()
+    }
+
     /// The device memory it holds of its own: a moved relation's (the index lies in its relation's block).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.moved.as_ref().map_or(0, |m| m.bytes())
