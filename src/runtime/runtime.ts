@@ -409,6 +409,8 @@ const LedgerEntrySchema = z.union([
     })).optional(),
     // Absent for the session's own agent, and in a ledger written before calls recorded their subagent.
     agentId: z.string().optional(),
+    // The folder the call ran in, where its host said; absent too in a ledger written before calls recorded it.
+    cwd: z.string().optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
@@ -424,7 +426,7 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string }
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string; cwd?: string }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
   | { type: "secret-result"; toolCallId: string; eventId: string }
@@ -1554,8 +1556,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     bridge: CodeRuleBridge | undefined,
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName, event.input);
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, undefined, event.cwd);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, { toolName: event.toolName, input: event.input, cwd: event.cwd });
     return undefined;
   }
 
@@ -1571,7 +1573,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const paths = generatedEditPaths(event.toolName, event.input);
     await this.#append(state, {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
-      ...(preimages === undefined ? {} : { preimages }), ...agent,
+      ...(preimages === undefined ? {} : { preimages }), ...agent, ...(event.cwd === undefined ? {} : { cwd: event.cwd }),
     });
     state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
@@ -1582,11 +1584,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
    * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
    * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
-   * then, as overlapping calls do.
+   * then, as overlapping calls do. It runs in the folder the hook names (Codex's `cwd`), as the turn's calls do.
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
     if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID);
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
@@ -1630,7 +1632,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async #checkRestoredCall(state: RuntimeSessionState, bridge: CodeRuleBridge, call: RestoredCall, failed: boolean): Promise<void> {
     try {
-      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       await bridge.finish(call.toolCallId, failed);
     } catch (error) {
       // A session closed meanwhile closed its evaluator too.
@@ -2470,7 +2472,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         // A result that arrived while the evaluator opened went on without code rules: its call is not begun late, or
         // the bridge would hold it pending, and skip its paths in every later shell-write walk, for the session's life.
         if (!state.pendingCodeRuleCalls.some(pending => pending.id === call.toolCallId)) continue;
-        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+        await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {}, call.cwd);
       }
     } catch (error) {
       delete state.codeRuleBridge;

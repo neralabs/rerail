@@ -252,6 +252,12 @@ export type AdapterEvent =
        * `agent_id`. Absent for the session's own agent.
        */
       agentId?: string | undefined;
+      /**
+       * The folder the call runs in, where the host's hook says (its `cwd`, which follows the agent's `cd`). A shell write
+       * in another worktree is the session's own only when one of its calls ran there (`CodeRuleBridge`). Absent where a
+       * host does not say.
+       */
+      cwd?: string | undefined;
     })
   | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });

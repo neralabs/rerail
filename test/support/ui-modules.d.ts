@@ -207,6 +207,8 @@ declare module "*/ui/attachments.js" {
 declare module "*/ui/format.js" {
   /** A failure toast: what did not happen, then the error as a sentence. */
   export function failed(what: string, error: unknown): string;
+  /** Who a violation is credited to: its session, which its button opens, or the repository (`session` null). */
+  export function violationOwner(violation: { sessionId: string | null; host: string | null }): { session: string | null; label: string; title: string };
 }
 
 declare module "*/ui/settings-writes.js" {
