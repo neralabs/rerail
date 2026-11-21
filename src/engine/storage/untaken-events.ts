@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, constants, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher, type Stats } from "node:fs";
 import { join } from "node:path";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { replaceFile } from "../file-replace.js";
@@ -364,20 +364,26 @@ class NotAnEventError extends Error {}
 
 /**
  * The text of the event file at `path`, which a hook wrote whole: a regular file of the `bytes` its name says, within
- * the folder's bound. It is looked at before it is opened, so a folder, a link or a pipe under its name is never
- * opened; the open follows no link (`openNoFollowSync`) and, where the system has the flag (not Windows), waits for no
- * pipe's writer, so one put under the name since is not read either.
+ * the folder's bound (`eventShape`). It is looked at before it is opened, so a folder, a link or a pipe under its name
+ * is never opened; the open follows no link (`openNoFollowSync`) and, where the system has the flag (not Windows), waits
+ * for no pipe's writer; and what was opened is looked at again, so what is read is such a file, whatever was put under
+ * the name since.
  */
 function eventText(path: string, bytes: number): string {
-  const info = lstatSync(path);
-  if (!info.isFile()) throw new NotAnEventError("it is not a file");
-  if (info.size !== bytes || bytes > UNTAKEN_MOST_BYTES) throw new NotAnEventError(`it holds ${info.size} bytes, where its name says ${bytes}`);
+  eventShape(lstatSync(path), bytes);
   const fd = openNoFollowSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   try {
+    eventShape(fstatSync(fd), bytes);
     return readFileSync(fd, "utf8");
   } finally {
     closeSync(fd);
   }
+}
+
+/** Fails (`NotAnEventError`) unless `info` is of a regular file of the `bytes` an event's name says, within the bound. */
+function eventShape(info: Stats, bytes: number): void {
+  if (!info.isFile()) throw new NotAnEventError("it is not a file");
+  if (info.size !== bytes || bytes > UNTAKEN_MOST_BYTES) throw new NotAnEventError(`it holds ${info.size} bytes, where its name says ${bytes}`);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { on, once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, symlinkSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +22,19 @@ import {
 } from "../../../src/engine/storage/untaken-events.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
+/** By path, what runs just before the taker opens an event's file: a file put under its name after it was looked at. */
+const beforeOpen = vi.hoisted(() => new Map<string, () => void>());
+vi.mock("../../../src/engine/no-follow.js", async importOriginal => {
+  const actual = await importOriginal<{ openNoFollowSync: (path: string, ...flags: number[]) => number }>();
+  return {
+    ...actual,
+    openNoFollowSync: (path: string, ...flags: number[]) => {
+      beforeOpen.get(path)?.();
+      return actual.openNoFollowSync(path, ...flags);
+    },
+  };
+});
+
 const homes: string[] = [];
 async function home(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "rerail-untaken-"));
@@ -30,6 +43,7 @@ async function home(): Promise<string> {
 }
 
 afterEach(async () => {
+  beforeOpen.clear();
   await Promise.all(homes.splice(0).map(path => removeFolder(path)));
 });
 
@@ -305,6 +319,24 @@ describe("the home's untaken events", () => {
     await taker.taken();
     expect(handler.events).toEqual([]);
     expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it("fail in the pass that met it a larger file put under an event's name after it was looked at, unread", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    writeFileSync(join(rerailHome, "larger"), "first, and more");
+    beforeOpen.set(file, () => renameSync(join(rerailHome, "larger"), file));
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    await untakenEventTaker(rerailHome, { take: handler.take, passed: pass => reported.resolve(pass) }).taken();
+    // Before, the open read what it found, sized by its look at the file that was there before.
+    expect(handler.events).toEqual([]);
+    expect(await reported.promise).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 1 });
+    expect(stderr).toHaveBeenCalledWith(`rerail: the event a hook left in ${name} could not be checked: it holds 15 bytes, where its name says 5\n`);
   });
 
   // Windows makes a link only with a privilege.
