@@ -1475,3 +1475,65 @@ fn jsonc_refusals_by_reason() {
         std::fs::write(out, rerail_compiler::rir_asm::disassemble(&c.program)).expect("writes");
     }
 }
+
+/// JSON's parser as Rust in simdjson's structure (`rerail_json_aot`): tier 1 and tier 2 as the Bitlex compiler writes
+/// them from the grammar, tier 1 from the lexer's statements (`bitlex_lex_rust`, stage 1) and tier 2 from the tree
+/// rules in one loop (`bitlex_rust::tier2_loop`), never from tier 2's native IR (decision 0551).
+fn json_rust() -> (String, String) {
+    let source = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+    let ids = rerail_compiler::ladder::Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = rerail_compiler::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let c = rerail_compiler::bitlex_masks::compile_shaped(&stmts, &[rerail_compiler::bitlex_masks::FALLBACK], Some(&symbols), rerail_compiler::bitlex_masks::Shape::Auto).expect("compiles");
+    let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
+    let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    (tier1, tier2)
+}
+
+/// `rerail_json_aot`'s `tier1.rs` and `tier2.rs` are the Bitlex compiler's output for the grammar (`json_rust`);
+/// `RERAIL_BLESS=1` writes them again.
+#[test]
+fn json_rust_is_current() {
+    let (tier1, tier2) = json_rust();
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../json_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// The generated parser's format 16 and 16z tapes are the JIT's, byte for byte, in a language whose table is the
+/// one the generator made (`ENTRIES`); it refuses the files the JIT refuses.
+#[test]
+fn json_rusts_tapes_are_the_jits() {
+    let jit = simdjson_form();
+    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let mut inputs = tree_inputs();
+    inputs.extend(deep_nests(1023..1026));
+    let (mut same, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
+        for z in [false, true] {
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| w.extent().to_vec());
+            let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, z, true, f.len() / 2 + 16);
+            let got = rerail_json_aot::parse(f, &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
+            match (&want, &got) {
+                (Ok(a), Ok(b)) => {
+                    assert!(a == b, "file {k} ({:?}, 16z {z}): the Rust's tape is not the JIT's; the JIT's nodes {:?}", show(), ours(&jit, f));
+                    same += 1;
+                }
+                (Err(_), Err(_)) => refused += 1,
+                _ => panic!("file {k} ({:?}, 16z {z}): the JIT {want:?}, the Rust {got:?}", show()),
+            }
+        }
+    }
+    eprintln!("{same} tapes the JIT's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
+}

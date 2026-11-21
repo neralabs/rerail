@@ -17,6 +17,9 @@
 //!   node put over the one just made (`wrap`) by `Writer::insert`.
 
 use ::bitlex::syntax::{Gram, Stmt, TokenElem};
+
+mod one_loop;
+pub use one_loop::tier2_loop;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -216,6 +219,16 @@ impl<'a> G<'a> {
         self.x.words.iter().position(|w| w.as_slice() == text.as_bytes()).map(|i| (i + 1) as u8)
     }
 
+    /// A keyword's kind of one word (`keywords number { "true" -> true }`): that word, a rule's test of the kind.
+    fn keyword_word(&self, kind: &str) -> Option<u8> {
+        let mut words = self.x.keywords.iter().flat_map(|r| r.1.iter()).filter(|(_, k)| k.as_deref() == Some(kind));
+        let (w, _) = words.next()?;
+        if words.next().is_some() {
+            return None;
+        }
+        self.word_of(&String::from_utf8_lossy(w))
+    }
+
     fn is_token_kind(&self, name: &str) -> bool {
         self.x.tokens.iter().any(|(_, n)| n == name || n.strip_suffix("_close") == Some(name))
     }
@@ -260,6 +273,8 @@ impl<'a> G<'a> {
                     self.rule_first(n)?
                 } else if self.is_token_kind(n) {
                     (vec![(Test::Kind(n.clone()), None)], false)
+                } else if let Some(w) = self.keyword_word(n) {
+                    (vec![(Test::Word(w), None)], false)
                 } else {
                     return Err(format!("`{n}`: no rule, mark or token of that name"));
                 }
@@ -780,6 +795,7 @@ impl<'a> G<'a> {
                 None => None,
             },
             Gram::Sym(n) if self.mark_of(n).is_none() && !self.rules.contains_key(n.as_str()) && self.is_token_kind(n) => Some((Test::Kind(n.clone()), n.clone())),
+            Gram::Sym(n) if self.mark_of(n).is_none() && !self.rules.contains_key(n.as_str()) => self.keyword_word(n).map(|w| (Test::Word(w), n.clone())),
             _ => None,
         }
     }

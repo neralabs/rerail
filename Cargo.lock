@@ -3646,6 +3646,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-json-aot",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
@@ -4318,6 +4326,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-context",
+ "rerail-json-aot",
  "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
