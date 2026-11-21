@@ -303,7 +303,15 @@ impl CpuComputeFunctionLibrary {
             // `.dSYM`, Windows' `.pdb`, beside it) goes with it, where a debugger looks.
             let sym = |p: &std::path::Path| p.with_extension(if cfg!(windows) { "pdb" } else { "so.dSYM" });
             let _ = std::fs::rename(sym(&tmp), sym(&lib));
-            std::fs::rename(&tmp, &lib).map_err(|e| format!("{}: {e}", lib.display()))?;
+            if let Err(e) = std::fs::rename(&tmp, &lib) {
+                // Windows replaces no library a process has loaded ("Access is denied"): another process made and
+                // loaded this one meanwhile, the same library, which this process loads too.
+                if !lib.exists() {
+                    return Err(format!("{}: {e}", lib.display()));
+                }
+                let _ = std::fs::remove_file(&tmp);
+                let _ = std::fs::remove_file(sym(&tmp));
+            }
         }
         let opened = open_library(&lib)?;
         Ok(CpuComputeFunctionLibrary { lib: opened, name: file_name_to_appear_in_error_messages.to_string() })
