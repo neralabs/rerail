@@ -294,7 +294,7 @@ impl Query {
 
     /// The statement reads only relations `declared` accepts, CTEs before or while they are defined, and
     /// columns its FROM items have, in scope.
-    pub(in crate::code_rule_dsl) fn check(&self, declared: &dyn Fn(&Relation) -> bool) -> Result<(), String> {
+    pub fn check(&self, declared: &dyn Fn(&Relation) -> bool) -> Result<(), String> {
         let mut ctes = BTreeMap::<&str, Vec<Option<String>>>::new();
         for cte in &self.ctes {
             if ctes.contains_key(cte.name.as_str()) {

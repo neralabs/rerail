@@ -1,9 +1,10 @@
 //! The logic language (docs/final-shape/03-architecture.md §12; 05 Phases 5–6): rules as named
 //! facts and Datalog over them, planned from statistics and lowered to SQL or transducer groups.
-//! `sql` is the typed SQL its plans emit.
+//! `sql` is the typed SQL its plans emit. The core modules (`sql`, `analysis`, `costs`, `run`, …) are
+//! `rerail-logic-core`'s, under the planner; this module re-exports them under their paths.
 
-pub mod crypto;
-pub mod derived;
+pub use rerail_logic_core::code_rule_dsl::logic::crypto;
+pub use rerail_logic_core::code_rule_dsl::logic::derived;
 pub mod run;
 pub mod run_state;
 #[cfg(test)]
@@ -21,9 +22,14 @@ mod test_load {
     #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
-pub mod analysis;
-pub mod bloom;
-pub mod join_size;
+/// `rerail-logic-core`'s, with its tests, which read the whole language (`rr::parse_version`).
+pub mod analysis {
+    pub use rerail_logic_core::code_rule_dsl::logic::analysis::*;
+    #[cfg(test)]
+    pub mod tests;
+}
+pub use rerail_logic_core::code_rule_dsl::logic::bloom;
+pub use rerail_logic_core::code_rule_dsl::logic::join_size;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/front")]
@@ -61,13 +67,13 @@ pub mod front {
     #[allow(unused_imports)]
     use std::fmt;
 }
-pub mod costs;
+pub use rerail_logic_core::code_rule_dsl::logic::costs;
 // The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
 pub mod device;
 pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
-pub mod liveness;
+pub use rerail_logic_core::code_rule_dsl::logic::liveness;
 // The demand passes' tests (`plan::corpus::preparation::magic`) against T's goldens; its files are those alone.
 #[cfg(any(test, feature = "test-hooks"))]
 #[path = "logic/magic"]
@@ -108,16 +114,15 @@ pub mod program_image {
     pub use analyses::{Edges, Strata};
 }
 pub mod program_text;
-pub mod version_trace;
+pub use rerail_logic_core::code_rule_dsl::logic::version_trace;
 /// Main's JSON rules translated to `.rerail` on read (decision 0175).
 pub mod json_rules;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;
-#[allow(dead_code)]
-pub mod sql;
+pub use rerail_logic_core::code_rule_dsl::logic::sql;
 /// The reach index's form found in a program (decision 0119).
-pub mod reach_form;
+pub use rerail_logic_core::code_rule_dsl::logic::reach_form;
 pub mod rank_form;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/strings")]

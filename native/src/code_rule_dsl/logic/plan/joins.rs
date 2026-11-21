@@ -1529,6 +1529,10 @@ pub fn from_store((notes, exact, raised): Stored) {
     joins().noted.store(!m.notes.is_empty(), Relaxed);
 }
 
+/// The learned join model as the batch pricer.
+#[cfg(target_os = "macos")]
+pub mod model;
+
 #[cfg(test)]
 mod tests;
 

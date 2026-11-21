@@ -24,6 +24,8 @@ pub mod width;
 pub use setfix::Derivations;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
+/// The native lattices' algebra as SQL functions, for the SQL lattice folds.
+pub mod lattices;
 /// `dfs_first` and `dfs_first_memo` (`core.rerail`): a relation the evaluator makes from its inputs' rows.
 pub mod dfs_first;
 /// `components` (`core.rerail`, decision 0063): each document's import component and its Merkle key.

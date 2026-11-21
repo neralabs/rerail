@@ -464,3 +464,35 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - The compiler's crates, rust-stream, parser_tests, rr-parser, lang-json, kotlin, c-directives and the AOT
       crates: 332 pass.
     - After `native_cpu_clusters` moved, those of them that read it: 307 pass.
+- **Step 5a** (2026-11-21): `rerail-logic-core` (`native/crates/logic_core`), the bottom of logic: `analysis`,
+  `bloom`, `costs`, `crypto`, `derived`, `join_size`, `liveness`, `reach_form`, `sql` and `version_trace`, 7.0k
+  production lines. `rerail-logic` reads them under their old names (`logic.rs` re-exports each), so no caller
+  changed.
+  - **The layering differs from the table above.** The modules the table leaves in `rerail-logic` are not one
+    layer. `sql`, `costs`, `analysis`, `bloom` and the liveness rules read nothing above them. `run`, `run_state`,
+    `lanes`, `device`, the waves and the thread pool do: they and setfix read each other, so they stay with
+    `logic::native` and go into `rerail-setfix` together. `rank_form` reads the planner's bodies and goes with it.
+    The references, by `refgraph`, run typing → planner, not both ways, and memo → planner, so the order up is core,
+    setfix, planner, typing, corpus-memo, corpus-prep, then `rerail-logic` (the corpus and the language's root).
+  - **What the core read of the crates above moved, or became a registration.**
+    - The SQL lattice functions (`sql::lattices`) are the native lattices' algebra as SQL functions, so they are
+      `native::lattices`, beside `Lattice` and `Reduction`. Their tops in the SQL a plan emits (`transfers`)
+      rewrite an `Emitted`, so they are `plan::emit::transfers`, which the corpus planner and the SQL sessions
+      call.
+    - `liveness::read_counts` reads a run's `Outputs`, so it is `plan::output::read_counts`.
+    - On macOS the cost model trained the learned join model and set it as the planner's `Pricer`. Training stays
+      in `costs::join_steps`. The pricer over the model is `plan::joins::model`, and boot registers its `install`
+      (`join_steps::register_install`, a `fn`, as `prof::register_device_memory` is).
+    - `analysis`'s tests parse `.rerail` text (`rr::parse_version`), so `rerail-logic`'s facade of `analysis`
+      mounts them.
+  - **A test waited on the disk.** `a_closure_over_many_components_runs_in_pieces_like_semi_naive` inserted its
+    35,000 rows into a file store one commit at a time. On an ext4 host each commit waited on the journal, and the
+    test ran past nextest's 240 s limit. Its inserts are now one transaction: 0.87 s on that host, 1.1 s on a Mac.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; the logic crates, boot and tests_logic
+    check on a Mac):
+    - The core's own tests, and the lattice, liveness, SQL kernel, widening, SQL session, native and run-state
+      tests of the crates above (spark1): 404 run, 402 pass. The closure test then passed alone after its fix. The
+      SQL profiling test needs `node`, which that host lacks, and passes on a Mac.
+    - On a Mac: the core's 23 tests, the join planner's and join steps' tests, `analysis`'s, the closure test and
+      the profiling test: 32 pass.
+

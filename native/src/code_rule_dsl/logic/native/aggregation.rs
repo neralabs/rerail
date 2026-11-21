@@ -171,7 +171,7 @@ pub mod tests {
             .unwrap();
         let sql = format!(
             "SELECT {} FROM input",
-            crate::code_rule_dsl::logic::sql::lattices::flat_aggregate("v", TOP)
+            crate::code_rule_dsl::logic::native::lattices::flat_aggregate("v", TOP)
         );
         for values in [
             vec![],

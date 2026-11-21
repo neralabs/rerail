@@ -1049,6 +1049,17 @@ fn shown_local(low: i64, by_definition: bool) -> String {
     if by_definition { format!("{}.{}", low >> INDEX_BITS, low & ((1 << INDEX_BITS) - 1)) } else { low.to_string() }
 }
 
+/// `liveness::COUNTS`' rows, by relation, from a run's outputs: each measure's count, absent where the relation had no row.
+pub fn read_counts(outputs: &Outputs) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+    let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
+    for row in outputs.rows(crate::code_rule_dsl::logic::liveness::COUNTS) {
+        if let (Some(rel), Some(what)) = (row.get(0).text(), row.get(1).text()) {
+            out.entry(rel.to_owned()).or_default().insert(what.to_owned(), row.get(2).int().map_or(0, |n| n as u64));
+        }
+    }
+    out
+}
+
 /// A run's outputs as a reader reads them: the stack in its directory, mapped. Every reader reads through it.
 pub struct Outputs {
     stack: Vec<Image>,

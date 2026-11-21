@@ -46,6 +46,8 @@ fn install_with(ids: Option<BuildIds>) {
         install_devices();
         install_languages(ids.is_none());
         logic::plan::corpus::install_git_inventory();
+        #[cfg(target_os = "macos")]
+        logic::costs::join_steps::register_install(logic::plan::joins::model::install);
         crate::content_store::set_connection_functions(|db| {
             text::install(db)?;
             prefilter::tapes::install(db)

@@ -427,12 +427,16 @@ fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
     let rows = |semi_naive: bool, wave: bool| -> Vec<(i64, i64)> {
         let db = connection();
         db.execute_batch("CREATE TABLE s(c0, c1); CREATE TABLE e(c0, c1); CREATE TABLE r(c0, c1);").unwrap();
+        // The rows in one transaction: the store is a file, and a commit a row (35,000 of them) waits on the disk's
+        // journal each time (minutes on an ext4 host).
+        db.execute_batch("BEGIN").unwrap();
         for (a, b) in &seeds {
             db.execute("INSERT INTO s VALUES (?1, ?2)", [a, b]).unwrap();
         }
         for (a, b) in &edges {
             db.execute("INSERT INTO e VALUES (?1, ?2)", [a, b]).unwrap();
         }
+        db.execute_batch("COMMIT").unwrap();
         let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
         let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
         let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
