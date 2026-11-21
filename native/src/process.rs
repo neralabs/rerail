@@ -532,12 +532,16 @@ mod tests {
             .expect("the read runs")
             .expect("the child's start");
         // A process that started after the time given is not the one that time names: it runs on.
-        let later = end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
+        let later =
+            end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
         assert_eq!(later, "later");
         assert!(child.try_wait().expect("the child is asked").is_none());
         let ended = end_process_started_by(child.id(), started, 5_000).expect("the call runs");
         assert_eq!(ended, "ended");
         assert!(child.try_wait().expect("the child is asked").is_some());
-        assert_eq!(end_process_started_by(0, started, 0).expect("the call runs"), "unread");
+        assert_eq!(
+            end_process_started_by(0, started, 0).expect("the call runs"),
+            "unread"
+        );
     }
 }
