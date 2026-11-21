@@ -28,6 +28,8 @@ use crate::lower::Program;
 /// frame a lane's bytes with every call inlined.
 pub struct Kernel {
     pub tape: Tape,
+    /// Its code tape (`code`), which `run` executes.
+    pub code: Tape,
     pub name: String,
 }
 
@@ -53,7 +55,9 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     for (n, field) in fields.into_iter().enumerate() {
         b.set_field(n, field);
     }
-    Ok(Kernel { tape: b.finish(), name: f.name.clone() })
+    let tape = b.finish();
+    let code = crate::code::compile(&tape)?;
+    Ok(Kernel { tape, code, name: f.name.clone() })
 }
 
 /// Where an inlined body's frame is: its variables' base, its callees' base, its result's slot (offset, type,

@@ -1,18 +1,19 @@
-//! A kernel's vector tape run by an interpreter at 32 lanes (decision 0567 §6, the first back end): each node over a
-//! SIMD group's lanes at once, its active lanes a mask. A uniform value with no effect is computed once for its SIMD
-//! group; a varying one lane by lane; a branch on a varying value runs each side under its lanes' mask, and a loop
-//! until its mask is empty. A node with a threadgroup barrier in it (`GSYNC`, the cut) runs for all of its group's
-//! SIMD groups at once, each region between barriers SIMD group by SIMD group. SIMD-group operations are the lanes'
-//! values permuted (a shuffle) or gathered (a ballot). The tapes are read in place.
+//! A kernel's code tape (`code`) run by the interpreter (decision 0567 §6, the first back end): a SIMD group of 32
+//! lanes at a time, an instruction a whole register. The instructions are read in place from the tape's one node, and
+//! each is one jump through a table (`match` on the fused opcode): its handler is a loop over the 32 lanes with
+//! nothing left to decide, which the compiler makes vector code (NEON; AVX2 where the CPU has it, chosen at run
+//! time). A mask's lanes are packed by NEON's adds across a vector.
 //!
-//! A lane's variables are its own, once a lane in its SIMD group's frame (struct of arrays): the variable at offset
-//! `off` of `size` bytes is lane `l`'s at `off * W + l * size`.
+//! A threadgroup's SIMD groups take turns: each runs to its next threadgroup barrier (`Bar`) or its end, then the
+//! next; once all have, they all go on. The barrier rule (decision 0567 §3), proven by `vector`, makes every SIMD
+//! group that has not ended wait at the same barrier; one that does not fails the kernel.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::Error;
-use crate::k::{Builtin, CHECK, EFFECT, Kind, Level, M, NO_SLOT, Op, View};
+use crate::code::{CUR, HEADER, I, WORDS};
+use crate::k::{Builtin, M, Op, View};
 use crate::lower::Program;
 use crate::ops;
 use crate::vector::Kernel;
@@ -20,7 +21,8 @@ use crate::vector::Kernel;
 /// The SIMD group's lanes.
 pub const W: usize = 32;
 
-type Vals = [u64; W];
+type V32 = [u32; W];
+type V64 = [u64; W];
 
 /// A kernel argument: its bytes (a pointer's address, a structure's bytes), or an offset in the group's
 /// threadgroup memory past the kernel's own (`set_thread_group_memory`).
@@ -30,37 +32,48 @@ pub enum Arg {
     Local(u64),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Flow {
-    Normal,
-    Break,
-    Continue,
-    Return,
-}
-
-/// A SIMD group: its lanes' control, the lanes that have ended, its frame.
-struct Sg {
-    index: u32,
-    flow: [Flow; W],
-    ended: u32,
-    frame: u64,
-}
-
-impl Sg {
-    fn normal(&self) -> u32 {
-        let mut m = 0;
-        for (l, f) in self.flow.iter().enumerate() {
-            if *f == Flow::Normal {
-                m |= 1 << l;
-            }
-        }
-        m & !self.ended
-    }
-}
-
 type R<T> = Result<T, Error>;
 
+/// Why a SIMD group's turn ended: its end, or a threadgroup barrier (its site).
+enum Stop {
+    Halt,
+    Bar(u32),
+}
+
+/// A SIMD group: where it is, its frame (its lanes' variables, struct of arrays) and its registers.
+struct Sg {
+    index: u32,
+    pc: usize,
+    done: bool,
+    frame: u64,
+    s: Vec<u64>,
+    v32: Vec<V32>,
+    v64: Vec<V64>,
+    m: Vec<u32>,
+    /// Each lane's id in its group, by dimension.
+    lid: [V32; 3],
+}
+
+/// A checked branch's decisions in the group, in order, and how many each SIMD group has made.
+type Decisions = (Vec<bool>, Vec<usize>);
+
+/// One dispatch's state.
+struct Cx<'p> {
+    p: &'p Program,
+    kernel: &'p str,
+    code: &'p [u32],
+    data: u64,
+    shared: u64,
+    grid: [u32; 3],
+    block: [u32; 3],
+    group: [u32; 3],
+    agreed: RefCell<HashMap<u32, Decisions>>,
+    #[cfg(target_arch = "x86_64")]
+    avx2: bool,
+}
+
 /// The lanes of a mask, in order.
+#[inline(always)]
 fn lanes(mut m: u32) -> impl Iterator<Item = usize> {
     std::iter::from_fn(move || {
         if m == 0 {
@@ -72,116 +85,195 @@ fn lanes(mut m: u32) -> impl Iterator<Item = usize> {
     })
 }
 
+/// The first lane of a mask (lane 0 of an empty one).
+#[inline(always)]
 fn first(m: u32) -> usize {
-    if m == 0 { 0 } else { m.trailing_zeros() as usize }
+    (m.trailing_zeros() as usize) & (W - 1)
 }
 
-/// One dispatch's state.
-struct Run<'p> {
-    p: &'p Program,
-    v: View<'p>,
-    kernel: &'p str,
-    data: u64,
-    shared: u64,
-    grid: [u32; 3],
-    block: [u32; 3],
-    group: [u32; 3],
-    /// Each checked branch's decisions in the group so far, by the first SIMD group to make them, and how many of
-    /// them each SIMD group has made.
-    agreed: RefCell<HashMap<usize, Decisions>>,
+/// The lanes of `v` that are not 0.
+#[inline(always)]
+fn tomask(v: &V32) -> u32 {
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: NEON is every aarch64 CPU's; the loads are within `v` and the constant.
+    unsafe {
+        use std::arch::aarch64::*;
+        let bits = vld1q_u32([1u32, 2, 4, 8].as_ptr());
+        let mut m = 0u32;
+        for k in 0..W / 4 {
+            let x = vld1q_u32(v.as_ptr().add(4 * k));
+            m |= vaddvq_u32(vandq_u32(vtstq_u32(x, x), bits)) << (4 * k);
+        }
+        m
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut m = 0u32;
+        for (l, x) in v.iter().enumerate() {
+            m |= u32::from(*x != 0) << l;
+        }
+        m
+    }
 }
 
-/// A checked branch's decisions in the group, in order, and how many each SIMD group has made.
-type Decisions = (Vec<bool>, Vec<usize>);
+/// `o`'s lanes of `mask` set to `x`'s.
+#[inline(always)]
+fn blend32(o: &mut V32, x: &V32, mask: u32) {
+    for l in 0..W {
+        let k = 0u32.wrapping_sub((mask >> l) & 1);
+        o[l] = (x[l] & k) | (o[l] & !k);
+    }
+}
+
+#[inline(always)]
+fn blend64(o: &mut V64, x: &V64, mask: u32) {
+    for l in 0..W {
+        let k = 0u64.wrapping_sub(u64::from((mask >> l) & 1));
+        o[l] = (x[l] & k) | (o[l] & !k);
+    }
+}
+
+/// The bits of `m`'s width.
+fn width(m: M) -> u64 {
+    if m.bits() >= 64 { u64::MAX } else { (1u64 << m.bits()) - 1 }
+}
+
+/// A 32-bit lane's value as `m`'s normalized `u64`.
+#[inline(always)]
+fn wide(m: M, x: u32) -> u64 {
+    ops::norm(m, u64::from(x))
+}
 
 /// Runs `k` (a kernel of `p`) over `grid` groups of `block` threads, with `args` for its parameters. `local` is
 /// the threadgroup memory a group has past the kernel's own (its `Arg::Local` arguments').
 pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64) -> R<()> {
-    let v = View::new(&k.tape);
-    let root = 0;
-    let n_params = v.w(root, 4) as usize;
+    let cv = View::new(&k.code);
+    let words = cv.p(0);
+    let (frame_bytes, own, n_params) = (words[0] as usize, u64::from(words[1]).next_multiple_of(16), words[2] as usize);
+    let (ns, n32, n64, nm, ncode) = (words[3] as usize, words[4] as usize, words[5] as usize, words[6] as usize, words[7] as usize);
+    let params = &words[HEADER..HEADER + 2 * n_params];
+    let code = &words[HEADER + 2 * n_params..HEADER + 2 * n_params + ncode];
     if args.len() != n_params {
         return Err(Error(format!("{} takes {n_params} arguments, given {}", k.name, args.len())));
     }
     let threads = block.iter().map(|&b| b as usize).product::<usize>();
     let nsg = threads.div_ceil(W);
-    let frame = (v.w(root, 1) as usize).next_multiple_of(16) * W;
+    let frame = frame_bytes.next_multiple_of(16) * W;
     let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
-    let own = u64::from(v.w(root, 2)).next_multiple_of(16);
     let mut shared = vec![0u128; (own + local).div_ceil(16) as usize + 1];
     let pv = View::new(&p.tape);
     let data_node = pv.children(0).last().expect("the program's data");
     let data = pv.ws(data_node, 1, 0).as_ptr() as u64;
-    let mut r = Run { p, v, kernel: &k.name, data, shared: shared.as_mut_ptr() as u64, grid, block, group: [0; 3], agreed: RefCell::new(HashMap::new()) };
-    let body = r.v.child(root, 0);
+    let mut cx = Cx {
+        p,
+        kernel: &k.name,
+        code,
+        data,
+        shared: shared.as_mut_ptr() as u64,
+        grid,
+        block,
+        group: [0; 3],
+        agreed: RefCell::new(HashMap::new()),
+        #[cfg(target_arch = "x86_64")]
+        avx2: std::arch::is_x86_feature_detected!("avx2"),
+    };
+    let base = frames.as_mut_ptr() as u64;
+    let (bx, by) = (block[0].max(1), block[1].max(1));
+    let mut g: Vec<Sg> = (0..nsg as u32)
+        .map(|s| {
+            let lin = |l: usize| s * W as u32 + l as u32;
+            let lid = [std::array::from_fn(|l| lin(l) % bx), std::array::from_fn(|l| lin(l) / bx % by), std::array::from_fn(|l| lin(l) / (bx * by))];
+            Sg {
+                index: s,
+                pc: 0,
+                done: false,
+                frame: base + u64::from(s) * frame as u64,
+                s: vec![0; ns.max(1)],
+                v32: vec![[0; W]; n32.max(1)],
+                v64: vec![[0; W]; n64.max(1)],
+                m: vec![0; nm.max(8)],
+                lid,
+            }
+        })
+        .collect();
+    let live = |s: usize| {
+        let n = (threads - s * W).min(W);
+        if n == W { u32::MAX } else { (1u32 << n) - 1 }
+    };
     for gz in 0..grid[2] {
         for gy in 0..grid[1] {
             for gx in 0..grid[0] {
-                r.group = [gx, gy, gz];
-                r.agreed.borrow_mut().clear();
+                cx.group = [gx, gy, gz];
+                cx.agreed.borrow_mut().clear();
                 shared.fill(0);
                 frames.fill(0);
-                let base = frames.as_mut_ptr() as u64;
-                let mut g: Vec<Sg> = (0..nsg as u32).map(|s| Sg { index: s, flow: [Flow::Normal; W], ended: 0, frame: base + u64::from(s) * frame as u64 }).collect();
-                let mut masks = vec![0u32; nsg];
-                for (s, sg) in g.iter().enumerate() {
-                    let n = (threads - s * W).min(W);
-                    masks[s] = if n == W { u32::MAX } else { (1u32 << n) - 1 };
+                for (s, sg) in g.iter_mut().enumerate() {
+                    let mask = live(s);
+                    sg.m.fill(0);
+                    sg.m[CUR as usize] = mask;
+                    sg.pc = 0;
+                    sg.done = false;
                     for (k, a) in args.iter().enumerate() {
-                        let (off, m) = (u64::from(r.v.w(root, 5 + 2 * k)), M(r.v.w(root, 6 + 2 * k)));
-                        for l in lanes(masks[s]) {
+                        let (off, m) = (u64::from(params[2 * k]), M(params[2 * k + 1]));
+                        for l in lanes(mask) {
                             let at = sg.frame + off * W as u64 + l as u64 * u64::from(m.bytes());
                             match a {
                                 // SAFETY: the parameter's place in the lane's frame, its type's bytes.
                                 Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at as usize as *mut u8, b.len().min(m.bytes() as usize)) },
-                                Arg::Local(o) => unsafe { ops::store(M::PTR, at, r.shared + own + o) },
+                                // SAFETY: the same, a pointer's.
+                                Arg::Local(o) => unsafe { ops::store(M::PTR, at, cx.shared + own + o) },
                             }
                         }
                     }
                 }
-                if r.v.gsync(body) {
-                    r.gexec(&mut g, body, &masks)?;
-                } else {
-                    for (s, sg) in g.iter_mut().enumerate() {
-                        r.vexec(sg, body, masks[s])?;
-                    }
-                }
+                cx.group_run(&mut g)?;
             }
         }
     }
     Ok(())
 }
 
-impl Run<'_> {
+impl Cx<'_> {
     fn site(&self, w: u32) -> &str {
         self.p.sites.get(w as usize).map_or("?", String::as_str)
     }
 
-    fn lid(&self, sg: &Sg, lane: usize) -> ([u32; 3], u32) {
-        let lin = sg.index * W as u32 + lane as u32;
-        let (bx, by) = (self.block[0], self.block[1]);
-        ([lin % bx, lin / bx % by, lin / (bx * by)], lin)
+    fn err(&self, e: &str) -> Error {
+        Error(format!("{}: {e}", self.kernel))
     }
 
-    /// A variable's (a `Local`'s payload `p`) address in lane `l`.
-    fn local(&self, sg: &Sg, p: &[u32], l: usize) -> u64 {
-        sg.frame + u64::from(p[0]) * W as u64 + l as u64 * u64::from(p[1]) + u64::from(p[2])
-    }
-
-    /// Whether node `n`'s value is computed once for its SIMD group: a value, uniform in it, without effect.
-    fn once(&self, n: usize) -> bool {
-        matches!(
-            self.v.kind(n),
-            Kind::Const | Kind::Global | Kind::Shared | Kind::Load | Kind::Bin | Kind::Un | Kind::Cast | Kind::Cond | Kind::Logic | Kind::Comma | Kind::Builtin
-        ) && self.v.level(n) <= Level::SimdGroup
-            && self.v.field(n) & EFFECT == 0
+    /// The group's SIMD groups, each to its next barrier or its end, in turns, until all have ended.
+    fn group_run(&self, g: &mut [Sg]) -> R<()> {
+        loop {
+            let mut at: Option<(usize, u32)> = None;
+            for sg in g.iter_mut().filter(|sg| !sg.done) {
+                match self.exec(sg)? {
+                    Stop::Halt => sg.done = true,
+                    Stop::Bar(site) => match at {
+                        Some((pc, other)) if pc != sg.pc => {
+                            return Err(Error(format!(
+                                "{}: SIMD group {} waits at {} while another waits at {}: the group's threads meet different barriers (decision 0567 §3)",
+                                self.kernel,
+                                sg.index,
+                                self.site(site),
+                                self.site(other)
+                            )));
+                        }
+                        _ => at = Some((sg.pc, site)),
+                    },
+                }
+            }
+            if at.is_none() {
+                return Ok(());
+            }
+        }
     }
 
     /// A checked branch's decision `d`, by SIMD group `sg`: the same as the first SIMD group's, or the kernel fails.
-    fn agree(&self, n: usize, sg: &Sg, d: bool, site: u32) -> R<()> {
+    fn agree(&self, node: u32, sg: u32, d: bool, site: u32) -> R<()> {
         let mut a = self.agreed.borrow_mut();
-        let (ds, at) = a.entry(n).or_insert_with(|| (Vec::new(), Vec::new()));
-        let s = sg.index as usize;
+        let (ds, at) = a.entry(node).or_default();
+        let s = sg as usize;
         if at.len() <= s {
             at.resize(s + 1, 0);
         }
@@ -199,664 +291,545 @@ impl Run<'_> {
         Ok(())
     }
 
-    // One lane.
-
-    /// Node `n`'s value in lane `l` (a value without effect).
-    fn sval(&self, sg: &Sg, n: usize, l: usize) -> R<u64> {
-        let v = &self.v;
-        let p = v.p(n);
-        Ok(match v.kind(n) {
-            Kind::Const => u64::from(p[1]) | u64::from(p[2]) << 32,
-            Kind::Local => self.local(sg, p, l),
-            Kind::Shared => self.shared + u64::from(p[0]),
-            Kind::Global => self.data + u64::from(p[0]),
-            Kind::Load => {
-                let a = self.sval(sg, v.child(n, 0), l)?;
-                // SAFETY: the kernel's address (its buffers', frames' and threadgroup memory's are the dispatch's).
-                unsafe { ops::load(M(p[0]), a) }
-            }
-            Kind::Bin => {
-                let a = self.sval(sg, v.child(n, 0), l)?;
-                let b = self.sval(sg, v.child(n, 1), l)?;
-                ops::bin(Op::of(p[0]), M(p[1]), a, b).map_err(|e| Error(e.to_string()))?
-            }
-            Kind::Un => ops::un(Op::of(p[0]), M(p[1]), self.sval(sg, v.child(n, 0), l)?),
-            Kind::Cast => ops::cast(M(p[0]), M(p[1]), self.sval(sg, v.child(n, 0), l)?),
-            Kind::Cond => {
-                let c = self.sval(sg, v.child(n, 0), l)?;
-                self.sval(sg, v.child(n, if c != 0 { 1 } else { 2 }), l)?
-            }
-            Kind::Logic => {
-                let and = p[0] != 0;
-                let a = self.sval(sg, v.child(n, 0), l)? != 0;
-                if a != and { u64::from(a) } else { u64::from(self.sval(sg, v.child(n, 1), l)? != 0) }
-            }
-            Kind::Comma => self.sval(sg, v.child(n, 1), l)?,
-            Kind::Builtin => {
-                let mut a = [0u64; 3];
-                for (k, c) in v.children(n).enumerate() {
-                    a[k] = self.sval(sg, c, l)?;
-                }
-                self.builtin(sg, l, n, a)?
-            }
-            k => return Err(Error(format!("a {k:?} node computed once"))),
-        })
-    }
-
-    /// A builtin with no effect beyond its lane, in lane `l`.
-    fn builtin(&self, sg: &Sg, l: usize, n: usize, a: [u64; 3]) -> R<u64> {
-        let p = self.v.p(n);
-        let (b, m) = (Builtin::of(p[0]), M(p[1]));
-        let (lid, lin) = self.lid(sg, l);
-        let d = a[0] as usize;
-        let dim = |x: [u32; 3], or: u32| if d < 3 { x[d] } else { or };
+    /// A builtin with no effect beyond its lane: a size or id's (`a` the dimension), or the lane's own operation on
+    /// `a`, `x` (values of `from`, the result `m`).
+    fn lane_builtin(&self, b: Builtin, m: M, from: M, a: u64, x: u64) -> R<u64> {
+        let d = a as usize;
+        let dim = |v: [u32; 3], or: u32| if d < 3 { v[d] } else { or };
         Ok(match b {
-            Builtin::LocalId => u64::from(dim(lid, 0)),
             Builtin::LocalSize => u64::from(dim(self.block, 1)),
             Builtin::GroupId => u64::from(dim(self.group, 0)),
             Builtin::NumGroups => u64::from(dim(self.grid, 1)),
-            Builtin::GlobalId => u64::from(dim(self.group, 0)) * u64::from(dim(self.block, 1)) + u64::from(dim(lid, 0)),
             Builtin::GlobalSize => u64::from(dim(self.grid, 1)) * u64::from(dim(self.block, 1)),
-            Builtin::SubGroupLocalId => u64::from(lin % W as u32),
-            Builtin::MemFence | Builtin::Barrier | Builtin::SubGroupBarrier => 0,
-            Builtin::Popcount => u64::from((ops::norm(m, a[0]) & mask(m)).count_ones()),
-            Builtin::Clz => u64::from((ops::norm(m, a[0]) & mask(m)).leading_zeros() - (64 - m.bits())),
+            Builtin::Popcount => u64::from((ops::norm(m, a) & width(m)).count_ones()),
+            Builtin::Clz => u64::from((ops::norm(m, a) & width(m)).leading_zeros() - (64 - m.bits())),
             Builtin::MulHi => {
                 if m.bits() == 64 {
-                    if m.signed() { ((i128::from(a[0] as i64) * i128::from(a[1] as i64)) >> 64) as u64 } else { ((u128::from(a[0]) * u128::from(a[1])) >> 64) as u64 }
+                    if m.signed() { ((i128::from(a as i64) * i128::from(x as i64)) >> 64) as u64 } else { ((u128::from(a) * u128::from(x)) >> 64) as u64 }
                 } else if m.signed() {
-                    ops::norm(m, ((a[0] as i64).wrapping_mul(a[1] as i64) >> m.bits()) as u64)
+                    ops::norm(m, ((a as i64).wrapping_mul(x as i64) >> m.bits()) as u64)
                 } else {
-                    ops::norm(m, (ops::norm(m, a[0]).wrapping_mul(ops::norm(m, a[1]))) >> m.bits())
+                    ops::norm(m, (ops::norm(m, a).wrapping_mul(ops::norm(m, x))) >> m.bits())
                 }
             }
-            Builtin::As => ops::norm(m, a[0] & mask(M(p[4]))),
+            Builtin::As => ops::norm(m, a & width(from)),
             Builtin::Min | Builtin::Max => {
-                let less = ops::bin(Op::Lt, m, a[0], a[1]).unwrap_or(0) != 0;
-                if less == (b == Builtin::Min) { a[0] } else { a[1] }
+                let less = ops::bin(Op::Lt, m, a, x).unwrap_or(0) != 0;
+                if less == (b == Builtin::Min) { a } else { x }
             }
-            _ => return Err(Error(format!("{} as a lane's own", self.site(p[3])))),
+            _ => return Err(self.err(&format!("{b:?} as a lane's own"))),
         })
     }
 
-    /// An atomic at `a[0]`, one lane's.
-    fn atomic(&self, n: usize, a: [u64; 3]) -> u64 {
-        let p = self.v.p(n);
-        let (b, m) = (Builtin::of(p[0]), M(p[1]));
-        let ptr = a[0];
-        // SAFETY: the kernel's address; the interpreter runs one lane at a time, so an atomic is its read and write.
+    /// An atomic at `ptr`, one lane's.
+    ///
+    /// # Safety
+    ///
+    /// `ptr` is the kernel's address, of `m`'s bytes.
+    unsafe fn atomic(b: Builtin, m: M, ptr: u64, x: u64, y: u64) -> u64 {
+        // SAFETY: the caller's; the interpreter runs one lane at a time, so an atomic is its read and write.
         let old = unsafe { ops::load(m, ptr) };
         let new = match b {
-            Builtin::AtomicAdd => old.wrapping_add(a[1]),
-            Builtin::AtomicSub => old.wrapping_sub(a[1]),
-            Builtin::AtomicAnd => old & a[1],
-            Builtin::AtomicOr => old | a[1],
-            Builtin::AtomicXor => old ^ a[1],
-            Builtin::AtomicXchg => a[1],
+            Builtin::AtomicAdd => old.wrapping_add(x),
+            Builtin::AtomicSub => old.wrapping_sub(x),
+            Builtin::AtomicAnd => old & x,
+            Builtin::AtomicOr => old | x,
+            Builtin::AtomicXor => old ^ x,
+            Builtin::AtomicXchg => x,
             Builtin::AtomicInc => old.wrapping_add(1),
             Builtin::AtomicDec => old.wrapping_sub(1),
             Builtin::AtomicMin | Builtin::AtomicMax => {
-                let less = ops::bin(Op::Lt, m, a[1], old).unwrap_or(0) != 0;
-                if less == (b == Builtin::AtomicMin) { a[1] } else { old }
+                let less = ops::bin(Op::Lt, m, x, old).unwrap_or(0) != 0;
+                if less == (b == Builtin::AtomicMin) { x } else { old }
             }
             _ => {
-                if ops::norm(m, old) == ops::norm(m, a[1]) {
-                    a[2]
+                if ops::norm(m, old) == ops::norm(m, x) {
+                    y
                 } else {
                     old
                 }
             }
         };
+        // SAFETY: the caller's.
         unsafe { ops::store(m, ptr, new) };
         old
     }
 
-    // A SIMD group.
-
-    /// Node `n`'s values in the lanes `mask` of `sg` (the others' unspecified).
-    fn vval(&self, sg: &mut Sg, n: usize, mask: u32) -> R<Vals> {
-        if self.once(n) {
-            return Ok([self.sval(sg, n, first(mask))?; W]);
+    /// SIMD group `sg` from its instruction to its next barrier or its end.
+    fn exec(&self, sg: &mut Sg) -> R<Stop> {
+        #[cfg(target_arch = "x86_64")]
+        if self.avx2 {
+            // SAFETY: the CPU has AVX2 (`is_x86_feature_detected`); the code is `compile`'s.
+            return unsafe { exec_avx2(self, sg) };
         }
-        let v = &self.v;
-        let p = v.p(n);
-        let mut out = [0u64; W];
-        match v.kind(n) {
-            Kind::Local => {
-                for l in lanes(mask) {
-                    out[l] = self.local(sg, p, l);
-                }
-            }
-            Kind::Cond => {
-                let c = self.vval(sg, v.child(n, 0), mask)?;
-                let yes = lanes(mask).filter(|&l| c[l] != 0).fold(0u32, |m, l| m | 1 << l);
-                let a = if yes != 0 { self.vval(sg, v.child(n, 1), yes)? } else { out };
-                let b = if mask & !yes != 0 { self.vval(sg, v.child(n, 2), mask & !yes)? } else { out };
-                for l in lanes(mask) {
-                    out[l] = if yes >> l & 1 != 0 { a[l] } else { b[l] };
-                }
-            }
-            Kind::Logic => {
-                let and = p[0] != 0;
-                let a = self.vval(sg, v.child(n, 0), mask)?;
-                let rest = lanes(mask).filter(|&l| (a[l] != 0) == and).fold(0u32, |m, l| m | 1 << l);
-                let b = if rest != 0 { self.vval(sg, v.child(n, 1), rest)? } else { out };
-                for l in lanes(mask) {
-                    out[l] = u64::from(if rest >> l & 1 != 0 { b[l] != 0 } else { a[l] != 0 });
-                }
-            }
-            Kind::Inline => return self.vinline(sg, n, mask),
-            Kind::Block | Kind::Expr => {
-                self.vexec(sg, n, mask)?;
-            }
-            Kind::Builtin => {
-                let mut xs = [[0u64; W]; 3];
-                for (j, c) in v.children(n).enumerate() {
-                    xs[j] = self.vval(sg, c, mask)?;
-                }
-                self.vbuiltin(sg, n, mask, &xs, &mut out)?;
-            }
-            _ => {
-                let mut xs = [[0u64; W]; 3];
-                for (j, c) in v.children(n).enumerate() {
-                    xs[j] = self.vval(sg, c, mask)?;
-                }
-                self.vop(sg, n, mask, [&xs[0], &xs[1], &xs[2]], &mut out)?;
-            }
-        }
-        Ok(out)
-    }
-
-    /// Node `n`'s operation over the lanes `mask`, its operands' values `x` (a node whose operands are all evaluated
-    /// first): the node read once, its lanes in a loop.
-    fn vop(&self, sg: &Sg, n: usize, mask: u32, x: [&Vals; 3], out: &mut Vals) -> R<()> {
-        let p = self.v.p(n);
-        match self.v.kind(n) {
-            Kind::Const => out.fill(u64::from(p[1]) | u64::from(p[2]) << 32),
-            Kind::Shared => out.fill(self.shared + u64::from(p[0])),
-            Kind::Global => out.fill(self.data + u64::from(p[0])),
-            Kind::Local => {
-                let base = sg.frame + u64::from(p[0]) * W as u64 + u64::from(p[2]);
-                let size = u64::from(p[1]);
-                for l in lanes(mask) {
-                    out[l] = base + l as u64 * size;
-                }
-            }
-            Kind::Load => {
-                let m = M(p[0]);
-                for l in lanes(mask) {
-                    // SAFETY: the kernel's addresses.
-                    out[l] = unsafe { ops::load(m, x[0][l]) };
-                }
-            }
-            Kind::Store => {
-                let m = M(p[0]);
-                for l in lanes(mask) {
-                    unsafe { ops::store(m, x[0][l], x[1][l]) };
-                    out[l] = x[1][l];
-                }
-            }
-            Kind::Bin => {
-                let (op, m) = (Op::of(p[0]), M(p[1]));
-                for l in lanes(mask) {
-                    out[l] = ops::bin(op, m, x[0][l], x[1][l]).map_err(|e| Error(e.to_string()))?;
-                }
-            }
-            Kind::Un => {
-                let (op, m) = (Op::of(p[0]), M(p[1]));
-                for l in lanes(mask) {
-                    out[l] = ops::un(op, m, x[0][l]);
-                }
-            }
-            Kind::Cast => {
-                let (from, to) = (M(p[0]), M(p[1]));
-                for l in lanes(mask) {
-                    out[l] = ops::cast(from, to, x[0][l]);
-                }
-            }
-            Kind::Comma => *out = *x[1],
-            _ => {
-                for l in lanes(mask) {
-                    out[l] = self.lane_op(sg, n, l, [x[0][l], x[1][l], x[2][l]])?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Node `n`'s operation in lane `l`, its operands' values `x` (a node whose operands are all evaluated first).
-    fn lane_op(&self, sg: &Sg, n: usize, l: usize, x: [u64; 3]) -> R<u64> {
-        let p = self.v.p(n);
-        Ok(match self.v.kind(n) {
-            Kind::Const => u64::from(p[1]) | u64::from(p[2]) << 32,
-            Kind::Shared => self.shared + u64::from(p[0]),
-            Kind::Global => self.data + u64::from(p[0]),
-            Kind::Local => self.local(sg, p, l),
-            // SAFETY: the kernel's addresses.
-            Kind::Load => unsafe { ops::load(M(p[0]), x[0]) },
-            Kind::Store => {
-                unsafe { ops::store(M(p[0]), x[0], x[1]) };
-                x[1]
-            }
-            Kind::Zero => {
-                unsafe { std::ptr::write_bytes(x[0] as usize as *mut u8, 0, p[1] as usize) };
-                x[0]
-            }
-            Kind::Copy => {
-                unsafe { std::ptr::copy(x[1] as usize as *const u8, x[0] as usize as *mut u8, p[0] as usize) };
-                x[0]
-            }
-            Kind::Bin => ops::bin(Op::of(p[0]), M(p[1]), x[0], x[1]).map_err(|e| Error(e.to_string()))?,
-            Kind::Un => ops::un(Op::of(p[0]), M(p[1]), x[0]),
-            Kind::Cast => ops::cast(M(p[0]), M(p[1]), x[0]),
-            Kind::Comma => x[1],
-            Kind::Update => {
-                let (op, lm, om, post) = (Op::of(p[0]), M(p[1]), M(p[2]), p[3] != 0);
-                let old = unsafe { ops::load(lm, x[0]) };
-                let r = ops::bin(op, om, ops::cast(lm, om, old), x[1]).unwrap_or(0);
-                let new = ops::cast(om, lm, r);
-                unsafe { ops::store(lm, x[0], new) };
-                if post { old } else { new }
-            }
-            Kind::Builtin => self.builtin(sg, l, n, x)?,
-            k => return Err(Error(format!("a {k:?} node as a lane's operation"))),
-        })
-    }
-
-    /// A builtin over the lanes `mask`: a SIMD-group operation the lanes' values permuted or gathered, an atomic one
-    /// lane after another (once, for the SIMD group, when its value is uniform in it).
-    fn vbuiltin(&self, sg: &Sg, n: usize, mask: u32, xs: &[Vals; 3], out: &mut Vals) -> R<()> {
-        let p = self.v.p(n);
-        let b = Builtin::of(p[0]);
-        let from = |src: Option<usize>, or: u64| match src {
-            Some(s) if mask >> s & 1 != 0 => xs[0][s],
-            _ => or,
-        };
-        match b {
-            Builtin::SubGroupBallot => {
-                let m = lanes(mask).filter(|&l| xs[0][l] != 0).fold(0u64, |m, l| m | 1 << l);
-                for l in lanes(mask) {
-                    out[l] = m;
-                }
-            }
-            Builtin::SubGroupShuffle => {
-                for l in lanes(mask) {
-                    out[l] = from(Some(xs[1][l] as usize % W), 0);
-                }
-            }
-            Builtin::SubGroupShuffleXor => {
-                for l in lanes(mask) {
-                    out[l] = from(Some((l ^ xs[1][l] as usize) % W), 0);
-                }
-            }
-            Builtin::SubGroupShuffleUp => {
-                for l in lanes(mask) {
-                    out[l] = from(l.checked_sub(xs[1][l] as usize), xs[0][l]);
-                }
-            }
-            Builtin::SubGroupShuffleDown => {
-                for l in lanes(mask) {
-                    let s = l + xs[1][l] as usize;
-                    out[l] = from((s < W).then_some(s), xs[0][l]);
-                }
-            }
-            Builtin::SubGroupBarrier | Builtin::Barrier | Builtin::MemFence => {}
-            _ if crate::vector::is_atomic(b) => {
-                if self.v.level(n) <= Level::SimdGroup {
-                    let l = first(mask);
-                    let r = self.atomic(n, [xs[0][l], xs[1][l], xs[2][l]]);
-                    for l in lanes(mask) {
-                        out[l] = r;
-                    }
-                } else {
-                    for l in lanes(mask) {
-                        out[l] = self.atomic(n, [xs[0][l], xs[1][l], xs[2][l]]);
-                    }
-                }
-            }
-            _ => {
-                for l in lanes(mask) {
-                    out[l] = self.builtin(sg, l, n, [xs[0][l], xs[1][l], xs[2][l]])?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// An inlined call over the lanes `mask`: its parameters' stores and body, then its result, the lanes that
-    /// returned back.
-    fn vinline(&self, sg: &mut Sg, n: usize, mask: u32) -> R<Vals> {
-        let v = &self.v;
-        let mut live = mask;
-        for c in v.children(n) {
-            if live == 0 {
-                break;
-            }
-            self.vexec(sg, c, live)?;
-            live &= sg.normal();
-        }
-        for l in lanes(mask) {
-            if sg.flow[l] == Flow::Return {
-                sg.flow[l] = Flow::Normal;
-            }
-        }
-        Ok(self.result(sg, n, mask & !sg.ended))
-    }
-
-    /// An inlined call's result in the lanes `mask`: its slot's value, or an aggregate's copy's address.
-    fn result(&self, sg: &Sg, n: usize, mask: u32) -> Vals {
-        let p = self.v.p(n);
-        let m = M(p[0]);
-        let mut out = [0u64; W];
-        if m == M::VOID {
-            return out;
-        }
-        for l in lanes(mask) {
-            let slot = self.local(sg, &[p[1], m.bytes(), 0], l);
-            out[l] = if m.is_agg() {
-                let to = self.local(sg, &[p[2], m.bytes(), 0], l);
-                // SAFETY: two places of the lane's frame, the aggregate's bytes.
-                unsafe { std::ptr::copy(slot as usize as *const u8, to as usize as *mut u8, m.bytes() as usize) };
-                to
-            } else {
-                unsafe { ops::load(m, slot) }
-            };
-        }
-        out
-    }
-
-    /// A branch's decision on the lanes `mask` of `sg` from its condition's values `c`: the lanes it takes, the
-    /// decision checked (`CHECK`) against the group's.
-    fn decide(&self, sg: &Sg, n: usize, mask: u32, c: &Vals) -> R<u32> {
-        let yes = lanes(mask).filter(|&l| c[l] != 0).fold(0u32, |m, l| m | 1 << l);
-        if self.v.field(n) & CHECK != 0 && mask != 0 {
-            self.agree(n, sg, yes != 0, self.v.w(n, 0))?;
-        }
-        Ok(yes)
-    }
-
-    /// Statement `n` over the lanes `mask` of `sg`: each lane's control in its `flow`.
-    fn vexec(&self, sg: &mut Sg, n: usize, mask: u32) -> R<()> {
-        let v = &self.v;
-        let p = v.p(n);
-        match v.kind(n) {
-            Kind::Block => {
-                let mut live = mask;
-                for c in v.children(n) {
-                    if live == 0 {
-                        break;
-                    }
-                    self.vexec(sg, c, live)?;
-                    live &= sg.normal();
-                }
-            }
-            Kind::Expr => {
-                self.vval(sg, v.child(n, 0), mask)?;
-            }
-            Kind::Empty => {}
-            Kind::If => {
-                let c = self.vval(sg, v.child(n, 0), mask)?;
-                let yes = self.decide(sg, n, mask, &c)?;
-                if yes != 0 {
-                    self.vexec(sg, v.child(n, 1), yes)?;
-                }
-                if mask & !yes != 0 && v.children(n).count() > 2 {
-                    self.vexec(sg, v.child(n, 2), mask & !yes)?;
-                }
-            }
-            Kind::While | Kind::For | Kind::Do => {
-                let k = v.kind(n);
-                let (cond, body) = if k == Kind::Do { (v.child(n, 1), v.child(n, 0)) } else { (v.child(n, 0), v.child(n, 1)) };
-                let mut lp = mask;
-                let mut first = k == Kind::Do;
-                loop {
-                    if !first {
-                        let c = self.vval(sg, cond, lp)?;
-                        lp = self.decide(sg, n, lp, &c)?;
-                    }
-                    first = false;
-                    if lp == 0 {
-                        break;
-                    }
-                    self.vexec(sg, body, lp)?;
-                    lp = Self::rejoin(sg, lp);
-                    if k == Kind::For && lp != 0 {
-                        self.vexec(sg, v.child(n, 2), lp)?;
-                    }
-                }
-            }
-            Kind::Return => {
-                let x = if p[0] != 0 { self.vval(sg, v.child(n, 0), mask)? } else { [0; W] };
-                self.ret(sg, p, mask, &x);
-            }
-            Kind::Break => {
-                for l in lanes(mask) {
-                    sg.flow[l] = Flow::Break;
-                }
-            }
-            Kind::Continue => {
-                for l in lanes(mask) {
-                    sg.flow[l] = Flow::Continue;
-                }
-            }
-            _ => {
-                self.vval(sg, n, mask)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// The lanes of a loop's iteration that go on: a `break`'s leave, a `continue`'s come back, a `return`'s leave.
-    fn rejoin(sg: &mut Sg, lp: u32) -> u32 {
-        let mut next = 0;
-        for l in lanes(lp) {
-            match sg.flow[l] {
-                Flow::Break => sg.flow[l] = Flow::Normal,
-                Flow::Continue => {
-                    sg.flow[l] = Flow::Normal;
-                    next |= 1 << l;
-                }
-                Flow::Return => {}
-                Flow::Normal => next |= 1 << l,
-            }
-        }
-        next & !sg.ended
-    }
-
-    /// A `return` of the lanes `mask`, their values `x`: stored in its call's slot, or the lanes end.
-    fn ret(&self, sg: &mut Sg, p: &[u32], mask: u32, x: &Vals) {
-        let (slot, m) = (p[2], M(p[3]));
-        for l in lanes(mask) {
-            sg.flow[l] = Flow::Return;
-            if slot == NO_SLOT {
-                sg.ended |= 1 << l;
-            } else if p[0] != 0 {
-                let at = self.local(sg, &[slot, m.bytes(), 0], l);
-                if m.is_agg() {
-                    // SAFETY: the value is the aggregate's address; the slot, the lane's.
-                    unsafe { std::ptr::copy(x[l] as usize as *const u8, at as usize as *mut u8, m.bytes() as usize) };
-                } else {
-                    unsafe { ops::store(m, at, x[l]) };
-                }
-            }
-        }
-    }
-
-    // The group.
-
-    fn gstmt(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<()> {
-        if self.v.gsync(n) {
-            return self.gexec(g, n, masks);
-        }
-        for (s, sg) in g.iter_mut().enumerate() {
-            if masks[s] != 0 {
-                self.vexec(sg, n, masks[s])?;
-            }
-        }
-        Ok(())
-    }
-
-    fn gchild(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<Vec<Vals>> {
-        if self.v.gsync(n) {
-            return self.gval(g, n, masks);
-        }
-        let mut out = vec![[0u64; W]; g.len()];
-        for (s, sg) in g.iter_mut().enumerate() {
-            if masks[s] != 0 {
-                out[s] = self.vval(sg, n, masks[s])?;
-            }
-        }
-        Ok(out)
-    }
-
-    /// A branch's decision over the group: each SIMD group's lanes it takes.
-    fn gdecide(&self, g: &[Sg], n: usize, masks: &[u32], c: &[Vals]) -> R<Vec<u32>> {
-        let mut yes = vec![0u32; g.len()];
-        for (s, sg) in g.iter().enumerate() {
-            yes[s] = self.decide(sg, n, masks[s], &c[s])?;
-        }
-        Ok(yes)
-    }
-
-    fn normals(g: &[Sg], masks: &[u32]) -> Vec<u32> {
-        g.iter().zip(masks).map(|(sg, &m)| m & sg.normal()).collect()
-    }
-
-    /// Statement `n`, which has a threadgroup barrier in it, over the group's lanes `masks`.
-    fn gexec(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<()> {
-        let v = &self.v;
-        let p = v.p(n);
-        match v.kind(n) {
-            Kind::Block => {
-                let mut live = masks.to_vec();
-                for c in v.children(n) {
-                    if live.iter().all(|&m| m == 0) {
-                        break;
-                    }
-                    self.gstmt(g, c, &live)?;
-                    live = Self::normals(g, &live);
-                }
-            }
-            Kind::Expr => {
-                self.gval(g, v.child(n, 0), masks)?;
-            }
-            Kind::If => {
-                let c = self.gchild(g, v.child(n, 0), masks)?;
-                let yes = self.gdecide(g, n, masks, &c)?;
-                if yes.iter().any(|&m| m != 0) {
-                    self.gstmt(g, v.child(n, 1), &yes)?;
-                }
-                let no: Vec<u32> = masks.iter().zip(&yes).map(|(m, y)| m & !y).collect();
-                if no.iter().any(|&m| m != 0) && v.children(n).count() > 2 {
-                    self.gstmt(g, v.child(n, 2), &no)?;
-                }
-            }
-            Kind::While | Kind::For | Kind::Do => {
-                let k = v.kind(n);
-                let (cond, body) = if k == Kind::Do { (v.child(n, 1), v.child(n, 0)) } else { (v.child(n, 0), v.child(n, 1)) };
-                let mut lp = masks.to_vec();
-                let mut first = k == Kind::Do;
-                loop {
-                    if !first {
-                        let c = self.gchild(g, cond, &lp)?;
-                        lp = self.gdecide(g, n, &lp, &c)?;
-                    }
-                    first = false;
-                    if lp.iter().all(|&m| m == 0) {
-                        break;
-                    }
-                    self.gstmt(g, body, &lp)?;
-                    for (s, sg) in g.iter_mut().enumerate() {
-                        lp[s] = Self::rejoin(sg, lp[s]);
-                    }
-                    if k == Kind::For && lp.iter().any(|&m| m != 0) {
-                        self.gstmt(g, v.child(n, 2), &lp)?;
-                    }
-                }
-            }
-            Kind::Return => {
-                let x = if p[0] != 0 { self.gchild(g, v.child(n, 0), masks)? } else { vec![[0; W]; g.len()] };
-                for (s, sg) in g.iter_mut().enumerate() {
-                    self.ret(sg, p, masks[s], &x[s]);
-                }
-            }
-            _ => {
-                self.gval(g, n, masks)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Expression `n`, which has a threadgroup barrier in it, over the group's lanes `masks`.
-    fn gval(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<Vec<Vals>> {
-        let v = &self.v;
-        let p = v.p(n);
-        let mut out = vec![[0u64; W]; g.len()];
-        match v.kind(n) {
-            Kind::Inline => {
-                let mut live = masks.to_vec();
-                for c in v.children(n) {
-                    if live.iter().all(|&m| m == 0) {
-                        break;
-                    }
-                    self.gstmt(g, c, &live)?;
-                    live = Self::normals(g, &live);
-                }
-                for (s, sg) in g.iter_mut().enumerate() {
-                    for l in lanes(masks[s]) {
-                        if sg.flow[l] == Flow::Return {
-                            sg.flow[l] = Flow::Normal;
-                        }
-                    }
-                    out[s] = self.result(sg, n, masks[s] & !sg.ended);
-                }
-            }
-            Kind::Block | Kind::Expr => self.gexec(g, n, masks)?,
-            Kind::Cond | Kind::Logic => {
-                let cond = v.kind(n) == Kind::Cond;
-                let c = self.gchild(g, v.child(n, 0), masks)?;
-                // The lanes that take the second operand: a `?:`'s true ones, an `&&`'s true, an `||`'s false.
-                let take = cond || p[0] != 0;
-                let first: Vec<u32> = c.iter().zip(masks).map(|(c, &m)| lanes(m).filter(|&l| (c[l] != 0) == take).fold(0u32, |x, l| x | 1 << l)).collect();
-                let a = self.gchild(g, v.child(n, 1), &first)?;
-                let rest: Vec<u32> = masks.iter().zip(&first).map(|(m, f)| m & !f).collect();
-                let b = if cond { self.gchild(g, v.child(n, 2), &rest)? } else { c.clone() };
-                for s in 0..g.len() {
-                    for l in lanes(masks[s]) {
-                        let took = first[s] >> l & 1 != 0;
-                        out[s][l] = if cond {
-                            if took { a[s][l] } else { b[s][l] }
-                        } else {
-                            u64::from(if took { a[s][l] != 0 } else { c[s][l] != 0 })
-                        };
-                    }
-                }
-            }
-            Kind::Builtin if Builtin::of(p[0]) == Builtin::Barrier => {
-                // The barrier: every SIMD group's region before it has run (the rule proven by the vector pass).
-                for c in v.children(n) {
-                    self.gchild(g, c, masks)?;
-                }
-            }
-            _ => {
-                let mut xs = Vec::with_capacity(3);
-                for c in v.children(n) {
-                    xs.push(self.gchild(g, c, masks)?);
-                }
-                let none = [0u64; W];
-                for (s, sg) in g.iter().enumerate() {
-                    if masks[s] != 0 {
-                        let x = [0, 1, 2].map(|j| xs.get(j).map_or(&none, |x: &Vec<Vals>| &x[s]));
-                        self.vop(sg, n, masks[s], x, &mut out[s])?;
-                    }
-                }
-            }
-        }
-        Ok(out)
+        // SAFETY: the code tape's instructions are `compile`'s, their registers within the files.
+        unsafe { exec_in(self, sg) }
     }
 }
 
-/// The bits of `m`'s width.
-fn mask(m: M) -> u64 {
-    if m.bits() >= 64 { u64::MAX } else { (1u64 << m.bits()) - 1 }
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,popcnt,bmi1,bmi2,lzcnt")]
+unsafe fn exec_avx2(cx: &Cx, sg: &mut Sg) -> R<Stop> {
+    // SAFETY: the caller's.
+    unsafe { exec_in(cx, sg) }
+}
+
+/// The interpreter's loop: an instruction at a time, through the table of opcodes.
+///
+/// # Safety
+///
+/// The code is `compile`'s: its registers are within `sg`'s files, its jumps within the code, its addresses the
+/// kernel's (its buffers', its frame's, threadgroup memory's).
+#[inline(always)]
+unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
+    let code = cx.code.as_ptr();
+    let s = sg.s.as_mut_ptr();
+    let v32 = sg.v32.as_mut_ptr();
+    let v64 = sg.v64.as_mut_ptr();
+    let mk = sg.m.as_mut_ptr();
+    let frame = sg.frame;
+    let mut pc = sg.pc * WORDS;
+    // SAFETY: the function's (`compile`'s registers, jumps and addresses).
+    unsafe {
+        macro_rules! s {
+            ($i:expr) => {
+                *s.add($i)
+            };
+        }
+        macro_rules! m {
+            ($i:expr) => {
+                *mk.add($i)
+            };
+        }
+        macro_rules! r32 {
+            ($i:expr) => {
+                &*v32.add($i)
+            };
+        }
+        macro_rules! w32 {
+            ($i:expr) => {
+                &mut *v32.add($i)
+            };
+        }
+        macro_rules! r64 {
+            ($i:expr) => {
+                &*v64.add($i)
+            };
+        }
+        macro_rules! w64 {
+            ($i:expr) => {
+                &mut *v64.add($i)
+            };
+        }
+        loop {
+            let w0 = *code.add(pc);
+            let a = *code.add(pc + 1) as usize;
+            let b = *code.add(pc + 2) as usize;
+            let c = *code.add(pc + 3) as usize;
+            let d = *code.add(pc + 4) as usize;
+            pc += WORDS;
+            let (f1, f2, f3) = ((w0 >> 8) & 0xff, (w0 >> 16) & 0xff, w0 >> 24);
+            // Lane by lane: `o[l] = f(x[l], y[l])`, the result's file and the operands'. A destination is never an
+            // operand (`compile` allocates it while they live), so the loops read and write apart.
+            macro_rules! bin {
+                ($w:ident, $r:ident, $f:expr) => {{
+                    let (x, y, o) = (*$r!(b), *$r!(c), $w!(a));
+                    for l in 0..W {
+                        o[l] = $f(x[l], y[l]);
+                    }
+                }};
+            }
+            macro_rules! un {
+                ($w:ident, $r:ident, $f:expr) => {{
+                    let (x, o) = (*$r!(b), $w!(a));
+                    for l in 0..W {
+                        o[l] = $f(x[l]);
+                    }
+                }};
+            }
+            let cur = m!(CUR as usize);
+            match I::of(w0) {
+                I::Halt => {
+                    sg.pc = pc / WORDS;
+                    return Ok(Stop::Halt);
+                }
+                I::Jmp => pc = a * WORDS,
+                I::Jzm => {
+                    if m!(a) == 0 {
+                        pc = b * WORDS;
+                    }
+                }
+                I::Jzs => {
+                    if s!(a) == 0 {
+                        pc = b * WORDS;
+                    }
+                }
+                I::Jnzs => {
+                    if s!(a) != 0 {
+                        pc = b * WORDS;
+                    }
+                }
+                I::MAnd => m!(a) = m!(b) & tomask(r32!(c)),
+                I::MAndN => m!(a) = m!(b) & !tomask(r32!(c)),
+                I::MSet => m!(a) = m!(b),
+                I::MOr => m!(a) |= m!(b),
+                I::MClr => m!(a) = 0,
+                I::MLive => m!(0) &= !(m!(1) | m!(2) | m!(3) | m!(4)),
+                I::MRejoin => m!(0) = m!(a) & !(m!(1) | m!(3) | m!(4)),
+                I::MExit => m!(0) = m!(a) & !(m!(3) | m!(4)),
+                I::MResume => m!(0) = m!(a) & !m!(4),
+                I::Agree => cx.agree(a as u32, sg.index, s!(c) != 0, b as u32)?,
+                I::AgreeM => cx.agree(a as u32, sg.index, m!(c) != 0, b as u32)?,
+                I::Bar => {
+                    sg.pc = pc / WORDS;
+                    return Ok(Stop::Bar(a as u32));
+                }
+
+                I::SConst => s!(a) = b as u64 | (c as u64) << 32,
+                I::SShared => s!(a) = cx.shared + b as u64,
+                I::SGlobal => s!(a) = cx.data + b as u64,
+                I::SMov => s!(a) = s!(b),
+                I::SBin => s!(a) = ops::bin(Op::of(f1), M(f2), s!(b), s!(c)).map_err(|e| cx.err(e))?,
+                I::SUn => s!(a) = ops::un(Op::of(f1), M(f2), s!(b)),
+                I::SCast => s!(a) = ops::cast(M(f1), M(f2), s!(b)),
+                I::SBuiltin => s!(a) = cx.lane_builtin(Builtin::of(f1), M(f2), M(f3), s!(b), s!(c))?,
+                I::SLoad => s!(a) = ops::load(M(f1), s!(b)),
+                I::SStore => ops::store(M(f1), s!(a), s!(b)),
+                I::SAtomic => s!(a) = Cx::atomic(Builtin::of(f1), M(f2), s!(b), s!(c), s!(d)),
+                I::LdLS => s!(a) = ops::load(M(f1), frame + b as u64 + (first(cur) * c) as u64),
+                I::Extract32 => s!(a) = wide(M(f1), r32!(b)[first(cur)]),
+                I::Extract64 => s!(a) = r64!(b)[first(cur)],
+
+                I::Bcast32 => *w32!(a) = [s!(b) as u32; W],
+                I::Bcast64 => *w64!(a) = [s!(b); W],
+                I::VMovM32 => blend32(w32!(a), r32!(b), cur),
+                I::VMovM64 => blend64(w64!(a), r64!(b), cur),
+
+                I::LdL => {
+                    let (m, at) = (M(f1), frame + b as u64);
+                    if m.bytes() == 8 {
+                        let o = w64!(a);
+                        if c == 8 {
+                            std::ptr::copy_nonoverlapping(at as usize as *const u64, o.as_mut_ptr(), W);
+                        } else {
+                            for (l, o) in o.iter_mut().enumerate() {
+                                *o = ops::load(m, at + (l * c) as u64);
+                            }
+                        }
+                    } else {
+                        let o = w32!(a);
+                        if c == 4 && m.bytes() == 4 {
+                            std::ptr::copy_nonoverlapping(at as usize as *const u32, o.as_mut_ptr(), W);
+                        } else {
+                            for (l, o) in o.iter_mut().enumerate() {
+                                *o = ops::load(m, at + (l * c) as u64) as u32;
+                            }
+                        }
+                    }
+                }
+                I::StL => {
+                    let (m, at) = (M(f1), frame + a as u64);
+                    if m.bytes() == 8 && b == 8 {
+                        blend64(&mut *(at as usize as *mut V64), r64!(c), cur);
+                    } else if m.bytes() == 4 && b == 4 {
+                        blend32(&mut *(at as usize as *mut V32), r32!(c), cur);
+                    } else if m.bytes() == 8 {
+                        let x = r64!(c);
+                        for l in lanes(cur) {
+                            ops::store(m, at + (l * b) as u64, x[l]);
+                        }
+                    } else {
+                        let x = r32!(c);
+                        for l in lanes(cur) {
+                            ops::store(m, at + (l * b) as u64, u64::from(x[l]));
+                        }
+                    }
+                }
+                I::LAddr => {
+                    let (o, at) = (w64!(a), frame + b as u64);
+                    for (l, o) in o.iter_mut().enumerate() {
+                        *o = at + (l * c) as u64;
+                    }
+                }
+                I::VLoad => {
+                    let (m, ad) = (M(f1), r64!(b));
+                    let n = u64::from(m.bytes());
+                    let dense = cur == u32::MAX && {
+                        let mut ok = true;
+                        for (l, &p) in ad.iter().enumerate() {
+                            ok &= p == ad[0].wrapping_add(l as u64 * n);
+                        }
+                        ok
+                    };
+                    if m.bytes() == 8 {
+                        let o = w64!(a);
+                        if dense {
+                            std::ptr::copy_nonoverlapping(ad[0] as usize as *const u8, o.as_mut_ptr().cast::<u8>(), W * 8);
+                        } else {
+                            for l in lanes(cur) {
+                                o[l] = ops::load(m, ad[l]);
+                            }
+                        }
+                    } else {
+                        let o = w32!(a);
+                        if dense && n == 4 {
+                            std::ptr::copy_nonoverlapping(ad[0] as usize as *const u8, o.as_mut_ptr().cast::<u8>(), W * 4);
+                        } else if dense && m == M::U8 {
+                            let src = (ad[0] as usize as *const [u8; W]).read_unaligned();
+                            for l in 0..W {
+                                o[l] = u32::from(src[l]);
+                            }
+                        } else {
+                            for l in lanes(cur) {
+                                o[l] = ops::load(m, ad[l]) as u32;
+                            }
+                        }
+                    }
+                }
+                I::VStore => {
+                    let (m, ad) = (M(f1), r64!(a));
+                    if m.bytes() == 8 {
+                        let x = r64!(b);
+                        for l in lanes(cur) {
+                            ops::store(m, ad[l], x[l]);
+                        }
+                    } else {
+                        let x = r32!(b);
+                        let dense = cur == u32::MAX && m.bytes() == 4 && {
+                            let mut ok = true;
+                            for (l, &p) in ad.iter().enumerate() {
+                                ok &= p == ad[0].wrapping_add(l as u64 * 4);
+                            }
+                            ok
+                        };
+                        if dense {
+                            std::ptr::copy_nonoverlapping(x.as_ptr().cast::<u8>(), ad[0] as usize as *mut u8, W * 4);
+                        } else {
+                            for l in lanes(cur) {
+                                ops::store(m, ad[l], u64::from(x[l]));
+                            }
+                        }
+                    }
+                }
+                I::VCopy => {
+                    let (to, from) = (r64!(a), r64!(b));
+                    for l in lanes(cur) {
+                        std::ptr::copy(from[l] as usize as *const u8, to[l] as usize as *mut u8, c);
+                    }
+                }
+                I::VZero => {
+                    let at = r64!(a);
+                    for l in lanes(cur) {
+                        std::ptr::write_bytes(at[l] as usize as *mut u8, 0, b);
+                    }
+                }
+
+                I::VLid | I::VGid => {
+                    let dim = s!(b) as usize;
+                    let gid = I::of(w0) == I::VGid;
+                    let (base, src) = if dim < 3 {
+                        (if gid { u64::from(cx.group[dim]) * u64::from(cx.block[dim]) } else { 0 }, sg.lid[dim])
+                    } else {
+                        (0, [0; W])
+                    };
+                    if f1 == 1 {
+                        let o = w64!(a);
+                        for l in 0..W {
+                            o[l] = base + u64::from(src[l]);
+                        }
+                    } else {
+                        let o = w32!(a);
+                        for l in 0..W {
+                            o[l] = (base as u32).wrapping_add(src[l]);
+                        }
+                    }
+                }
+                I::VLane => {
+                    for (l, o) in w32!(a).iter_mut().enumerate() {
+                        *o = l as u32;
+                    }
+                }
+                I::Ballot => s!(a) = u64::from(tomask(r32!(b)) & cur),
+                I::Shuf32 => shuffle(Builtin::of(f1), cur, r32!(b), r32!(c), w32!(a)),
+                I::Shuf64 => shuffle(Builtin::of(f1), cur, r64!(b), r32!(c), w64!(a)),
+                I::VAtomic => {
+                    let (op, m) = (Builtin::of(f1), M(f2));
+                    let ad = *r64!(b);
+                    if m.bytes() == 8 {
+                        let (x, y) = (*r64!(c), *r64!(d));
+                        let o = w64!(a);
+                        for l in lanes(cur) {
+                            o[l] = Cx::atomic(op, m, ad[l], x[l], y[l]);
+                        }
+                    } else {
+                        let (x, y) = (*r32!(c), *r32!(d));
+                        let o = w32!(a);
+                        for l in lanes(cur) {
+                            o[l] = Cx::atomic(op, m, ad[l], wide(m, x[l]), wide(m, y[l])) as u32;
+                        }
+                    }
+                }
+
+                I::VBinGen => {
+                    let (op, m) = (Op::of(f1), M(f2));
+                    let out64 = !op.compares() && m.bytes() == 8;
+                    for l in lanes(cur) {
+                        let (x, y) = if m.bytes() == 8 { (r64!(b)[l], r64!(c)[l]) } else { (wide(m, r32!(b)[l]), wide(m, r32!(c)[l])) };
+                        let r = ops::bin(op, m, x, y).map_err(|e| cx.err(e))?;
+                        if out64 {
+                            w64!(a)[l] = r;
+                        } else {
+                            w32!(a)[l] = r as u32;
+                        }
+                    }
+                }
+                I::VUnGen => {
+                    let (op, m) = (Op::of(f1), M(f2));
+                    for l in lanes(cur) {
+                        if m.bytes() == 8 {
+                            w64!(a)[l] = ops::un(op, m, r64!(b)[l]);
+                        } else {
+                            w32!(a)[l] = ops::un(op, m, wide(m, r32!(b)[l])) as u32;
+                        }
+                    }
+                }
+                I::VCastGen => {
+                    let (from, to) = (M(f1), M(f2));
+                    for l in lanes(cur) {
+                        let x = if from.bytes() == 8 { r64!(b)[l] } else { wide(from, r32!(b)[l]) };
+                        let r = ops::cast(from, to, x);
+                        if to.bytes() == 8 {
+                            w64!(a)[l] = r;
+                        } else {
+                            w32!(a)[l] = r as u32;
+                        }
+                    }
+                }
+                I::VBuiltinGen => {
+                    let (op, m, from) = (Builtin::of(f1), M(f2), M(f3));
+                    for l in lanes(cur) {
+                        let (x, y) = if from.bytes() == 8 { (r64!(b)[l], r64!(c)[l]) } else { (wide(from, r32!(b)[l]), wide(from, r32!(c)[l])) };
+                        let r = cx.lane_builtin(op, m, from, x, y)?;
+                        if m.bytes() == 8 {
+                            w64!(a)[l] = r;
+                        } else {
+                            w32!(a)[l] = r as u32;
+                        }
+                    }
+                }
+
+                I::Zx8 => un!(w32, r32, |x: u32| x & 0xff),
+                I::Sx8 => un!(w32, r32, |x: u32| x as u8 as i8 as i32 as u32),
+                I::Zx16 => un!(w32, r32, |x: u32| x & 0xffff),
+                I::Sx16 => un!(w32, r32, |x: u32| x as u16 as i16 as i32 as u32),
+                I::Truth32 => un!(w32, r32, |x: u32| u32::from(x != 0)),
+                I::Truth64 => un!(w32, r64, |x: u64| u32::from(x != 0)),
+                I::Trunc => un!(w32, r64, |x: u64| x as u32),
+                I::Zext => un!(w64, r32, |x: u32| u64::from(x)),
+                I::Sext => un!(w64, r32, |x: u32| x as i32 as i64 as u64),
+
+                I::Add32 => bin!(w32, r32, |x: u32, y: u32| x.wrapping_add(y)),
+                I::Sub32 => bin!(w32, r32, |x: u32, y: u32| x.wrapping_sub(y)),
+                I::Mul32 => bin!(w32, r32, |x: u32, y: u32| x.wrapping_mul(y)),
+                I::And32 => bin!(w32, r32, |x: u32, y: u32| x & y),
+                I::Or32 => bin!(w32, r32, |x: u32, y: u32| x | y),
+                I::Xor32 => bin!(w32, r32, |x: u32, y: u32| x ^ y),
+                I::Shl32 => bin!(w32, r32, |x: u32, y: u32| x << (y & 31)),
+                I::ShrU32 => bin!(w32, r32, |x: u32, y: u32| x >> (y & 31)),
+                I::ShrI32 => bin!(w32, r32, |x: u32, y: u32| ((x as i32) >> (y & 31)) as u32),
+                I::Eq32 => bin!(w32, r32, |x: u32, y: u32| u32::from(x == y)),
+                I::Ne32 => bin!(w32, r32, |x: u32, y: u32| u32::from(x != y)),
+                I::LtU32 => bin!(w32, r32, |x: u32, y: u32| u32::from(x < y)),
+                I::LtI32 => bin!(w32, r32, |x: u32, y: u32| u32::from((x as i32) < (y as i32))),
+                I::LeU32 => bin!(w32, r32, |x: u32, y: u32| u32::from(x <= y)),
+                I::LeI32 => bin!(w32, r32, |x: u32, y: u32| u32::from((x as i32) <= (y as i32))),
+                I::MinU32 => bin!(w32, r32, |x: u32, y: u32| x.min(y)),
+                I::MinI32 => bin!(w32, r32, |x: u32, y: u32| (x as i32).min(y as i32) as u32),
+                I::MaxU32 => bin!(w32, r32, |x: u32, y: u32| x.max(y)),
+                I::MaxI32 => bin!(w32, r32, |x: u32, y: u32| (x as i32).max(y as i32) as u32),
+
+                I::Add64 => bin!(w64, r64, |x: u64, y: u64| x.wrapping_add(y)),
+                I::Sub64 => bin!(w64, r64, |x: u64, y: u64| x.wrapping_sub(y)),
+                I::Mul64 => bin!(w64, r64, |x: u64, y: u64| x.wrapping_mul(y)),
+                I::And64 => bin!(w64, r64, |x: u64, y: u64| x & y),
+                I::Or64 => bin!(w64, r64, |x: u64, y: u64| x | y),
+                I::Xor64 => bin!(w64, r64, |x: u64, y: u64| x ^ y),
+                I::Shl64 => bin!(w64, r64, |x: u64, y: u64| x << (y & 63)),
+                I::ShrU64 => bin!(w64, r64, |x: u64, y: u64| x >> (y & 63)),
+                I::ShrI64 => bin!(w64, r64, |x: u64, y: u64| ((x as i64) >> (y & 63)) as u64),
+                I::Eq64 => bin!(w32, r64, |x: u64, y: u64| u32::from(x == y)),
+                I::Ne64 => bin!(w32, r64, |x: u64, y: u64| u32::from(x != y)),
+                I::LtU64 => bin!(w32, r64, |x: u64, y: u64| u32::from(x < y)),
+                I::LtI64 => bin!(w32, r64, |x: u64, y: u64| u32::from((x as i64) < (y as i64))),
+                I::LeU64 => bin!(w32, r64, |x: u64, y: u64| u32::from(x <= y)),
+                I::LeI64 => bin!(w32, r64, |x: u64, y: u64| u32::from((x as i64) <= (y as i64))),
+                I::MinU64 => bin!(w64, r64, |x: u64, y: u64| x.min(y)),
+                I::MinI64 => bin!(w64, r64, |x: u64, y: u64| (x as i64).min(y as i64) as u64),
+                I::MaxU64 => bin!(w64, r64, |x: u64, y: u64| x.max(y)),
+                I::MaxI64 => bin!(w64, r64, |x: u64, y: u64| (x as i64).max(y as i64) as u64),
+
+                I::AddF32 => bin!(w32, r32, |x: u32, y: u32| (f32::from_bits(x) + f32::from_bits(y)).to_bits()),
+                I::SubF32 => bin!(w32, r32, |x: u32, y: u32| (f32::from_bits(x) - f32::from_bits(y)).to_bits()),
+                I::MulF32 => bin!(w32, r32, |x: u32, y: u32| (f32::from_bits(x) * f32::from_bits(y)).to_bits()),
+                I::DivF32 => bin!(w32, r32, |x: u32, y: u32| (f32::from_bits(x) / f32::from_bits(y)).to_bits()),
+                I::EqF32 => bin!(w32, r32, |x: u32, y: u32| u32::from(f32::from_bits(x) == f32::from_bits(y))),
+                I::NeF32 => bin!(w32, r32, |x: u32, y: u32| u32::from(f32::from_bits(x) != f32::from_bits(y))),
+                I::LtF32 => bin!(w32, r32, |x: u32, y: u32| u32::from(f32::from_bits(x) < f32::from_bits(y))),
+                I::LeF32 => bin!(w32, r32, |x: u32, y: u32| u32::from(f32::from_bits(x) <= f32::from_bits(y))),
+                I::AddF64 => bin!(w64, r64, |x: u64, y: u64| (f64::from_bits(x) + f64::from_bits(y)).to_bits()),
+                I::SubF64 => bin!(w64, r64, |x: u64, y: u64| (f64::from_bits(x) - f64::from_bits(y)).to_bits()),
+                I::MulF64 => bin!(w64, r64, |x: u64, y: u64| (f64::from_bits(x) * f64::from_bits(y)).to_bits()),
+                I::DivF64 => bin!(w64, r64, |x: u64, y: u64| (f64::from_bits(x) / f64::from_bits(y)).to_bits()),
+                I::EqF64 => bin!(w32, r64, |x: u64, y: u64| u32::from(f64::from_bits(x) == f64::from_bits(y))),
+                I::NeF64 => bin!(w32, r64, |x: u64, y: u64| u32::from(f64::from_bits(x) != f64::from_bits(y))),
+                I::LtF64 => bin!(w32, r64, |x: u64, y: u64| u32::from(f64::from_bits(x) < f64::from_bits(y))),
+                I::LeF64 => bin!(w32, r64, |x: u64, y: u64| u32::from(f64::from_bits(x) <= f64::from_bits(y))),
+
+                I::Neg32 => un!(w32, r32, |x: u32| x.wrapping_neg()),
+                I::Neg64 => un!(w64, r64, |x: u64| x.wrapping_neg()),
+                I::NegF32 => un!(w32, r32, |x: u32| x ^ 0x8000_0000),
+                I::NegF64 => un!(w64, r64, |x: u64| x ^ (1 << 63)),
+                I::Not32 => un!(w32, r32, |x: u32| !x),
+                I::Not64 => un!(w64, r64, |x: u64| !x),
+                I::LNot32 => un!(w32, r32, |x: u32| u32::from(x == 0)),
+                I::LNot64 => un!(w64, r64, |x: u64| u64::from(x == 0)),
+                I::Popcount32 => un!(w32, r32, |x: u32| x.count_ones()),
+            }
+        }
+    }
+}
+
+/// A SIMD-group shuffle (`b`) of `x` by `idx` over the running lanes `cur`: a lane from a lane that is not running
+/// takes 0 (a shuffle's, a xor's), or its own value (up, down).
+#[inline(always)]
+fn shuffle<T: Copy + Default>(b: Builtin, cur: u32, x: &[T; W], idx: &V32, o: &mut [T; W]) {
+    let on = |s: usize| cur >> s & 1 != 0;
+    match b {
+        Builtin::SubGroupShuffle => {
+            for l in 0..W {
+                let s = idx[l] as usize % W;
+                o[l] = if on(s) { x[s] } else { T::default() };
+            }
+        }
+        Builtin::SubGroupShuffleXor => {
+            for l in 0..W {
+                let s = (l ^ idx[l] as usize) % W;
+                o[l] = if on(s) { x[s] } else { T::default() };
+            }
+        }
+        Builtin::SubGroupShuffleUp => {
+            for l in 0..W {
+                o[l] = match l.checked_sub(idx[l] as usize) {
+                    Some(s) if on(s) => x[s],
+                    _ => x[l],
+                };
+            }
+        }
+        _ => {
+            for l in 0..W {
+                let s = l + idx[l] as usize;
+                o[l] = if s < W && on(s) { x[s] } else { x[l] };
+            }
+        }
+    }
 }

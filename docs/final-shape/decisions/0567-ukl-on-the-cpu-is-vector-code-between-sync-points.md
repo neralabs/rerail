@@ -1,6 +1,6 @@
 # 0567: UKL on the CPU is vector code between sync points, made by tape-to-tape passes
 
-Status: agreed with the user (2026-11-21). Steps 1 and 2 are built (2026-11-21, "Step 2, as built" below). The goal is the user's: "run the same kernels on the GPU and
+Status: agreed with the user (2026-11-21). Steps 1 and 2 are built (2026-11-21, "Step 2, as built" below; its interpreter rebuilt as a code tape the same day). The goal is the user's: "run the same kernels on the GPU and
 the CPU", where the CPU backend's coroutine C++ (decision 0440 §8, "The CPU backend") "is correct but horribly
 slow". The answers below are the user's, given to the questions of the design pass. Follows 0440 and 0310.
 
@@ -148,19 +148,44 @@ slow". The answers below are the user's, given to the questions of the design pa
   - The tests are `a_barrier_some_threads_skip_is_refused_with_its_place`,
     `a_simd_group_operation_some_lanes_skip_is_refused` and `threads_that_end_are_let_off`. Every kernel of the
     library's tests vectorizes.
-- **The interpreter runs at 32 lanes**, a SIMD group at a time, its active lanes a mask:
-  - A uniform value with no effect is computed once for its SIMD group; any other node is read once and its lanes
-    run in a loop.
-  - A varying branch runs each side under its mask, and a loop runs until its mask is empty.
-  - A cut node runs for all of the group's SIMD groups, each region between barriers one SIMD group after another.
-  - SIMD-group operations are native: a ballot is the mask's lanes, and a shuffle is a permute of the lanes'
-    values.
-  - A lane's variables are its own, as a struct of arrays in its SIMD group's frame.
+- **The interpreter runs a code tape** (`code`, `run`). The first version walked the vector tape recursively:
+  each node decoded at each visit, each lane dispatched on its operation and type, every value 64 bits a lane, and a
+  uniform value broadcast to all 32. It was ten times slower than the coroutine backend. It was rebuilt in step 2,
+  not left to step 3 (2026-11-21):
+  - **The code tape:** the vector tape lowered once, on the kernel's first launch, to one `Code` node in the tape
+    format. Its payload is a header, the parameters, and instructions of 5 words, read in place.
+  - **Fused opcodes:** an operation and its type are one opcode (`Add32`, `LtI32`, `AddF64`, `Truth64`, ...). An
+    instruction is one indirect jump through the table of a `match`. Its handler is a loop over the 32 lanes with
+    nothing left to decide, which the compiler makes straight NEON (`AddF32` is eight `fadd.4s`). The rare cases
+    are generic (`VBinGen`, ...), decided once an instruction, then lane by lane: a narrow type's arithmetic, a
+    division (its zero is an error), a float's conversion. 32-bit kernels use no generic opcode (the test
+    `the_interpreter_runs_fused_opcodes_and_each_thread_gets_its_value`).
+  - **Typed registers:** a SIMD group has 32-bit lanes (every type of 4 bytes or fewer), 64-bit lanes, and scalars.
+    A scalar is a value that is the same in the SIMD group and has no effect, computed once. An expression's
+    temporaries are allocated by its depth, and a variable lives in the frame.
+  - **Masks:** the lanes running, and those that took a `break`, a `continue` or a `return`, or ended. A uniform
+    branch or loop condition is a jump; a varying one sets the running lanes for each side, packed from the
+    condition by NEON (`vtstq`, `vaddvq`). No code runs with no lanes: a jump skips it.
+  - **A lane's own variables** stay a struct of arrays in its SIMD group's frame. A direct read or write of a whole
+    scalar variable is 32 consecutive values: one copy, or one blend under the mask. A load or store whose 32
+    addresses are consecutive is one copy too.
+  - **A threadgroup barrier ends a SIMD group's turn.** Each runs to it or to its end, then the next. Once all
+    have, they go on, and SIMD groups that wait at different barriers fail the kernel. This replaces the cut's
+    group-at-once nodes.
+  - **x86:** the same loop compiled again with AVX2, chosen at run time (`is_x86_feature_detected`). It is not yet
+    built here: this Mac and the farm's Linux hosts are aarch64.
+  - Still to lower: `switch`, which the library's tests do not reach. Step 3's gate kernels need it.
 - **A scan's tile is 16 values a thread** on this path (`UKL_SCAN_VT`), as on the CPU backend (decision 0527 §3).
   A group operation costs hundreds of the tape's nodes, against a few for a thread's fold of one value. At 1 value
   a thread, the grid scan of 1,000,000 values took 3 s; at 16, the whole test takes 2.7 s.
-- **Gate:** with `RERAIL_GPU=cpu RERAIL_CPU_EXEC=vec`, the library's 19 tests pass (the bench is ignored):
-  - in 31–57 s at 6 threads, by the machine's load, against 223 s for step 1's one-lane interpreter;
-  - against 5.7 s for the coroutine backend, on a debug build (`rerail-ukl-vec` at opt-level 3).
+- **Gate:** with `RERAIL_GPU=cpu RERAIL_CPU_EXEC=vec`, the library's 19 tests pass (the bench is ignored). The
+  runs were at 6 threads on a debug build (`rerail-ukl-vec` at opt-level 3), back to back at a load of 9:
 
-  The interpreter's speed is step 3's work.
+  | Executor | Wall | CPU |
+  |---|---|---|
+  | The code tape's interpreter | 3.6 s | 4.4 s |
+  | The coroutine backend | 5.0 s | 5.9 s |
+  | The tree-walking interpreter it replaced | 31–57 s, by load | |
+  | Step 1's one-lane interpreter | 223 s | |
+
+  In a sample of the suite, the interpreter's loop is nearly all of the running thread's time.

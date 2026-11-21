@@ -144,13 +144,15 @@ pub enum Kind {
     /// then the callee's body. Its value is its result at frame offset `slot` (the body's `Return`s store it there),
     /// an aggregate's copied to the caller's `temp` (its value that address).
     Inline,
+    /// A code tape's one node (`code`): `[header, parameters, instructions]`.
+    Code,
 }
 
 /// A `Return`'s slot when it ends the thread (the kernel's own body's).
 pub const NO_SLOT: u32 = u32::MAX;
 
 impl Kind {
-    pub const LAST: u16 = Kind::Inline as u16;
+    pub const LAST: u16 = Kind::Code as u16;
 
     pub fn of(k: u16) -> Kind {
         assert!((1..=Self::LAST).contains(&k), "a kernel tape's kind: {k}");
