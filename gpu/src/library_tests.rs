@@ -17,7 +17,7 @@ struct TestArgs {
 }
 unsafe impl Pod for TestArgs {}
 
-/// The work queue's tests' arguments: polls, nodes and a worker's budget (`QueueArgs`).
+/// The work queue's tests' arguments: unused, nodes and a worker's budget (`QueueArgs`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct QueueArgs {
@@ -557,7 +557,7 @@ fn radix_sorts_are_stable() {
 
 /// The tree walk of `nodes` by `kernel`'s workers, each taking `budget` items a launch at most (0: no budget),
 /// launched again while items remain; the launches.
-fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32, budget: u32) -> u32 {
+fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, budget: u32) -> u32 {
     {
         let capacity = 4 * nodes as usize;
         let mut slots = vec![0u32; capacity];
@@ -572,7 +572,7 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32,
             let bound = (capacity as u32).checked_div(budget).map_or(1000, |launches| launches + 1);
             assert!(launches <= bound, "{}: the work queue of {nodes} did not drain in {bound} launches", crate::device::backend());
             launch(q, p.function(kernel).unwrap())
-                .value("args", &QueueArgs { n: polls, w: nodes, b: budget, pad: 0 })
+                .value("args", &QueueArgs { n: 0, w: nodes, b: budget, pad: 0 })
                 .buffer("slots", &sb)
                 .buffer("control", &cb)
                 .buffer("visits", &vb)
@@ -596,12 +596,12 @@ fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32,
 fn a_work_queue_visits_every_item_once() {
     let Some((p, mut q)) = setup() else { return };
     // A SIMD group at a time: the form for many workers.
-    for (nodes, polls) in [(1u32, 64u32), (1000, 64), (100_000, 64), (100_000, 2)] {
-        walk(p, &mut q, "t_workqueue_sg", nodes, polls, 0);
+    for nodes in [1u32, 1000, 100_000] {
+        walk(p, &mut q, "t_workqueue_sg", nodes, 0);
     }
     // A thread at a time: each item a swap that every worker contends for, so few items.
-    for (nodes, polls) in [(1u32, 64u32), (300, 64), (300, 1)] {
-        walk(p, &mut q, "t_workqueue", nodes, polls, 0);
+    for nodes in [1u32, 300] {
+        walk(p, &mut q, "t_workqueue", nodes, 0);
     }
 }
 
@@ -613,14 +613,14 @@ fn a_work_queue_budget_ends_a_launch_and_the_next_takes_the_rest() {
     let Some((p, mut q)) = setup() else { return };
     // 64 groups of 64 threads: 2 SIMD groups of 32 a group (Apple's, CUDA's), each a claim of 32 items a take.
     for (nodes, budget) in [(1u32, 1u32), (100_000, 1), (100_000, 4)] {
-        let launches = walk(p, &mut q, "t_workqueue_sg", nodes, 64, budget);
+        let launches = walk(p, &mut q, "t_workqueue_sg", nodes, budget);
         // 128 SIMD groups of a claim each take 4,096 items a launch at most.
         if nodes == 100_000 && budget == 1 {
             assert!(launches > 1, "{}: a tree past a launch's budgets takes more than one launch", crate::device::backend());
         }
     }
     for (nodes, budget) in [(300u32, 1u32), (300, 3)] {
-        walk(p, &mut q, "t_workqueue", nodes, 64, budget);
+        walk(p, &mut q, "t_workqueue", nodes, budget);
     }
 }
 

@@ -274,3 +274,12 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      `f000.py`) that a run with a launch a phase and the limit at 400 missed: the wave's, not the phases'.
    - The label-sweep tests on the M3 Max fail as before and no more: the two step-budget tests, and the resident
      interpreter's (the same 14 clauses; 99 equal, 97 before, two fewer refused at the limit).
+7. **No device thread waits for another by polling (user, 2026-11-21): "find any places where we're spinning in the
+   same way elsewhere in the system and replace it with the scheme" of step 6.** The places, and what each became:
+   - **Done: an idle work-queue worker ends at once.** `ukl_wq_idle` and `ukl_wq_idle_sg` polled the queue's active
+     count up to a limit for others' pushes (the label sweep's spill queue: its first 512 threads 4,096 polls, the
+     rest 1; the lattice: 4,096). They are gone: a take that finds nothing ends the worker. A worker that pushed is
+     running and takes on, and a dispatch's later workers start as earlier ones end and take what is queued then.
+     The gate on the M3 Max: Metal 17.6 s without the polls, 18.4 s with them, run after run on one host (a first
+     run at 49.8 s was the host's load: the same code ran at 17.6 s next). The queue's tests pass on the Mac mini's
+     Metal and spark1; the device fix waves (the lattice) and the spilled walks on the M3 Max.

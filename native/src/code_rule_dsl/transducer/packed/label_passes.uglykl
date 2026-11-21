@@ -161,13 +161,10 @@ typedef struct MicroFrame { uint32_t pc,node,resume,named,next,end,cursors[8],ca
 typedef struct MicroQ { UKL_GLOBAL uint32_t* slots; UKL_GLOBAL uint32_t* control; UKL_GLOBAL uint32_t* items; uint32_t capacity; uint32_t pass; uint32_t doc; UKL_GLOBAL const uint32_t* roots; } MicroQ;
 // (`roots`: the batch's pass roots, `label_passes::Roots`, where a walk may test another node for its pass's start: a
 // sibling pass's leader, `scan_marks`. Null: none tested.)
-// Only the first `MICRO_STANDBY` threads of a dispatch wait for spilled frames (`MICRO_POLLS`
-// polls between items); the rest exit once the queue is empty. Every thread polling while a long
-// walk ran was 10^8 contended loads a dispatch. A thread that spilled still takes its own frames.
+// A thread that finds the queue empty ends (<ukl/workqueue.h>, decision 0540 step 7): none waits for spilled frames.
+// A thread that spilled still takes its own frames, and threads that start later take what is queued then.
 #define MICRO_ITEM 20u
 #define MICRO_CHUNK 64u
-#define MICRO_POLLS 4096u
-#define MICRO_STANDBY 512u
 
 UKL_INLINE bool micro_class(Tree t,UKL_GLOBAL const uint32_t* head,uint32_t node,uint32_t kind){
   if(kind>=16384u){uint32_t words=head[1];UKL_GLOBAL const uint32_t* bits=head+2;return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;}
@@ -232,7 +229,7 @@ WALK_NEXT(walk_next_micro,MicroFrame)
 UKL_INLINE void micro_from(uint32_t FRAMES,Tree t,UKL_GLOBAL const uint32_t* head,MicroPass pass,UKL_GLOBAL const uint32_t* words,uint32_t start,UKL_GLOBAL uint32_t* scratch,UKL_GLOBAL uint32_t* flags,UKL_GLOBAL const uint32_t* texts,UKL_GLOBAL uint32_t* counts,Shape shape,UKL_GLOBAL MicroFrame* stack,UKL_PRIVATE uint32_t* steps,MicroQ q,uint32_t depth0);
 
 // A thread's walks: its items' roots, then the queue's spilled frames (`MicroQ`), each walked from its frame, until
-// none is left or the worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
+// it finds none to take.
 // One loop calls the walk (`micro_from`) once for both: the compiler inlines the walk at every call, and two calls
 // held two copies of it and of every tape read under it (work queue Q181).
 //
@@ -249,7 +246,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
   SimdRoots r=simd_roots(0ul,lane __UKL_ARGS);
   bool walking=true,fresh=true;
   UklWorkQueue wq={q.slots,q.control,q.capacity};
-  uint32_t polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
+  uint32_t turn=0u;
   while(true){
     uint32_t p=0u,f=0u,start=0u,depth0=0u;
     if(walking){
@@ -276,7 +273,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
       turn++;
       if(ukl_atomic_load(&flags[2])!=0u)return;
       uint32_t at;
-      if(!ukl_wq_take(wq,&at)){if(ukl_wq_idle(wq,&polls,idle))return;continue;}
+      if(!ukl_wq_take(wq,&at))return;
       ukl_fence_device();
       UKL_GLOBAL uint32_t* spilled=q.items+at*MICRO_ITEM;
       uint32_t w[MICRO_ITEM];
@@ -291,7 +288,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
     micro_from(FRAMES,t,head,passes[p],words,start,scratch,flags,texts,counts,shape,stack,&steps,q,depth0);
     // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
     if(shape.profile!=0u){UKL_GLOBAL uint32_t* s=wstats+3u*(shape.profile-1u+p);ukl_atomic_add(&s[0],1u);ukl_atomic_add(&s[1],steps);ukl_atomic_max(&s[2],steps);}
-    if(!walking){ukl_wq_done(wq);polls=0u;}
+    if(!walking)ukl_wq_done(wq);
   }
 }
 

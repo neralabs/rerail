@@ -228,16 +228,14 @@ DEFINE_KERNEL2(tests, t_workqueue,
                GID0,     uint32_t, i,       )
 {
     UklWorkQueue q = test_queue(slots, control, args);
-    uint32_t polls = 0u, taken = 0u;
+    uint32_t taken = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
-        if (ukl_wq_take(q, &item)) {
-            visit(q, visits, args.w, item);
-            polls = 0u;
-            taken++;
-        } else if (ukl_wq_idle(q, &polls, args.n)) {
+        // None to take: the worker ends (decision 0540 step 7).
+        if (!ukl_wq_take(q, &item))
             break;
-        }
+        visit(q, visits, args.w, item);
+        taken++;
     }
 }
 
@@ -249,16 +247,17 @@ DEFINE_KERNEL2(tests, t_workqueue_sg,
                LANE,     uint16_t, lane,    )
 {
     UklWorkQueue q = test_queue(slots, control, args);
-    uint32_t polls = 0u, taken = 0u;
+    uint32_t taken = 0u;
     for (uint32_t turn = 0u; turn < UKL_WQ_TURNS && !ukl_wq_spent(q, taken); turn++) {
         uint32_t item = 0u;
         bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
         if (got)
             visit(q, visits, args.w, item);
-        // The group's takes that got any item: the same count in every lane.
-        taken += ukl_sg_count(got __UKL_ARGS) != 0u ? 1u : 0u;
-        if (ukl_wq_idle_sg(q, got, &polls, args.n __UKL_ARGS))
+        // The group's takes that got any item: the same count in every lane. None: the group ends (0540 step 7).
+        bool any = ukl_sg_count(got __UKL_ARGS) != 0u;
+        if (!any)
             break;
+        taken++;
     }
 }
 
