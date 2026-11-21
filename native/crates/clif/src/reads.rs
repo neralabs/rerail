@@ -136,6 +136,11 @@ pub const READS: &[Read] = &[
     // descendants as a range of numbers. Last, so no other read's number moves.
     Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
     Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
+    // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host):
+    // last, so no other read's number moves.
+    Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
+    Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
+    Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
 ];
 
 /// The reads the kernels' UKL leaves out: `tape_lz4` takes its destination's address, a host's (the tape crate's

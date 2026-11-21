@@ -1067,8 +1067,9 @@
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
-        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
-        for name in ["node", "child", "field", "core_node", "line"] {
+        // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
+        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
+        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
             let (n, k) = (src.len(), src.columns().len());
@@ -1107,8 +1108,8 @@
                 }
             }
         }
-        assert_eq!(seen, 10);
-        assert_eq!(in_place, 10, "node, child, field, core_node and line read in place");
+        assert_eq!(seen, 16);
+        assert_eq!(in_place, 16, "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};

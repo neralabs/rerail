@@ -3372,7 +3372,8 @@ impl Source for Viewed {
         // lines) is on the device.
         #[cfg(target_os = "macos")]
         let loc = matches!(self.view, View::Loc(_));
-        let in_place = (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
+        let read_only = matches!(view, device_chunk::VIEW_TAPE | device_chunk::VIEW_DEPTH | device_chunk::VIEW_ORDER);
+        let in_place = (loc || read_only || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
@@ -3383,6 +3384,10 @@ impl Source for Viewed {
             });
         #[cfg(not(target_os = "macos"))]
         let in_place: Option<()> = None;
+        // `tape`, `ast_depth` and `node_order` are read in place or not at all: no device code makes their rows.
+        if read_only && in_place.is_none() {
+            return None;
+        }
         if matches!(self.view, View::Loc(_)) && in_place.is_none() && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
         }

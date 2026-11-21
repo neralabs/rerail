@@ -535,7 +535,10 @@ __attribute__((noinline)) static long vread(uint kind, device const ViewDir* d, 
         case 5u: return long(clif_view_loc_line(d->chunk, e.entry, e.tape, v, e.lines, i, col));
         case 6u: return long(clif_view_loc_end(d->chunk, e.entry, e.tape, v, e.lines, i, col));
         case 7u: return long(clif_view_loc_col(d->chunk, e.entry, e.tape, v, e.lines, i, col));
-        default: return long(clif_view_loc_docof(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 8u: return long(clif_view_loc_docof(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 9u: return long(clif_view_tape(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 10u: return long(clif_view_depth(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        default: return long(clif_view_order(d->chunk, e.entry, e.tape, v, e.lines, i, col));
     }
 }
 "#;
