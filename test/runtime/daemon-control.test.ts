@@ -1,6 +1,7 @@
 import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -16,6 +17,7 @@ import {
   type DaemonState,
   type FoundDaemon,
   type NativeLaunch,
+  type StartDaemonResult,
   type StartedChild,
   type StopDaemonResult,
   AUTOSTART_CLAIM_FILE,
@@ -36,8 +38,10 @@ import {
   keepAutostartClaim,
   launchDetached,
   lookupDaemon,
+  MACHINE_WITHOUT_ENGINE,
   openDashboard,
   openInBrowser,
+  OtherDaemonKeptError,
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
@@ -509,7 +513,9 @@ describe("Rerail daemon control", () => {
       process.env.RERAIL_HOME = home;
       process.env.RERAIL_AUTOSTART = "false";
 
-      await expect(daemonEngineEndpoint(true)).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+      const refused = daemonEngineEndpoint(true);
+      await expect(refused).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+      await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
     } finally {
       if (autostart === undefined) delete process.env.RERAIL_AUTOSTART;
       else process.env.RERAIL_AUTOSTART = autostart;
@@ -813,6 +819,287 @@ describe("a state file Windows left behind", () => {
     await writeFile(stateFile, JSON.stringify(state));
     expect(await lookupDaemon(home, { ...windows([PIPE_NAME]), ...proving })).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
     expect(sent).toEqual(["capability"]);
+  });
+
+  /** When the daemon of the records below stamped `startedAt`. */
+  const OLDER_STARTED_AT = 1_800_000_000_000;
+
+  /**
+   * A Windows machine where the daemon a state file records runs an engine of a release before the proof, which has no
+   * proof to give (`no-proof`), and whose process started at `started`; each start read's limit goes to `limits`.
+   */
+  function olderEngine(started: number | undefined, limits: number[] = []): DaemonMachine {
+    return {
+      ...windows([PIPE_NAME]),
+      capabilityProof: async () => "no-proof",
+      processStartedAt: (pid, timeoutMs) => {
+        limits.push(timeoutMs);
+        return pid === DEAD_PID ? started : undefined;
+      },
+    };
+  }
+
+  it("finds a daemon whose engine has no proof by when its process started, and sends it the capability only then", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    const sent: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, init: RequestInit) => {
+      sent.push(new Headers(init.headers).get("x-rerail-access"));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    // A process keeps its pid for life, so one that started before the record was stamped is the daemon that wrote it,
+    // and holds the port of the URL it recorded. Its start is read within what is left of the lookup's own 2 s once the
+    // proof has taken 1.5 s of them.
+    const limits: number[] = [];
+    await writeFile(stateFile, JSON.stringify(state));
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const slowProof: DaemonMachine = {
+        ...olderEngine(OLDER_STARTED_AT - 600, limits),
+        capabilityProof: async () => {
+          vi.setSystemTime(Date.now() + 1_500);
+          return "no-proof";
+        },
+      };
+      expect(await lookupDaemon(home, slowProof)).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(sent).toEqual(["capability"]);
+    expect(existsSync(stateFile)).toBe(true);
+    expect(limits).toHaveLength(1);
+    expect(limits[0]).toBeGreaterThan(0);
+    expect(limits[0]).toBeLessThanOrEqual(500);
+
+    // A process that took the pid once the daemon was gone started later: the record is stale, and nothing is sent.
+    sent.length = 0;
+    expect(await lookupDaemon(home, olderEngine(OLDER_STARTED_AT + 60_000))).toEqual({ status: "absent" });
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+
+    // A start that cannot be read proves nothing: nothing is sent, and the record goes, as for any engine that does
+    // not prove itself, so a hook launches its own daemon rather than wait for one it may neither use nor replace.
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await recordedDaemonAlive(state, olderEngine(undefined))).toBe(false);
+    expect(await lookupDaemon(home, olderEngine(undefined))).toEqual({ status: "absent" });
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it("takes a daemon whose engine has no proof for this home's only while this user may signal its process", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    const sent: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, init: RequestInit) => {
+      sent.push(new Headers(init.headers).get("x-rerail-access"));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    // A process this user may not signal (EPERM) is one it could neither stop nor replace, whenever it started.
+    const unsignalable: DaemonMachine = { ...olderEngine(OLDER_STARTED_AT - 600), kill: denied };
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await recordedDaemonAlive(state, unsignalable)).toBe(false);
+    expect(await lookupDaemon(home, unsignalable)).toEqual({ status: "absent" });
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  // A hook asks whether Rerail runs in its repository before every tool call; the status line and the MCP bridge ask
+  // before each read. A lookup alone tells a daemon whose engine has no proof from a stale record, and its caller alone
+  // stops or replaces it: every other reader sends it nothing, as an engine that refuses the proof, and reads no start
+  // for it, which on Windows loads the engine into the reader's process.
+  it("sends a daemon whose engine has no proof nothing outside a lookup, and reads no start for it", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    const limits: number[] = [];
+    expect(await recordedDaemonStatus(state, olderEngine(OLDER_STARTED_AT - 600, limits))).toBe("gone");
+    expect(await recordedDaemonAlive(state, olderEngine(OLDER_STARTED_AT - 600, limits))).toBe(false);
+    expect(limits).toEqual([]);
+  });
+
+  it("stops a daemon whose engine has no proof once its start shows it wrote the record", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT });
+    // A daemon of Rerail 0.1.4 or earlier answers its health probe and has no shutdown route, so it is asked none.
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      asked.push(path);
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    const signals: Array<string | number | undefined> = [];
+    let running = true;
+    const limits: number[] = [];
+    const machine: DaemonMachine = {
+      ...olderEngine(OLDER_STARTED_AT - 600, limits),
+      kill: (_pid, signal) => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        signals.push(signal);
+        if (signal === "SIGTERM") running = false;
+        return true;
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    // The stop's lookup reads the start within the stop's own 10 s, not a hook's 2 s: `rerail install --remove` reads
+    // it through Windows PowerShell, which can take longer, and a start not read would drop the record.
+    expect(limits[0]).toBeGreaterThan(2_000);
+    expect(asked).toEqual(["/healthz"]);
+    expect(signals.filter(signal => signal !== 0)).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  /** This checkout: the package the hooks under test run from. */
+  const OWN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const OTHER_ROOT = String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\@neralabs\rerail`;
+
+  /**
+   * A Windows machine whose daemon.json in `home` names a live daemon of Rerail 0.1.4 or earlier, launched from
+   * `packageRoot`, whose process started at `started` (undefined: its start cannot be read). Each request to its URL,
+   * each signal to its pid and each launch goes to `events`, in order. A launched daemon's pid is one no process holds
+   * here, so it reads as exited at once, whether or not the earlier daemon still runs: a start ends without its 15 s
+   * wait, and the order of events alone decides.
+   */
+  async function besideOlderDaemon(started: number | undefined, packageRoot: string, events: string[]): Promise<DaemonMachine> {
+    const state = stateFor({
+      pid: DEAD_PID, version: "0.1.4", kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT, packageRoot,
+    });
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      events.push(path);
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
+    let running = true;
+    return {
+      ...olderEngine(started),
+      env: { RERAIL_HOME: home },
+      kill: (pid, signal) => {
+        if (pid !== DEAD_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        if (signal !== 0) events.push(String(signal));
+        if (signal === "SIGTERM") running = false;
+        return true;
+      },
+      spawnDetached: () => {
+        events.push("launch");
+        return { pid: DEAD_PID - 1 };
+      },
+    };
+  }
+
+  /** A hook's start in `home`, from this checkout's package, as a session's start makes it. */
+  async function hookStart(machine: DaemonMachine): Promise<StartDaemonResult> {
+    const control = { home, packageRoot: OWN_ROOT, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    return await startDaemonForPackage(control, { dev: true, port: 0 }, machine);
+  }
+
+  // A hook's start before it sends its settings replaces a daemon of another install. One whose engine has no proof
+  // (Rerail 0.1.4 or earlier) is ended first, as `rerail daemon stop` ends it: left running, it would keep its engine
+  // pipe and the database open beside the hook's daemon, with no record naming it, and its own later starts would fail.
+  // It predates the fields a hook sends, so a hook's start replaces it even when it ran from the hook's own package.
+  it.each([
+    ["another install", OTHER_ROOT],
+    ["the hook's own package", OWN_ROOT],
+  ])("ends a daemon whose engine has no proof, launched from %s, before a hook's start launches its own", async (_from, packageRoot) => {
+    const events: string[] = [];
+    const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, packageRoot, events);
+    await expect(hookStart(machine)).rejects.toThrow(/exited/u);
+    expect(events).toEqual(["/healthz", "SIGTERM", "launch"]);
+  });
+
+  // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
+  // when it ran from the hook's own package. Its replacement ends here at the SIGTERM, which the test makes fail.
+  it("sends no event of a session to a daemon whose engine has no proof, launched from the hook's own package", async () => {
+    const events: string[] = [];
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    const machine: DaemonMachine = {
+      ...older,
+      kill: (pid, signal) => {
+        if (signal === "SIGTERM") throw new Error("the replacement reached its SIGTERM");
+        return older.kill(pid, signal);
+      },
+    };
+    await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow(/reached its SIGTERM/u);
+    expect(events.filter(event => event !== "/healthz")).toEqual([]);
+  });
+
+  // With RERAIL_AUTOSTART=0 the person runs the daemon and a hook replaces none, so it sends that daemon nothing and
+  // says it is not the active package's, as for a daemon of another install. Its record stays for the stop, which the
+  // message names first: `rerail daemon start` answers that a daemon already runs.
+  it("sends no event of a session to a daemon whose engine has no proof while RERAIL_AUTOSTART=0 keeps it", async () => {
+    const events: string[] = [];
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    const machine: DaemonMachine = { ...older, env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" } };
+    // The error a session's start answers with the line that tells the person (`answerAutostartOff`).
+    const refused = runningDaemonEngineEndpoint(undefined, machine);
+    await expect(refused).rejects.toThrow(new OtherDaemonKeptError(
+      "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package, and the running one is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET",
+    ));
+    await expect(refused).rejects.toBeInstanceOf(OtherDaemonKeptError);
+    expect(events.filter(event => event !== "/healthz")).toEqual([]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
+  });
+
+  // A start does not replace a daemon that was busy when it looked and answered only later, as for a busy daemon of
+  // another install: the hook sends one whose engine has no proof nothing either, and says why.
+  it("sends no event to a daemon whose engine has no proof that answered only after a hook's start looked", async () => {
+    const events: string[] = [];
+    const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    let probes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      events.push(path);
+      if (path === "/healthz" && ++probes === 1) throw new Error("connect ECONNREFUSED");
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    const refused = daemonEngineEndpoint(true, undefined, machine);
+    await expect(refused).rejects.toThrow(
+      new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start"),
+    );
+    await expect(refused).rejects.not.toBeInstanceOf(OtherDaemonKeptError);
+    expect(events).toEqual(["/healthz", "/healthz"]);
+  });
+
+  // Nothing proves that daemon this home's, so the hook's start launches its own as beside a gone one: one that waited
+  // for a daemon it may neither use nor replace would fail every event of the session.
+  it("launches a hook's daemon beside a daemon whose engine has no proof and whose start cannot be read", async () => {
+    const events: string[] = [];
+    const machine = await besideOlderDaemon(undefined, OTHER_ROOT, events);
+    await expect(hookStart(machine)).rejects.toThrow(/exited/u);
+    expect(events).toEqual(["launch"]);
+  });
+
+  // This machine reads a process's start through the engine, so a status or a hook beside a daemon of Rerail 0.1.4 or
+  // earlier starts no process for it: neither the second Windows PowerShell costs nor one a policy blocks.
+  // The uninstall stops the daemon on this machine as a process that loads no engine reads it: it deletes the engine's
+  // folder next, and Windows keeps a loaded DLL from being deleted.
+  it("gives a process that must not load the engine a machine that reads a process's start without it", () => {
+    expect(MACHINE_WITHOUT_ENGINE.processStartedAt).toBe(processStartedAt);
+  });
+
+  it.runIf(process.platform === "win32")("finds a daemon whose engine has no proof on this machine, starting no process for it", async () => {
+    const daemon = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    const pipe = defaultEngineSocketPath(join(home, "rerail.sqlite"), "win32");
+    // An engine of 0.1.4 answers 404 to every path but its events, the proof's among them.
+    const engine = createHttpServer((_request, response) => {
+      response.statusCode = 404;
+      response.end();
+    });
+    engine.listen(pipe);
+    await once(engine, "listening");
+    try {
+      // A daemon stamps startedAt once it has started, 0.6 s or more after Windows created its process; stamped at
+      // once here, Node's clock and the one Windows stamps a creation with can differ by a tick, so it gets a second.
+      const state = stateFor({ pid: daemon.pid!, kernelSocketPath: pipe, accessToken: "capability", startedAt: Date.now() + 1_000 });
+      vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: daemon.pid })));
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
+      const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
+      expect(await lookupDaemon(home)).toMatchObject({ status: "running", state: { pid: daemon.pid }, older: true });
+      expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
+    } finally {
+      engine.close();
+      const closed = once(daemon, "close");
+      daemon.kill();
+      await closed;
+    }
   });
 
   it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {
@@ -1973,7 +2260,7 @@ describe("the engine endpoint of a busy daemon", () => {
     await holdHome(home, DEAD_PID);
     const machine = fakeMachine("linux", { env, kill: () => true, homeDaemonLockHeld: () => true });
     await expect(daemonEngineEndpoint(true, undefined, machine)).rejects.toThrow(
-      new Error("the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start"),
+      new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start"),
     );
     expect(probes).toBe(2);
   });

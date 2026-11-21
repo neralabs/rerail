@@ -25,7 +25,7 @@ import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
-import { processStartedAt, processState, type ProcessSignal } from "../engine/process-liveness.js";
+import { processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -322,12 +322,15 @@ const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 export interface RunningDaemon {
   state: DaemonState;
   health: DaemonHealth;
+  /** A daemon of a release before the engine's proof, as a lookup marks it ({@link DaemonLookup}). */
+  older?: true;
 }
 
 /**
  * What the state file says, checked against reality.
  *
- * - `running`: the recorded pid is alive and `/healthz` answers with that pid.
+ * - `running`: the recorded pid is alive and `/healthz` answers with that pid. `older` marks a daemon of a release
+ *   before the engine's proof, Rerail 0.1.4 or earlier, found by its process's start on Windows ({@link olderDaemon}).
  * - `unresponsive`: the pid is alive but the probe failed. The state is kept:
  *   a transient timeout must not orphan a live daemon, and `stop` still needs
  *   the pid. `start` refuses rather than spawning a second instance.
@@ -338,7 +341,7 @@ export interface RunningDaemon {
  *   home's daemon ({@link recordedProcess}).
  */
 export type DaemonLookup =
-  | { status: "running"; state: DaemonState; health: DaemonHealth }
+  | { status: "running"; state: DaemonState; health: DaemonHealth; older?: true }
   | { status: "unresponsive"; state: DaemonState }
   | { status: "refused"; state: DaemonState }
   | { status: "absent"; notDaemon?: number };
@@ -585,12 +588,19 @@ const THIS_MACHINE: DaemonMachine = {
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
-  processStartedAt,
+  processStartedAt: (pid, timeoutMs) => processStartedAtThroughEngine(pid, timeoutMs),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
   spawnShown,
 };
+
+/**
+ * This machine as a process that must not load the engine reads it: one that deletes the engine's folder after it
+ * stops the daemon, as the uninstall deletes `versions/`, since Windows keeps a loaded DLL from being deleted. It reads
+ * a process's start through Windows PowerShell (`processStartedAt`), which takes about a second each time.
+ */
+export const MACHINE_WITHOUT_ENGINE: DaemonMachine = { ...THIS_MACHINE, processStartedAt };
 
 /**
  * Whether the engine pipe `state` records exists. Windows ends a daemon without its shutdown handler (logoff, reboot,
@@ -631,8 +641,22 @@ export function mainInstanceHolderRuns(directory: string, pid: number, machine: 
  */
 export type RecordedDaemon = "alive" | "gone" | "silent";
 
+/**
+ * {@link RecordedDaemon} as the engine's proof leaves it, with `no-proof` for a live pid this user may signal whose
+ * engine has no proof to give: Rerail 0.1.4 or earlier, or a listener without the proof's path on a gone daemon's pipe
+ * name. A lookup reads on ({@link lookedUpEngine}); every other reader takes it as `gone` ({@link recordedDaemon}).
+ */
+type ProofVerdict = RecordedDaemon | "no-proof";
+
+/**
+ * {@link RecordedDaemon} as a lookup makes it, with `older` for a daemon that may be sent the capability and runs a
+ * release before the engine's proof, Rerail 0.1.4 or earlier ({@link olderDaemon}). A hook's start replaces such a
+ * daemon whatever package it ran from (`startDaemonForPackage`).
+ */
+type RecordedEngine = RecordedDaemon | "older";
+
 /** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
-const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
+const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, ProofVerdict>> = { proved: "alive", "no-proof": "no-proof", refused: "gone", silent: "silent" };
 
 /**
  * How long a reader of a state file gives the engine's proof on Windows ({@link recordedDaemon}): its limit, and whether
@@ -647,11 +671,33 @@ type ProofWait = { timeoutMs: number } & Pick<EngineProofOptions, "waitForInstan
  * be live, and on macOS and Linux this user's to signal: another user's process cannot be this user's daemon. Windows
  * asks more ({@link windowsRecordedDaemon}).
  */
-async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: ProofWait): Promise<RecordedDaemon> {
+async function proofVerdict(state: DaemonState, machine: DaemonMachine, wait: ProofWait): Promise<ProofVerdict> {
   const daemon = processState(state.pid, machine.kill);
   if (daemon === "gone") return "gone";
   if (machine.platform === "win32") return await windowsRecordedDaemon(state, daemon === "running", machine, wait);
   return daemon === "running" ? "alive" : "gone";
+}
+
+/**
+ * {@link proofVerdict} for a reader that only reads the daemon or sends it the capability: each hook's check whether
+ * Rerail runs in its repository, the status line, the MCP bridge and a stop's shutdown request. An engine with no proof
+ * is sent nothing, as one that refuses the proof, and its process's start is not read: a hook asks this before every
+ * tool call, and a start read there loads the engine into the hook's process. Only a lookup tells such a daemon from a
+ * stale record, and only a lookup's caller stops or replaces it ({@link lookedUpEngine}).
+ */
+async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: ProofWait): Promise<RecordedDaemon> {
+  const recorded = await proofVerdict(state, machine, wait);
+  return recorded === "no-proof" ? "gone" : recorded;
+}
+
+/**
+ * {@link proofVerdict} for a lookup, by `deadline` (epoch ms): the start of the process an engine with no proof runs in,
+ * read by `readDeadline`, the lookup's own limit, decides whether it is the daemon that wrote the record
+ * ({@link olderDaemon}).
+ */
+async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadline: number, readDeadline: number): Promise<RecordedEngine> {
+  const recorded = await proofVerdict(state, machine, { timeoutMs: deadline - Date.now() });
+  return recorded === "no-proof" ? olderDaemon(state, machine, readDeadline) : recorded;
 }
 
 /**
@@ -663,11 +709,29 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: 
  * this user's daemon, started from an elevated terminal or agent session. An engine silent for `wait.timeoutMs` is
  * `silent`: a daemon busy in an audit is, and dropping its state for that would lose a daemon that still runs. A state
  * without a capability is sent none, and the pid and pipe decide.
+ *
+ * An engine of Rerail 0.1.4 or earlier has no proof to give (`no-proof`), nor has a listener without the proof's path
+ * on a gone daemon's pipe name. A lookup reads on for one only where this user may signal its pid, and so stop or
+ * replace its daemon ({@link olderDaemon}); one it may not is `gone`, as before the proof's 404 was told apart.
  */
-async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, wait: ProofWait): Promise<RecordedDaemon> {
+async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, wait: ProofWait): Promise<ProofVerdict> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
-  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait)];
+  const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait);
+  return answer === "no-proof" && !signalable ? "gone" : PROOF_VERDICT[answer];
+}
+
+/**
+ * What a lookup makes of the daemon a Windows state records whose engine has no proof to give and whose pid this user
+ * may signal ({@link lookedUpEngine}), from the start of the process holding that pid, read by `deadline`
+ * ({@link startVerdict}). A process keeps its pid for life, so one that started no later than the record's `startedAt`
+ * is the daemon that wrote it, and holds the recorded pipe and URL while it runs: `older`. Anything else is `gone`, and
+ * the record is dropped: a process that took a gone daemon's pid, and a start that cannot be read or falls within
+ * {@link START_CLOCK_SLACK_MS}. A record kept with nothing proved would have every hook wait for a daemon it may
+ * neither use nor replace, and fail.
+ */
+function olderDaemon(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedEngine {
+  return startVerdict(state, machine, deadline) === "ours" ? "older" : "gone";
 }
 
 /**
@@ -778,7 +842,7 @@ function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: numb
  * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}),
  * within what is left of `readLimitMs` from the lookup's start (that limit, unless a stop passes its own wait): a busy
  * daemon is kept, and a process that took a dead daemon's pid is not. A start time not read by then proves nothing, and
- * the record is kept.
+ * the record is kept. The start of a daemon whose engine has no proof is read by the same limit ({@link olderDaemon}).
  */
 export async function lookupDaemon(
   home: string,
@@ -790,16 +854,19 @@ export async function lookupDaemon(
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
   const deadline = Date.now() + readLimitMs;
-  const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
+  const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs, deadline);
   if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
   await rm(stateFile, { force: true });
   return { status: "absent", notDaemon: state.pid };
 }
 
-/** What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`. */
-async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number): Promise<DaemonLookup> {
+/**
+ * What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`;
+ * the start of a daemon whose engine has no proof is read by `readDeadline` (epoch ms), the lookup's own limit.
+ */
+async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number, readDeadline: number): Promise<DaemonLookup> {
   const deadline = Date.now() + probeTimeoutMs;
-  const recorded = await recordedDaemon(state, machine, { timeoutMs: probeTimeoutMs });
+  const recorded = await lookedUpEngine(state, machine, deadline, readDeadline);
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
   // fails its engine's proof: the state is stale, and its URL is never probed.
   if (recorded === "gone") {
@@ -808,7 +875,8 @@ async function checkedLookup(stateFile: string, state: DaemonState, machine: Dae
   }
   // A busy daemon is waited for, not forgotten; its URL is not probed with a capability its engine has not proved.
   if (recorded === "silent") return { status: "unresponsive", state };
-  return await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
+  const found = await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
+  return recorded === "older" && found.status === "running" ? { ...found, older: true } : found;
 }
 
 /** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
@@ -1036,7 +1104,7 @@ export async function startDaemonForPackage(
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
     if (lookup.status === "running") {
-      if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
+      if (await daemonServesPackage(lookup, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
       await stopFoundDaemon(control.home, lookup, machine);
@@ -1045,6 +1113,15 @@ export async function startDaemonForPackage(
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
   });
+}
+
+/**
+ * Whether a hook may send its settings and events to the healthy daemon it found (`found`): one launched from the hook's
+ * own package (`packageRoot`), unless it runs a release before the engine's proof (`older`, known on Windows), which
+ * predates the fields the hook sends whichever package it ran from.
+ */
+export async function daemonServesPackage(found: Pick<RunningDaemon, "state" | "older">, packageRoot: string): Promise<boolean> {
+  return found.older !== true && await daemonUsesPackageRoot(found.state, packageRoot);
 }
 
 /** Whether a healthy daemon was launched from the package the caller is executing. */
@@ -1067,6 +1144,16 @@ export class AutostartOffError extends Error {
   override readonly name = "AutostartOffError";
 }
 
+/**
+ * A daemon runs that the caller may not send events to (another package's, or a release before the engine's proof:
+ * {@link daemonServesPackage}), and `RERAIL_AUTOSTART` (`0` or `false`) kept the caller from replacing it. Unlike a
+ * daemon that is not running, this is no choice of the person's: hooks log each event it costs, and a session's start
+ * says so (`answerAutostartOff`).
+ */
+export class OtherDaemonKeptError extends Error {
+  override readonly name = "OtherDaemonKeptError";
+}
+
 /** What `rerail status` and `rerail daemon stop` say when daemon.json named a live process that is not the home's daemon. */
 export const NOT_HOME_DAEMON_NOTE = "The process daemon.json named is not a Rerail daemon of this home, so Rerail ended nothing and removed that record.";
 
@@ -1083,13 +1170,23 @@ export function daemonNotRunningMessage(env: NodeJS.ProcessEnv = process.env): s
 }
 
 /**
+ * What a session's start says (`answerAutostartOff`) when `RERAIL_AUTOSTART` kept its hook from replacing a daemon the
+ * hook may not use ({@link OtherDaemonKeptError}): nothing is recorded until a daemon of the active package runs, and
+ * the stop comes before the start, since a start beside a running daemon answers that one already runs.
+ */
+export function otherDaemonKeptMessage(env: NodeJS.ProcessEnv = process.env): string {
+  return `The running Rerail daemon is from another Rerail package or an earlier release, and RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} keeps hooks from replacing it, so nothing is recorded until a daemon from the active package runs. Run rerail daemon stop, then rerail daemon start.`;
+}
+
+/**
  * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
- * another package, which is how a hook keeps an older daemon from receiving fields it predates; a client that
- * outlives an update passes false after its first event so it keeps using the newer daemon instead of displacing
- * it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError` without
- * one. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the caller
- * names one, as a hook does.
+ * another package or of a release before the engine's proof ({@link daemonServesPackage}), which is how a hook keeps
+ * an older daemon from receiving fields it predates, and sends such a daemon nothing where it may not replace it; a
+ * client that outlives an update passes false after its first event so it keeps using the newer daemon instead of
+ * displacing it. `RERAIL_AUTOSTART=0` starts nothing and requires a running daemon, and throws `AutostartOffError`
+ * without one and `OtherDaemonKeptError` beside one it may not use. A daemon that is alive but busy is waited for (`patientLookup`), until `deadline` (epoch ms) when the
+ * caller names one, as a hook does.
  */
 export async function daemonEngineEndpoint(
   replaceOtherPackage: boolean,
@@ -1104,21 +1201,23 @@ export async function daemonEngineEndpoint(
   if (daemon === undefined) {
     throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
-  if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
-    throw new Error(otherPackageDaemon(machine.env));
+  if (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot))) {
+    throw otherPackageDaemon(machine.env);
   }
   return engineEndpointOf(daemon.state);
 }
 
 /**
- * Why the caller sends no event to the daemon of another package it found. An off autostart may not replace that
- * daemon, so the error names the setting as the person set it. With autostart on, a start replaces it unless it was
- * busy when the start looked and answered only later, so the error names no setting.
+ * Why the caller sends no event to the daemon it found of another package or of a release before the engine's proof
+ * ({@link daemonServesPackage}). An off autostart may not replace that daemon, so the error is an
+ * {@link OtherDaemonKeptError}, which a session's start answers, and names the setting as the person set it, and the
+ * stop before the start: a start beside a running daemon answers that one already runs. With autostart on, a start
+ * replaces it unless it was busy when the start looked and answered only later, so the error names no setting.
  */
-function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
+function otherPackageDaemon(env: NodeJS.ProcessEnv): Error {
   return autostartOff(env)
-    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`
-    : "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start";
+    ? new OtherDaemonKeptError(`RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package, and the running one is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET`)
+    : new Error("the running Rerail daemon is from another Rerail package or an earlier release; run rerail daemon stop, then rerail daemon start");
 }
 
 /**
@@ -1129,7 +1228,7 @@ function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
 async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | undefined> {
   const lookup = await patientLookup(home, machine, deadline);
   if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
-  return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
+  return lookup.status === "running" ? lookup : undefined;
 }
 
 /**
@@ -1151,7 +1250,7 @@ async function startedDaemon(
     if (!(error instanceof LiveDaemonError) || error.lookup.status !== "unresponsive") throw error;
     const answered = await patientLookup(control.home, machine, deadline, error.lookup);
     if (answered.status !== "running") throw error;
-    return { state: answered.state, health: answered.health };
+    return answered;
   }
 }
 
@@ -1165,13 +1264,14 @@ export type HookDaemon = { status: "running"; endpoint: EngineEndpoint } | Exclu
  * The engine endpoint for a hook after a session's start, or why there is none. A daemon that is down is not started:
  * each tool call then costs one failed probe instead of an autostart that can outlast the coding agent's hook timeout
  * (design N11). A busy one is waited for (`patientLookup`), until `deadline` when the hook names one. A healthy daemon
- * from another package (an update installed mid-session) is replaced as `daemonEngineEndpoint(true)` replaces it, so
- * steering carries on with this package's engine.
+ * from another package (an update installed mid-session), or of a release before the engine's proof
+ * ({@link daemonServesPackage}), is replaced as `daemonEngineEndpoint(true)` replaces it, so steering carries on with
+ * this package's engine.
  */
 export async function runningDaemonEngineEndpoint(deadline?: number, machine: DaemonMachine = THIS_MACHINE): Promise<HookDaemon> {
   const lookup = await patientLookup(defaultRerailHome(machine.env), machine, deadline);
   if (lookup.status !== "running") return lookup;
-  const endpoint = await daemonUsesPackageRoot(lookup.state, PACKAGE_ROOT)
+  const endpoint = await daemonServesPackage(lookup, PACKAGE_ROOT)
     ? engineEndpointOf(lookup.state)
     : await daemonEngineEndpoint(true, deadline, machine);
   return { status: "running", endpoint };

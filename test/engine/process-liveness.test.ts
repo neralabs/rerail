@@ -5,11 +5,13 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { exitedEveryThread, processStartedAt, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import * as native from "../../src/engine/native/native.js";
+import { exitedEveryThread, processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
 import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
 
-// Spies that call through, so a test can stand a program in for Windows PowerShell.
+// Spies that call through, so a test can stand a program in for Windows PowerShell, and see whether the engine loads.
 vi.mock("node:child_process", { spy: true });
+vi.mock("../../src/engine/native/native.js", { spy: true });
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -121,9 +123,12 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
 
   // A FILETIME counts 100 ns ticks from 1601-01-01 UTC; this one is 1,234 ticks past 1_700_000_000_000 ms since 1970,
   // more than a double holds exactly.
-  it("reads the creation time PowerShell prints as a FILETIME, in epoch milliseconds", async () => {
+  // The uninstall reads this way before it deletes the folder the engine loads from, which a loaded DLL would keep.
+  it("reads the creation time PowerShell prints as a FILETIME, in epoch milliseconds, and loads no engine", async () => {
+    const loads = vi.mocked(native.loadNativeBinding).mock.calls.length;
     await standIn(process.execPath, ["-e", "process.stdout.write('133444736000001234\\r\\n')"]);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBe(1_700_000_000_000);
+    expect(vi.mocked(native.loadNativeBinding).mock.calls.length).toBe(loads);
   });
 
   // AppLocker and WDAC script policies run PowerShell in Constrained Language Mode, which allows cmdlets and the methods
@@ -154,5 +159,102 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     const calls = vi.mocked(childProcess.spawnSync).mock.calls.length;
     expect(processStartedAt(process.pid, 0, "win32")).toBeUndefined();
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(calls);
+  });
+});
+
+describe("processStartedAtThroughEngine", () => {
+  /**
+   * An engine that answers every pid with a start and records each pid it is asked for. A read on a system the engine
+   * does not serve shows by both that it never asked: an engine that throws could not show it, since the read takes any
+   * throw for no answer.
+   */
+  const answeringEngine = (asked: number[]) => () => ({
+    processStartedAt: (pid: number) => {
+      asked.push(pid);
+      return 1_700_000_000_000;
+    },
+  });
+
+  it("reads a Windows process's start through the engine, which starts no process", () => {
+    const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
+    const asked: number[] = [];
+    const engine = () => ({
+      processStartedAt: (pid: number) => {
+        asked.push(pid);
+        return pid === 7 ? 1_700_000_000_000 : null;
+      },
+    });
+    expect(processStartedAtThroughEngine(7, 2_000, "win32", engine)).toBe(1_700_000_000_000);
+    expect(processStartedAtThroughEngine(8, 2_000, "win32", engine)).toBeUndefined();
+    expect(asked).toEqual([7, 8]);
+    expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
+  });
+
+  // As the PowerShell read is: a lookup whose limit an engine silent to the proof used up keeps the record unread.
+  it("reads nothing on Windows with no time left, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    const engine = () => ({
+      processStartedAt: (pid: number) => {
+        asked.push(pid);
+        return 1_700_000_000_000;
+      },
+    });
+    expect(processStartedAtThroughEngine(7, 0, "win32", engine)).toBeUndefined();
+    expect(processStartedAtThroughEngine(7, -5, "win32", engine)).toBeUndefined();
+    expect(asked).toEqual([]);
+  });
+
+  it("reads nothing where the engine does not load or was built before the read", () => {
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => {
+      throw new Error("Unsupported platform or missing native addon");
+    })).toBeUndefined();
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => ({}))).toBeUndefined();
+  });
+
+  it("reads no start on a system it does not read, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", answeringEngine(asked))).toBeUndefined();
+    expect(asked).toEqual([]);
+  });
+
+  it.runIf(process.platform === "linux")("reads Linux's start from /proc whatever time is left, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    // As processStartedAt does, with no time left and with time left, when a lookup would load the engine to ask it.
+    // Each read counts the start back from the clock at its own moment, so the reads can differ by the time they took
+    // and by /proc's 10 ms resolution, and no more.
+    const before = Date.now();
+    const withNone = processStartedAtThroughEngine(process.pid, 0, "linux", answeringEngine(asked));
+    const withSome = processStartedAtThroughEngine(process.pid, 2_000, "linux", answeringEngine(asked));
+    const again = processStartedAt(process.pid, 0, "linux");
+    const took = Date.now() - before;
+    for (const started of [withNone, withSome]) {
+      expect(started).toBeDefined();
+      expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
+    }
+    expect(asked).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("reads when this process and a later one started through the engine built here", async () => {
+    const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
+    // The order of facts decides, not how long anything took: this process was created before the case ran, and the
+    // child after the case asked for it. Windows stamps a creation with a clock that can read a timer tick (15.6 ms by
+    // default) apart from Node's, so the child's lower bound allows two ticks.
+    const asked = Date.now();
+    const started = processStartedAtThroughEngine(process.pid, 2_000);
+    expect(started).toBeDefined();
+    expect(started!).toBeLessThanOrEqual(asked);
+    const spawning = Date.now();
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    try {
+      const childStarted = processStartedAtThroughEngine(child.pid!, 2_000);
+      expect(childStarted).toBeGreaterThan(started!);
+      expect(childStarted!).toBeGreaterThanOrEqual(spawning - 32);
+    } finally {
+      const closed = once(child, "close");
+      child.kill();
+      await closed;
+    }
+    expect(processStartedAtThroughEngine(DEAD_PID, 2_000)).toBeUndefined();
+    expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
   });
 });

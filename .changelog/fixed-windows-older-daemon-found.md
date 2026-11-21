@@ -1,0 +1,1 @@
+On Windows, Rerail no longer loses a daemon of 0.1.4 or earlier still running after an upgrade. `rerail status` deleted its record, so `rerail daemon stop` left it running, and a coding agent's next session in a repository where Rerail runs started a second daemon beside it. Now status and stop find that daemon, and that session replaces it.

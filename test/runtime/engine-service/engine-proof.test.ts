@@ -601,3 +601,42 @@ describe("the engine proof's request", () => {
     expect(asked).toBe(`POST /proof HTTP/1.1\r\nx-rerail-challenge: ${challenge}\r\ncontent-length: 0\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
   }, 15_000);
 });
+
+describe("the engine proof, against an engine of a release before it", () => {
+  /**
+   * Listens on a new endpoint as the engine of Rerail 0.1.4 and earlier does, which has no proof: it takes `POST /events`
+   * only with the capability and answers every other path 404. `proofStatus` replaces that 404 on the proof's path, for a
+   * listener that refuses the proof otherwise. Resolves to the endpoint.
+   */
+  async function engineWithoutProof(name: string, proofStatus = 404): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "rerail-proof-"));
+    folders.push(root);
+    const path = process.platform === "win32" ? pipePath(name) : join(root, "engine.sock");
+    const listener = createServer((request, response) => {
+      request.resume();
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "POST" && request.url === "/events") response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+      else response.writeHead(request.url === "/proof" ? proofStatus : 404).end();
+    });
+    closers.push(() => {
+      listener.closeAllConnections();
+      listener.close();
+    });
+    listener.listen(path);
+    await once(listener, "listening");
+    return path;
+  }
+
+  // A 404 on the proof's path is the answer of an engine built before the proof, and of any listener without that path:
+  // it proves the listener neither this home's engine nor another's. The engine start has no record to weigh it against.
+  it("answers no-proof to a 404 on the proof's path, which the engine start does not take for its home's engine", async () => {
+    const path = await engineWithoutProof("older");
+    expect(await engineCapabilityProof(path, "capability", 1_000)).toBe("no-proof");
+    expect(await engineHoldsCapability(path, "capability", 1_000)).toBe(false);
+  }, 15_000);
+
+  it.each([401, 403, 500])("answers refused to a %i on the proof's path", async (status) => {
+    const path = await engineWithoutProof(`refusing-${status}`, status);
+    expect(await engineCapabilityProof(path, "capability", 1_000)).toBe("refused");
+  }, 15_000);
+});

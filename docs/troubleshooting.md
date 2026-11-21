@@ -476,7 +476,10 @@ With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that fi
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
 show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
 `rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
-nothing is recorded until it runs, and to start it with `rerail daemon start`.
+nothing is recorded until it runs, and to start it with `rerail daemon start`. A daemon that runs but that hooks may
+not use, one of another Rerail package or, on Windows, one of Rerail 0.1.4 or earlier, is not replaced either: the
+session's start says that nothing is recorded until a daemon from the active package runs, and to run
+`rerail daemon stop`, then `rerail daemon start`. Each event lost beside it goes to the hook failure log above.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
