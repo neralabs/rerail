@@ -749,6 +749,49 @@ A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `f
 After: 322 G against 314 G on format 15 (+2.6%), 319 against 315 on format 16 (+1.1%), 397 against 391 on 16z
 (+1.4%), and the same findings on all three. What remains is in-place reading the arrays never paid for: on format
 15 the parent search, and the select that finds the tape node of a node probed by its id.
+
+### Step 3 on the CPU: the executor reads the device's directory (2026-11-21)
+
+**The user (2026-11-21):** "we need to REMOVE all of the host-side CPU stuff. The CPU needs to run on the same blocks
+as the GPU only. … NO CPU-SIDE RUST POINTER-BASED DATA STRUCTURES." And: "A single memo as part of execution is
+fine, it can be done on both the CPU and the GPU. And caches are fine, so long as they are implemented in a way that
+both CPU and GPU can use and share them."
+
+**Where it stands.** The device reads the views in place (step 4d). The batch's block holds a directory (`ViewDir`):
+a `ViewRow` for each document, with each view's first row, its numbering's entry (`ViewDoc`) and its tape. The
+kernels read every view through the reads written once (`rerail_clif::view_reads`: `clif_view_node`,
+`clif_view_number`, …). The CPU's executor reads none of this. Its views are `Viewed` over host structures of its
+own:
+
+| Host structure (CPU only) | What it answers | Its home in the block |
+|---|---|---|
+| `made::Docs` (`slots`, `keys`, `tags`, `given`) and `Projected`'s fields (`key`, `file`, `tag`) | A document by key or index, its projection | `ViewRow` and `ViewDoc` |
+| `Batch::offsets` (`made::Offsets`, a vector a view) | A view's first row of each document | `ViewRow::rows` |
+| `DOC`, `LOCATED` (thread-locals) | The last document found | A memo argument of the directory's reads |
+| `of_tag`, `programs` | A tag's documents; a file's programs | A directory's ranges by tag and by file |
+| `kinds` (`KindRows`) | The `node` view's rows by kind | An index in the batch's block |
+| `given_rows`, `Shared` (`strings`, `at`, `atoms`) | Rows by relation; a group's strings | The run's relations; the atoms directory |
+
+The kernels search the directory by hand too: four bisections with no memo, by row (`vread`, `child_next`,
+`view_expand`) and by key (`by_parent`).
+
+**The steps.**
+1. **The directory is position-independent and always made.** Its addresses (`ViewDir::chunk`, `ViewDir::rows`,
+   `ViewRow::tape`, `ViewRow::lines`) become offsets, and each executor passes its own bases: host addresses on the
+   CPU, device addresses on the GPU. A tape held in a vector (no device) is a base of its own. The directory is made
+   with the batch, on every platform, whether or not a device is open (no `placed::device()` gate).
+2. **The searches are reads written once.** A document by row of a view, and by key, are CLIF reads over the
+   directory. Each takes a memo: the document found last, tried before the bisection. The CPU passes the probe's
+   or scan's cursor, and a kernel passes its own. They replace the four bisections in UKL and `Batch::doc` and
+   `Batch::locate`.
+3. **The CPU's views are the reads.** `Viewed`'s scans and probes read through `view_reads` (the generated Rust;
+   the JIT inlines the CLIF) over the directory. Check: every view's rows equal `Viewed`'s, for every view and
+   dialect, cold and warm, before `Viewed`'s own reads go.
+4. **The host structures in the table go.** Each one is deleted with its last reader, and the table here shrinks
+   to nothing.
+
+Each step ends with findings unchanged (1,629 on cold hogql), instructions measured against the step before, and
+Metal checked on the farm's Macs (the mini, then the M3, then the M1 Max, one test at a time).
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node
