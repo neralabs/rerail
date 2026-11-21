@@ -42,10 +42,13 @@ export interface RepositoryIdentityLocation {
   identityPath: string;
   /** False only for a linked Git worktree; a folder outside Git is its own main checkout. */
   main: boolean;
+  /** Set only outside Git, on a linked worktree whose Git folder was gone as this answer was read ({@link worktreeGitFolderGone}). */
+  gitFolderGone?: true;
 }
 
-function nonGitLocation(requested: string): RepositoryIdentityLocation {
-  return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
+function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIdentityLocation {
+  const location = { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
+  return gitFolderGone ? { ...location, gitFolderGone } : location;
 }
 
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
@@ -135,8 +138,9 @@ interface Located {
 
 function locatedByGit(requested: string): Located {
   const searched = searchedUp(requested);
-  const result = locateInGit(requested);
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  const none = gitFindsNone(requested);
+  const result = none === undefined ? locateInGit(requested) : undefined;
+  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
   return { location, byGit: true, searched };
 }
 
@@ -232,8 +236,9 @@ function rememberGitPlaced(common: string): void {
  */
 export async function repositoryIdentityLocationAsync(workspace: string, signal?: AbortSignal): Promise<RepositoryIdentityLocation> {
   const requested = resolve(workspace);
-  const result = gitFindsNone(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+  const none = gitFindsNone(requested);
+  const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled) : undefined;
+  return result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
 }
 
 /** Undefined when Git is not installed; any other failure is thrown again. */
@@ -242,13 +247,8 @@ function noGitInstalled(error: unknown): undefined {
   throw error;
 }
 
-/**
- * Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed, or when Git
- * would find no repository there ({@link gitFindsNone}), so a folder outside Git, asked about on every hook event of a
- * session working in it, starts no Git process.
- */
+/** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
-  if (gitFindsNone(requested)) return undefined;
   try {
     return runGit(requested, LOCATE_ARGS);
   } catch (error) {
@@ -257,12 +257,14 @@ function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
 }
 
 /**
- * Whether Git, asked where `requested`'s repository is, would answer none, read from the disk without starting Git: the
- * folder is outside Git ({@link outsideGit}), or it is a linked worktree whose Git folder is gone, which Git refuses
- * (exit 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}).
+ * Why Git, asked where `requested`'s repository is, would answer none, read from the disk without starting Git, so a
+ * folder asked about on every hook event of a session working in it starts no Git process: `outside`, the folder is
+ * outside Git ({@link outsideGit}); `gone`, it is a linked worktree whose Git folder is gone, which Git refuses (exit
+ * 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}). Undefined where Git is to be asked.
  */
-function gitFindsNone(requested: string): boolean {
-  return outsideGit(requested) || worktreeGitFolderGone(requested);
+function gitFindsNone(requested: string): "outside" | "gone" | undefined {
+  if (outsideGit(requested)) return "outside";
+  return worktreeGitFolderGone(requested) ? "gone" : undefined;
 }
 
 /**

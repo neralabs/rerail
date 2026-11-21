@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -19,7 +19,7 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
 
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, lstatSync: vi.fn(actual.lstatSync) };
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync), mkdirSync: vi.fn(actual.mkdirSync) };
 });
 
 const temporaryDirectories: string[] = [];
@@ -27,6 +27,7 @@ const openDatabases: RerailDatabase[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
   vi.mocked(lstatSync).mockReset();
+  vi.mocked(mkdirSync).mockReset();
   for (const database of openDatabases.splice(0)) database.$client.close();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
@@ -173,6 +174,39 @@ describe("a linked worktree whose main checkout was deleted", () => {
 
     expect(locateCalls(worktree)).toBe(0);
   });
+
+  it("keeps its recorded clone id when its main checkout, moved away, comes back after the location was read", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    const db = database(root);
+    const recorded = recordCheckout(db, worktree);
+    renameSync(main, join(root, "away"));
+    const { mkdirSync: actualMkdir } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    // A folder outside Git gets its id file's folder made once its location is read: the main checkout comes back then.
+    const comeBack = (...args: Parameters<typeof mkdirSync>): ReturnType<typeof mkdirSync> => {
+      renameSync(join(root, "away"), main);
+      return actualMkdir(...args);
+    };
+    vi.mocked(mkdirSync).mockImplementationOnce(comeBack as typeof mkdirSync);
+
+    expect(recordCheckout(db, worktree).cloneId).toBe(recorded.cloneId);
+  });
+});
+
+describe("a linked worktree whose .git file names its Git folder by a relative path", () => {
+  it("is placed and recorded in its repository through a link its .. climb past, with no id file written into it", async () => {
+    const root = await plainRoot();
+    const link = relativeWorktreeByLink(root);
+    const worktree = join(root, "wts", "feature");
+    expect(gitTop(worktree), "Git places the worktree").toBeDefined();
+    expect(gitTop(link), "Git joins the path to the folder the link leads to").toBe(gitTop(worktree));
+
+    expect(repositoryIdentityLocation(link)).toMatchObject({ git: true, workspaceRoot: gitTop(link) });
+    expect(recordCheckout(database(root), link).git).toBe(true);
+    expect(existsSync(join(worktree, ".rerail")), "the id file of a folder outside Git").toBe(false);
+  });
 });
 
 describe("a folder Git places in a repository with no work tree", () => {
@@ -232,6 +266,24 @@ function goneMainWorktree(root: string): string {
   return linked;
 }
 
+/**
+ * A linked worktree of `root/main` at `root/wts/feature` whose `.git` file names its Git folder by a path relative to
+ * it, as `git worktree add --relative-paths` writes it, reached by the link `root/links/x/current` (a junction on
+ * Windows): the `..` in that path climb from the folder the link leads to, past the link's own folder.
+ */
+function relativeWorktreeByLink(root: string): string {
+  const worktree = join(root, "wts", "feature");
+  git(checkout(root, "main"), "worktree", "add", "-q", "-b", "feature", worktree);
+  writeFileSync(join(worktree, ".git"), "gitdir: ../../main/.git/worktrees/feature\n");
+  return linkAt(worktree, join(folderAt(root, "links", "x"), "current"));
+}
+
+/** `folder`, once `deleted` (the Git folder its `.git` file names, or a folder holding it) was deleted. */
+function afterDeleting(folder: string, deleted: string): string {
+  removeFolderSync(deleted);
+  return folder;
+}
+
 /** A work tree at `root/work` whose Git folder is `root/kept.git`. */
 function keptApart(root: string): string {
   git(root, "init", "-q", `--separate-git-dir=${join(root, "kept.git")}`, join(root, "work"));
@@ -281,6 +333,7 @@ const outsideShapes: readonly Shape[] = [
   { name: "while GIT_DISCOVERY_ACROSS_FILESYSTEM is set", asks: false, make: root => notesWhile(root, "GIT_DISCOVERY_ACROSS_FILESYSTEM", "1") },
   { name: "while GIT_INDEX_FILE is set", asks: false, make: root => notesWhile(root, "GIT_INDEX_FILE", join(root, "index")) },
   { name: "a linked worktree whose main checkout was deleted", asks: false, make: root => goneMainWorktree(root) },
+  { name: "a linked worktree whose .git names its Git folder by a relative path, by a link, once its main checkout was deleted", asks: false, make: root => afterDeleting(relativeWorktreeByLink(root), join(root, "main")) },
   { name: "by its \\\\localhost\\C$ path", asks: false, windowsOnly: true, make: root => byShare(folderAt(root, "notes")) },
   { name: "written in other letter case", asks: false, windowsOnly: true, make: root => folderAt(root, "notes").toUpperCase() },
   { name: "written with forward slashes", asks: false, windowsOnly: true, make: root => folderAt(root, "notes").split("\\").join("/") },
@@ -303,6 +356,8 @@ const askedShapes: readonly Shape[] = [
   { name: "a folder inside a checkout's .git", asks: true, make: root => join(checkout(root, "main"), ".git", "refs") },
   { name: "an empty .git folder", asks: true, make: root => notesHolding(root, [".git"]) },
   { name: "a .git file that leads nowhere", asks: true, make: root => withFile(folderAt(root, "notes"), ".git", `gitdir: ${join(root, "missing")}\n`) },
+  { name: "a work tree whose Git folder kept apart was deleted", asks: true, make: root => afterDeleting(keptApart(root), join(root, "kept.git")) },
+  { name: "a submodule whose Git folder in its superproject was deleted", asks: true, make: root => afterDeleting(join(withSubmodule(root), "sub"), join(root, "main", ".git", "modules", "sub")) },
   { name: "a .git file with no gitdir line", asks: true, make: root => withFile(folderAt(root, "notes"), ".git", "notes\n") },
   { name: "a .git link to a checkout's Git folder", asks: true, make: root => resolve(linkAt(join(checkout(root, "main"), ".git"), join(folderAt(root, "notes"), ".git")), "..") },
   { name: "a .git link that leads nowhere", asks: true, make: root => resolve(linkAt(join(root, "missing"), join(folderAt(root, "notes"), ".git")), "..") },

@@ -100,7 +100,8 @@ function locateCalls(folder: string): number {
 function expectGitsAnswers(...folders: string[]): number {
   const asked = [...new Set(folders.map(folder => resolve(folder)))];
   const before = asked.reduce((sum, folder) => sum + locateCalls(folder), 0);
-  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(gitsAnswer(folder));
+  // Matched, not equal: Rerail's answer also says whether a worktree's Git folder was gone, which Git does not print.
+  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toMatchObject(gitsAnswer(folder));
   return asked.reduce((sum, folder) => sum + locateCalls(folder), 0) - before;
 }
 

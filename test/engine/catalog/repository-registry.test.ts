@@ -900,6 +900,20 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, folder).cloneId).not.toBe(before.cloneId);
   });
 
+  it("records a clone whose Git folder kept apart was deleted under a new clone id, as before", async () => {
+    const root = await temporary("rerail-registry-kept-apart-gone-");
+    const database = open(join(root, "rerail.sqlite"));
+    const work = join(root, "work");
+    git(root, "init", "-q", `--separate-git-dir=${join(root, "kept.git")}`, work);
+    const before = recordCheckout(database, work);
+    removeFolderSync(join(root, "kept.git"));
+
+    // Its .git file names a Git folder that is gone, as a worktree's does, but no worktree's: the id file decides.
+    const after = recordCheckout(database, work);
+    expect(after.git).toBe(false);
+    expect(after.cloneId).not.toBe(before.cloneId);
+  });
+
   it("keeps a worktree moved without Git, at its old path and its new one, until Git prunes its entry", async () => {
     const root = await temporary("rerail-registry-prune-moved-");
     const database = open(join(root, "rerail.sqlite"));

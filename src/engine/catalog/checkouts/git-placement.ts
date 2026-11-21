@@ -180,6 +180,8 @@ interface NamedGitFolder {
   readonly gitFolder: string;
   readonly stamp: string;
   readonly file: boolean;
+  /** The path a `.git` file names its Git folder by, as written. */
+  readonly written?: string;
 }
 
 interface FoundGitFolder extends NamedGitFolder {
@@ -196,7 +198,7 @@ function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
   const read = entry.isFile() ? fileText(at) : undefined;
   if (!isText(read) || !read.text.startsWith(GITDIR)) return undefined;
   const named = readPath(read.text.slice(GITDIR.length));
-  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.text}`, file: true };
+  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.text}`, file: true, written: named };
 }
 
 /**
@@ -265,16 +267,31 @@ export function filePlacementInputs(folder: string): PlacementInputs | undefined
 
 /**
  * Whether `folder` is a linked worktree whose Git folder is gone: its `.git` file, read as Git reads it, names a folder
- * in a Git folder's `worktrees` that is not there. Its main checkout was deleted or moved away, or Git pruned the
- * worktree's entry, and the clone's id file, kept in the common Git folder, may have gone too; Git, asked about the
- * folder, reads that file first and refuses it. A `.git` that is no regular file is never opened. False while the
- * environment moves Git's lookup, and wherever the disk cannot tell. Two lstats and one read of a small file.
+ * in a Git folder's `worktrees` that is not there where Git looks ({@link reachedGitFolder}). Its main checkout was
+ * deleted or moved away, or Git pruned the worktree's entry, and the clone's id file, kept in the common Git folder, may
+ * have gone too; Git, asked about the folder, reads the `.git` file first and refuses it. A `.git` that is no regular
+ * file is never opened. False while the environment moves Git's lookup, and wherever the disk cannot tell. Two lstats
+ * and one read of a small file, and on Windows one real path.
  */
 export function worktreeGitFolderGone(folder: string): boolean {
   if (environmentMovesLookup()) return false;
   const entry = look(join(folder, ".git"));
-  const named = isEntry(entry) ? gitFolderOf(folder, entry) : undefined;
-  return named !== undefined && basename(dirname(named.gitFolder)) === "worktrees" && look(named.gitFolder) === "none";
+  const written = isEntry(entry) ? gitFolderOf(folder, entry)?.written : undefined;
+  const reached = written === undefined ? undefined : reachedGitFolder(folder, written);
+  return reached !== undefined && basename(dirname(reached)) === "worktrees" && look(reached) === "none";
+}
+
+/**
+ * The Git folder a `.git` file in `folder` names by `written`, spelled as Git reaches it: Git joins a relative path to
+ * the folder it changed into, read by its real path. On Linux and macOS the joined text is never cleaned, so the system
+ * follows each link before the `..` after it, as for `commondir` ({@link commonFolderOf}), where `resolve` would cancel
+ * a link and the `..` after it as text. Windows takes each `..` off the path as written before it follows a junction or
+ * a link, so there the path is joined to the folder's real path. Undefined when that real path cannot be read.
+ */
+function reachedGitFolder(folder: string, written: string): string | undefined {
+  if (process.platform !== "win32") return isAbsolute(written) ? written : `${folder}/${written}`;
+  const real = realOf(folder);
+  return real === undefined ? undefined : resolve(real, written);
 }
 
 function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder): PlacementInputs | undefined {
