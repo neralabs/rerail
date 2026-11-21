@@ -186,6 +186,15 @@ function callEvent(eventId: string, observedAt: number) {
   };
 }
 
+/**
+ * The ledger's lines after `recorded`, as the daemon walks them for lost events at a session's open (`lostEvents` in
+ * `runtime.ts`): none when the ledger does not hold it.
+ */
+function linesAfter<Line extends { eventId: string }>(ledger: readonly Line[], recorded: string | undefined): Line[] {
+  const from = ledger.findIndex(line => line.eventId === recorded);
+  return from < 0 ? [] : ledger.slice(from + 1);
+}
+
 function rows(path: string, sql: string): unknown[] {
   const database = new Database(path, { readonly: true });
   try {
@@ -611,6 +620,53 @@ describe("record writes while another process holds the write lock", () => {
     holder.exec("COMMIT");
 
     expect(sessions.lastRecordedEvent(session.sessionId, new Set(["call"]))).toBe("three");
+  }, 30_000);
+
+  // A newer Rerail's migration or `rerail scrub` holds the lock past the read's bound while the session reopens in the
+  // same daemon: the read sees the disk without the waiting rows. The record of lost events counted them, and the
+  // history then held both the events and a record saying they were lost.
+  it("count no event lost at a session's reopen whose row still waits for the lock past the bound", async () => {
+    const { path, sessions } = await stores();
+    const [one, two, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("three", 3)];
+    sessions.openSession(session, 1_000);
+    sessions.append(one.event, session);
+    const holder = holderHere(path);
+    const clock = boundClock();
+    sessions.append(two.event, session);
+    sessions.append(three.event, session);
+    clock.pastTheBound();
+
+    sessions.openSession(session, 4_000);
+    const recorded = sessions.lastRecordedEvent(session.sessionId, new Set(["call"]));
+    sessions.recordLostEvents(session, linesAfter([one.line, two.line, three.line], recorded));
+    holder.exec("COMMIT");
+    await settled(path);
+
+    expect(rows(path, "SELECT event_id FROM events WHERE kind = 'call' ORDER BY sequence")).toEqual([["one"], ["two"], ["three"]]);
+    expect(rows(path, "SELECT event_id FROM events WHERE kind = 'events-lost'")).toEqual([]);
+  }, 30_000);
+
+  it("still count the events whose rows the history lacks once the waiting rows are made", async () => {
+    const { path, sessions } = await stores();
+    const [one, two, gone, three] = [callEvent("one", 1), callEvent("two", 2), callEvent("gone", 3), callEvent("three", 4)];
+    sessions.openSession(session, 1_000);
+    sessions.append(one.event, session);
+    const holder = holderHere(path);
+    const clock = boundClock();
+    sessions.append(two.event, session);
+    sessions.append(three.event, session);
+    clock.pastTheBound();
+
+    sessions.openSession(session, 5_000);
+    const recorded = sessions.lastRecordedEvent(session.sessionId, new Set(["call"]));
+    sessions.recordLostEvents(session, linesAfter([one.line, two.line, gone.line, three.line], recorded));
+    holder.exec("COMMIT");
+    await settled(path);
+
+    const records = rows(path, "SELECT event_id, observed_at, payload_json FROM events WHERE kind = 'events-lost'") as Array<[string, number, string]>;
+    expect(records.map(([eventId, observedAt, payload]) => [eventId, observedAt, JSON.parse(payload) as unknown])).toEqual([[
+      "events-lost:gone", 3, { count: 1, kinds: { call: 1 }, firstEventId: "gone", lastEventId: "gone", firstObservedAt: 3, lastObservedAt: 3 },
+    ]]);
   }, 30_000);
 
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {

@@ -500,7 +500,8 @@ export class SqliteSessionStore {
    * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
    * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
    * of the stretch it counted. One read: the session's rows newest first, to the first of those kinds, after this
-   * process's waiting record writes are made (`#recorded`), so a row still waiting for the lock never reads as lost.
+   * process's waiting record writes are made (`#recorded`). A row whose write the lock still keeps waiting past the bound
+   * of that wait reads as not recorded; `recordLostEvents` looks for it again once its own write is made, behind it.
    */
   lastRecordedEvent(sessionId: string, kinds: ReadonlySet<string>): string | undefined {
     const wanted = [...kinds, LOST_EVENTS_KIND].map(kind => sql`${kind}`);
@@ -519,17 +520,19 @@ export class SqliteSessionStore {
    * operating system crash took (`LostEvents`). One record for the stretch, at the time of its last event, so what reads
    * when the newest event was recorded (`lastObservedEventAt`, `rerail status`) reads that time. Its id names the
    * stretch's last event: the next open finds the same stretch until a later event's row is written, and adds no copy.
+   * The write counts only the events of `lost` whose rows the history still lacks when it is made. It is made behind
+   * every record write this process asked for before it, so an event whose row waited for another process's lock past
+   * the bound of `lastRecordedEvent`'s wait is on disk by then and is not counted; when every row arrived, it writes
+   * nothing.
    */
   recordLostEvents(session: AdapterSession, lost: readonly LostEvent[]): void {
-    const [first, last] = [lost[0], lost.at(-1)];
-    if (first === undefined || last === undefined) return;
-    const kinds: Record<string, number> = {};
-    for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
-    const payload: LostEvents = {
-      count: lost.length, kinds, firstEventId: first.eventId, lastEventId: last.eventId,
-      firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
-    };
-    this.append({ sessionId: session.sessionId, eventId: `${LOST_EVENTS_ID}${last.eventId}`, kind: LOST_EVENTS_KIND, observedAt: last.observedAt, payload }, session);
+    const whole = lostEventsRow(session.sessionId, lost);
+    if (whole === undefined) return;
+    const restore = this.#sessionRestore(session);
+    this.#records.write(database => {
+      const row = lostEventsRow(session.sessionId, lost.filter(event => !holdsEvent(database, session.sessionId, event.eventId)));
+      if (row !== undefined) this.#eventWrite([row], restore)(database);
+    }, rowBytes(whole));
   }
 
   /** Marks a boundary answered before its shell-write check finished: what that check finds reaches a later boundary. */
@@ -726,6 +729,28 @@ function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
     payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
     payloadV8: serialize(event.payload),
   };
+}
+
+/**
+ * The record of lost events (`recordLostEvents`) over `lost`, oldest first, at the time of its last event, its id naming
+ * that event; undefined when `lost` is empty.
+ */
+function lostEventsRow(sessionId: string, lost: readonly LostEvent[]): EventRow | undefined {
+  const [first, last] = [lost[0], lost.at(-1)];
+  if (first === undefined || last === undefined) return undefined;
+  const kinds: Record<string, number> = {};
+  for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
+  const payload: LostEvents = {
+    count: lost.length, kinds, firstEventId: first.eventId, lastEventId: last.eventId,
+    firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
+  };
+  return eventRow({ sessionId, eventId: `${LOST_EVENTS_ID}${last.eventId}`, kind: LOST_EVENTS_KIND, observedAt: last.observedAt, payload });
+}
+
+/** Whether the session's history holds the row of `eventId` (one lookup on `events_session_event`). */
+function holdsEvent(database: RerailDatabase, sessionId: string, eventId: string): boolean {
+  return database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.eventId, eventId))).get() !== undefined;
 }
 
 /** The payload of the session's latest rule coverage event, as stored. */
