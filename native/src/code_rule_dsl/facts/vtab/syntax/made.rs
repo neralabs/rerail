@@ -115,6 +115,10 @@ impl Docs {
     pub fn given_all(&self) -> bool {
         self.given.iter().any(Option::is_some) && self.given.iter().zip(&self.slots).all(|(g, s)| g.is_some() || s.input.is_made())
     }
+    /// Whether every document's views' counts were given, an edit's changed ones too: none to keep anew.
+    pub fn given_every(&self) -> bool {
+        self.given.iter().all(Option::is_some)
+    }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
         match (self.slots[i].made.get(), self.given[i]) {

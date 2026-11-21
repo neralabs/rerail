@@ -97,12 +97,18 @@ pub fn reserved() -> usize {
     pool().load(Ordering::Acquire)
 }
 
+/// The pool's ledger this thread's run counts against (its machine's; in a test build its thread's): what a lease of
+/// relational work keeps, so its drop reads it without a run (`rerail_accel::gpu::shared::set_other_reserved`).
+pub fn ledger() -> Arc<AtomicUsize> {
+    pool()
+}
+
 /// The bytes of `metal_buffer_limit()` relational work (the logic engine's device joins) may still lease: past the
 /// buffer pool's reservations and what relational work holds itself, leased and kept idle in its pool. Its leases
 /// reserve nothing in the pool's ledger, so a check of `reserved` alone never saw them: a wave encoded strata until
 /// it held 400 MB.
 pub fn relational_bytes_left() -> usize {
-    rerail_accel::gpu::shared::set_other_reserved(reserved);
+    rerail_accel::gpu::shared::set_other_reserved(ledger);
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
     metal_buffer_limit().saturating_sub(pool().load(Ordering::Acquire) + live + idle)
 }

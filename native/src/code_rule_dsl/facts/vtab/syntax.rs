@@ -381,8 +381,8 @@ impl LongTexts {
         let local = p.local_of(low)?;
         let values = valued.values.get_or_init(|| {
             let mut values = HashMap::new();
-            if let Some(reader) = crate::code_rule_dsl::facts::core::value_reader() {
-                reader.values(&valued.tape, valued.file.as_ref(), true, false, &mut |followed, ordinal, v, _| {
+            if let (Some(reader), Some((tape, file))) = (crate::code_rule_dsl::facts::core::value_reader(), &self.batch.docs.input(i).tape) {
+                reader.values(tape, file.as_ref(), true, false, &mut |followed, ordinal, v, _| {
                     let local = p.local_of_node(ordinal as u32);
                     if !followed && local != NONE && let Some(v) = v {
                         values.insert(local, v);
@@ -499,14 +499,14 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// so `functions::eval` gives none.
 pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
 
-/// The request relation of `value` (decision 0174): a batch keeps its documents' tapes for W's values where a program
+/// The request relation of `value` (decision 0174): a batch reads W's values off its documents' tapes where a program
 /// derives it.
 pub const VALUE_REQ: &str = "rr_value_req";
 
-/// A document's tape and the values W reads off it (`ValueReader`), read at the first request.
+/// The values W reads off a document's tape (`ValueReader`), read at the first request.
 pub(crate) struct Valued {
-    tape: crate::code_rule_dsl::tape::TapeDoc,
-    file: Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>,
+    /// Read off its document's tape at the first request (`value_any`): the document is made by then (its node's
+    /// projection is read), and a pending one is not made for it before (Q332).
     values: OnceLock<HashMap<u32, String>>,
 }
 
@@ -2932,6 +2932,11 @@ impl Batch {
         self.docs.given_all()
     }
 
+    /// Whether every document's views' counts were given (decision 0494): none is counted anew, so none is kept.
+    pub fn counts_given(&self) -> bool {
+        self.docs.given_every()
+    }
+
     /// How many of the batch's documents are made, of how many it holds (decision 0494): a run makes those it reads.
     pub fn documents_made(&self) -> (usize, usize) {
         (self.docs.made_count(), self.docs.len())
@@ -3026,22 +3031,10 @@ impl Batch {
         let block = Arc::clone(grown.block.get_or_insert_with(|| cells::block((documents.iter().map(|d| block_bytes(d.size())).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two())));
         // Decision 0055: each guest's host. A guest's key is past every file's (`corpus::guests`).
         grown.host.extend(documents.iter().filter_map(|d| d.guest().map(|g| (d.key(), g.host))));
-        // W's values on request (decision 0174): the tapes of the documents W reads values of. A document of a dialect
-        // with values is made for its tape here (`Pending`).
+        // W's values on request (decision 0174): the documents W reads values of, a dialect's with values, each read off
+        // its tape when first asked (`Valued`): none made for it here (a `Pending` stays so, Q332).
         let added_valued: Vec<Option<Arc<Valued>>> = if projection.derived.contains(VALUE_REQ) {
-            let mut valued = Vec::with_capacity(documents.len());
-            for d in &documents {
-                if !dialects.get(d.tag()).is_some_and(|x| x.values) {
-                    valued.push(None);
-                    continue;
-                }
-                let made = d.document();
-                if let Some(why) = d.failure() {
-                    return Err(StoreError::Invalid(why.to_owned()));
-                }
-                valued.push(made.tape.clone().map(|(tape, file)| Arc::new(Valued { tape, file, values: OnceLock::new() })));
-            }
-            valued
+            documents.iter().map(|d| dialects.get(d.tag()).is_some_and(|x| x.values).then(|| Arc::new(Valued { values: OnceLock::new() }))).collect()
         } else {
             Vec::new()
         };

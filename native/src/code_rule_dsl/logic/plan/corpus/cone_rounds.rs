@@ -667,7 +667,7 @@ impl RoundProgram {
                 // Admit quiet rows before either write if the other fact space (a revision's rounds) needs them.
                 let different = on.alternate.is_some_and(|target| !was.same_rows(target));
                 let copied = !different || next.admit_for_copy(on.store, &self.placed, &cut.clean.iter().cloned().collect::<Vec<_>>())?;
-                let write = |target, cut| next.write_kept(on.store, target, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeMap::new());
+                let write = |target, cut| next.write_kept(on.store, target, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &BTreeMap::new());
                 let mut written = write(was, &cut)?;
                 if let Some(target) = on.alternate.filter(|_| copied) {
                     let complete = retain::Cut { clean: BTreeSet::new(), strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };

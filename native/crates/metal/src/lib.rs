@@ -46,7 +46,7 @@ pub use rerail_compiler::Error;
 /// reservations and evicts the residency's slabs.
 static POOL_HOOKS: std::sync::LazyLock<()> = std::sync::LazyLock::new(|| {
     // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
-    rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
+    rerail_accel::gpu::shared::set_other_reserved(runtime::ledger);
     // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
     rerail_accel::gpu::shared::set_evictor(slabs::evict);
 });

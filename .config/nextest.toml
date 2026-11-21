@@ -71,7 +71,7 @@ path = "junit.xml"
 # (`cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm`). A warm run that parses, builds or
 # makes an unchanged file, writes again, hashes or binds an input whole, or counts a kept statistic again fails here.
 [profile.warm]
-default-filter = "test(/::warm_tests::|::the_run_after_a_cold_one|maintain_tests::r2_|made_batch_tests::|cross_views_tests::a_session_holds_its_corpus_batch/)"
+default-filter = "test(/::warm_tests::|::the_run_after_a_cold_one|maintain_tests::r2_|made_batch_tests::|cross_views_tests::a_session_holds_its_corpus_batch|base_tests::a_copy_of_any_inputs_columns_is_held_in_place/)"
 slow-timeout = { period = "30s", terminate-after = 2 }
 failure-output = "immediate"
 

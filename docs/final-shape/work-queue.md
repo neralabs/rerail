@@ -5087,7 +5087,7 @@ after the phases went on the run path (0083).
     rules run in 60 s (profiled) instead of past 180 s. All 57 rules run over the 50 files.
   - `RERAIL_KEEPS_TRACE=<text>` prints the pricing's estimates for relations whose names hold the text.
 
-### Q287. 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (open)
+### Q287. 0458's corpus batch is made again on every warm run: ep2's warm edit 18.8 G and 197 MB to 57.5 G and 545 MB (done 2026-11-20)
 
 - **Found** (2026-11-19, rr-align's roll-up of phased-facts 10158b23ccd, 0458 steps 1-4; ep2 on m3): rows 0
   differing on every run, but each warm run (B101's constant edited, 1 of 300 files' rows unchanged in kind) makes
@@ -5177,7 +5177,43 @@ after the phases went on the run path (0083).
       (`Batch::keys_of_paths`), the one document of that path made.
     `warm_tests` all pass (8 with `made_batch_tests`). PostHog (`len-_py`, cold, CPU, m3-linux): 29,747 findings,
     digest fa0efeaed6ff.
-- **Still open**: ep2's warm edit measured against 18.8 G / 197 MB (the user's).
+- **Done** (2026-11-20): ep2 (`tmp/ep2/ep2.sh`: 300 files, 317 rules; profiling build, the M1 Max, CPU, instructions
+  retired, peak footprint), against the user's 18.8 G / 197 MB:
+
+  | Step | Before (this tree, 2026-11-20) | Now |
+  |---|---|---|
+  | warm, nothing changed | 33.5 G, 364 MB | 14.1 G, 147 MB (1.25 s) |
+  | B101's message edited (the warm edit) | 35.9 G, 371 MB | 13.8 G, 131 MB (1.17 s) |
+  | a run after two file edits, nothing changed since | 32.2 G, 392 MB (with the first two changes below) | 13.9 G, 131 MB |
+  | cold | 1,329 G | 1,331 G |
+
+  Findings as before (463; 464 after the edits). The file edits themselves (append 57.0 G and 587 MB, body 65.7 G and
+  672 MB) are measured, not yet held to a number. What the last part took:
+  - A semi-join's base relations (`ast_depth`, `docof`, `end_line`, `node_order`, `visit_index`) have their
+    statistics kept and patched as every base relation's are (`base_statistics`), not measured off every document
+    each run (`syntax::statistics`: every document made, 8 sorts of 430k-460k rows). The statistics written beside
+    their inputs' frames for that (`write_input_kept`, `kept_inputs`' `stats_of`, `KeptInput::stats`) are gone.
+  - A copy of any input's columns is a view held in place (decisions 0329, 0353), not only one of `node`. `hold_view`
+    read any other source into flat rows, a copy, and a view keeps nothing, so every run derived it again ("not
+    reached, its rows not kept"): ep2's `rr_ctx29($s) :- string_annotation($s)` made all 300 documents, 0.93 s of a
+    2.4 s warm run that read none of it. Its statistics are its base's where the run holds them, else counted off
+    its source when first planned with (`plan::SourceView`).
+  - An edit keeps its changed documents' views' counts. They were written only when the batch was not lazy, and an
+    edit's is, so every later run built the changed file from its tape again to count it.
+  - A base relation's rows are its statistics' (kept of these documents, patched and checked, or counted), not its
+    `len`: `within` (an axis no solve answers) made every node's containers to count its rows. The profile's "held
+    for the cross-file part" reads the run's counts too: profiled, it made them.
+  - A batch's value relations (`Valued`) read their documents when first asked, not when the batch is added to.
+  - Found on the way: a relation made outside a run and a chunk (a session's work between runs) leased a block of the
+    run's size each time, 16 GiB of address space under decision 0445, since the open block is no one's there:
+    `sql_executor::tests::scaling::tree_walk_file_edits_retain_the_walk_and_match_fresh_execution`'s 1,000
+    one-document batches reserved 256 TiB and mmap refused (on Linux hosts). Such a relation is alone in a block of
+    its room, doubled (`facts::rows`, `lease_room`).
+  - Found on the way: a pooled device buffer dropped on a pool thread outside a run read the run's ledger there and
+    panicked on macOS ("a pooled buffer is Metal's"); it reads the ledger it was made with (`accel::gpu::shared`).
+- **Tests**: `made_batch_tests::r7_a_run_after_an_edit_makes_no_document` (failed before: 3 of 3 documents built and
+  made) and `base_tests::a_copy_of_any_inputs_columns_is_held_in_place`, both in the `warm` profile (17 tests, about
+  17 s on a Linux host). PostHog (`len-_py`, cold, CPU, m3-linux): 29,747 findings, digest fa0efeaed6ff.
 
 ### Q383. (Q354 here until 2026-11-20; Q288 on phased-facts) `the_view_reads_are_the_hosts_rows` timed out: its kernel's pipeline did not compile in 240 s (done)
 
