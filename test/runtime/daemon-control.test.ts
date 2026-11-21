@@ -56,7 +56,7 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, type PipeServer } from "../../src/runtime/daemon/engine-pipe.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../src/runtime/daemon/engine-pipe.js";
 import { HOOK_DAEMON_WAIT_MS } from "../../src/runtime/daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "../../src/runtime/daemon/engine-proof.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
@@ -960,6 +960,28 @@ describe("a state file Windows left behind", () => {
       await expect(engineEndpointAt(PIPE, undefined, machine)).rejects.toThrow(
         `nothing listens on the engine pipe ${PIPE}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`,
       );
+    });
+
+    it("says the daemon is not running, and to start it, when nothing listens on the pipe and no daemon.json is left, as after rerail daemon stop", async () => {
+      const machine = { ...answering("refused"), pipes: () => ["other-pipe"] };
+      await expect(engineEndpointAt(PIPE, undefined, machine)).rejects.toThrow(
+        `nothing listens on the engine pipe ${PIPE}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`,
+      );
+      expect(asked).toEqual([]);
+    });
+
+    it("asks the engine to prove itself, and sends the event once it does, when the engine's binding will not load in the hook's process", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      // The binding that asks Windows which process holds the pipe is missing, as while an update replaces it.
+      vi.stubEnv("RERAIL_ENGINE_PATH", join(home, "missing-engine.node"));
+      try {
+        const unloaded = (answer: EngineProofAnswer): DaemonMachine => ({ ...answering(answer), pipeServer });
+        expect(await engineEndpointAt(PIPE, undefined, unloaded("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
+        await expect(engineEndpointAt(PIPE, undefined, unloaded("refused"))).rejects.toThrow(notOurs);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
     });
 
     it("is sent nothing, and the hook says the pipe stayed busy, when other clients kept every instance taken for the whole wait", async () => {

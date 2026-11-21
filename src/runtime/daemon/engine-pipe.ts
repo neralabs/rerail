@@ -93,8 +93,12 @@ export type PipeServer = NativeNamedPipeServer;
  * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
  * one to free and opens again, as Node's own client does, until `timeoutMs` has passed. Any local user can create a pipe
  * of any name, but not one Windows records as another process's. Undefined where no such pipe takes a connection, or
- * where the binding predates the question.
+ * where the binding predates the question, will not load in this process or throws, so the engine's proof decides.
  */
 export function pipeServer(path: string, timeoutMs: number): PipeServer | undefined {
-  return loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
+  try {
+    return loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
