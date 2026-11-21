@@ -1577,16 +1577,23 @@ fn a_runs_output_directory_is_rerails_own() {
 /// `start` (a process a test starts, `switches::started`) while another thread holds `switch` through `switches::set`,
 /// as a test beside it does (`cross_file_rows_are_memoised_per_import_component`'s `RERAIL_INLINE_ONLY`, the session
 /// tests' `RERAIL_CROSS_K4`): the process waits for it, and takes none of it.
-fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce() -> T) -> T {
-    let (held, holding) = std::sync::mpsc::channel();
+///
+/// A test holding the switches over its runs (`switches::reading`) lets them go for this (`held`), and takes them again
+/// after: the other thread's `set` waits for every reader, the test's too, and the test waits for it to set.
+fn beside_a_switch<T>(switch: (&'static str, &'static str), held: &mut Option<super::switches::Reading>, start: impl FnOnce() -> T) -> T {
+    let reading = held.take().is_some();
+    let (held_by_other, holding) = std::sync::mpsc::channel();
     let other = std::thread::spawn(move || {
         let _switched = super::switches::set(&[switch]);
-        held.send(()).unwrap();
+        held_by_other.send(()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(200));
     });
     holding.recv().unwrap();
     let out = start();
     other.join().unwrap();
+    if reading {
+        *held = Some(super::switches::reading());
+    }
     out
 }
 
@@ -1603,11 +1610,11 @@ fn the_run_after_a_cold_one_writes_nothing() {
     // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
     // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
     // child processes take them as they start.
-    let _switches = super::switches::reading();
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE);
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE, &mut switches);
 }
 
 /// The same with tape values (decision 0431): a policy that parses string annotations. The warm run reads each
@@ -1618,7 +1625,7 @@ fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     let c408 = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
-    cold_then_warm(temp.path(), Some(&c408), &files);
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
 
 /// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
@@ -1634,12 +1641,12 @@ fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
     std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
-    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE);
+    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE, &mut None);
 }
 
 /// A cold run of `program` (else the pickle pack's) over `files` under `base`, then a warm one under
 /// `RERAIL_WARM=list`, which writes nothing.
-fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)]) {
+fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)], switches: &mut Option<super::switches::Reading>) {
     let src = base.join("src");
     for (path, text) in files {
         let at = src.join(path);
@@ -1683,7 +1690,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     run(false);
     let cold = manifests();
     assert!(!cold.is_empty(), "the cold run recorded its manifests");
-    beside_a_switch(("RERAIL_CROSS_K4", "off"), || run(true));
+    beside_a_switch(("RERAIL_CROSS_K4", "off"), switches, || run(true));
     let warm = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
@@ -1770,7 +1777,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
     // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
     // child processes take them as they start.
-    let _switches = super::switches::reading();
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
     let base = kept.as_deref().unwrap_or(temp.path());
@@ -1805,7 +1812,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     run(1);
     let one = manifests();
     // A process of two: the second names the same. Another test's switch is held as it is started.
-    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), || run(2));
+    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), &mut switches, || run(2));
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
