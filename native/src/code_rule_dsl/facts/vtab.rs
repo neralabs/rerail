@@ -215,6 +215,12 @@ pub trait Source: Send + Sync {
     fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
         None
     }
+    /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
+    /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
+    /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
+    fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
+        None
+    }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).
     fn doc_column(&self) -> Option<usize> {
         None

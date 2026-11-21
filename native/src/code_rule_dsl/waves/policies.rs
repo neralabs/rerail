@@ -275,6 +275,8 @@ fn shape(v: &Version, r: RuleRef<'_>) -> (String, Vec<Value>) {
             Lit::Agg { var, op, over, atom: a } => {
                 let op = match op {
                     crate::code_rule_dsl::logic::program_image::AggRef::Join { by, sep } => format!("join[{:?}]({})", v.text(sep), by.map(|s| s.0.to_string()).collect::<Vec<_>>().join(",")),
+                    // A bounded extreme's key holds its bound and flags (decision 0511).
+                    crate::code_rule_dsl::logic::program_image::AggRef::Bounded { max, bound, strict } => format!("bounded[{max},{strict}](V{})", bound.0),
                     other => format!("{:?}", std::mem::discriminant(&other)),
                 };
                 _ = write!(out, "V{} = {op} V{:?} : ", var.0, over.map(|s| s.0));

@@ -1101,6 +1101,16 @@ impl Part {
         Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
     }
 
+    /// A home of no columns for `rows` rows a view holds elsewhere, with room for one index of its own (a view's index
+    /// on the host, decision 0450 step 5e): a run's block, which a device run reads through a wrap as any run's. Its
+    /// rows are claimed: the index reads its keys through the view.
+    pub fn view_home(rows: usize) -> Part {
+        let part = Part::with_index_room(Life::Run, 0, rows, 1);
+        // SAFETY: rows `0..rows` are reserved; they hold no columns, so nothing is read of them.
+        unsafe { part.rel().rows.claim_reserved(rows as u32) };
+        part
+    }
+
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves

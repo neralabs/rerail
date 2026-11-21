@@ -7,6 +7,7 @@ use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
+mod reference_stage_tests;
 
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
@@ -163,7 +164,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
-    // The reference graph the corpus runner binds (`logic::plan::corpus::references`): the policy's, one per policy.
+    // The reference graph `python/references.rerail` derives, under the `.references` setting: the policy's, one per policy.
     let graphs = reference_graphs(&document);
     if graphs.len() > 1 {
         return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));

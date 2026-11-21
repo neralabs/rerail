@@ -1405,6 +1405,8 @@ impl LibraryFile {
 /// file appearing where an include looked) reads and lowers it again.
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
+/// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
+pub const DERIVED_BY: [(&str, &str); 2] = [("reference_edge", "python/references.rerail"), ("reference_open", "python/references.rerail")];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rerail"];
 
@@ -1761,7 +1763,11 @@ fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
                 Some(S::Clause) => s.heads(),
                 _ => Vec::new(),
             };
-            if let Some(name) = names.into_iter().find(|n| engine.contains(n)) {
+            // A relation `DERIVED_BY` names is core.rerail's, but its one library file derives it (decision 0483).
+            let derives = |n: &str| {
+                DERIVED_BY.iter().any(|(rel, by)| *rel == n && library().join(by).canonicalize().is_ok_and(|by| &by == file))
+            };
+            if let Some(name) = names.into_iter().find(|n| engine.contains(n) && !(matches!(s.what(), Some(S::Clause)) && derives(n))) {
                 return Err(Error::Syntax(format!("{}:{}: {name} is core.rerail's: a program reads it and cannot declare or derive it", file.display(), s.line())));
             }
         }

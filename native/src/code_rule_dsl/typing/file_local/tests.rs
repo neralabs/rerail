@@ -353,6 +353,37 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(split.causes.get("under").is_none(), "{:?}", split.causes);
 }
 
+/// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document
+/// (t50 step 1). The `.references` setting's relations, which the lowering states empty when the program has no
+/// setting, are such. Declared and not stated, a relation has no location, and its readers are cross-file.
+#[test]
+fn a_relation_stated_empty_is_a_constant() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl setting_given(k: number)
+.decl setting_glob(g: symbol)
+.decl pydoc(d: number, p: symbol)
+pydoc(d, p) :- doc(d, p, _), !setting_given(1).
+pydoc(d, p) :- doc(d, p, _), setting_given(1), setting_glob(g), glob(g, p).
+.decl module(d: number, m: symbol)
+module(d, m) :- pydoc(d, p), doc(d, p, m).
+.decl named(n: node, m: symbol)
+named(n, m) :- node(d, n, "identifier", _, _), module(d, m).
+.output named
+"#);
+    let unstated = split_of(&v);
+    assert!(unstated.causes.contains_key("pydoc"), "{:?}", unstated.causes);
+    let mut b = Builder::on(&v);
+    b.set_facts("setting_given", &[]);
+    b.set_facts("setting_glob", &[]);
+    let (v, _) = b.finish().unwrap();
+    let split = split_of(&v);
+    assert!(split.local.contains("pydoc") && split.local.contains("module") && split.local.contains("named"), "{:?} {:?}", split.local, split.causes);
+    assert!(split.causes.is_empty(), "{:?}", split.causes);
+}
+
 #[test]
 fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
     let source = |extra: &str| format!(r#"

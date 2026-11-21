@@ -222,6 +222,9 @@ fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSe
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|k| need.remove(k));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound).then(|| VarSet::of([var]))
             }
             Lit::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| lit_vars(*x)),

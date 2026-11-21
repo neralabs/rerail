@@ -55,6 +55,7 @@
 //! `!split_dot(q, _, x)`).
 
 pub mod core;
+pub mod first;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use self::core::drop_unread_core;
 pub use self::core::is_core;
@@ -349,6 +350,8 @@ struct Lowerer {
     siblings: Vec<LitAt>,
     /// The file of the clause being lowered, whose tape its literals are read off (`reads`).
     file: Option<std::sync::Arc<super::from_tape::RrFile>>,
+    /// The literals the module's lowering reads past, by file and node: a group's first's `!later` (decision 0515).
+    firsts: first::Firsts,
     /// The clause's substitution sets: the variables standing for the terms its hoistings moved (`reads::Sub`).
     subs: Vec<reads::Sub>,
     /// The relations the clause being lowered writes: a context leaves their atoms out where it can (`context`).
@@ -682,10 +685,14 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
 /// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
 /// appends onto its scope.
 pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Result<Module, Error> {
+    // A group's first by an order, written as a self-join (decision 0515), is a lattice relation: its later-relation's
+    // statements are left out, its value column read as the lattice, and its `!later` literal read past.
+    let firsts = first::recognize(&statements);
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
         .filter(|s| matches!(s.what(), Some(S::Decl(_))))
+        .filter(|s| !firsts.drops(s))
         .filter_map(|s| {
             let (t, n) = s.tape();
             let (name, cols, _) = t.decl(n).ok()?;
@@ -694,9 +701,12 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
         .collect();
     super::tape_type::check_in(&statements, &seeds.given)?;
     drop(typing);
+    // Typed as written (`!later` reads a declared relation), then read without a dropped later-relation (0515).
+    let statements: Vec<Stmt> = statements.into_iter().filter(|s| !firsts.drops(s)).collect();
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
     let declares_docof = statements.iter().any(|s| s.what() == Some(S::Decl("docof")));
     let mut l = seeds.l.clone();
+    l.firsts = firsts.clone();
     let seeded = seeds.seeded.clone();
     let mut clauses = Vec::new();
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
@@ -717,7 +727,11 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
         match st.read().map_err(at)? {
             S::Include(path) => return Err(Error::Syntax(format!("line {line}: #include {path:?} not resolved"))),
             S::Decl(_) => {
-                let (name, cols, tail) = t.decl(node).map_err(at)?;
+                let (name, mut cols, tail) = t.decl(node).map_err(at)?;
+                // A group's first (0515): its value column is the order's lattice.
+                if let (Some(lattice), Some(last)) = (firsts.column(&name), cols.last_mut()) {
+                    last.1 = lattice.to_owned();
+                }
                 l.decl(name, cols, &tail).map_err(at)?
             }
             S::Edit(_) | S::Functor(_) | S::Type(_) => {}
@@ -1037,6 +1051,16 @@ impl Reads for Lowerer {
     /// The tape of the clause being lowered.
     fn tape(&self) -> super::from_tape::Tape<'_> {
         self.file.as_ref().expect("a clause being lowered").tape()
+    }
+
+    /// The literals of a body or a conjunction node, but those the module reads past (`Firsts::unread`, decision 0515).
+    fn body_at(&self, b: u32, s: u32) -> Vec<LitAt> {
+        let t = self.tape();
+        if t.is(b, super::tape::Kind::Disjunction) {
+            return vec![LitAt::Node(b, s)];
+        }
+        let file = self.file.as_ref().expect("a clause being lowered");
+        t.all(b, super::tape::Field::Literal).filter(|&n| !self.firsts.unread(file, n)).map(|l| LitAt::Node(l, s)).collect()
     }
 
     /// The variable standing in place of node `n` under set `s`.
@@ -2300,7 +2324,7 @@ impl Lowerer {
         let ty = match op {
             AggOp::Count | AggOp::Sum | AggOp::Product => "int".to_owned(),
             AggOp::Join { .. } => "sym".to_owned(),
-            AggOp::Min | AggOp::Max => {
+            AggOp::Min | AggOp::Max | AggOp::Bounded { .. } => {
                 let col = args.iter().position(|t| over.is_some() && tm_var(&self.prog, t) == over);
                 col.and_then(|c| self.prog.columns_of(rel)?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
             }
@@ -2309,6 +2333,8 @@ impl Lowerer {
         args.iter().for_each(|t| tm_vars(&self.prog, t, &mut vars));
         vars.insert(var.to_owned());
         vars.extend(over.map(str::to_owned));
+        // A bounded extreme's bound: a variable it reads from outside (decision 0511).
+        vars.extend(op.bound().cloned());
         self.scan.as_mut().expect("a scan").vars.extend(vars);
         self.scan_types(vec![(var.to_owned(), ty)], None);
     }
@@ -2619,7 +2645,8 @@ impl Lowerer {
         }
         self.under_unset(|me, unset| {
             if let Some(vars) = unset.filter(|v| !v.is_empty()) {
-                if vars.contains(var) || over.is_some_and(|o| vars.contains(o)) {
+                // A bounded extreme's bound is read from outside, as its result and `over` are its own (0511).
+                if vars.contains(var) || over.is_some_and(|o| vars.contains(o)) || op.bound().is_some_and(|b| vars.contains(b.as_str())) {
                     return not_yet("`unset` in an aggregate, `nearest` or `ast`");
                 }
                 args.iter_mut().for_each(|t| tm_unset(&me.prog, t, vars));
@@ -2812,6 +2839,8 @@ impl Lowerer {
             let (column, merge) = match self.lattices.get(lattice) {
                 Some((base, lub)) => (base.clone(), Some(lub.clone())),
                 None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
+                // The first of a group in shortlex order (`first`, decision 0515): the engine's own join.
+                None if lattice == "shortlex_min" => ("sym".to_owned(), Some("shortlex_min".to_owned())),
                 None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
             };
             let decl = LatticeDecl { keys: i, ty: column.clone(), merge, widen };
@@ -5117,8 +5146,78 @@ impl Lowerer {
 
 
 
+    /// A `min` or `max` bounded by its probe (decision 0511): `u = max t : { B(k, t), t < r }` with `r` bound outside
+    /// the body and read nowhere else in it. Its body less the bound is the group's values, the same for every probe:
+    /// lowered as an aggregate of its own, it is one helper of the group's keys and values, not a row per probe and
+    /// value under the bound. The bound goes on the aggregate's op, and each engine searches or filters the group by it.
+    /// A number's bound only: nodes and symbols order by keys `front::order_nodes` writes, after this. The body less
+    /// the bound, and the op.
+    fn bounded(&self, agg: &str, over: Option<&At>, body: &[LitAt], outer: &BTreeSet<String>) -> Option<(Vec<LitAt>, AggOp)> {
+        let max = match agg {
+            "max" => true,
+            "min" => false,
+            _ => return None,
+        };
+        let T::Var(t) = self.tv(over?) else { return None };
+        if std::env::var("RERAIL_ASOF").is_ok_and(|v| v == "off") {
+            return None;
+        }
+        // `t < r` for a max (`r > t` the same), `t > r` for a min; `<=` and `>=` not strict.
+        let side = |l: &LitAt| -> Option<(String, bool)> {
+            let L::Cmp { l, op, r } = self.lit(l) else { return None };
+            let (T::Var(a), T::Var(b)) = (self.tv(&l), self.tv(&r)) else { return None };
+            let (r, op) = if a == t {
+                (b, op)
+            } else if b == t {
+                (
+                    a,
+                    match op {
+                        "<" => ">",
+                        "<=" => ">=",
+                        ">" => "<",
+                        ">=" => "<=",
+                        o => o,
+                    },
+                )
+            } else {
+                return None;
+            };
+            let strict = match (max, op) {
+                (true, "<") | (false, ">") => true,
+                (true, "<=") | (false, ">=") => false,
+                _ => return None,
+            };
+            (r != t && outer.contains(&r)).then_some((r, strict))
+        };
+        let found: Vec<(usize, String, bool)> = body.iter().enumerate().filter_map(|(i, l)| side(l).map(|(r, strict)| (i, r, strict))).collect();
+        let [(at, ref bound, strict)] = found[..] else { return None };
+        let rest: Vec<LitAt> = body.iter().enumerate().filter(|&(i, _)| i != at).map(|(_, l)| l.clone()).collect();
+        let mut read = Vec::new();
+        rest.iter().for_each(|l| self.lit_vars(l, &mut read));
+        if rest.is_empty() || read.iter().any(|v| v == bound) {
+            return None;
+        }
+        // The value is a number where a declared relation of the body holds it (an `int` column, as the engine names
+        // it), and nowhere a node or a symbol.
+        let mut types = rest.iter().flat_map(|l| match self.lit(l) {
+            L::Atom { rel, args, neg: false } => {
+                let cols = self.prog.columns_of(&rel).unwrap_or_default();
+                args.iter().zip(cols).filter(|(a, _)| matches!(self.tv(a), T::Var(v) if v == t)).map(|(_, (_, ty))| ty).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        });
+        let number = |ty: &str| matches!(ty, "int" | "number");
+        if !types.next().is_some_and(|ty| number(&ty)) || types.any(|ty| !number(&ty)) {
+            return None;
+        }
+        Some((rest, AggOp::Bounded { max, bound: bound.clone(), strict }))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&At>, by: &[At], sep: &Option<String>, body: &[LitAt], outer: &BTreeSet<String>) -> Result<(), Error> {
+        // A bounded extreme reads its body less the bound (decision 0511).
+        let bounded = self.bounded(agg, over, body, outer);
+        let body: &[LitAt] = bounded.as_ref().map_or(body, |(rest, _)| rest.as_slice());
         // A value or key that is a term (`sum strlen(x) - strlen(a)`) is a variable the body binds.
         let mut body = body.to_vec();
         let mut variable = |t: &At, me: &mut Self| match me.tv(t) {
@@ -5144,6 +5243,7 @@ impl Lowerer {
             "mean" => return not_yet("the aggregate mean (a decimal number)"),
             other => return not_yet(format!("the aggregate {other}")),
         };
+        let op = bounded.map_or(op, |(_, op)| op);
         if (!by.is_empty() || sep.is_some()) && agg != "join" {
             return Err(Error::Syntax(format!("{agg} takes no `by` or `sep`")));
         }

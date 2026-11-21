@@ -327,7 +327,14 @@ fn check_rr_finds_problems() {
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
-    let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
+    // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
+    // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
+    let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
+    let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
+    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
+    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
+    let twice =vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
 
@@ -777,26 +784,22 @@ fn native_aggregates_and_text_functions_run() {
 .input node, doc
 .decl kv(k: number, v: number)
 kv(1, 5). kv(1, 3). kv(1, 9). kv(2, 4).
-.decl ks(k: number, s: number)
-ks(1, 20). ks(1, 10). ks(2, 30).
 .decl lo(k: number, v: number)
 lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
 .decl hi(k: number, v: number)
 hi(k, v) :- kv(k, _), v = max x : { kv(k, x) }.
-.decl one(k: number)
-one(k) :- ks(k, _), s = min t : { ks(k, t) }, ks(k, s).
 .decl q(p: symbol, k: number)
 q("a.b.c", 1). q("a.b.c", 2). q("a", 3).
 .decl up(p: symbol, k: number, u: symbol)
 up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
-.output lo, hi, one, up
+.output lo, hi, up
 "#;
+    // (A min or max over symbols is refused: `front::tests::named_errors`.)
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     assert_eq!(read("lo"), [["1", "3"], ["2", "4"]]);
     assert_eq!(read("hi"), [["1", "9"], ["2", "4"]]);
-    assert_eq!(read("one"), [["1"], ["2"]]);
     assert_eq!(read("up"), [["a", "3", ""], ["a.b.c", "1", "a.b"], ["a.b.c", "2", "a"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4967,7 +4970,8 @@ fn a_demand_split_stays_linear_in_the_modules() {
         let c: Vec<&str> = l.split('\t').collect();
         (c[0], c[1], c[3].parse().unwrap())
     }).collect();
-    assert!(rows.iter().any(|(part, _, _)| part.contains("typing programs")), "the typing program ran: {heads}");
+    // The typing ran: its phases are parts of the run (`phases`: `phase <name>: run`), in the one engine.
+    assert!(rows.iter().any(|(part, _, _)| part.contains("phase ") && part.ends_with(": run")), "the typing's phases ran: {heads}");
     let product = (SPLIT_MODULES * SPLIT_MODULES * SPLIT_REFERENCES) as u64;
     for (part, head, work) in &rows {
         if head.starts_with("pre_") || head.starts_with("demand_") {

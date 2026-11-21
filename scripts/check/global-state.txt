@@ -133,7 +133,6 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counte
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/corpus.rs::CROSS_FILE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
 native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it
