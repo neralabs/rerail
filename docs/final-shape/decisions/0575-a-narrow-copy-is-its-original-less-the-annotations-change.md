@@ -73,6 +73,34 @@ mixed points-to components, in the cross-file part. Most of the candidates' cost
 and its anti-joins over `pt_bound_in` and its copy. Earlier figures this session that left out the requests' cones
 or read `guest_of` (784 to 809 G) were unsound, and are not counted.
 
+## Then: no copy built where its readers allow
+
+6. **A diffed copy is read in place** (`combining::Unnarrow`). It is its original less its candidates, and the
+   candidates its recheck finds (`rr_recheck_X`, the narrow rule over the candidates). A rule reading it reads, for
+   each read, the original less the candidates, or the recheck; negated, neither the original nor the recheck, or a
+   candidate the recheck does not hold. Its rows gone and added are read off the recheck. The copy stays built where
+   a read cannot be so written: an aggregate's, a gated one, a term not a variable or a constant (a negated `_` has
+   no such form), a native operator's rule, more than 3 in one rule (each rule is one per way), or where the program
+   lists it. 87 of the 174 are read in place. Writing a positive read's `_` as a variable, and allowing 5 reads a
+   rule, built fewer copies but cost more (764 G, 768 G): not done.
+7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
+   that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
+   (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
+   written once a place they differ, that place read as the copy's rows added (or, negated, gone).
+8. **A pushed join hands a bound's variable on** (`PushLocalJoins`): the reader tests the bound, so a copy's rule, its
+   original's and its candidates' push one join.
+
+Tried and not kept: a bound's candidates told by its range rather than `rr_ann_node` (958 G; 806 G in the requests'
+cones alone); the deltas of a copy not diffed made whole (783 G); a copy whose original the inliner takes in written
+as its own rules again (781 G: the work moves into its readers).
+
+| | instructions (unprofiled) | peak |
+|---|---|---|
+| step 1 (above) | 794 G | 1.52 GB |
+| 7, twins | 781 G | 1.51 GB |
+| 8, bounds handed on | 775 G | 1.53 GB |
+| 6, read in place | 761 G | 1.52 GB |
+
 ## Not done
 
 The mixed components (decision 0165 §3's cross-file part) need another design: the wide and narrow relations are one
