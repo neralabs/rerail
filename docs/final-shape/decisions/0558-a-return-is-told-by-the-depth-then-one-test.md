@@ -1,4 +1,4 @@
-# 0548: A return is told by the depth, then by one test
+# 0558: A return is told by the depth, then by one test
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the second): "a two-way
 return". How it is done is the implementer's choice. Follows 0541. Page 40, step 52.
