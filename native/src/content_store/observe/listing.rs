@@ -1,6 +1,7 @@
 //! A directory's entries with their stats, read as a listing (decision 0400): on macOS by `getattrlistbulk`, which
 //! returns many entries' attributes a call; elsewhere on Unix by `readdir` and `fstatat` relative to the open
-//! directory. The observer checks a small root's kept answers against these, with no `stat` of a path.
+//! directory; on Windows by `FindNextFile`, whose entries carry their attributes. The observer checks a small root's
+//! kept answers against these, with no `stat` of a path.
 
 use super::{Kind, Stat};
 use std::ffi::OsString;
@@ -109,8 +110,9 @@ fn i64_at(b: &[u8], at: usize) -> Option<i64> {
 }
 
 /// The entries of `dir`, by name: `readdir`, then each entry's `fstatat` relative to the open directory (no path
-/// walked again), a symbolic link left to be `stat`ed on its own.
-#[cfg(all(unix, not(target_os = "macos")))]
+/// walked again), a symbolic link left to be `stat`ed on its own. On Windows std's listing is `FindNextFile`'s, and
+/// an entry's metadata is what that call gave (Windows has no inode or change time: `Stat::of`).
+#[cfg(not(target_os = "macos"))]
 pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir)? {
@@ -136,11 +138,5 @@ pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     Ok(out)
 }
 
-/// No listing with stats here: a root is not checked by its listings (`supported`).
-#[cfg(not(unix))]
-pub(super) fn entries(_dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
-    Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
-}
-
 /// Whether a root may be checked by its listings on this system.
-pub(super) const SUPPORTED: bool = cfg!(unix);
+pub(super) const SUPPORTED: bool = cfg!(any(unix, windows));
