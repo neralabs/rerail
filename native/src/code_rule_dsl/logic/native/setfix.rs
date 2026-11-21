@@ -3366,6 +3366,10 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                 let rel = &store.rels[*r];
                 count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.value(i as usize, c)))
             }
+            // Rows made per looked-up value (a tree axis, `within`): read whole, every one is made (159 M rows of
+            // `within`'s chains on 3,089 files, 2.6 GB, for one histogram). Their counts are the structure's, not a
+            // histogram's: no histogram, as for a step that is not a positive atom.
+            Src::In(rel, _) if rel.view.as_ref().is_some_and(|v| v.src.made_on_lookup()) => return None,
             Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
         };
         if stride > 1 {
