@@ -234,7 +234,7 @@ describe("rerail events in a main build", () => {
     });
     const after = Date.now();
 
-    // A proof the pipe gave the event's start check since the event arrived answers for the lookup's own.
+    // Each event's lookup of the named socket is handed the deadline the event got when it arrived, 12 s on.
     expect(routing.engineEndpointAt.mock.calls.map(([named]) => named)).toEqual([socketPath, socketPath]);
     for (const [, deadline] of routing.engineEndpointAt.mock.calls) {
       expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
