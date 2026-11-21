@@ -281,19 +281,35 @@ pub fn child(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn field(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
-    let numbering = b.follow(b.tape, at::NUMBERING);
-    let fielded = b.c32(2);
-    let x = b.call_at("num_select", numbering, &[fielded, i]);
-    let numbering = b.follow(b.tape, at::NUMBERING);
-    let node = b.c32(0);
-    let l = b.call_at("num_rank", numbering, &[node, x]);
+    // Its tape node, and that node's number: each column's branch finds what it reads, as `child`'s does. Found once
+    // before the branches, the M1 Max's compile (G13) read the tape there as zeros: the parent read `x - 1` and the
+    // field atom 0, while the same MSL read right on the M3 (decision 0353 step 4d; the views' test).
+    let tape_node = |b: &mut B<'_, '_>| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let fielded = b.c32(2);
+        b.call_at("num_select", numbering, &[fielded, i])
+    };
+    let numbered = |b: &mut B<'_, '_>, x: Value| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let node = b.c32(0);
+        b.call_at("num_rank", numbering, &[node, x])
+    };
     let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
-    b.either(I64, c, |b| b.parent_id(l, x), |b| {
+    b.either(I64, c, |b| {
+        let x = tape_node(b);
+        let l = numbered(b, x);
+        b.parent_id(l, x)
+    }, |b| {
         let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
         b.either(I64, c, |b| {
+            let x = tape_node(b);
             let code = b.call_tape("tape_number", &[x]);
             b.entry_item(at::FIELDS, code)
-        }, |b| b.node_id(l))
+        }, |b| {
+            let x = tape_node(b);
+            let l = numbered(b, x);
+            b.node_id(l)
+        })
     })
 }
 
