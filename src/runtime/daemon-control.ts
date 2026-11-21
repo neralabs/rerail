@@ -174,13 +174,23 @@ async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): 
   throw new Error(notSentReason(pipe, answer, holder));
 }
 
-/** daemon.json and the capability it records, for the engine on `pipe` to prove it holds; throws where it records none. */
-function capabilityToProve({ socketPath, home, state }: NamedPipe): { state: DaemonState; accessToken: string } {
+/**
+ * daemon.json and the capability it records, for the engine on `pipe` to prove it holds; throws where it records none,
+ * saying the daemon is not running when nothing listens on the pipe either, as after `rerail daemon stop`, which
+ * removes daemon.json.
+ */
+function capabilityToProve({ socketPath, home, state, machine }: NamedPipe): { state: DaemonState; accessToken: string } {
   const accessToken = state === undefined ? undefined : state.accessToken;
   if (state === undefined || accessToken === undefined) {
+    if (!pipeListed(socketPath, () => machine.pipes())) throw new Error(nothingListens(socketPath));
     throw new Error(`no daemon.json in ${home} records the capability that the engine on the pipe ${socketPath} must prove it holds, ${NOTHING_SENT}`);
   }
   return { state, accessToken };
+}
+
+/** Why a hook sent nothing to the engine pipe `socketPath` when no pipe of that name exists. */
+function nothingListens(socketPath: string): string {
+  return `nothing listens on the engine pipe ${socketPath}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`;
 }
 
 /** When each engine pipe last proved to this process that it holds a capability, epoch ms, by machine ({@link proofKey}). */
@@ -229,9 +239,7 @@ function pipeStayedBusy(holder: PipeServer | undefined): boolean {
  * wait, its engine said nothing within the wait, or it is another process.
  */
 function notSentReason({ socketPath, home, machine }: NamedPipe, answer: EngineProofAnswer, holder: PipeServer | undefined): string {
-  if (!pipeListed(socketPath, () => machine.pipes())) {
-    return `nothing listens on the engine pipe ${socketPath}: the Rerail daemon is not running, so this event was not recorded. Start it with rerail daemon start`;
-  }
+  if (!pipeListed(socketPath, () => machine.pipes())) return nothingListens(socketPath);
   const waited = `${ENGINE_ANSWER_WAIT_MS / 1_000} s`;
   if (pipeStayedBusy(holder)) return `other clients kept every instance of the engine pipe ${socketPath} taken for ${waited}, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
   if (answer === "silent") return `the engine on the pipe ${socketPath} did not prove within ${waited} that it is this Rerail home's daemon, ${NOTHING_SENT}`;
