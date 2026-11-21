@@ -8006,6 +8006,38 @@ object.
   load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
   then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
   memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
+- **After the hub's merge** (2026-11-20, fast-forward to 3c65266120): 99.3-100.0 B, 2.6-2.8 s wall, 1,629
+  findings. The engine is not it: the probe resolves `builtins.len` through `python/names.rerail`, whose scope
+  rules final-rerail-shape made equal to W's graph (46793a3c78, t50 §4: `def_outside`, `cls_late`, `gbefore`,
+  `nl_try`). Their strata cost about 1.3 s of CPU more. Two things, found on the way:
+  - **The plan of `def_outside`** read every function's body: `within(n, p)` from the function's `parameters` was
+    priced at the function's size (t50 step 4's `part_of`), the same as the function's every node by `nearest`. A
+    field's part is now priced at the mean size of the kinds that field's children have under that parent
+    (`Fielded::part_size`, over the tree's (parent kind, child kind, field) counts); a body stays near its
+    function's. `def_outside`'s work 1.27 M to 0.35 M rows. Measured 91.5 and 91.6 B, 1,629 findings (load 40, so
+    the wall says nothing). Test: `within_read_from_a_fields_part_is_priced_by_that_fields_children`; the
+    planner's 95 tests, the corpus and converter tests, and the reference tests (W's graph) pass.
+  - **A sketch's clone** shared its original's few values (`Counts`) in place, and the original's passing them
+    (`end_few`) left the clone with neither few values nor a filter: `keys` reached `unreachable!` ("a sketch past
+    its few values keeps their filter"), one cold hogql run in four. A clone of a sketch still in its few values
+    now counts its own. Test: `a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them` (fails without).
+  - Left: rewriting `cls_early` and `def_outside` through a relation of their candidates did nothing (the planner
+    inlines it back) and cost 11 B outside the spans, so it is not kept. t50's next steps (keyed nearest for
+    `walk`/`look`) are final-rerail-shape's.
+  - **`nameref`** (2026-11-21). Before the merge it was inlined into its readers. The merge gave it 16 reader
+    copies, so it is now built whole, and `pat_tail` (the merge's) was demanded. The demand split's scan took
+    `pat_tail(n)` at every `child` row, because `child(d, n, i)` binds `n`, though `d` is one of a few dotted names.
+    So `nameref` was a `pre_` relation of every identifier, a 236 k-row demand and a second pass: 0.45 s of strata
+    CPU. A scan's rows are now carried across the base atoms its variables share (the rows a probe of that column
+    meets, `stats.fan`), so `pat_tail` is not demanded, and `nameref` is one stratum at 0.22 s. Measured 90.5 and
+    90.9 B, 1.89-1.95 s wall at load 11-15, 1,629 findings. Test: `a_scan_bound_through_a_small_kinds_children_is_not_demanded`.
+    The demand, split and planner tests (338), the corpus and converter tests and the pack-data ones pass.
+    What is left of `nameref`, at 365 k identifiers: two `!field(_, #f, $n)` at 150-165 ns a probe and
+    `text($n, $x)` at 255-267 ns. Each resolves a node id to its document and tape node again: three times an
+    identifier, through the granule table (`number_of`). A test that reads `$n`'s own field and builds no rows
+    (`Source::holds` on `field`) measured the same, so the rows built are not the cost. It is not kept.
+  - The reference test on the projects needs the data-layer lint pack's two authored dead-code checks to include
+    `python/references.rerail` (Final-shape-quality's staged publish); with that local copy it passes.
 
 ### Q431. (Q412 on investigate-bend-vs-datalog; Q266 on Native-GPU-strata, Q397 on it after its merge of the hub) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 

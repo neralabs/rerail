@@ -756,6 +756,95 @@ A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `f
 After: 322 G against 314 G on format 15 (+2.6%), 319 against 315 on format 16 (+1.1%), 397 against 391 on 16z
 (+1.4%), and the same findings on all three. What remains is in-place reading the arrays never paid for: on format
 15 the parent search, and the select that finds the tape node of a node probed by its id.
+
+### Step 3 on the CPU: the executor reads the device's directory (2026-11-21)
+
+**The user (2026-11-21):** "we need to REMOVE all of the host-side CPU stuff. The CPU needs to run on the same blocks
+as the GPU only. … NO CPU-SIDE RUST POINTER-BASED DATA STRUCTURES." And: "A single memo as part of execution is
+fine, it can be done on both the CPU and the GPU. And caches are fine, so long as they are implemented in a way that
+both CPU and GPU can use and share them."
+
+**Where it stands.** The device reads the views in place (step 4d). The batch's block holds a directory (`ViewDir`):
+a `ViewRow` for each document, with each view's first row, its numbering's entry (`ViewDoc`) and its tape. The
+kernels read every view through the reads written once (`rerail_clif::view_reads`: `clif_view_node`,
+`clif_view_number`, …). The CPU's executor reads none of this. Its views are `Viewed` over host structures of its
+own:
+
+| Host structure (CPU only) | What it answers | Its home in the block |
+|---|---|---|
+| `made::Docs` (`slots`, `keys`, `tags`, `given`) and `Projected`'s fields (`key`, `file`, `tag`) | A document by key or index, its projection | `ViewRow` and `ViewDoc` |
+| `Batch::offsets` (`made::Offsets`, a vector a view) | A view's first row of each document | `ViewRow::rows` |
+| `DOC`, `LOCATED` (thread-locals) | The last document found | A memo argument of the directory's reads |
+| `of_tag`, `programs` | A tag's documents; a file's programs | A directory's ranges by tag and by file |
+| `kinds` (`KindRows`) | The `node` view's rows by kind | An index in the batch's block |
+| `given_rows`, `Shared` (`strings`, `at`, `atoms`) | Rows by relation; a group's strings | The run's relations; the atoms directory |
+
+The kernels search the directory by hand too: four bisections with no memo, by row (`vread`, `child_next`,
+`view_expand`) and by key (`by_parent`).
+
+**The steps.**
+1. **The directory is position-independent and always made.** Its addresses (`ViewDir::chunk`, `ViewDir::rows`,
+   `ViewRow::tape`, `ViewRow::lines`) become offsets, and each executor passes its own bases: host addresses on the
+   CPU, device addresses on the GPU. A tape held in a vector (no device) is a base of its own. The directory is made
+   with the batch, on every platform, whether or not a device is open (no `placed::device()` gate).
+2. **The searches are reads written once.** A document by row of a view, and by key, are CLIF reads over the
+   directory. Each takes a memo: the document found last, tried before the bisection. The CPU passes the probe's
+   or scan's cursor, and a kernel passes its own. They replace the four bisections in UKL and `Batch::doc` and
+   `Batch::locate`.
+3. **The CPU's views are the reads.** `Viewed`'s scans and probes read through `view_reads` (the generated Rust;
+   the JIT inlines the CLIF) over the directory. Check: every view's rows equal `Viewed`'s, for every view and
+   dialect, cold and warm, before `Viewed`'s own reads go.
+4. **The host structures in the table go.** Each one is deleted with its last reader, and the table here shrinks
+   to nothing.
+
+Each step ends with findings unchanged (1,629 on cold hogql), instructions measured against the step before, and
+Metal checked on the farm's Macs (the mini, then the M3, then the M1 Max, one test at a time).
+
+**Step 1, done (2026-11-21).** The directory holds no address of its own:
+- `ViewDir::at` is the directory's offset in the batch's block. An executor finds the block's start as the
+  directory's address less it (`view_block` in the kernels).
+- `rows` and `homes` are offsets in the block.
+- A row's tape and lines are a home's number and an offset in it (`ViewRow::homes`, `tape`, `lines`).
+- The homes table (`ViewHome`) is the one place a base lies. It gives each slab's, or each tape vector's, host and
+  device address, and each executor reads its own column.
+
+The 16z cache is a home too: a block of its own, which the reads of both executors share and write. Binding the
+batch's block for writing would make the host wait on every pass that reads it. The cache offset in a stored view
+(`TapeView::side`) is still the device's: the join kernels read the view where it lies, in global memory, and
+cannot set it per read. The host's reads will set their own from the same homes (step 3).
+
+`build_dir` no longer asks for a device. It refuses a batch only for a document in another block, or one with no
+tape read in place. The device's address (`ViewsInPlace::dir`) is given only when every home has a device address.
+The directory is made on its first ask. The CPU asks from step 3, so until then a CPU run makes none: cold hogql
+still gives 1,629 findings, at 88.1 B instructions against 87.1 B before. Test:
+`the_views_directory_is_the_hosts_too`. On Metal, the mini passes `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`, and the M3
+passes the first. A home's device base is `ViewHome::gpu`, since `device` is a Metal keyword.
+
+**Step 2, the reads (2026-11-21).** The directory's two searches are written once: `dir_doc_of_row(view, row, memo)`
+and `dir_doc_of_key(key, memo)` in CLIF, in the relation family, with the directory as the descriptor. The host's
+twins, written directly, are `ViewDir::doc_of_row` and `doc_of_key`. Each tries the memo first and then bisects.
+A stale memo costs a comparison, never a wrong document. The memo is a value the caller passes and keeps; it is
+never thread or process state.
+
+The kernels' three bisections by row (`vread`, `child_next`) and by key (`by_parent`) now call the reads. `vread`
+takes its caller's memo: the copy kernel and `ix_bucket` share one across a row's columns, and every other caller
+passes a fresh one, which costs what the bisection cost. `view_expand`'s search (`chunk_views.uglykl`) is over the
+chunk's copied document array, not the directory, and goes with that copy.
+
+Tests:
+- `the_directorys_searches_are_the_jits`: the host's searches against the JIT's.
+- `the_kernels_directory_searches_are_the_hosts`: the device's against the host's, for every row of every view,
+  every key and keys of none, with each memo.
+
+**Step 2, the CPU's searches (next).** `Batch::doc` runs before documents are made (decision 0494), and
+`Batch::locate` reads offsets made from the documents' counts alone. So the directory comes in two layers:
+- **The search layer**, made from keys and counts the first time the batch is asked: each row's key and first row
+  in every view, `child`'s sibling view among them. It replaces `made::Offsets` and the key search over
+  `made::Docs`.
+- **The reads layer**: each row's entry, tape and view, written when its document is made.
+
+`locate` and `doc` then take their callers' memo in place of the `DOC` and `LOCATED` thread-locals.
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

@@ -2661,6 +2661,34 @@ fn within_read_from_a_part_is_priced_by_its_parents_size() {
     assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
 }
 
+/// A field's part is priced at the size of the kinds that field's children have (`Fielded::part_size`), not its
+/// parent's: a function's `parameters` are a few nodes, its `body` most of it. Priced at the function's size, the
+/// parameters tied with the function's every node by `nearest`, and `def_outside` (python/names.rerail) read every
+/// function's body to keep the reads in its signature (hogql: 1.27 M rows of work for 0.35 M).
+#[test]
+fn within_read_from_a_fields_part_is_priced_by_that_fields_children() {
+    let rule = |f: &str| {
+        format!(".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"{f}\", b), within(n, b).\n.output r\n")
+    };
+    let p = parse(&rule("parameters")).unwrap();
+    let mut model = bare_model(&p);
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("block".to_owned(), 380.0), ("parameters".to_owned(), 4.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("block".to_owned(), 10), ("parameters".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_030.0;
+    model.stats.fielded([
+        ("fdef".to_owned(), "block".to_owned(), "body".to_owned(), 10.0),
+        ("fdef".to_owned(), "parameters".to_owned(), "parameters".to_owned(), 10.0),
+    ]);
+    // A function's parameters are their kind's size, its body its block's: not the function's 400 either.
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(4.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "body", &model.stats.size), Some(380.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "name", &model.stats.size), None, "no such edges: the parent's size");
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // Each function's parameters' descendants: 10 × 4, not 10 × 400.
+    assert!(work < 10.0 * 50.0, "work {work}: {order:?}");
+}
+
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
 /// made, not the default size.
 #[test]

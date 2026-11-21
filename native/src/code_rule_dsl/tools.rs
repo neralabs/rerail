@@ -347,7 +347,10 @@ impl PolicyInvocation {
                 PolicySource::Directory(root) => analysis_scope::RunSource::directory(root),
                 PolicySource::Revision { snapshot, .. } => snapshot.run_source(),
             };
-            match ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
+            // The scope's acquisition (and its release, `finish`) is the store's own record around the run, before
+            // its first wave and after its last: behind the run, as the store writer's (decision 0104's strict mode).
+            let begun = super::logic::profile::behind(|| ContentStore::open(&path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)));
+            match begun {
                 Ok(run) => invocation.analysis = Some(run),
                 Err(error) => invocation.warning = Some(error.to_string()),
             }
@@ -380,7 +383,8 @@ impl PolicyInvocation {
 
     fn finish(&mut self, succeeded: bool) -> Option<String> {
         if let Some(mut run) = self.analysis.take() {
-            if let Err(error) = run.finish(succeeded && self.warning.is_none()) {
+            let clean = succeeded && self.warning.is_none();
+            if let Err(error) = super::logic::profile::behind(|| run.finish(clean)) {
                 self.warning.get_or_insert_with(|| error.to_string());
             }
             if let Some(warning) = run.publication_warning() {

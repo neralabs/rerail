@@ -777,6 +777,7 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     "#;
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    let equal_columns = super::push_equal_columns();
     let (result, made) = pushed(read(text));
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
