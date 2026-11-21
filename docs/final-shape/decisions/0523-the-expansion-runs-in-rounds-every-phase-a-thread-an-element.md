@@ -75,6 +75,15 @@ SIMD-group operation switches each thread of the group.
 - **256 threads a group,** as on a GPU: the radix sort's tiles are written for
   `UKL_RADIX_THREADS`. A 32-thread group cut a small unit's time from 10 to 3 ms, but its sorts of
   more than 32 keys took the tile path and faulted.
+- **A SIMD-group operation is one wait.** The CPU had no native reductions or scans: each was five
+  shuffles of two waits, so a sum suspended all 256 coroutines ten times, and the small sort's 32
+  sums a SIMD group were most of a round. Now a reduction, a scan, a segmented scan, a shuffle and
+  a ballot each write the lane's value to one of two banks and wait once (the next operation
+  writes the other bank, so no second wait guards the first's reads).
+- **The scheduler counts its waits.** A waiting thread hands on to the next runnable one (one
+  switch a wait, not two), and the counts of threads at the barrier, at each SIMD group's
+  operation and done replace three scans of the 256 threads at every release (22% of a run's
+  samples before, under 1% after).
 - **One program a source:** each kernel of the preprocessor's source was its own program,
   preprocessed and loaded again (`accel::gpu::kernels::elsewhere`, keyed by the kernel's name). Now
   the program is keyed by the source's library key.
@@ -107,4 +116,32 @@ SIMD-group operation switches each thread of the group.
    went from 58 ms at 8 groups to 33 ms at one.
 2. **The scan as grid phases** (§2's first row), then the substitution, the call, and the final and
    place. Each kind's SIMD-group body goes when its phases pass the same tests.
+
+   Done so far:
+   - **The scan,** as §2's first row.
+   - **The library's group primitives without per-step waits.** A threadgroup's segmented scan is
+     each SIMD group's, then the carries from the SIMD groups before (3 waits a tile, not 18). The
+     small sort ranks a row a thread against all the rows (no wait, not 32 SIMD sums).
+   - **Fewer rounds a level.** A call whose arguments need no list substitutes in its own round.
+     A list made in a round (an argument's) is scanned in that round's scan.
+   - **`ctl` 25 counts the rounds** (`Expanded::rounds`, printed under `RERAIL_PP_TIME`).
+
+   Measured on the CPU backend, here (an M-series laptop, one CPU group), device time:
+
+   | Unit | Rounds | Before step 2 | Now |
+   |---|---|---|---|
+   | A chain of 150 plain levels | 302 | 232 ms | 122 ms |
+   | 150 levels, an argument scanned at each | 902 | 648 ms | 344 ms |
+   | 150 levels, an exit at each | 452 | 400 ms | 206 ms |
+
+   About 0.4 ms a round. What is left per round is the item bodies, a SIMD group a list.
+   - **A list's final** (`px_final`) climbs its chain on one SIMD group, walking each level's
+     pieces (`px_walk`).
+   - **The places go top-down,** a level a round: each place pushes its children's places, so a
+     chain takes two rounds a level.
+   - **A 32,768-token `#if` line** (`a_unit_past_its_room_runs_again_larger`) takes 920 ms in 20
+     rounds. That is the 4,681 lists' walks, a SIMD group each, not its rounds.
+
+   Next: the final and the place as grid phases (§2's last row), then the call and the
+   substitution.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.

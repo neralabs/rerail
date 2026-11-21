@@ -433,8 +433,10 @@ pub struct XCaps {
     pub out: usize,
     pub sb: usize,
     pub st: usize,
-    /// The queue's items: the most the work pushes (it is linear, no slot used twice).
+    /// A round's items, and the lists it scans: the most a round makes.
     pub q: usize,
+    /// A round's scanned tokens: the most one round scans, every list's (decision 0523 §2).
+    pub sc: usize,
     /// The runs refused for room so far: the counters' and the text facts' rooms, and the
     /// `#line` rows', double with it.
     pub rung: u32,
@@ -449,11 +451,11 @@ impl XCaps {
     pub fn at(top: usize, rung: u32) -> XCaps {
         let tok = (top + 4096) << (rung + 1);
         let lists = tok / 16 + 1024;
-        XCaps { tok, lists, args: tok / 16 + 1024, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, q: 2 * lists + 64, rung }
+        XCaps { tok, lists, args: tok / 16 + 1024, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, q: 2 * lists + 64, sc: tok / 4 + 4096, rung }
     }
 
     fn max(self, a: XCaps) -> XCaps {
-        XCaps { tok: self.tok.max(a.tok), lists: self.lists.max(a.lists), args: self.args.max(a.args), out: self.out.max(a.out), sb: self.sb.max(a.sb), st: self.st.max(a.st), q: self.q.max(a.q), rung: self.rung.max(a.rung) }
+        XCaps { tok: self.tok.max(a.tok), lists: self.lists.max(a.lists), args: self.args.max(a.args), out: self.out.max(a.out), sb: self.sb.max(a.sb), st: self.st.max(a.st), q: self.q.max(a.q), sc: self.sc.max(a.sc), rung: self.rung.max(a.rung) }
     }
 
     /// At least the first run's rooms of a top level of `top` tokens (P1's grew).
@@ -481,7 +483,7 @@ impl XCaps {
         };
         let mut c = self;
         c.rung += 1;
-        let [tok, lists, args, sb, st, q, out] = room;
+        let [tok, lists, args, sb, st, q, out, sc] = room;
         c.tok = up(tok, c.tok);
         c.lists = up(lists, c.lists);
         c.args = up(args, c.args);
@@ -489,7 +491,8 @@ impl XCaps {
         c.st = up(st, c.st);
         c.q = up(q, c.q);
         c.out = up(out, c.out);
-        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q && c.out == self.out {
+        c.sc = up(sc, c.sc);
+        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q && c.out == self.out && c.sc == self.sc {
             let a = XCaps::at(top, self.rung + 1);
             return XCaps { rung: a.rung, ..self.fit(top) }.max(a);
         }
@@ -1122,7 +1125,23 @@ pub struct Exp {
     cnt_cap: u32,
     lb_cap: u32,
     pub out: Buf,
+    /// A round's scan (decision 0523 §2): the lists (`q` of them) and their tokens (`sc_cap`).
+    scans: Buf,
+    sc_n: Buf,
+    sc_base: Buf,
+    sc_xj: Buf,
+    sc_scan: Scan,
+    sc_tok: [Buf; 12],
+    sc_cscan: Scan,
+    sc_lscan: Scan,
+    sc_ckeys: Buf,
+    sc_sort: Sort,
+    sc_first: Buf,
+    sc_cap: u32,
 }
+
+/// A round's scan's stores a token (`Exp::sc_tok`), by slot.
+const SC_TOK: [&str; 12] = ["SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK"];
 
 impl Exp {
     pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, x: XCaps, caps: Caps) -> Result<Exp, Error> {
@@ -1171,7 +1190,7 @@ impl Exp {
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
         // front's growth); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
-        let mut ctl = [0u32; 24];
+        let mut ctl = [0u32; 26];
         ctl[4] = lit_bytes as u32;
         ctl[15] = gap as u32;
 
@@ -1233,7 +1252,7 @@ impl Exp {
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
             // A round's items and the next's (decision 0523).
             slots: zeroed(2 * q)?,
-            qctl: zeroed(5)?,
+            qctl: zeroed(6)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1251,6 +1270,18 @@ impl Exp {
             // The refs, then each one's space flag.
             // The output's pieces: five columns, `out` words each (decision 0520 §3).
             out: zeroed(5 * out)?,
+            scans: zeroed(q)?,
+            sc_n: zeroed(q)?,
+            sc_base: zeroed(q)?,
+            sc_xj: zeroed(q)?,
+            sc_scan: Scan::new(arena)?,
+            sc_tok: [(); 12].map(|()| zeroed(x.sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| Error::BackendFailure)?,
+            sc_cscan: Scan::new(arena)?,
+            sc_lscan: Scan::new(arena)?,
+            sc_ckeys: arena.zeroed::<u64>(x.sc.max(1))?,
+            sc_sort: Sort::new(arena, x.sc.max(1))?,
+            sc_first: zeroed(1)?,
+            sc_cap: x.sc as u32,
         })
     }
 
@@ -1272,6 +1303,12 @@ impl Exp {
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
+        l.at("SCANS", &self.scans).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
+        for (name, b) in SC_TOK.iter().zip(&self.sc_tok) {
+            l.at(name, b);
+        }
+        l.at("SC_CTOTAL", &self.sc_cscan.total).at("SC_LTOTAL", &self.sc_lscan.total).at("SC_CKEYS", &self.sc_ckeys).at("SC_FIRST", &self.sc_first);
+        l.at("SC_KB", &self.sc_sort.keys_b).at("SC_VA", &self.sc_sort.vals_a).at("SC_VB", &self.sc_sort.vals_b).at("SC_HIST", &self.sc_sort.hist).word("SC_CAP", self.sc_cap);
     }
 
     /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).
@@ -1290,6 +1327,11 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
+    pub fn rounds(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` 25 counts the rounds.
+        unsafe { *self.ctl.host().cast::<u32>().add(25) }
+    }
+
     pub fn room(&self) -> [(u32, u32); ROOMS] {
         // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
         // `qctl` the rounds' (the next round's items, past the room where it ran out; `ctl` 13 each
@@ -1303,7 +1345,7 @@ impl Exp {
             let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
-            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
+            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32), (*ctl.add(24), self.sc_cap)]
         }
     }
 
@@ -1420,13 +1462,15 @@ pub struct Expanded {
     pub caps: Caps,
     pub xcaps: XCaps,
     pub passes: (u32, u32),
+    /// The expansion's rounds (decision 0523 §1), every top's (a measurement).
+    pub rounds: u32,
     pub def_rung: u32,
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
-pub const ROOM_STORES: [&str; ROOMS] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items", "output"];
+pub const ROOM_STORES: [&str; ROOMS] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items", "output", "scan tokens"];
 /// The expansion's rooms a run reports (`Exp::room`).
-pub const ROOMS: usize = 7;
+pub const ROOMS: usize = 8;
 
 /// A ref to a scratch token, not a tape node.
 pub const SCRATCH: u32 = 0x8000_0000;
@@ -1511,7 +1555,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs);
@@ -1524,7 +1568,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1532,7 +1576,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
     }
 }
 

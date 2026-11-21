@@ -365,7 +365,7 @@ fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::fi
         let t0 = std::time::Instant::now();
         let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
         if std::env::var_os("RERAIL_PP_TIME").is_some() {
-            eprintln!("TIME expand {:.3} ms (device {:.3} ms)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3));
+            eprintln!("TIME expand {:.3} ms (device {:.3} ms, {} rounds)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3), x.as_ref().map_or(0, |x| x.rounds));
         }
         if let Ok(x) = &x {
             ran.runs += 1;
