@@ -963,13 +963,13 @@ typedef struct PpTg {
     (void)sl; (void)jobs; (void)files; (void)which; (void)is_if; (void)closes
 #define PX_PHASE_END *phasep = phase; return true
 #define PX_ROUND(f, CLOSES, w) if (!f(arena, data, lay, tg, g, &phase, stop, is_if, (CLOSES), (w) __UKL_ARGS)) PX_QUIT
-UKL_CALLED bool px_r_work(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_WORK_ON(DR, closes); PX_PHASE_END; }
-UKL_CALLED bool px_r_calls(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_CALLS(DR, closes); PX_PHASE_END; }
-UKL_CALLED bool px_r_substs(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_SUBSTS(DR, closes); PX_PHASE_END; }
-UKL_CALLED bool px_r_scans(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_SCANS(DR, closes); PX_PHASE_END; }
-UKL_CALLED bool px_r_walks(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_WALKS(DR, closes, which); PX_PHASE_END; }
-UKL_CALLED bool px_r_give(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_GIVE(); PX_PHASE_END; }
-UKL_CALLED bool px_drain(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg,
+UKL_ONCE bool px_r_work(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_WORK_ON(DR, closes); PX_PHASE_END; }
+UKL_ONCE bool px_r_calls(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_CALLS(DR, closes); PX_PHASE_END; }
+UKL_ONCE bool px_r_substs(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_SUBSTS(DR, closes); PX_PHASE_END; }
+UKL_ONCE bool px_r_scans(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_SCANS(DR, closes); PX_PHASE_END; }
+UKL_ONCE bool px_r_walks(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_WALKS(DR, closes, which); PX_PHASE_END; }
+UKL_ONCE bool px_r_give(PX_PHASE_PARAMS) { PX_PHASE_BEGIN; PX_GIVE(); PX_PHASE_END; }
+UKL_ONCE bool px_drain(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg,
                          UklGrid g, UKL_PRIVATE uint32_t* phasep, uint32_t stop, bool is_if,
                          PP_GLOBAL const uint64_t* closes __UKL_PARAMS)
 {

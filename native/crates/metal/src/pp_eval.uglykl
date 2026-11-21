@@ -44,20 +44,20 @@ UKL_INLINE int64_t pf_src(PpFile f) { return pf_at(f) + (int64_t)f.source; }
 // A file's document's first byte, 16-byte aligned in its slab: where its names' words are read from.
 UKL_INLINE UKL_GLOBAL const uint64_t* pf_words(UKL_GLOBAL const uint8_t* data, PpFile f) { return (UKL_GLOBAL const uint64_t*)(data + pf_at(f)); }
 
-// The tape's reads are calls (`UKL_CALLED`), compiled once: inlined at each of their ~600 sites
+// The tape's reads are calls (`UKL_ONCE`), compiled once: inlined at each of their ~600 sites
 // (12 KB of code for a start, 46 KB for an end, the stated starts' decode), they made the setup
 // kernel 14 MB of code and its Metal back end's compile minutes.
 //
 // Node `i`'s key: its code's kind and field (`kind | field << 10`; a preprocessor tape's codes
 // have no flags), from its number in the language's table (`DeviceCode`s, 24 bytes each).
-UKL_CALLED uint32_t node_key(Tape t, uint32_t i) {
+UKL_ONCE uint32_t node_key(Tape t, uint32_t i) {
     UKL_GLOBAL const uint16_t* c = (UKL_GLOBAL const uint16_t*)(t.codes + 24u * clif_tape_number(t.d, (UKL_GLOBAL const uint32_t*)t.v, i));
     return ((uint32_t)(c[0])) | ((uint32_t)(c[1])) << 10;
 }
 UKL_INLINE uint32_t node_kind(Tape t, uint32_t i) { return node_key(t, i) & 0x3ffu; }
-UKL_CALLED uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_CALLED uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
-UKL_CALLED uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_size(Tape t, uint32_t i) { return clif_tape_size(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_start(Tape t, uint32_t i) { return clif_tape_start(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
+UKL_ONCE uint32_t node_end(Tape t, uint32_t i) { return clif_tape_end(t.d, (UKL_GLOBAL const uint32_t*)t.v, i); }
 // The line (from 0) of byte `x` of the file: by its tape's newline index.
 UKL_INLINE uint32_t tape_line_of(Tape t, uint32_t x) { return clif_tape_line(t.d, (UKL_GLOBAL const uint32_t*)t.v, x); }
 

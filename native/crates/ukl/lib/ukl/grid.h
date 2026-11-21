@@ -123,7 +123,7 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
 // Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
 // group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
 // number of times. `flag` is a word of threadgroup memory.
-UKL_CALLED bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
+UKL_ONCE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
 {
     // The group's writes, done.
     ukl_tg_barrier_device();
@@ -242,7 +242,7 @@ UKL_INLINE uint32_t ukl_grid_scan_tiles(UklGrid g, uint32_t first, uint32_t end,
 // group sums its share of each job; group 0 scans each job's sums (`sums[groups]` its total); each group scans its
 // shares from their offsets. False when a barrier failed (the outputs are then partial). Ends with a barrier: every
 // output is seen by every group.
-UKL_CALLED bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, uint32_t k, UKL_COHERENT uint32_t* sums,
+UKL_ONCE bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, uint32_t k, UKL_COHERENT uint32_t* sums,
                                UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     bool small = true;
@@ -290,7 +290,7 @@ UKL_CALLED bool ukl_grid_scans(UklGrid g, UKL_PRIVATE const UklScanJob* jobs, ui
 
 // The exclusive scan of `in`'s first `n` values into `out`, its total into `*total` (`out + n` for an offsets
 // array): `ukl_grid_scans` of one job. `sums` is `groups + 1` words.
-UKL_CALLED bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+UKL_ONCE bool ukl_grid_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
                                 UKL_COHERENT uint32_t* total, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     UklScanJob job;
@@ -313,7 +313,7 @@ UKL_INLINE bool ukl_grid_scan_exclusive_u32(UklGrid g, UKL_GLOBAL const uint32_t
 // `ukl_grid_scan_n` by one group alone (its threads, `g.lid` of `g.lsz`; the other groups call nothing): its tiles in
 // order, the total into `*total`, then the group's barrier (device memory). For phases whose elements a group holds
 // (decision 0527): no grid barrier.
-UKL_CALLED void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+UKL_ONCE void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
                                  UKL_COHERENT uint32_t* total, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
 {
     uint32_t run = ukl_grid_scan_tiles(g, 0u, n, 0u, in, out, scratch __UKL_ARGS);
@@ -468,7 +468,7 @@ UKL_INLINE void ukl_seg_tile(UklGrid g, uint32_t op, uint32_t base, uint32_t end
 
 // `ukl_grid_seg_scan_n` by one group alone (as `ukl_group_scan_n`): its tiles in order, each from the carry of
 // those before it, then the group's barrier (device memory).
-UKL_CALLED void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+UKL_ONCE void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
                                      UKL_COHERENT uint32_t* out, UKL_LOCAL uint32_t* sv, UKL_LOCAL uint32_t* sf __UKL_PARAMS)
 {
     uint32_t cv = 0u, cf = 0u;
@@ -481,7 +481,7 @@ UKL_CALLED void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COH
 // segment starting at each nonzero `heads` word, as phases of the grid; `in` may be `out`. `sums` is `2 * groups`
 // words of device memory (each group's aggregate: value, then whether it holds a head); `sv`, `sf` are `lsz` words
 // each of threadgroup memory. Three phases, as the scan's. Ends with a barrier.
-UKL_CALLED bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+UKL_ONCE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
                                     UKL_COHERENT uint32_t* out, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* sv,
                                     UKL_LOCAL uint32_t* sf, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
@@ -572,7 +572,7 @@ UKL_INLINE bool ukl_sort_before(uint32_t ah, uint32_t al, uint32_t ai, uint32_t 
 //   threadgroup memory; each thread of the grid ranks its row among them all;
 //   the rows go to their places after a barrier where they are sorted in place;
 // - more: the digits that vary among the rows (a reduction), and only those passed, three barriers each.
-UKL_CALLED bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
+UKL_ONCE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
                                        UKL_COHERENT uint32_t* values, UKL_COHERENT uint64_t* keys2, UKL_COHERENT uint32_t* values2,
                                        UKL_COHERENT uint32_t* hist, UKL_COHERENT uint32_t* sums, UklGridSortLocal l,
                                        UKL_LOCAL uint32_t* scratch, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
