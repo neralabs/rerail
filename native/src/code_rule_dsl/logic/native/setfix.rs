@@ -4479,7 +4479,11 @@ pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Ar
         Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     };
     forgotten_on_close();
-    on(&conn).given.lock().insert(table.to_owned(), given.map(view));
+    let given = given.map(view);
+    for (rel, ver) in given.iter().zip(["old", "minus", "plus", "now"]) {
+        let _ = rel.name.set(format!("{table} ({ver})"));
+    }
+    on(&conn).given.lock().insert(table.to_owned(), given);
 }
 
 /// Drops `tables`' given versions (`give_versions`).
@@ -5184,6 +5188,16 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn columns(&self) -> Vec<String> { self.1.clone().unwrap_or_else(|| (0..self.0.k).map(|i| format!("c{i}")).collect()) }
     fn len(&self) -> usize { self.2.as_ref().map_or_else(|| self.0.len(), Vec::len) }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {
+        // A view of every row of a source (an input, a changed input's version, a kept relation read in place) is
+        // estimated as its source estimates it (a batch's relation by its kept statistics, none made), unless its
+        // statistics are at hand: every column of every row is not read for one column's estimate.
+        if self.2.is_none()
+            && self.0.measured.get().is_none()
+            && let Some(v) = self.0.view.as_ref().filter(|v| v.ids.is_none() && v.eqs.is_empty())
+            && let Some(&sc) = v.cols.get(c)
+        {
+            return v.src.estimated_matches(sc, batch);
+        }
         let ndv = self.statistics().and_then(|s| s.get(c).map(|x| x.2)).unwrap_or(1).max(1) as usize;
         let one = self.len().div_ceil(ndv);
         if batch { one * 8 } else { one }
@@ -5238,8 +5252,20 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
         if let Some(src) = self.0.held_source() && let Some(s) = src.statistics() {
             return Some(self.columns().into_iter().zip(s).map(|(n, (_, a, b, c, d))| (n, a, b, c, d)).collect());
         }
+        // Kept by the engine as its rows came (`InRel::kept_stats`), or given when it was bound (`give_measured`):
+        // read, not measured.
+        if self.0.measured.get().is_none()
+            && let Some(stats) = self.0.kept_stats(self.columns())
+        {
+            self.0.give_measured(&stats.statistics(&|_| true));
+        }
         let m = self.0.measured.get_or_init(|| {
-            let m: Vec<[i64; 4]> = self.0.posted().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect());
+            let m: Vec<[i64; 4]> = self.0.posted().unwrap_or_else(|| {
+                crate::code_rule_dsl::logic::profile::decision("a held relation's statistics measured by reading its rows", || {
+                    format!("{} ({} rows)", self.0.name.get().map_or("?", String::as_str), self.len())
+                });
+                crate::code_rule_dsl::facts::vtab::syntax::measured(self).into_iter().map(|(_, a, b, c, d)| [a, b, c, d]).collect()
+            });
             // Written once in a block (decision 0478 step 6).
             BlockVec::from_iter_in(self.0.rows.home().as_ref(), m)
         });
@@ -5332,6 +5358,14 @@ impl KeptStats {
 impl InRel {
     /// Its statistics as kept while its rows came (`Rel::stats`), its columns named `names`: `None` for one not
     /// derived by the native engine, or whose rows were not all counted.
+    /// Its statistics as measured of its rows before (a kept relation's, by an earlier run: decision 0120 §3), each
+    /// column's rows, distinct values, sum of squared postings and that sum by document: what its source answers
+    /// (`Derived::statistics`) without reading its rows. Ignored once it has some, or if they are of another width.
+    pub(in crate::code_rule_dsl) fn give_measured(&self, measured: &[(String, i64, i64, i64, i64)]) {
+        if measured.len() == self.k && self.measured.get().is_none() {
+            let _ = self.measured.set(BlockVec::from_iter_in(self.rows.home().as_ref(), measured.iter().map(|&(_, a, b, c, d)| [a, b, c, d])));
+        }
+    }
     pub(in crate::code_rule_dsl) fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
         let s = self.stats.as_ref()?;
         (s.0.rows() == (self.n - self.ndead) as i64 && names.len() == self.k).then(|| s.0.renamed(names))
@@ -6190,6 +6224,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
             {
                 let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
                 loaded(0, thread_cpu() - c0, 0);
+                let _ = rel.name.set(table.clone());
                 keep(&rel);
                 return Ok(rel);
             }
@@ -6197,6 +6232,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
             let n = 0;
             let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
             loaded(0, thread_cpu() - c0, 0);
+            let _ = rel.name.set(table.clone());
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
             }

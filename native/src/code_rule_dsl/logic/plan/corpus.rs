@@ -11345,6 +11345,10 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
         crate::code_rule_dsl::logic::native::component::adopt(db, &rel, Arc::clone(held));
     }
     let measured_before = held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested));
+    // The engine's reads of it (an index's estimate, `Derived::statistics`) take them too, not measured again.
+    if let (Some(h), Some((measured, _, _))) = (&held, &measured_before) {
+        h.give_measured(measured);
+    }
     // Kept, and not measured before for these constants: its statistics are made when a stratum first plans with
     // it (decisions 0101 §4, 0123), as the eager path below would make them. Most strata a step reaches are quiet
     // or join an empty delta and never do.
@@ -11367,6 +11371,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             }
             let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
             let measured = syntax::statistics(source2.as_ref());
+            h2.give_measured(&measured);
             let counts = constant_counts(wanted.as_ref(), source2.as_ref());
             (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested2))
         });
@@ -11380,6 +11385,9 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
         None => {
             let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
             let measured = syntax::statistics(source.as_ref());
+            if let Some(h) = &held {
+                h.give_measured(&measured);
+            }
             // The constants the rules test it by are counted too: a column measured without them reads as holding
             // none, so `kind(r, identifier)` was planned as one row and drove a delta rule.
             let counts = constant_counts(tested_of(&b.constants, &rel), source.as_ref());

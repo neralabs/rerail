@@ -77,3 +77,20 @@ fn a_filtered_view_finds_its_rows_on_its_first_scan() {
     assert!(some.ids.as_ref().is_some_and(|ids| ids.get().is_none()), "a probe finds no view row");
     assert_eq!((some.ids(), some.len()), (Some(&[1u32, 2][..]), 2), "the scan's rows");
 }
+
+/// A held relation that views every row of a source (an input, a changed input's version, a kept relation read in
+/// place) is estimated as its source estimates it: an index's choice of its lead column (`InRel::lead`) measured
+/// every column of every row for one column's distinct values (ep2's edit: 15% of its CPU).
+#[test]
+fn a_whole_views_estimate_is_its_sources() {
+    let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["a".into(), "b".into()], vec![Some(vec![1, 1, 2, 2, 3, 3]), Some(vec![5, 6, 7, 8, 9, 10])]);
+    let held = InRel::over_source(Arc::clone(&source), vec![b'i', b'i']);
+    let viewed = held.source(vec!["a".into(), "b".into()]);
+    assert_eq!(viewed.estimated_matches(0, false), source.estimated_matches(0, false), "the source's estimate");
+    assert_eq!(viewed.estimated_matches(1, false), source.estimated_matches(1, false));
+    assert!(held.measured.get().is_none(), "no statistic of it is measured for an estimate");
+    // Statistics given (a kept relation's, measured by an earlier run) answer it, as they answer `statistics`.
+    held.give_measured(&[("a".into(), 6, 3, 12, 12), ("b".into(), 6, 6, 6, 6)]);
+    assert_eq!((viewed.estimated_matches(0, false), viewed.estimated_matches(1, false)), (2, 1));
+    assert_eq!(viewed.statistics().map(|s| s[0].2), Some(3), "the statistics given, not measured");
+}
