@@ -573,7 +573,9 @@ Two changes:
   its mutex-and-map rows path. It now takes `lookup_read` with no columns.
 
 On s1000, rows unchanged: 338.6 → 321.9 G instructions; `wstart` 0.755 → 0.697 s, `walk` 0.767 → 0.603 s (own
-CPU; the wall times are noisy between runs). The views' id translation and the index runs' probes are left.
+CPU; the wall times are noisy between runs). On `all`, against 0523's run: 3.253 → 3.165 T instructions, the
+lookup stage 12.61 → 11.74 s, `wstart` 5.06 s; every stage's rows as before (t50's known `ref` and `open_name`
+differences). The views' id translation and the index runs' probes are left.
 
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
