@@ -8922,65 +8922,82 @@ fn run_observed_within(
         // counted out and their new ones in (0096 §3's patch, of the documents rather than memo entries); else counted
         // off the corpus batch, read where its rows lie. Counted at the columns its rules read (`held`).
         let (table_digest, kept_stats) = &mut base_stats_kept;
+        let table_digest = *table_digest;
         let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
-        let mut base_statistics = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &BTreeSet<&str>| -> Vec<(String, i64, i64, i64, i64)> {
+        type Stat = (String, i64, i64, i64, i64);
+        // One relation's statistics, of its kept ones (`kept`, taken from the table's) or counted: what they are, how
+        // they were had, and the counts to keep beside the table when counted or patched. Reads only what it is given
+        // and the batch, so relations are counted side by side (below).
+        let base_counted = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &BTreeSet<&str>, kept: Option<(u64, super::statkeep::RelStats)>| -> (Vec<Stat>, &'static str, Option<super::statkeep::RelStats>) {
             let columns = source.columns();
             let width = columns.len();
             let from: Vec<usize> = (0..width).filter(|&c| held.contains(columns[c].as_str())).collect();
             let names: Vec<String> = from.iter().map(|&c| columns[c].clone()).collect();
+            let kept = kept.filter(|(_, k)| k.columns() == names.as_slice());
             // A text test is a test of a string (decision 0504): nothing of it changes with an edit, so its kept
             // statistics stand, read without its `len` (a scan of the batch's strings).
             if cross_vocabulary.tests.iter().any(|(t, _)| t == rel)
-                && let Some((_, k)) = kept_stats.remove(rel).filter(|(_, k)| k.columns() == names.as_slice())
+                && let Some((_, k)) = &kept
             {
-                crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: kept, a text test (decision 0504)"));
                 let rows = k.rows();
-                let by_name: HashMap<String, (String, i64, i64, i64, i64)> = k.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
-                return columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect();
+                let by_name: HashMap<String, Stat> = k.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+                return (columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect(), "kept, a text test (decision 0504)", None);
             }
             let rows = source.len() as i64;
             let now = base_digest(rel);
-            let counted = match kept_stats.remove(rel).filter(|(_, k)| k.columns() == names.as_slice()) {
-                Some((d, k)) if d == now && k.rows() == rows => Some((k, "kept")),
+            let counted = match kept {
+                Some((d, k)) if d == now && k.rows() == rows => Some((k, "kept", false)),
                 Some((d, mut k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => base_wholes.get(rel).and_then(|(old, new)| {
                     for (v, sign) in [(old, -1), (new, 1)] {
                         if let Some(v) = v {
                             k.documents_read(v.len(), width, &|r, c| v.value(r, c), &from, sign);
                         }
                     }
-                    (k.rows() == rows).then(|| {
-                        if base_binds.is_some() {
-                            base_stats_out.push((rel.to_owned(), now, k.clone()));
-                        }
-                        (k, "patched by the changed documents")
-                    })
+                    (k.rows() == rows).then_some((k, "patched by the changed documents", true))
                 }),
                 _ => None,
             };
-            let counted = counted.unwrap_or_else(|| {
+            let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
                 k.documents_read(source.len(), width, &|r, c| source.value(r, c), &from, 1);
-                if base_binds.is_some() {
-                    base_stats_out.push((rel.to_owned(), now, k.clone()));
-                }
-                (k, "counted")
+                (k, "counted", true)
             });
-            let (counted, how) = counted;
-            crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
-            let by_name: HashMap<String, (String, i64, i64, i64, i64)> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
-            columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect()
+            let by_name: HashMap<String, Stat> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+            let st = columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect();
+            (st, how, (keep && base_binds.is_some()).then_some(counted))
         };
+        let held_of = |columns: &[String], values: &[Option<Vec<i64>>]| -> BTreeSet<String> { columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.clone()).collect() };
         // Every value the exports hold, the chunks' and the hits' (as `mention` gathered them per chunk before 0458
-        // step 4's copy 2): the nodes a semi-join's relation is looked up at. Made at the first semi-join read off the
-        // batch.
-        let held_nodes: std::cell::OnceCell<rustc_hash::FxHashSet<i64>> = std::cell::OnceCell::new();
+        // step 4's copy 2): the nodes a semi-join's relation is looked up at. Made once, before the relations are
+        // counted, when a semi-join's is read off the batch.
+        let held_nodes: rustc_hash::FxHashSet<i64> = if base_rows.keys().any(|r| semijoin.contains(r) && !base_layered.contains_key(r)) {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
+            let mut held = rustc_hash::FxHashSet::default();
+            let exports = exports.borrow();
+            for rel in &split.exports {
+                exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
+            }
+            held
+        } else {
+            rustc_hash::FxHashSet::default()
+        };
+        // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
+        // statistics.
+        struct Count {
+            rel: String,
+            columns: Vec<String>,
+            held: BTreeSet<String>,
+            source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
+            kept: Option<(u64, super::statkeep::RelStats)>,
+        }
+        let mut counts: Vec<Count> = Vec::new();
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
+            let held = held_of(&columns, &values);
             // A kept base relation with its delta (decision 0117 step 2): bound as it is, its digest taken from its
             // owners', its statistics the keeper's.
             if let Some(source) = base_layered.remove(&rel) {
                 let rows = source.len();
-                let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
                 let statistics = if semijoin.contains(&rel) {
                     // A semi-join's, kept at these rows (`kept_input_stats`), else measured and kept for the next run.
                     match kept_input_stats.get(&rel).filter(|(d, _)| input_digests.get(&rel) == Some(d)) {
@@ -8992,7 +9009,13 @@ fn run_observed_within(
                         }
                     }
                 } else {
-                    base_statistics(&rel, source.as_ref(), &held)
+                    let held: BTreeSet<&str> = held.iter().map(String::as_str).collect();
+                    let (st, how, keep) = base_counted(&rel, source.as_ref(), &held, kept_stats.remove(&rel));
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
+                    if let Some(k) = keep {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), k));
+                    }
+                    st
                 };
                 totals.add(&rel, rows, &statistics);
                 input_digests.insert(rel.clone(), base_digest(&rel));
@@ -9001,48 +9024,76 @@ fn run_observed_within(
             }
             // Read off the corpus batch's documents (decision 0458), not the rows the chunks gathered.
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch")))?);
-            let columns = source.columns();
-            // A semi-join's relation is read by the cross part only at the nodes the exports hold: its statistics are
-            // those rows' (`keptstats::SemijoinCounts`), read off the batch by a walk of their documents
-            // (`for_rows_keyed`), not every node's measured: the view's every row is computed from the tape (1.2-1.5 M
-            // rows on hogql, 1 s to measure). Else every row is measured.
-            let looked_up = semijoin.contains(&rel).then(|| {
-                let input = super::super::sql::select::input_columns(&rel)?;
-                let at: Vec<usize> = input.iter().map(|c| columns.iter().position(|h| h == c)).collect::<Option<_>>()?;
-                let n_at = input.iter().position(|c| *c == "n")?;
-                let held = held_nodes.get_or_init(|| {
-                    let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
-                    let mut held = rustc_hash::FxHashSet::default();
-                    let exports = exports.borrow();
-                    for rel in &split.exports {
-                        exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied()));
+            let kept = if semijoin.contains(&rel) { None } else { kept_stats.remove(&rel) };
+            counts.push(Count { rel, columns, held, source, kept });
+        }
+        // Each relation counted on the pool, side by side: they read the batch alone, which makes a document once,
+        // for whichever reads it first (0504). On the run's thread they took 0.6 s of hogql's cold run, one at a time.
+        enum Counted {
+            /// A semi-join's rows at the held nodes (`SemijoinCounts`): their number and statistics.
+            Looked(usize, Vec<Stat>),
+            /// A semi-join's every row, measured (its keyed walk refused).
+            Measured(Vec<Stat>),
+            Base(Vec<Stat>, &'static str, Option<super::statkeep::RelStats>),
+        }
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let counted: Vec<Counted> = {
+            use rayon::prelude::*;
+            let count = |c: &Count| -> Counted {
+                let _in = carry.enter();
+                let source = c.source.as_ref();
+                if !semijoin.contains(&c.rel) {
+                    let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
+                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone());
+                    return Counted::Base(st, how, keep);
+                }
+                // A semi-join's relation is read by the cross part only at the nodes the exports hold: its statistics
+                // are those rows' (`keptstats::SemijoinCounts`), read off the batch by a walk of their documents
+                // (`for_rows_keyed`), not every node's measured: the view's every row is computed from the tape
+                // (1.2-1.5 M rows on hogql, 1 s to measure). Else every row is measured.
+                let looked = (|| {
+                    let input = super::super::sql::select::input_columns(&c.rel)?;
+                    let at: Vec<usize> = input.iter().map(|n| c.columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
+                    let n_at = input.iter().position(|n| *n == "n")?;
+                    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{}'s rows at the held nodes, counted", c.rel));
+                    let mut counts = keptstats::SemijoinCounts::default();
+                    source
+                        .for_rows_keyed(at[n_at], &held_nodes, &at, &mut |_, row| {
+                            counts.row(row[n_at], n_at, row);
+                            true
+                        })
+                        .then_some(())?;
+                    let st = counts.statistics(input, &c.columns)?;
+                    Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st))
+                })();
+                looked.unwrap_or_else(|| {
+                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({} rows)", source.len()));
+                    Counted::Measured(syntax::statistics(source))
+                })
+            };
+            if counts.len() > 1 { crate::code_rule_dsl::logic::profile::on_cores(|| counts.par_iter().map(count).collect()) } else { counts.iter().map(count).collect() }
+        };
+        // Applied in the relations' order, as one thread gave them.
+        for (c, counted) in counts.into_iter().zip(counted) {
+            let Count { rel, columns, source, .. } = c;
+            let (rows, statistics) = match counted {
+                Counted::Looked(rows, st) => (rows, st),
+                Counted::Measured(st) => {
+                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || format!("{rel}: columns {columns:?}, input {:?}", super::super::sql::select::input_columns(&rel)));
+                    crate::code_rule_dsl::logic::profile::decision("a base relation measured, not kept", || format!("{rel}: {} rows", source.len()));
+                    // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
+                    semijoin_stats.insert(rel.clone(), st.clone());
+                    (source.len(), st)
+                }
+                Counted::Base(st, how, keep) => {
+                    crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
+                    if let Some(k) = keep {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), k));
                     }
-                    held
-                });
-                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}'s rows at the held nodes, counted"));
-                let mut counts = keptstats::SemijoinCounts::default();
-                source.for_rows_keyed(at[n_at], held, &at, &mut |_, row| {
-                    counts.row(row[n_at], n_at, row);
-                    true
-                }).then_some(())?;
-                let st = counts.statistics(input, &columns)?;
-                Some((st.first().map_or(0, |s| s.1 as usize), st))
-            }).flatten();
-            if semijoin.contains(&rel) && looked_up.is_none() {
-                crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || format!("{rel}: columns {columns:?}, input {:?}", super::super::sql::select::input_columns(&rel)));
-            }
-            let rows = looked_up.as_ref().map_or_else(|| source.len(), |(rows, _)| *rows);
-            let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
-            let statistics = (!semijoin.contains(&rel)).then(|| base_statistics(&rel, source.as_ref(), &held));
-            let source = retain::kept_source_digested(parts.as_deref(), &rel, Arc::clone(&source), base_digest(&rel), &mut input_digests);
-            let statistics = statistics.or_else(|| looked_up.map(|(_, st)| st)).unwrap_or_else(|| {
-                crate::code_rule_dsl::logic::profile::decision("a base relation measured, not kept", || format!("{rel}: {rows} rows"));
-                let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({rows} rows)"));
-                let st = syntax::statistics(source.as_ref());
-                // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
-                semijoin_stats.insert(rel.clone(), st.clone());
-                st
-            });
+                    (source.len(), st)
+                }
+            };
+            let source = retain::kept_source_digested(parts.as_deref(), &rel, source, base_digest(&rel), &mut input_digests);
             totals.add(&rel, rows, &statistics);
             base_sources.insert(rel, source);
         }

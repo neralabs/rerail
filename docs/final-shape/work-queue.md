@@ -7152,6 +7152,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
   Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
 - **Do**: Q314, which lets chunks be large without a guess.
+- **Seen** (2026-11-20, CPU binding): hogql cold now runs as 6 chunks, so the small chunks are not what its wall time
+  is today (Q396's "Wall time").
 
 ### Q313. (Q260 on CUDA-support) A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -7708,7 +7710,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
 - **Q337's runs under it** (a profiling build, an M3 of the farm, format 16 (the default), cold hogql, each its own
   store, load 9-10): 16 of 16 gave 1,629 findings, 66-78 B instructions, 3.1-35 s (the first a cold launch; runs 6-10
   10-14 s), one device budget refusal in all, no panic. The host's link then dropped (it went unreachable), before the
-  last four.
+  last four, and it was still unreachable over 20 minutes later. It may have stopped under the Metal runs (as this
+  Mac did twice), so the last four wait until the host is seen again and its uptime says whether it restarted.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
   `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
@@ -7803,6 +7806,15 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
   `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection
   (0.34 s) moved.
+- **Wall time** (2026-11-20, the user: 2.1-2.45 s against this morning's 1.75 s at similar load): not Q312's chunk
+  sizing, as hogql now runs as 6 chunks. The gap was the `stats` phase, 0.62 s on the run's thread (this morning
+  0.007 s): the semi-join's counts (`col`, `line`, `node`, `ast_depth`, 0.06-0.08 s each, with the lazy batch's
+  projection inside them), the node rows (0.14 s) and the string annotations (0.09 s), one relation after another.
+  Each base relation read off the corpus batch is now counted on the pool (`Count`, `base_counted`); the results are
+  applied in the relations' order, as before. `stats` is 0.08 s wall (0.65 s CPU). Measured (cold, CPU binding,
+  load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
+  then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
+  memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
 
 ### Q397. (Q266 on Native-GPU-strata) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
 
