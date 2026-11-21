@@ -293,10 +293,15 @@ fn the_pool_gives_each_block_once() {
 }
 
 /// `<ukl/pool.h>`'s split takes over a grid (decision 0486 §10): every thread of 8 groups takes
-/// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
+/// blocks of one class from pieces of every class, a larger piece split and its rest given back
 /// while others take; then they are given back and taken again. No unit is taken twice, each block
-/// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of
-/// the class (a piece of class `k` at least `c` holds 2^(k-c)), whichever is less.
+/// lies inside one given range, and no block is lost: the takes met and the blocks of the class
+/// still in the pool are its room (a piece of class `k` at least `c` holds 2^(k-c)). Where the room
+/// is more than the demand, every take is met.
+///
+/// Not "every take met up to the room": a take may find every class empty while others hold blocks
+/// mid-split, and its caller then takes from the store's front (the pool's contract). On the CPU
+/// backend one group's threads take turns and that never happens; on Metal they take at once.
 #[test]
 fn the_pool_splits_a_larger_block() {
     let size = |c: u32| 1u32 << c;
@@ -342,7 +347,25 @@ fn the_pool_splits_a_larger_block() {
                     assert!(!std::mem::replace(&mut used[u as usize], true), "class {c}, rounds {rounds}: unit {u} taken twice");
                 }
             }
-            assert_eq!(met, (threads * per).min(room), "class {c}, rounds {rounds}: the takes met ({} asked, room for {room})", threads * per);
+            // The blocks of the class the pool still holds, each list walked from its head (bounded: a cycle
+            // is a corrupt pool).
+            let (h, nx) = (read::<u32>(&heads, 128), read::<u32>(&next, at as usize));
+            let mut left = 0usize;
+            for k in c..32 {
+                let (mut b, mut steps) = (h[k as usize], 0u32);
+                while b != u32::MAX {
+                    assert!(steps < at && (b as usize) < nx.len(), "class {c}, rounds {rounds}: class {k}'s list is not a list");
+                    for u in b..b + size(k) {
+                        assert!(!std::mem::replace(&mut used[u as usize], true), "class {c}, rounds {rounds}: unit {u} both taken and in the pool");
+                    }
+                    left += 1usize << (k - c);
+                    (b, steps) = (nx[b as usize], steps + 1);
+                }
+            }
+            assert_eq!(met + left, room, "class {c}, rounds {rounds}: blocks lost to the pool ({met} met, {left} left)");
+            if room > threads * per {
+                assert_eq!(met, threads * per, "class {c}, rounds {rounds}: a take not met with room for {room}");
+            }
         }
     }
 }
@@ -375,6 +398,23 @@ fn what_a_barrier_costs() {
             eprintln!("{}, {groups} groups: {:.3} us each", names[what as usize], (t1 - t0) * 1e6 / 1000.0);
         }
     }
+}
+
+/// The setup's Metal source splits one unit a barriered phase function (decision 0571), as the spike's split did
+/// (14 dynamic libraries, `px_r_substs` among them, calls 6 deep), and the small tape reads stay in their callers.
+#[test]
+fn the_setup_splits_one_unit_a_barriered_function() {
+    let msl = rerail_ukl::metal_source("pp_setup", source()).expect("the setup's source preprocesses");
+    let split = rerail_ukl::split::split(&msl).expect("the setup has barriered functions");
+    for (l, units) in split.levels().iter().enumerate() {
+        eprintln!("level {l}: {}", units.iter().map(|u| format!("{}({})", u.name, u.calls.join(","))).collect::<Vec<_>>().join(" "));
+    }
+    eprintln!("local: {}; depth {}", split.local.join(" "), split.depth);
+    assert!(split.units.iter().any(|u| u.name == "px_r_substs"), "px_r_substs is a unit");
+    assert!(split.local.iter().any(|n| n.starts_with("node_")), "the tape's reads stay local");
+    assert_eq!(split.units.len(), 14);
+    assert_eq!(split.depth, 6);
+    assert!(split.kernel.contains("kernel void pp_setup") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 
 /// The evaluator's kernels compile (a failed compile is fatal: its message is the panic's).

@@ -299,5 +299,7 @@ impl Preprocess {
     }
 }
 
+pub mod split;
+
 #[cfg(test)]
 mod tests;

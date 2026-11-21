@@ -74,8 +74,11 @@ device error"), with or without this decision.
 - **The same test, the same shapes, on UKL's CPU backend**: passes.
 
 So the failure is the device's code at the large shape, not the grid's count. The user said not to chase the one
-kernel's miscompile (2026-11-21, "don't chase"). The fix being built is to compile pp's Metal kernel as per-function
-dynamic libraries (the next decision). This test on Metal is its check.
+kernel's miscompile (2026-11-21, "don't chase"). The spike found the same: the monolithic build failed every time in
+a 32-group run, and the per-function build of the same source passed.
 
-Halvings caused by that failure may also have lowered the m3's kept measure: a measure only falls (2). Once the
-kernel is per-function, its source is new, so its key is new, and it is measured again.
+With pp's kernel built per function (0571), the launch test passes on the m3's Metal: the large shape at the
+device's bound, with no failed barrier.
+
+Halvings caused by that failure lowered the m3's kept measures to 1 (a measure only falls, item 2). They were removed
+when 0571 landed, and are measured again from the bound.
