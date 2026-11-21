@@ -615,6 +615,28 @@ fn room_for(k: usize, rows: usize) -> usize {
     bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
+/// The rows a relation's chunks hold once they hold `rows` (`Rows::try_reserve`'s steps).
+fn capacity_for(rows: usize) -> u64 {
+    let min_log = rerail_blocks::rows::MIN_LOG;
+    let mut chunks = 0;
+    while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
+        chunks += 1;
+    }
+    rerail_blocks::rows::capacity(chunks, min_log)
+}
+
+/// The bytes `indexes` indexes of `rows` rows take in their relation's block (`Relation::try_reserve_index`): each
+/// its buckets and its rows, each chunk aligned, and the directory.
+fn index_room(indexes: usize, rows: u64) -> usize {
+    let rows = rows.max(1) as usize;
+    let one = 4 * (rows.next_power_of_two() + 1) + 4 * rows + 2 * rerail_blocks::block::PAGE;
+    indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
+}
+
+/// The rows from which a relation of a run or of a batch's sources is alone in a block with room for its indexes
+/// (`Part::try_new`, `Part::alone_indexed`).
+pub const ALONE_ROWS: usize = 4096;
+
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
 /// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
 /// refusal running it on the CPU). Without Metal, anonymous memory.
@@ -681,6 +703,10 @@ pub struct Held {
     /// Rows of a continuation's base it took when it moved (`grow`, `moved_room`): its rows start at id 0 then, and the
     /// `Rows` holding it drops the base's segment (`Rows::absorbed`).
     absorbed: u32,
+    /// The indexes of its rows its block keeps room for (decision 0353 step 6): its rows' growth leaves their bytes
+    /// free (`Part::reserve_keeping`), and moves it to a block of its own with as much room past its rows when the
+    /// block has no more; 0 for none.
+    ix_room: u8,
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -710,7 +736,7 @@ impl Lent {
         }
         self.tail.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let lent = Lent { tail: self.tail.clone(), at, from: None };
-        self.tail.rel().rows.try_reserve(&self.tail.facts.block, end).then_some(lent)
+        self.tail.reserve_keeping(end).then_some(lent)
     }
 
     /// `after`, when its block has no room: the relation's rows so far (this loan's first `written` too) moved into
@@ -786,7 +812,25 @@ impl Part {
 
     /// `new`, or why no block could be had (a device block past the device's budget).
     fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+        // A large relation of a run's or of a batch's sources is alone in a block with room past its rows for it to
+        // double and for an index of each column and one more (decision 0353 step 6): packed into a shared block,
+        // a later probe's index found no bytes there and copied it (`DevIndex::moved`: 501.5 MB in 98 copies on the
+        // M3's 300-file run, ab112, every one a relation in a shared block of 16 or 64 MB with no bytes left).
+        if matches!(life, Life::Run | Life::Source) && rows >= ALONE_ROWS {
+            return Part::alone_indexed(life, k, rows, (k + 1).min(rerail_blocks::relation::ADDED_INDEXES));
+        }
         Part::try_new_with(life, k, rows, 0, false)
+    }
+
+    /// A relation of `k` columns alone in a block with room for `rows` rows, past them for its rows to double and for
+    /// `indexes` indexes of all of them, which its growth keeps (`ix_room`). The block is address space, memory only
+    /// as it is written (decision 0342's `Device::No`).
+    fn alone_indexed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        let rows = rows.max(1);
+        let extra = room_for(k, 2 * rows) - room_for(k, rows) + index_room(indexes, capacity_for(2 * rows)) + (64 << 10);
+        let mut part = Part::try_new_with(life, k, rows, extra, false)?;
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes as u8;
+        Ok(part)
     }
 
     /// `try_new`, a block of its own (a device relation's) with `extra` bytes past the relation's room.
@@ -834,7 +878,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, ix_room: 0 }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -930,7 +974,9 @@ impl Part {
         let cap = rows.next_power_of_two().max(1);
         let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
         let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        let mut part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        Arc::get_mut(&mut part.held).expect("a new relation's one holder").ix_room = indexes.max(1) as u8;
+        part
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
@@ -997,7 +1043,7 @@ impl Part {
         self.lent.compare_exchange(0, 1, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).ok()?;
         // Made now, so a refusal below gives the loan back.
         let lent = Lent { tail: self.clone(), at, from: None };
-        self.rel().rows.try_reserve(&self.facts.block, end).then_some(lent)
+        self.reserve_keeping(end).then_some(lent)
     }
 
     /// Its first `rows` rows (claimed, or written into room lent and finished) moved into a relation of its life with
@@ -1046,11 +1092,17 @@ impl Part {
     /// Room for `n` rows: chunks in its block, or the relation moved to a block with room for twice as many.
     fn grow(&mut self, n: u64) {
         debug_assert!(!self.capped(), "a write to a shared prefix");
-        if self.rel().rows.try_reserve(&self.facts.block, n) {
+        if self.reserve_keeping(n) {
             return;
         }
         let moved = self.moved_whole(self.len(), 2 * n as usize);
         *self = moved;
+    }
+
+    /// Room for `n` rows in all in its block, leaving the room its indexes take there (`ix_room`).
+    fn reserve_keeping(&self, n: u64) -> bool {
+        let ix = self.ix_room as usize;
+        self.rel().rows.try_reserve_keeping(&self.facts.block, n, |rows| if ix == 0 { 0 } else { index_room(ix, rows) })
     }
 
     /// Its first `rows` rows moved into a new relation of its life with room for `room` rows of its own more: a
@@ -1059,7 +1111,12 @@ impl Part {
     fn moved_whole(&self, rows: u32, room: usize) -> Part {
         let k = self.rel().rows.ncols as usize;
         let pre = self.base.as_ref().map_or(0, |_| self.rel().base_rows);
-        let mut moved = Part::new(self.life, k, room.max(rows as usize) + pre as usize);
+        let all = room.max(rows as usize) + pre as usize;
+        // One given room for its indexes keeps it where it goes.
+        let mut moved = match self.ix_room {
+            0 => Part::new(self.life, k, all),
+            ix => Part::alone_indexed(self.life, k, all, ix as usize).unwrap_or_else(|e| panic!("a relation of {k} columns and {all} rows: {e}")),
+        };
         if let Some(base) = &self.base {
             // copy: growth: a continuation moved out of a full block takes the rows of its chain with it, once.
             moved.copy_reads(base, pre);
@@ -1105,7 +1162,7 @@ impl Part {
         let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
-                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, ix_room: base.ix_room };
         Some(Part { held: Arc::new(held), cap: u32::MAX })
     }
 
@@ -2401,25 +2458,57 @@ mod tests {
         assert_ne!(Arc::as_ptr(&block_of(&kept)) as usize, run);
     }
 
+    /// Pushed a batch at a time far past the rows it was made for (moved as it grows), a large relation still has
+    /// room in its block for an index of each column and one more (decision 0353 step 6): its growth never takes
+    /// their bytes.
+    #[test]
+    fn a_large_relations_growth_keeps_room_for_its_indexes() {
+        let mut r = Rows::new(2);
+        r.reserve(2 * ALONE_ROWS);
+        for b in 0..40i64 {
+            // copy: not block data (a test's literal rows)
+            r.extend_from_slice(&(0..2 * 3000).map(|v| b * 6000 + v).collect::<Vec<i64>>());
+        }
+        assert_eq!(r.rows(), 120_000);
+        let part = r.parts().next().expect("one part");
+        assert_eq!(r.parts().count(), 1, "one relation");
+        let n = part.len();
+        for key in [&[0u16][..], &[1], &[0, 1]] {
+            // SAFETY: no other thread adds an index; its rows are written.
+            let room = unsafe { part.rel().try_reserve_index(&part.facts().block, key, n) };
+            assert!(room.is_some(), "room for an index on {key:?} of {n} rows");
+        }
+    }
+
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
-    /// its size takes them, so the block's used bytes grow by the descriptors alone.
+    /// its size takes them, so the block's used bytes grow by the descriptors alone. A large one (`ALONE_ROWS`) is
+    /// alone in a block of its own, with room for its indexes (decision 0353 step 6), which goes with it.
     #[test]
     fn a_dropped_relations_chunks_are_taken_by_the_next() {
         in_chunk(|| {
-            let fill = |base: i64| {
+            let fill = |base: i64, rows: i64| {
                 let mut r = Rows::new(3);
                 // copy: not block data (a test's literal rows)
-                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vec<i64>>());
+                r.extend_from_slice(&(0..3 * rows).map(|v| base + v).collect::<Vec<i64>>());
                 r
             };
-            let first = fill(0);
+            let small = (ALONE_ROWS / 2) as i64;
+            let first = fill(0, small);
             let facts = block_of(&first);
             drop(first);
             let used = facts.block.used();
-            let next = fill(1_000_000);
+            let next = fill(1_000_000, small);
             assert!(Arc::ptr_eq(&facts, &block_of(&next)), "the same block");
             assert!(facts.block.used() - used < 64 << 10, "grew {} bytes: the chunks were taken again", facts.block.used() - used);
-            assert_eq!(*next.row(29_999, 3), [1_089_997, 1_089_998, 1_089_999]);
+            let last = 3 * (small - 1);
+            assert_eq!(*next.row((small - 1) as u32, 3), [1_000_000 + last, 1_000_001 + last, 1_000_002 + last]);
+            // A large one: a block of its own, gone with it.
+            let large = fill(0, 30_000);
+            let alone = Arc::downgrade(&block_of(&large));
+            assert!(!Arc::ptr_eq(&facts, &block_of(&large)), "a large relation alone in its block");
+            assert_eq!(*large.row(29_999, 3), [89_997, 89_998, 89_999]);
+            drop(large);
+            assert!(alone.upgrade().is_none(), "its block goes with it");
         });
     }
 

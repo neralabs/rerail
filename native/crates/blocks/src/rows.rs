@@ -199,6 +199,13 @@ impl Rows {
     /// allocated; a writer of another relation in the block can still take it between, and then the columns'
     /// room already taken is left unused.
     pub fn try_reserve(&self, block: &Block, n: u64) -> bool {
+        self.try_reserve_keeping(block, n, |_| 0)
+    }
+
+    /// `try_reserve`, leaving `keep(rows)` bytes of the block free past the chunks for `rows` rows in all: room the
+    /// relation's indexes take later (decision 0353 step 6), which its own rows' growth does not use up. False when
+    /// a chunk would take it.
+    pub fn try_reserve_keeping(&self, block: &Block, n: u64, keep: impl Fn(u64) -> usize) -> bool {
         let mut nchunks = self.nchunks.load(Relaxed);
         while capacity(nchunks, self.min_log) < n {
             let k = nchunks as usize;
@@ -206,7 +213,9 @@ impl Rows {
             let rows = chunk_rows(k, self.min_log) as usize;
             let align = |bytes: usize| if bytes >= PAGE { PAGE } else { 64 };
             let need: usize = (0..self.ncols as usize).map(|c| rows * self.col(c).width as usize).map(|b| b + align(b)).sum();
-            // Room at the front, or on the free list (decision 0342), for every column's chunk.
+            // Room at the front, or on the free list (decision 0342), for every column's chunk, and the room kept
+            // past it.
+            let need = need + keep(capacity(nchunks + 1, self.min_log));
             if block.reserved().saturating_sub(block.used()) < need && block.free_bytes() < need {
                 return false;
             }
