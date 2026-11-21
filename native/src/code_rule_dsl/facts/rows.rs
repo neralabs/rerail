@@ -49,6 +49,9 @@ impl Life {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
+/// The rows from which a relation of the run's is alone in a block with room for its indexes (`Part::try_new`).
+pub const ALONE_ROWS: usize = 4096;
+
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     pub block: Block,
@@ -786,6 +789,18 @@ impl Part {
 
     /// `new`, or why no block could be had (a device block past the device's budget).
     fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+        // A large relation of the run's is alone in a block with room past its rows for it to double and for an
+        // index of each column and one more (decision 0353 step 6): packed into the run's shared block, a later
+        // probe's index found no bytes there and copied it (`DevIndex::moved`: 501.5 MB in 98 copies on the M3's
+        // 300-file run, ab112, every one a relation in a block with under 16 MB left). Its block is anonymous
+        // memory, taken only as it is written.
+        if life == Life::Run && rows >= ALONE_ROWS {
+            let cap = rows.next_power_of_two();
+            let index = 4 * (cap + 1) + 4 * rows + 2 * 64;
+            let indexes = (k + 1).min(rerail_blocks::relation::ADDED_INDEXES);
+            let extra = room_for(k, 2 * rows) - room_for(k, rows) + indexes * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+            return Part::try_new_with(life, k, rows, extra, false);
+        }
         Part::try_new_with(life, k, rows, 0, false)
     }
 
@@ -2402,24 +2417,34 @@ mod tests {
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
-    /// its size takes them, so the block's used bytes grow by the descriptors alone.
+    /// its size takes them, so the block's used bytes grow by the descriptors alone. A large one (`ALONE_ROWS`) is
+    /// alone in a block of its own, with room for its indexes (decision 0353 step 6), which goes with it.
     #[test]
     fn a_dropped_relations_chunks_are_taken_by_the_next() {
         in_chunk(|| {
-            let fill = |base: i64| {
+            let fill = |base: i64, rows: i64| {
                 let mut r = Rows::new(3);
                 // copy: not block data (a test's literal rows)
-                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vec<i64>>());
+                r.extend_from_slice(&(0..3 * rows).map(|v| base + v).collect::<Vec<i64>>());
                 r
             };
-            let first = fill(0);
+            let small = (ALONE_ROWS / 2) as i64;
+            let first = fill(0, small);
             let facts = block_of(&first);
             drop(first);
             let used = facts.block.used();
-            let next = fill(1_000_000);
+            let next = fill(1_000_000, small);
             assert!(Arc::ptr_eq(&facts, &block_of(&next)), "the same block");
             assert!(facts.block.used() - used < 64 << 10, "grew {} bytes: the chunks were taken again", facts.block.used() - used);
-            assert_eq!(*next.row(29_999, 3), [1_089_997, 1_089_998, 1_089_999]);
+            let last = 3 * (small - 1);
+            assert_eq!(*next.row((small - 1) as u32, 3), [1_000_000 + last, 1_000_001 + last, 1_000_002 + last]);
+            // A large one: a block of its own, gone with it.
+            let large = fill(0, 30_000);
+            let alone = Arc::downgrade(&block_of(&large));
+            assert!(!Arc::ptr_eq(&facts, &block_of(&large)), "a large relation alone in its block");
+            assert_eq!(*large.row(29_999, 3), [89_997, 89_998, 89_999]);
+            drop(large);
+            assert!(alone.upgrade().is_none(), "its block goes with it");
         });
     }
 
