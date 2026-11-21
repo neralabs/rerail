@@ -1508,6 +1508,10 @@ pub mod presorted {
     }
 }
 
+// The probe structures an index could be, over a run's captured relations (t50 step 5; measurement only).
+#[cfg(test)]
+mod index_spike;
+
 #[cfg(test)]
 pub mod tests {
     use super::*;

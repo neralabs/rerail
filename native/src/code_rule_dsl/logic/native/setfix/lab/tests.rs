@@ -84,9 +84,10 @@
             load(&db, false);
             let outs: Vec<&String> = tables.iter().filter(|t| t.starts_with("out")).collect();
             // The same stratum on the device (decision 0095, step 4), first: its rows against the run's, row for row,
-            // or the reason the device refuses it. Then the relations as they were, for the CPU's run.
+            // or the reason the device refuses it. Then the relations as they were, for the CPU's run. Not with
+            // `RERAIL_RELATIONAL_LAB_HOST_ONLY` (no device work, below).
             #[cfg(target_os = "macos")]
-            {
+            if std::env::var_os("RERAIL_RELATIONAL_LAB_HOST_ONLY").is_none() {
                 let dspec = spec.replacen('\n', "\ndevice\n", 1);
                 super::super::open(&db, &dspec).unwrap();
                 let c0 = process_cpu();

@@ -2102,7 +2102,8 @@ pub fn plans_to_store() -> Option<StoredPlans> {
 
 /// `RERAIL_JOIN_LINES=FILE` (a measurement aid): each line that ran a search's work or more, appended as it ends,
 /// tab-separated: its stratum, its delta, its order (literal positions), its rows of work, its price for the rows it
-/// read, its wall seconds, its plan key and its rule.
+/// read, its wall seconds, its plan key, each step's bindings in and out (`in/out`, by step, in the order run) and
+/// its rule.
 fn line_log() -> Option<&'static parking_lot::Mutex<std::fs::File>> {
     static LOG: std::sync::LazyLock<Option<parking_lot::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
         let p = std::env::var_os("RERAIL_JOIN_LINES")?;
@@ -10235,7 +10236,8 @@ impl<'a> Run<'a, '_> {
                         let shown = order.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join(".");
                         let wall = walled.get(line).copied().unwrap_or(0.0);
                         use std::io::Write as _;
-                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{text}", key as u64);
+                        let steps = c.iter().map(|(i, o)| format!("{i}/{o}")).collect::<Vec<_>>().join(" ");
+                        let _ = writeln!(log.lock(), "{stratum}\t{first:?}\t{shown}\t{w:.0}\t{est:.0}\t{wall:.6}\t{:x}\t{steps}\t{text}", key as u64);
                     }
                 }
                 lines_push(runs);
