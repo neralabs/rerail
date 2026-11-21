@@ -23,7 +23,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 53
+VERSION = 54
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1335,6 +1335,9 @@ def health(host, fresh=False):
                    "starting": "a guest, starting", "stopping": "a guest, stopping"}[g["state"]]
             return dict(h or {}, ok=False, why=why + (f" ({g['why']})" if g.get("why") and g["state"] == "stopped" else ""),
                         guest=g["state"])
+        if g.get("state") == "unknown" and g.get("why"):
+            # Its provider did not answer (a cloud guest's gcloud signed out): that, not "unreachable".
+            return dict(h or {}, ok=False, why=f"a guest, its state unknown: {g['why']}", guest="unknown")
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h

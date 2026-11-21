@@ -53,7 +53,8 @@ instead, and only that run's output is shown.
 | `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
-| `status` | what the farm can use now: each host probed, and why one is not usable |
+| `status` | what the farm can use now: each host probed, and why one is not usable; each host's compile benchmark |
+| `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs on each host, kept in the farm's state for `status` ("How fast each host compiles") |
 | `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
 | `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
 | `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
@@ -741,6 +742,47 @@ sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line rep
 sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
 health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
 names come from the configuration at run time.
+
+## How fast each host compiles
+
+`bench` measures each host on one task: a clean debug build of the workspace's `gix` (121 crates, the
+same `Cargo.lock` everywhere), with no compile cache, from an empty target directory, at 1, 4 and 8
+jobs. It runs through `test-remote --host`, so on a Linux or Windows host it is that OS's build. The
+results stay in the farm's state, outside the tree, and `status` prints each host's under its line.
+`bench HOST` measures one again (after a change to a host, or a run marked contended).
+
+Measured 2026-11-21, in seconds (`*`: the host was busy with other work, so the time is high):
+
+| Machine | OS | 1 job | 4 jobs | 8 jobs | 8 jobs, against this Mac |
+|---|---|---|---|---|---|
+| M3 Max Mac | Linux VM (Lima) | 101 | 29.5 | 16.6 | 0.80 |
+| DGX Spark (two) | Linux | 116, 121 | 33.5, 33.8 | 19.3, 19.4 | 0.92 |
+| M5 Max MacBook Pro (this Mac, nice 19) | macOS | 113 | 36.1 | 20.9 | 1.00 |
+| M3 Max Mac | macOS | 142 | 47.2 | 26.9 | 1.29 |
+| M5 Max MacBook Pro | Linux VM (OrbStack) | 118 | 45.7 | 27.6 | 1.32 |
+| M5 Max MacBook Pro | Windows 11 ARM VM (Parallels) | 200 | 45.8 | 29.9 | 1.43 |
+| Mac mini M1 | Linux VM (Lima, 6 cores) | 126* | 39.1 | 31.9 | 1.52 |
+| M1 Max Mac | macOS | 193* | 47.9 | 37.9 | 1.81 |
+| Ryzen 7 7735HS mini PC | Linux (WSL2) | 167 | 55.4 | 40.5 | 1.94 |
+| M1 Max Mac | Linux VM (Lima) | 161 | 54.1 | 42.9 | 2.05 |
+| Core Ultra 7 268V laptop | Linux (WSL2) | 152 | 73.0 | 58.2 | 2.78 |
+| Mac mini M1 | macOS | 185 | 74* | 80* | 3.8 |
+| Ryzen 7 7735HS mini PC | Windows (MSVC) | 392 | 137* | 82 | 3.92 |
+| Core Ultra 7 268V laptop | Windows (MSVC) | 379 | 115 | 102 | 4.88 |
+
+What follows from it:
+
+- A Linux side beats macOS on the same Mac (the M3 Max: 101 s against 142 s at 1 job). One cause is
+  measured: macOS checks each new program the first time it runs, and over ssh (the farm's way in) that
+  took 290 ms a program on the M3 Max and 345 ms on the M1 Max, against 5 ms in this Mac's terminal,
+  which is a Developer Tool (System Settings, Privacy & Security, Developer Tools). A build runs a few
+  dozen new build scripts.
+- A Windows build costs 2 to 2.5 times the Linux side of the same PC. Defender is not the cause: with
+  the farm's directory, the toolchains and the compilers excluded (2026-11-21), the PCs' times moved by
+  under 10% at 4 and 8 jobs. Only the Windows VM gained (51 s to 30 s at 8 jobs). On Windows, add
+  exclusions with literal paths: a PowerShell command that adds them through `$env:` variables is
+  stopped as `Trojan:Win32/PowExcEnv`.
+- So a command that does not need Windows or macOS goes fastest to a Linux side.
 
 ## No benchmark leases
 

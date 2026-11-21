@@ -96,13 +96,20 @@ usernames, home paths, addresses, interfaces or network layout. Model numbers ar
 the file there are no hosts, and every command below runs here instead.
 
 ```
-scripts/build/farm/status                          # which hosts are usable now, and why not
+scripts/build/farm/status                          # which hosts are usable now, and why not; each one's compile speed
+scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4 and 8 jobs)
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
+
+The hosts differ in speed by up to 5 times (`status` shows each one's measured compile times; the farm's
+README, "How fast each host compiles"). The Linux sides (the VMs on the Macs, the Sparks) are the
+fastest, about this Mac's speed. A Windows build takes 2 to 2.5 times the Linux side of the same PC, and
+the M1 Max and the mini about twice this Mac's time. So send a command that needs neither Windows nor
+macOS to Linux (`--os linux`), and judge a slow run by its host's figure there before suspecting the code.
 
 Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
 program built here) or here, without waiting for an idle machine, and note the machine's load with

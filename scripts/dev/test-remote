@@ -137,7 +137,7 @@ def wait_for_guest(host):
     deadline = time.time() + guest.START_SECONDS + 60
     while time.time() < deadline:
         h = farm.health(host)
-        if h.get("ok") or h.get("guest") == "stopped":
+        if h.get("ok") or h.get("guest") in ("stopped", "unknown"):  # unknown: its provider did not answer
             return h
         time.sleep(3)
     return farm.health(host)
@@ -153,7 +153,7 @@ def choose(named, oses, roots):
         if farm.host_os(host) not in oses:
             return None, None, None, f"{named} is a {farm.host_os(host)} host, and this command runs on {' or '.join(oses)} (--os)"
         h = farm.health(host, fresh=True)
-        if not h.get("ok") and h.get("guest") in ("stopped", "starting") and guest.request_start(host):
+        if not h.get("ok") and h.get("guest") in ("stopped", "starting", "unknown") and guest.request_start(host):
             base = guest.spec(host)[0]
             what = "its guest " + base["name"] if base["name"] != named else "the guest"
             if farm.host_os(host) == "windows" and base["name"] != named:
@@ -241,7 +241,9 @@ def choose(named, oses, roots):
             best = free[0]
             best[6].used()
             return best[5], best[6], best[7], None
-        if not starting:
+        if not starting and not named:
+            # (A command for a named host waits for that host: started elsewhere, a `--host` command
+            # for a busy PC ran on another machine, 2026-11-21.)
             # It would wait: the stopped guests that can take it are started (guest.py), and it
             # takes the first slot that frees, a running host's or a guest's once it is up.
             # One a command: another machine's before this Mac's (where the edit loop runs), then the
