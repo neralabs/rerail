@@ -593,6 +593,12 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 50, done: the end the stream's count, tested once (decision 0546)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The end | `next == index + count`, once, after the outer close | a token taken past the count, `t.start == s.len`, and `ACCEPT`'s `t.start == self.len` | no token taken, `if (t.next as usize == s.n)`, `ACCEPT` tests the open nodes alone |
+
 ## Step 49, done: an empty container one leaf (decision 0545)
 
 | | the lean parser | before | now |

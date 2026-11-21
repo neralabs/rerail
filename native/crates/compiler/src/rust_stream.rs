@@ -2569,6 +2569,8 @@ $COMMIT_ALL        let total = self.finish(nodes);
     } else {
         src.to_string()
     };
+    // The end tested once, at the counted end's switch, where every way into `ACCEPT` is its arm (`accept_at_end`).
+    let src = if accept_at_end(x) { src.replace("if !$AT_END || ", "if ") } else { src.to_string() };
     out.push_str(&src.replace("$COMMIT_ALL", if x.coded { "" } else { "        self.commit(nodes);\n" }).replace("$AT_END", &x.at_end("t", "self")).replace("$PROVISIONAL", &provisional).replace("$FEW", few).replace("$IS_EXTRA", &is_extra).replace("$CLASS_PUT", &put));
 }
 
@@ -2718,7 +2720,8 @@ fn cells16(x: &Facts<'_>, t: &str) -> String {
         ("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end = k };", "unsafe { self.wr.set_slot(k) };"),
         ("unsafe { (*self.row(*Self::col(self.open, self.nopen - 1))).end }", "unsafe { self.wr.slot() }"),
         ("        if !SURE && self.nopen == 0 {\n            return refuse(why::NODES);\n        }\n        self.nopen -= 1;\n", "        if !SURE && self.wr.open_len == 0 {\n            return refuse(why::NODES);\n        }\n"),
-        ("|| self.nopen != 1 {\n            return refuse(why::NODES);\n        }\n        let nodes = self.nodes;\n", "|| self.wr.open_len != 1 {\n            return refuse(why::NODES);\n        }\n        let nodes = self.wr.n;\n"),
+        // `ACCEPT`'s, its end tested before it or not (`accept_at_end`).
+        ("self.nopen != 1 {\n            return refuse(why::NODES);\n        }\n        let nodes = self.nodes;\n", "self.wr.open_len != 1 {\n            return refuse(why::NODES);\n        }\n        let nodes = self.wr.n;\n"),
     ] {
         out = out.replace(from, to);
     }
@@ -3163,7 +3166,10 @@ fn switch_plan(x: &Facts<'_>, sw: &ByteSwitch) -> Plan {
             return p;
         }
         let j = p.to(sw.end);
-        p.code = format!("if {} {{\n{j}\n}} else {{\n{b}}}\n", x.at_end("t", "s"));
+        // Every token taken: the end by the stream's count, the token before not taken (`counted_end`).
+        let counted = x.native.switches.iter().position(|o| std::ptr::eq(o, sw)).is_some_and(|k| counted_end(x, k as u16));
+        let end = if counted { "(t.next as usize == s.n)".to_string() } else { x.at_end("t", "s") };
+        p.code = format!("if {end} {{\n{j}\n}} else {{\n{b}}}\n");
         return p;
     }
     if let (true, Some(reps)) = (on_kinds(x, sw), &x.kind_reps) {
@@ -3280,6 +3286,8 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
         }
     }
     Ok(match n.structural[pc].operation {
+        // Before a switch that takes the end alone (`counted_end`): no token taken, the end the stream's count.
+        Op::Token { any: None, extras: false, .. } if taken && matches!(n.structural.get(pc + 1).map(|w| w.operation), Some(Op::Switch { table }) if counted_end(x, table)) => jump(0)?,
         Op::Token { any, extras, .. } if x.flagged || taken => format!("s.{}(t)?;\n{}", token_name(any, extras), jump(0)?),
         // No token to take here: the next word switches on the one untaken.
         Op::Token { .. } => format!("{}{}", if x.unchecked { "" } else { "s.room()?;\n" }, jump(0)?),
@@ -4212,6 +4220,74 @@ fn code_set(x: &Facts<'_>, to: &[u16], code: u32) -> String {
 
 /// Whether the byte past the file (0, padding) is refused by `sw`'s switch on the first byte, and
 /// by the switch it gives its other bytes to (`delegate_of`).
+/// Whether switch `table` takes the stream's end alone and is tested by the stream's count, as the lean parser tests
+/// `next == index + count` once, after the walk: a byte switch of the records tier 2 makes, in a sentinel run, with
+/// an end arm and no byte arm of its own or the other switch's (`fetched_arms`), each word on it right after a `TOKEN`
+/// that takes, where the last token's end needs no copy at a token (`last_ends`). There the `TOKEN` takes nothing, and the switch tests `t.next == n`, every token taken: the token
+/// it would take is past the count (its end, 0543) or one no arm takes.
+fn counted_end(x: &Facts<'_>, table: u16) -> bool {
+    // Where the last token's end is kept without a copy at each token (`last_ends`): a take left out changes no end.
+    let Some(fx) = x.fetch.as_ref().filter(|_| x.sentinel && !x.flagged && x.ends.is_some()) else { return false };
+    let sw = &x.native.switches[usize::from(table)];
+    if sw.end == REFUSE || !(on_kinds(x, sw) && fresh(x, sw)) {
+        return false;
+    }
+    let mut groups = Vec::new();
+    fetched_arms_with(x, fx, sw, &mut Plan::default(), &mut groups);
+    let words = &x.native.structural;
+    groups.is_empty()
+        && words.iter().enumerate().filter(|(_, w)| matches!(w.operation, Op::Switch { table: t } if t == table)).all(|(pc, _)| {
+            pc > 0 && matches!(words[pc - 1].operation, Op::Token { any: None, extras: false, .. }) && x.phase[pc - 1] == crate::stream::TAKEN && !fx.part_at(x, pc - 1)
+        })
+}
+
+/// Whether every way into `ACCEPT` is a counted end's arm (`counted_end`) with no token taken after it: then the
+/// end was tested there, once, and `ACCEPT` tests it no more.
+fn accept_at_end(x: &Facts<'_>) -> bool {
+    let words = &x.native.structural;
+    let counted = |pc: usize| matches!(words[pc].operation, Op::Switch { table } if counted_end(x, table));
+    let walk = |from: Vec<usize>, through: &dyn Fn(usize) -> bool| -> bool {
+        let mut seen = vec![false; words.len()];
+        let mut work = from;
+        while let Some(pc) = work.pop() {
+            if pc >= words.len() || std::mem::replace(&mut seen[pc], true) {
+                continue;
+            }
+            if matches!(words[pc].operation, Op::Accept) {
+                return true;
+            }
+            if through(pc) {
+                work.extend(succ(x, pc));
+            }
+        }
+        false
+    };
+    // No way from the entries to `ACCEPT` but through a counted end; none from its arm through a take.
+    let ends: Vec<usize> = (0..words.len()).filter(|&pc| counted(pc)).filter_map(|pc| match words[pc].operation {
+        Op::Switch { table } => Some(usize::from(x.native.switches[usize::from(table)].end)),
+        _ => None,
+    }).collect();
+    let takes = |pc: usize| matches!(words[pc].operation, Op::Token { .. }) && x.phase[pc] == crate::stream::TAKEN;
+    !ends.is_empty() && !walk(x.entries.clone(), &|pc| !counted(pc)) && {
+        let mut ok = true;
+        for &e in &ends {
+            // A take on the way: `ACCEPT` past it is reached with a token taken after the end's test.
+            let mut seen = vec![false; words.len()];
+            let mut work = vec![e];
+            while let Some(pc) = work.pop() {
+                if pc >= words.len() || std::mem::replace(&mut seen[pc], true) || matches!(words[pc].operation, Op::Accept) {
+                    continue;
+                }
+                if takes(pc) {
+                    ok = false;
+                }
+                work.extend(succ(x, pc));
+            }
+        }
+        ok
+    }
+}
+
 fn zero_refused(x: &Facts<'_>, fx: &Fetched, sw: &ByteSwitch) -> bool {
     let ft = &fx.ft;
     let named = sw.words.iter().any(|&(y, _)| ft.words.get(usize::from(y)).is_some_and(|(w, _)| w.first() == Some(&0)));
