@@ -785,10 +785,15 @@ pub(crate) trait WriterOps: Sized {
     #[cfg_attr(not(test), allow(dead_code))]
     fn set_start(&mut self, i: usize, start: u64);
     fn finish(self) -> Result<Finished, String>;
+    /// Each writer's `finish`, in order (the device's run in one launch, a thread a writer).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn finish_all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+        ws.into_iter().map(Self::finish).collect()
+    }
 }
 
 macro_rules! writer_ops {
-    ($t:ty) => {
+    ($t:ty $(, $all:ident)?) => {
         impl WriterOps for $t {
             fn open(&mut self, number: u32, start: u64) -> usize {
                 <$t>::open(self, number, start)
@@ -811,6 +816,11 @@ macro_rules! writer_ops {
             fn finish(self) -> Result<Finished, String> {
                 <$t>::finish(self)
             }
+            $(
+                fn $all(ws: Vec<Self>) -> Vec<Result<Finished, String>> {
+                    <$t>::$all(ws)
+                }
+            )?
         }
     };
 }
@@ -818,7 +828,7 @@ writer_ops!(Writer);
 #[cfg(any(test, feature = "reference"))]
 writer_ops!(reference::Writer<'_>);
 #[cfg(test)]
-writer_ops!(ops::device::DeviceOps);
+writer_ops!(ops::device::DeviceOps, finish_all);
 
 pub fn write(lang: &Lang, n: usize, source: &[u8], tag: u8, z: bool, node: impl FnMut(usize) -> Node) -> Result<Written, String> {
     write_with(Writer::new(lang, source, tag, z, false, n), n, node).map(|f| f.tape)
@@ -2857,6 +2867,8 @@ DEFINE_KERNEL2(tests, t_reads,
         type Case<'a> = (&'a str, &'a [(u32, u64, u64, usize)], &'a Vec<u8>);
         let mut cases: Vec<Case> = vec![("escaped", &nodes[..], &source), ("repeating", &rep[..], &rep_source), ("one node", &small[..], &source), ("none", &[][..], &source)];
         cases.extend(randoms.iter().map(|(t, src)| ("random", &t[..], src)));
+        // Every case's writer, finished together (the device's in one launch).
+        let (mut whats, mut refs, mut made) = (Vec::new(), Vec::new(), Vec::new());
         for (label, nodes, source) in cases {
             for (z, every, late, blocks) in [(false, 1, false, true), (false, 1_000_000, false, false), (false, 97, false, true), (false, 1, true, false), (false, 13, true, true), (true, 1, false, true), (true, 1_000_000, false, false), (true, 13, true, true)] {
                 if late && nodes.len() < 2 {
@@ -2866,28 +2878,32 @@ DEFINE_KERNEL2(tests, t_reads,
                 by_ops_of(&mut r, nodes, every, late);
                 let mut c = make(&lang, source, z, blocks, nodes.len());
                 by_ops_of(&mut c, nodes, every, late);
-                let what = format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}");
-                match (r.finish(), c.finish()) {
-                    (Ok(r), Ok(c)) => {
-                        match (&r.tape, &c.tape) {
-                            (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
-                            (Written::F16Z(rt), Written::F16Z(ct)) => {
-                                let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
-                                assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
-                                if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
-                                    panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
-                                }
-                                for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
-                                    kinds[usize::from(k)] += 1;
-                                }
+                whats.push((format!("{label}: 16z {z}, commit every {every}, late {late}, blocks {blocks}"), nodes.is_empty()));
+                refs.push(r.finish());
+                made.push(c);
+            }
+        }
+        for (((what, empty), r), c) in whats.into_iter().zip(refs).zip(W::finish_all(made)) {
+            match (r, c) {
+                (Ok(r), Ok(c)) => {
+                    match (&r.tape, &c.tape) {
+                        (Written::F16(rt), Written::F16(ct)) => assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape"),
+                        (Written::F16Z(rt), Written::F16Z(ct)) => {
+                            let (rb, cb) = (rt.as_bytes(), ct.as_bytes());
+                            assert_eq!(cb.len(), rb.len(), "{what}: the 16z tape's length");
+                            if let Some(k) = (0..rb.len()).find(|&k| rb[k] != cb[k]) {
+                                panic!("{what}: the 16z tapes differ from byte {k} of {}", rb.len());
                             }
-                            _ => panic!("{what}: the formats"),
+                            for &k in &rb[rt.zat[ZKINDS]..rt.zat[ZEND]] {
+                                kinds[usize::from(k)] += 1;
+                            }
                         }
-                        assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
+                        _ => panic!("{what}: the formats"),
                     }
-                    (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
-                    (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
+                    assert_eq!(c.tape.presence_bytes(), r.tape.presence_bytes(), "{what}: the presence");
                 }
+                (Err(_), Err(_)) => assert!(empty, "{what}: both failed"),
+                (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
             }
         }
         assert!(kinds.iter().all(|&k| k > 0), "16z's pieces of every kind (raw, LZ4, repeat): {kinds:?}");
