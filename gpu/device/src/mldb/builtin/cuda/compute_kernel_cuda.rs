@@ -58,6 +58,7 @@ struct Api {
     cu_event_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_func_set_attribute: unsafe extern "C" fn(Ptr, i32, i32) -> CUresult,
     cu_func_get_attribute: unsafe extern "C" fn(*mut i32, i32, Ptr) -> CUresult,
+    cu_occupancy_max_active_blocks_per_multiprocessor: unsafe extern "C" fn(*mut i32, Ptr, i32, usize) -> CUresult,
     cu_get_error_string: unsafe extern "C" fn(CUresult, *mut *const c_char) -> CUresult,
     nvrtc_create_program: unsafe extern "C" fn(*mut Ptr, *const c_char, *const c_char, i32, *const *const c_char, *const *const c_char) -> i32,
     nvrtc_compile_program: unsafe extern "C" fn(Ptr, i32, *const *const c_char) -> i32,
@@ -79,6 +80,7 @@ const CU_MEMHOSTALLOC_DEVICEMAP: u32 = 0x02;
 const CU_STREAM_NON_BLOCKING: u32 = 0x1;
 const CU_STREAM_WAIT_VALUE_GEQ: u32 = 0x0;
 const CU_ERROR_NOT_READY: CUresult = 600;
+const CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT: i32 = 16;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
@@ -168,6 +170,7 @@ fn api() -> Result<&'static Api, String> {
             cu_event_destroy: sym!(cuda, "cuEventDestroy_v2"),
             cu_func_set_attribute: sym!(cuda, "cuFuncSetAttribute"),
             cu_func_get_attribute: sym!(cuda, "cuFuncGetAttribute"),
+            cu_occupancy_max_active_blocks_per_multiprocessor: sym!(cuda, "cuOccupancyMaxActiveBlocksPerMultiprocessor"),
             cu_get_error_string: sym!(cuda, "cuGetErrorString"),
             nvrtc_create_program: sym!(nvrtc, "nvrtcCreateProgram"),
             nvrtc_compile_program: sym!(nvrtc, "nvrtcCompileProgram"),
@@ -218,6 +221,9 @@ pub struct CudaDevice {
     /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
     /// then a wrap may span several registrations (`Registered`).
     host_pointer: bool,
+    /// Its streaming multiprocessors: a persistent grid's resident blocks are these times a block's occupancy
+    /// (`CudaComputeFunction::resident_groups`).
+    pub multiprocessors: u32,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -259,9 +265,10 @@ impl CudaDevice {
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
             let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
             let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
+            let multiprocessors = attr(CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT)?.max(1) as u32;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer, multiprocessors })
         }
     }
 
@@ -694,6 +701,17 @@ unsafe impl Sync for CudaComputeFunction {}
 impl CudaComputeFunction {
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         &self.arguments
+    }
+
+    /// The blocks of `threads` threads, each with `dynamic` bytes of dynamic shared memory, that `device` holds at
+    /// once: the driver's occupancy of this function (its registers, its static and dynamic shared memory) times the
+    /// device's multiprocessors. A persistent grid's groups (decision 0568), the driver's answer, not a measure.
+    pub fn resident_groups(&self, device: &CudaDevice, threads: u32, dynamic: u64) -> Result<u64, String> {
+        let a = device.current();
+        let mut per = 0;
+        // SAFETY: the function's own handle, its context current.
+        ck(unsafe { (a.cu_occupancy_max_active_blocks_per_multiprocessor)(&mut per, self.func, threads as i32, dynamic as usize) }, "cuOccupancyMaxActiveBlocksPerMultiprocessor")?;
+        Ok(u64::from(device.multiprocessors) * per.max(0) as u64)
     }
 }
 

@@ -839,7 +839,7 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
 /// definitions, and one that runs again at a larger rung. A dispatch past the groups the device
-/// holds at once runs on the groups that join its grid (decision 0540 §3), to the same output.
+/// holds at once is refused (decision 0568); at them, it gives the default grid's output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -862,12 +862,15 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
     let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
     let (unit, lay) = (&d.unit, &d.lay);
-    let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
+    // Decision 0568: refused on the host, past the grid kernel's resident groups, before it is encoded.
+    let resident = rerail_metal::pp_arena::residency();
+    assert!(resident.groups < 4096, "{resident:?}");
+    assert!(matches!(rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096), Err(rerail_metal::Error::BackendCapacity)), "a grid past residency is refused");
+    // At its residency, it runs: the same output as the grid it dispatches by default.
+    let full = rerail_metal::pp_expand::expand_at(unit, lay, 0, resident.groups).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups >= 1 && wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the joined grid's refusals");
-    same(&wide.out, &narrow.out, "the joined grid's output");
-    eprintln!("past residency: {} groups joined", wide.groups);
+    same(full.refused, 0, "the resident grid's refusals");
+    same(&full.out, &narrow.out, "the resident grid's output");
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each

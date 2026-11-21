@@ -302,28 +302,64 @@ pub const GROUPS_UNKNOWN: u64 = 8;
 /// over the corpus, 32 took 147 ms).
 pub const GROUPS_MOST: u64 = 32;
 
-/// The groups of the persistent grid (decision 0468 §4): the device's resident count at the grid
-/// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
-/// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
-/// with no count; 1 on the CPU. The groups dispatched: the grid is those of them that join it
-/// (`ukl_grid_join`, decision 0540 §3), so a count past residency costs groups that end at once,
-/// not a failed barrier.
+/// The persistent grid's groups dispatched (decision 0468 §4, 0568): its kernel's resident groups (`residency`), at
+/// most `GROUPS_MOST`; 1 on the CPU.
 pub fn groups() -> u64 {
-    *rerail_context::machine::<Groups>().0.get_or_init(|| {
-        let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
-        // The CPU runs a launch's groups as coroutines on one host thread: past one group, a group
-        // adds work to no core, only its threads' switches at every barrier.
-        if matches!(device, lane::Device::Cpu(_)) {
-            return 1;
-        }
-        let local = kernel("pp_setup").threadgroup_bytes();
-        device.resident_groups(tg() as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
+    let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
+    // The CPU runs a launch's groups as coroutines on one host thread: past one group, a group adds work to no core,
+    // only its threads' switches at every barrier.
+    if matches!(device, lane::Device::Cpu(_)) {
+        return 1;
+    }
+    residency().groups.min(GROUPS_MOST)
+}
+
+/// The grid kernel's resident groups on this machine (decision 0568, `rerail_device::grid`): the backend's answer
+/// (CUDA's occupancy, the CPU's rule), else the measure kept for the machine, else the device's bound until a
+/// failed barrier measures it. Found once a process, a machine object (decision 0442), and lowered by `halved`.
+pub fn residency() -> rerail_device::grid::Residency {
+    let held = rerail_context::machine::<Groups>();
+    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    *held.get_or_insert_with(|| {
+        let Ok(device) = lane::device() else { return rerail_device::grid::Residency { groups: GROUPS_UNKNOWN, known: rerail_device::grid::Known::Bound } };
+        let k = kernel("pp_setup");
+        rerail_device::grid::residency(device, &k, &grid_key(), tg(), k.threadgroup_bytes())
     })
 }
 
-/// The machine's grid groups (`groups`), found once: a machine object (decision 0442), as its device is.
+/// The grid kernel's key in the machine's measures: its source and name.
+fn grid_key() -> String {
+    rerail_device::store::key(&[source().as_bytes(), b"pp_setup"])
+}
+
+/// A dispatch of `groups` groups past the grid kernel's resident groups is refused (`BackendCapacity`, decision
+/// 0568): its groups past them would wait at a barrier for groups that do not run. The join (`ukl_grid_join`) is the
+/// floor below this, should a device run fewer than it holds.
+pub fn refuse_past(groups: u64) -> Result<(), Error> {
+    if groups > residency().groups { Err(Error::BackendCapacity) } else { Ok(()) }
+}
+
+/// A grid of `groups` groups failed a barrier: the grid kernel's resident groups are half of it from now on, kept
+/// for the machine (`rerail_device::grid::halved`), and the run is the caller's to run again at them. `None` at
+/// one group, which no halving helps, and where the backend answered (`Known::Api`): its count is resident, so its
+/// failed barrier is the kernel's failure, not a residency to measure.
+pub fn halved(groups: u64) -> Option<u64> {
+    if groups <= 1 || residency().known == rerail_device::grid::Known::Api {
+        return None;
+    }
+    let held = rerail_context::machine::<Groups>();
+    let mut held = held.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let half = match lane::device() {
+        Ok(device) => rerail_device::grid::halved(device, &grid_key(), tg(), groups),
+        Err(_) => groups / 2,
+    };
+    *held = Some(rerail_device::grid::Residency { groups: half, known: rerail_device::grid::Known::Measured });
+    Some(half)
+}
+
+/// The machine's grid residency (`residency`), found once: a machine object (decision 0442), as its device is.
 #[derive(Default)]
-struct Groups(std::sync::OnceLock<u64>);
+struct Groups(std::sync::Mutex<Option<rerail_device::grid::Residency>>);
 
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.

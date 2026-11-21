@@ -435,7 +435,10 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let groups = crate::pp_arena::groups();
+    at_resident(crate::pp_arena::groups(), |groups| evaluate_at(unit, nodes, groups))
+}
+
+fn evaluate_at(unit: &Unit, nodes: bool, groups: u64) -> Result<Evaluated, Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, nodes, groups)?;
     arena.lease()?;
@@ -450,7 +453,8 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 /// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and
 /// its GPU time in seconds. The grid is the groups that joined it (`ukl_grid_join`, decision 0540
 /// §3), so a barrier waits only for groups that run: one that fails ran out of its bound, and is
-/// `BackendFailure`, not a guess of residency to halve.
+/// `BackendFailure`, and the grid kernel's residency is halved for the machine (`pp_arena::halved`,
+/// decision 0568): `at_resident` runs it again there.
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<(usize, f64), Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
@@ -461,7 +465,25 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
         }
         Ok(())
     })?;
-    if front.barrier_failed() { Err(Error::BackendFailure) } else { Ok(ran) }
+    if front.barrier_failed() {
+        crate::pp_arena::halved(groups);
+        return Err(Error::BackendFailure);
+    }
+    Ok(ran)
+}
+
+/// `run` at `groups` groups (decision 0568): refused past the grid kernel's residency
+/// (`pp_arena::refuse_past`), and run again at the halved residency while a failed barrier lowers
+/// it (`on_grid`). Any other failure is the caller's.
+pub fn at_resident<T>(groups: u64, mut run: impl FnMut(u64) -> Result<T, Error>) -> Result<T, Error> {
+    crate::pp_arena::refuse_past(groups)?;
+    let mut groups = groups;
+    loop {
+        match run(groups) {
+            Err(Error::BackendFailure) if crate::pp_arena::residency().groups < groups => groups = crate::pp_arena::residency().groups,
+            r => return r,
+        }
+    }
 }
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices

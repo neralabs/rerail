@@ -426,9 +426,12 @@ fn the_grid_is_the_devices_resident_count() {
     match device.gpu_cores() {
         Some(cores) => {
             eprintln!("{cores} GPU cores, {local} bytes of threadgroup memory a group: {} groups", groups());
-            let resident = device.resident_groups(tg() as u32, local).unwrap();
-            assert_eq!(groups(), resident.min(GROUPS_MOST), "the resident count, capped");
-            assert!(resident >= cores as u64, "a core holds a group at least");
+            let bound = device.resident_groups(tg() as u32, local).unwrap();
+            assert!(bound >= cores as u64, "a core holds a group at least");
+            // Decision 0568: the bound until a failed barrier measures less, kept for the machine.
+            let r = residency();
+            assert!(r.groups <= bound && r.groups >= 1, "{r:?} against the bound {bound}");
+            assert_eq!(groups(), r.groups.min(GROUPS_MOST), "the resident count, capped");
         }
         None => assert_eq!(groups(), GROUPS_UNKNOWN),
     }

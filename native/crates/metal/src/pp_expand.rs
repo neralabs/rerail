@@ -104,7 +104,10 @@ pub fn definitions(unit: &Unit) -> Result<(crate::pp_eval::Evaluated, DefsRead),
 
 /// `definitions` from rung `rung`.
 pub fn definitions_from(unit: &Unit, rung: u32) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
-    let groups = crate::pp_arena::groups();
+    crate::pp_eval::at_resident(crate::pp_arena::groups(), |groups| definitions_at(unit, rung, groups))
+}
+
+fn definitions_at(unit: &Unit, rung: u32, groups: u64) -> Result<(crate::pp_eval::Evaluated, DefsRead), Error> {
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
     let defs = Defs::new(&arena, unit, rung)?;
@@ -1446,40 +1449,51 @@ impl Exp {
     /// The output's refs, made from its pieces (decision 0520 §3) for a caller that asks for
     /// tokens: a top level's run each top token's node (the text's stretches, `top_ref`), a
     /// definition's body item its ref, a produced token its own.
-    pub fn read(&self, front: &crate::pp_eval::Front, vis: &Vis, defs: &Defs) -> (u32, Vec<u32>) {
-        // SAFETY: the device finished; `out` holds `out_cap` words a column and its pieces' total
-        // where no room ran out; the text's stretches and the definitions are the same run's.
-        unsafe {
-            let refused = *self.ctl.host().cast::<u32>().add(2);
-            if refused != 0 {
-                return (refused, Vec::new());
-            }
-            let n = *self.vscan.total.host().cast::<u32>() as usize;
-            let cap = self.out_cap as usize;
-            let np = (*self.opscan.total.host().cast::<u32>() as usize).min(cap);
-            let o = self.out.host().cast::<u32>();
-            let n_gaps = *vis.n_gaps.host().cast::<u32>() as usize;
-            let gat = std::slice::from_raw_parts(vis.gat.host().cast::<u32>(), n_gaps);
-            let firsts = vis.gfirsts.host().cast::<u32>();
-            let nodes = front.text_nodes.host().cast::<u32>();
-            let d = defs.defs.host().cast::<PpDef>();
-            let mut out = Vec::with_capacity(n);
-            for i in 0..np {
-                let (src, len, st) = (*o.add(i), *o.add(cap + i) & PN_LEN, *o.add(2 * cap + i));
-                for k in st..st + len {
-                    out.push(match src & P_KIND {
-                        P_TOP => {
-                            let j = gat.partition_point(|&g| g <= k).max(1) - 1;
-                            *nodes.add((*firsts.add(j) + (k - gat[j])) as usize)
-                        }
-                        P_BODY => (*d.add((src & !P_KIND) as usize)).body + k,
-                        _ => k,
-                    });
-                }
-            }
-            debug_assert_eq!(out.len(), n, "the output's pieces hold its tokens");
-            (0, out)
+    ///
+    /// Every word it follows is checked against its store: an output whose pieces do not add up
+    /// to its count, or name a node, gap or definition past their stores, is the device's failure
+    /// (`BackendFailure`), never a read past a buffer.
+    pub fn read(&self, front: &crate::pp_eval::Front, vis: &Vis, defs: &Defs) -> Result<(u32, Vec<u32>), Error> {
+        fn words(b: &Buf) -> &[u32] {
+            // SAFETY: the device finished; a store holds `bytes()` bytes of `u32` words.
+            unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), b.byte_length() / 4) }
         }
+        let refused = *words(&self.ctl).get(2).ok_or(Error::BackendFailure)?;
+        if refused != 0 {
+            return Ok((refused, Vec::new()));
+        }
+        let n = *words(&self.vscan.total).first().ok_or(Error::BackendFailure)? as usize;
+        let cap = self.out_cap as usize;
+        let np = (*words(&self.opscan.total).first().ok_or(Error::BackendFailure)? as usize).min(cap);
+        let o = words(&self.out).get(..3 * cap).ok_or(Error::BackendFailure)?;
+        let n_gaps = *words(&vis.n_gaps).first().ok_or(Error::BackendFailure)? as usize;
+        let gat = words(&vis.gat).get(..n_gaps).ok_or(Error::BackendFailure)?;
+        let firsts = words(&vis.gfirsts);
+        let nodes = words(&front.text_nodes);
+        // SAFETY: as `words`, of `PpDef` records.
+        let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
+        let mut out = Vec::with_capacity(n);
+        for i in 0..np {
+            let (src, len, st) = (o[i], o[cap + i] & PN_LEN, o[2 * cap + i]);
+            if out.len() + len as usize > n {
+                return Err(Error::BackendFailure);
+            }
+            for k in st..st.checked_add(len).ok_or(Error::BackendFailure)? {
+                out.push(match src & P_KIND {
+                    P_TOP => {
+                        let j = gat.partition_point(|&g| g <= k).max(1) - 1;
+                        let at = firsts.get(j).ok_or(Error::BackendFailure)?.checked_add(k.wrapping_sub(*gat.get(j).ok_or(Error::BackendFailure)?)).ok_or(Error::BackendFailure)?;
+                        *nodes.get(at as usize).ok_or(Error::BackendFailure)?
+                    }
+                    P_BODY => d.get((src & !P_KIND) as usize).ok_or(Error::BackendFailure)?.body + k,
+                    _ => k,
+                });
+            }
+        }
+        if out.len() != n {
+            return Err(Error::BackendFailure);
+        }
+        Ok((0, out))
     }
 }
 
@@ -1541,8 +1555,13 @@ pub fn expand_at(unit: &Unit, lay: &Layout, rung: u32, groups: u64) -> Result<Ex
 }
 
 /// `expand_at` from the rooms `sizes` (a unit's last run's), which it leaves at the rooms this
-/// run settled at. Each room grows a bounded number of times a call.
+/// run settled at. Each room grows a bounded number of times a call. Refused past the grid's
+/// residency, and run again at it where a barrier failed (`pp_eval::at_resident`, decision 0568).
 pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
+    crate::pp_eval::at_resident(groups, |groups| expand_sized_at(unit, lay, sizes, groups))
+}
+
+fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
     let Sizes { p1, x, defs: def_rung, .. } = *sizes;
     let (mut def_rung, mut p1, mut x) = (def_rung, p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
@@ -1607,7 +1626,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
-        let (refused, out) = exp.read(&front, &vis, &defs);
+        let (refused, out) = exp.read(&front, &vis, &defs)?;
         // A run out of room runs again larger whatever else it refused: past the room that ran
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
@@ -1652,8 +1671,12 @@ pub fn lookups(unit: &Unit, lay: &Layout) -> Result<(crate::pp_eval::Evaluated, 
 /// `lookups` from the rooms `sizes` (the unit's last round's), which it leaves at the rooms this
 /// run settled at.
 pub fn lookups_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
+    crate::pp_eval::at_resident(crate::pp_arena::groups(), |groups| lookups_at(unit, lay, sizes, groups))
+}
+
+fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<(crate::pp_eval::Evaluated, Vec<u32>, P1Out), Error> {
     let Sizes { p1, x, defs: rung, .. } = *sizes;
-    let (mut rung, groups, mut p1, mut x) = (rung, crate::pp_arena::groups(), p1, x);
+    let (mut rung, mut p1, mut x) = (rung, p1, x);
     let (mut p1_tries, mut x_tries) = (0, 0);
     loop {
         x = x.fit(p1.top);
@@ -1752,6 +1775,7 @@ pub fn stage_seconds_as(unit: &Unit, lay: &Layout, last: u32, stop: u32, iters: 
 }
 
 fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), groups: u64, (caps, xcaps, def_rung): (Caps, XCaps, u32)) -> Result<f64, Error> {
+    crate::pp_arena::refuse_past(groups)?;
     let arena = Arena::new();
     let front = Front::new(&arena, unit, false, groups)?;
     let defs = Defs::new(&arena, unit, def_rung)?;
