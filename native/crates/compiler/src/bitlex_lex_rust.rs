@@ -123,6 +123,8 @@ struct LoopFill {
 /// byte after the token); the bytes its last bytes may be (`last[m]`: `m` bytes before the last).
 struct End {
     k: usize,
+    /// The closer's first byte, this many before the token's last (`-1`: after it).
+    ext: i64,
     after: Option<[bool; 256]>,
     last: [[bool; 256]; 4],
 }
@@ -337,6 +339,9 @@ struct Node {
     /// block behind it.
     lag: u32,
     kept: bool,
+    /// Other vectors stage 1 stores its words in: a field of tier 2 the token loop then writes
+    /// over the region tokens (`FieldWrite`), as the mask outside them.
+    also: Vec<String>,
     /// A carry from block to block of its own (`fill`, `escaped`): `c_NAME`.
     carry: bool,
 }
@@ -351,6 +356,61 @@ type ByteMemo = HashMap<String, Cubes>;
 /// At most this many ways a mask may hold are kept apart; more are one, of the bytes any of
 /// them needs at each offset all of them name.
 const CUBES: usize = 16;
+
+/// A field tier 2 reads in a region's tokens that the token loop writes, as each token's parts
+/// know it: its variable, and for each region its value at the token's first byte, over its
+/// body's ranges, over its closer (`RegionCheck`'s parts).
+struct FieldWrite {
+    var: String,
+    parts: Vec<FieldPart>,
+    /// Its value outside the regions, where it is not none: the field starts as it, and each
+    /// region token puts its parts over its bytes.
+    outside: Option<String>,
+}
+
+/// A field's value over one region's token: at its first byte, over its body's ranges, over its
+/// closer, each a mask's code, `!` for all, or none.
+struct FieldPart {
+    why: String,
+    at: Option<String>,
+    body: Vec<(i64, Option<i64>, Option<String>)>,
+    /// Over the closer (`closer_parts`): for each offset after the token's first (`None`: any
+    /// other), the value at each of its bytes.
+    closer: Vec<(Option<i64>, Vec<Option<String>>)>,
+}
+
+/// An escape where a region's token reads it: its mask at the token's first byte, over ranges of
+/// its body (from the byte `lo` after its first to `hi`, none: to the closer), over its closer.
+#[derive(Clone)]
+struct RegionCheck {
+    why: String,
+    at: Option<String>,
+    body: Vec<(i64, Option<i64>, String)>,
+    closer: Option<String>,
+}
+
+/// The parts of a region token's body (`in_region_of`): its byte `q` (1 to 4) after the token's
+/// first (`BODY_AT + q`), and its bytes from 5 on (`BODY_LATE`). Part 1 is any body byte.
+const BODY_AT: u8 = 8;
+const BODY_LATE: u8 = 5;
+
+fn body_part(q: i64) -> u8 {
+    if q >= 5 { BODY_LATE } else { BODY_AT + q as u8 }
+}
+
+/// The parts of a region token's closer where it is `d` (1 to 4, or 5 for 5 on) bytes after the
+/// token's first: its byte `r` (0 to 3), `CLOSE_AT + 4 (d - 1) + r`. Part 2 is any closer byte,
+/// wherever the closer is.
+const CLOSE_AT: u8 = 32;
+
+fn close_part(d: i64, r: i64) -> u8 {
+    CLOSE_AT + 4 * (d.min(5) - 1) as u8 + r as u8
+}
+
+/// Whether part `p` is a byte of the closer.
+fn is_closer(p: u8) -> bool {
+    p == 2 || p >= CLOSE_AT
+}
 
 /// Whether `text` reads the variable `var` (not one whose name it starts).
 fn uses(text: &str, var: &str) -> bool {
@@ -460,7 +520,7 @@ struct Gen<'a> {
     /// The escapes over a region's bytes, tested where its token reads it (`in_region`), by
     /// region: each its reason and its masks at the start, after it to the closer, and over the
     /// closer.
-    region_checks: Vec<Vec<(String, [Option<String>; 3])>>,
+    region_checks: Vec<Vec<RegionCheck>>,
     /// The escapes over the bytes outside every region token, tested over each token of code's
     /// bytes: each its reason and its mask there.
     code_checks: Vec<(String, String)>,
@@ -475,6 +535,8 @@ struct Gen<'a> {
     skipped: [bool; 256],
     /// The fills the loop keeps (`LoopFill`).
     fills: Vec<LoopFill>,
+    /// Tier 2's fields the loop writes (`FieldWrite`).
+    field_writes: Vec<FieldWrite>,
     /// How each region token may end (`End`), and the bytes its first bytes may be: what a
     /// byte outside the regions may have before and after it in a region.
     ends: Option<Vec<End>>,
@@ -500,7 +562,7 @@ impl Gen<'_> {
     /// A stage-1 mask of its own, `name`'s, with its word's code and lag.
     fn push_node(&mut self, key: String, name: String, what: String, code: String, lag: u32, carry: bool) -> usize {
         let id = self.nodes.len();
-        self.nodes.push(Node { name, what, code, lag, kept: false, carry });
+        self.nodes.push(Node { name, what, code, lag, kept: false, carry, also: Vec::new() });
         self.node_of.insert(key, id);
         id
     }
@@ -760,6 +822,9 @@ impl Gen<'_> {
         for n in &kept {
             let _ = writeln!(out, "    {}: Vec<u64>,", n.name);
         }
+        for a in self.nodes.iter().flat_map(|n| &n.also) {
+            let _ = writeln!(out, "    {a}: Vec<u64>,");
+        }
         out.push_str("    refused: bool,\n}\n\n");
         let most = self.nodes.iter().map(|n| n.lag).max().unwrap_or(0);
         let ring = (most as usize + 2).next_power_of_two();
@@ -772,6 +837,9 @@ impl Gen<'_> {
         }
         for n in &kept {
             let _ = writeln!(out, "    let mut {} = vec![0u64; nw];", n.name);
+        }
+        for a in self.nodes.iter().flat_map(|n| &n.also) {
+            let _ = writeln!(out, "    let mut {a} = vec![0u64; nw];");
         }
         let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..nw + {most} {{");
         for lag in 0..=most {
@@ -794,8 +862,9 @@ impl Gen<'_> {
                 let code = code.trim();
                 let unsafe_ = if n.code.contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
                 let _ = writeln!(out, "            // {}\n            let w = {unsafe_};\n            r_{}[q % RING] = w;", n.what, n.name);
-                if n.kept {
-                    let _ = writeln!(out, "            if q < nw {{\n                {}[q] = w;\n            }}", n.name);
+                let stores: Vec<String> = n.kept.then(|| n.name.clone()).into_iter().chain(n.also.iter().cloned()).map(|v| format!("{v}[q] = w;")).collect();
+                if !stores.is_empty() {
+                    let _ = writeln!(out, "            if q < nw {{\n                {}\n            }}", stores.join("\n                "));
                 }
                 for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
                     let _ = writeln!(out, "            // {why}\n            refused |= q < nw && w != 0;");
@@ -806,6 +875,9 @@ impl Gen<'_> {
         out.push_str("    }\n    Stage1 {\n");
         for n in &kept {
             let _ = writeln!(out, "        {},", n.name);
+        }
+        for a in self.nodes.iter().flat_map(|n| &n.also) {
+            let _ = writeln!(out, "        {a},");
         }
         out.push_str("        refused,\n    }\n}\n\nrerail_simd8::dispatch! {\n    fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;\n}\n\n");
         out
@@ -1243,7 +1315,44 @@ impl Gen<'_> {
     /// fill from there to the closer, the hidden bytes after its start through its closer, none
     /// of them outside. `None`: `e` reads one of them shifted or carried.
     fn in_region(&self, e: &Expr, k: Option<usize>, part: u8) -> Option<Expr> {
-        self.in_region_of(e, k, part, &[true; 256], &mut HashMap::new())
+        let v = self.in_region_of(e, k, part, &[true; 256], &mut HashMap::new());
+        // The body where it is one mask over its bytes at each offset.
+        if v.is_none() && part == 1 && k.is_some() {
+            let parts = self.body_parts(e, k?)?;
+            if parts.windows(2).all(|w| format!("{:?}", w[0]) == format!("{:?}", w[1])) {
+                return parts.into_iter().next();
+            }
+        }
+        v
+    }
+
+    /// `e` over a token of region `k`'s closer: where the same at each of its bytes wherever it is,
+    /// one value (`None` offset); else for each byte `r` of it (to its most bytes), where the closer
+    /// is each offset `d` after the token's first that differs from 5 on's, and from 5 on (`None`).
+    fn closer_parts(&self, e: &Expr, k: usize) -> Option<Vec<(Option<i64>, Vec<Expr>)>> {
+        if let Some(v) = self.in_region(e, Some(k), 2) {
+            return Some(vec![(None, vec![v])]);
+        }
+        let r = self.kinds.get(k)?;
+        let most = i64::from(r.bytes.max(r.or.as_ref().map_or(0, |o| o.1))).clamp(1, 4);
+        let at = |d: i64| (0..most).map(|rr| self.in_region_of(e, Some(k), close_part(d, rr), &[true; 256], &mut HashMap::new())).collect::<Option<Vec<_>>>();
+        let late = at(5)?;
+        let key = |v: &[Expr]| format!("{v:?}");
+        let mut out = Vec::new();
+        for d in 1..=4 {
+            let v = at(d)?;
+            if key(&v) != key(&late) {
+                out.push((Some(d), v));
+            }
+        }
+        out.push((None, late));
+        Some(out)
+    }
+
+    /// `e` in a token of region `k`'s body: at its bytes 1 to 4 after the token's first, and from
+    /// its byte 5 on.
+    fn body_parts(&self, e: &Expr, k: usize) -> Option<Vec<Expr>> {
+        (1..=4).map(|q| body_part(q)).chain([BODY_LATE]).map(|p| self.in_region_of(e, Some(k), p, &[true; 256], &mut HashMap::new())).collect()
     }
 
     /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
@@ -1278,10 +1387,18 @@ impl Gen<'_> {
         {
             return self.outside_shift(f, args, ctx, memo);
         }
+        // In a region's part, likewise, of the masks' values in its parts.
+        if let Some(kk) = k
+            && self.regional(e)
+            && let Expr::Call(f, args) = e
+            && (f == "prev" || f == "next" || f == "fill")
+        {
+            return self.inside_shift(f, args, kk, part, ctx, memo);
+        }
         Some(match e {
             // Assumed at a region token's last byte: none outside one, nor before its closer.
             Expr::Name(n) if self.is_end_name(n) => {
-                if k.is_none() || part < 2 {
+                if k.is_none() || !is_closer(part) {
                     Expr::Empty
                 } else {
                     return None;
@@ -1292,7 +1409,7 @@ impl Gen<'_> {
                 let holds = if let Some(q) = kind("o") {
                     k == Some(q) && part == 0
                 } else if let Some(q) = kind("f") {
-                    k == Some(q) && part < 2
+                    k == Some(q) && !is_closer(part)
                 } else if let Some(d) = self.defs.get(n) {
                     return self.in_region_of(d, k, part, ctx, memo);
                 } else {
@@ -1327,6 +1444,11 @@ impl Gen<'_> {
     /// out; `next(a, j)` likewise at a region token's start; `fill(s, e)` where `e` stops it at
     /// a region token's last byte (or at its closer after it), and `s` does not start it there.
     fn outside_shift(&self, f: &str, args: &[Arg], ctx: &[bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
+        self.shift_before(f, args, ctx, &|_| [true; 256], memo)
+    }
+
+    /// `outside_shift`, where the bytes `o` on from the byte are `near(o)`'s.
+    fn shift_before(&self, f: &str, args: &[Arg], ctx: &[bool; 256], near: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
         let ends = self.ends.as_ref()?;
         let all = [true; 256];
         let meets = |x: &[bool; 256], y: &[bool; 256]| (0..256).any(|i| x[i] && y[i]);
@@ -1336,6 +1458,10 @@ impl Gen<'_> {
             self.cubes(e, memo).iter().any(|c| {
                 let here = c.get(&0).copied().unwrap_or(all);
                 let here: [bool; 256] = std::array::from_fn(|i| here[i] && ctx[i]);
+                let at = |o: i64| {
+                    let (x, y) = (at(o), near(o));
+                    std::array::from_fn::<bool, 256, _>(|i| x[i] && y[i])
+                };
                 meets(&here, &at(0)) && c.iter().all(|(o, b)| meets(b, &at(*o)))
             })
         };
@@ -1363,7 +1489,11 @@ impl Gen<'_> {
                                 -1 => end.after.unwrap_or(all),
                                 _ => all,
                             };
-                            !fits(&e, &at, memo) && !fits(&e0, &at, memo)
+                            // `a` in the token there (its closer, where the byte is one of the
+                            // closer's): none in it, or no way it holds fits.
+                            let parts: &[u8] = if end.after.is_none() && m <= end.ext { &[2] } else { &[0, 1, 2] };
+                            let none_in = parts.iter().all(|&p| matches!(self.in_region_of(a, Some(end.k), p, &all, memo), Some(Expr::Empty)));
+                            (none_in || !fits(&e, &at, memo)) && !fits(&e0, &at, memo)
                         })
                     } else {
                         // `o` bytes on is `o - j + m` after the token's first.
@@ -1377,7 +1507,7 @@ impl Gen<'_> {
                         return None;
                     }
                 }
-                Some(e0)
+                Some(simplify(e0))
             }
             ("fill", [Arg::E(st), Arg::E(stop)]) => {
                 let (s0, e0) = (self.in_region_of(st, None, 0, &all, memo)?, self.in_region_of(stop, None, 0, &all, memo)?);
@@ -1408,6 +1538,172 @@ impl Gen<'_> {
         }
     }
 
+    /// `prev`, `next` or `fill` (`f` of `args`) at a byte of part `part` of a token of region
+    /// `k` that is one of `ctx` (`in_region_of`): of the masks' values in the part the byte is in,
+    /// where at each place a shift reaches another part (or out of the token) the mask's value
+    /// there is the same, or no way it may hold fits the bytes there (the opener's from the
+    /// token's first byte, the closers' from the closer's first).
+    fn inside_shift(&self, f: &str, args: &[Arg], k: usize, part: u8, ctx: &[bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
+        let r = self.kinds.get(k)?;
+        let (opener, closers) = (r.opener.clone(), r.closers());
+        let all = [true; 256];
+        let meets = |x: &[bool; 256], y: &[bool; 256]| (0..256).any(|i| x[i] && y[i]);
+        let fits = |e: &Expr, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| {
+            self.cubes(e, memo).iter().any(|c| {
+                let here = c.get(&0).copied().unwrap_or(all);
+                let here: [bool; 256] = std::array::from_fn(|i| here[i] && ctx[i]);
+                meets(&here, &at(0)) && c.iter().all(|(o, b)| meets(b, &at(*o)))
+            })
+        };
+        // The bytes `d` on from the token's first byte, or from its closer's first.
+        let from_open = |d: i64, memo: &mut ByteMemo| if (0..4).contains(&d) { self.bytes_at(&opener, d, memo) } else { all };
+        let from_close = |d: i64, memo: &mut ByteMemo| if (0..4).contains(&d) { self.bytes_at(&closers, d, memo) } else { all };
+        let val = |a: &Expr, p: u8, memo: &mut ByteMemo| self.in_region_of(a, Some(k), p, &all, memo).filter(|v| !self.regional(v));
+        let same = |a: &Option<Expr>, b: &Expr| a.as_ref().is_some_and(|a| format!("{a:?}") == format!("{b:?}"));
+        match (f, args) {
+            ("prev" | "next", [Arg::E(a), rest @ ..]) => {
+                let j = match rest {
+                    [] => 1i64,
+                    [Arg::N(j)] => *j as i64,
+                    _ => return None,
+                };
+                let shifted = |x: &Expr| Expr::Call(f.to_owned(), std::iter::once(Arg::E(x.clone())).chain(rest.iter().cloned()).collect());
+                let e = shifted(a);
+                // A place where the shift reads another part (`there`, none: out of the token)
+                // than `v`'s: the same value there, or no way it holds fits it.
+                let safe = |v: &Expr, there: Option<Expr>, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| same(&there, v) || (!fits(&e, at, memo) && !fits(&shifted(v), at, memo));
+                if part == 0 {
+                    // The token's first byte (its opener's): before it is as before a byte outside.
+                    if f != "prev" {
+                        return None;
+                    }
+                    let ob = self.bytes_at(&opener, 0, memo);
+                    let c: [bool; 256] = std::array::from_fn(|i| ctx[i] && ob[i]);
+                    let near = |o: i64| if (0..4).contains(&o) { self.bytes_at(&opener, o, &mut HashMap::new()) } else { all };
+                    return self.shift_before(f, args, &c, &near, memo);
+                }
+                // Every byte, at a byte in the token: every byte.
+                let full = |v: Expr| if matches!(&v, Expr::Not(x) if matches!(**x, Expr::Empty)) { v } else { simplify(shifted(&v)) };
+                // A body byte at a known offset from the token's first (`BODY_AT`), or from offset
+                // 5 on (`BODY_LATE`): before it, the part of the byte `j` before.
+                if f == "prev" && (9..=12).contains(&part) {
+                    let q = i64::from(part) - 8;
+                    let t = q - j;
+                    return match t {
+                        // Before the token: as before a byte outside, the token's bytes known.
+                        ..0 => {
+                            let near = |o: i64| if (0..4).contains(&(q + o)) { self.bytes_at(&opener, q + o, &mut HashMap::new()) } else { all };
+                            self.shift_before(f, args, ctx, &near, memo)
+                        }
+                        0 => val(a, 0, memo).map(full),
+                        t => val(a, body_part(t), memo).map(full),
+                    };
+                }
+                // A closer byte `rr` with the closer `d` after the token's first: before it, the
+                // closer's byte or the body's, at its offset.
+                if f == "prev" && part >= CLOSE_AT {
+                    let (d, rr) = (i64::from((part - CLOSE_AT) / 4) + 1, i64::from((part - CLOSE_AT) % 4));
+                    if rr >= j {
+                        return val(a, close_part(d, rr - j), memo).map(full);
+                    }
+                    let q = d + rr;
+                    if d < 5 {
+                        return match q - j {
+                            ..0 => {
+                                let near = |o: i64| if (0..4).contains(&(q + o)) { self.bytes_at(&opener, q + o, &mut HashMap::new()) } else { all };
+                                self.shift_before(f, args, ctx, &near, memo)
+                            }
+                            0 => val(a, 0, memo).map(full),
+                            t => val(a, body_part(t), memo).map(full),
+                        };
+                    }
+                    // From 5 on: the body's bytes from `5 + rr - j` on, each the same.
+                    let lo = 5 + rr - j;
+                    let v = val(a, BODY_LATE, memo)?;
+                    if lo < 1 || !(lo..=4).all(|o| same(&val(a, body_part(o), memo), &v)) {
+                        return None;
+                    }
+                    return Some(full(v));
+                }
+                if f == "prev" && part == BODY_LATE {
+                    let v = val(a, BODY_LATE, memo)?;
+                    if j > 4 || !((5 - j).max(1)..=4).all(|o| same(&val(a, body_part(o), memo), &v)) {
+                        return None;
+                    }
+                    return Some(full(v));
+                }
+                // From the closer, a shift before reads the body; one after, the byte `j` on.
+                let at_part = match part {
+                    2 if f == "prev" => 1,
+                    9..=12 => body_part(i64::from(part) - 8 + j),
+                    p => p,
+                };
+                let v = val(a, at_part, memo)?;
+                let v0 = val(a, 0, memo);
+                if f == "prev" {
+                    // From the token's first byte `q` on: `j - q` before it, out of it; at it, part 0.
+                    for q in 1..=j {
+                        let at_open: Vec<[bool; 256]> = (0..8).map(|d| from_open(d - 4, memo)).collect();
+                        let at = |o: i64| at_open.get((q + o + 4) as usize).copied().unwrap_or(all);
+                        if !safe(&v, if q == j { v0.clone() } else { None }, &at, memo) {
+                            return None;
+                        }
+                    }
+                    if part == 2 {
+                        // From the closer's first byte `r` on, `j` or more: in the closer.
+                        let v2 = val(a, 2, memo);
+                        for rr in j..i64::from(r.bytes) {
+                            let at_close: Vec<[bool; 256]> = (0..8).map(|d| from_close(d - 4, memo)).collect();
+                            let at = |o: i64| at_close.get((rr + o + 4) as usize).copied().unwrap_or(all);
+                            if !safe(&v, v2.clone(), &at, memo) {
+                                return None;
+                            }
+                        }
+                    }
+                } else {
+                    if is_closer(part) {
+                        return None;
+                    }
+                    // `q` before the closer's first byte: `j - q` on, in the closer.
+                    let v2 = val(a, 2, memo);
+                    for q in 1..=j {
+                        let at_close: Vec<[bool; 256]> = (0..8).map(|d| from_close(d - 4, memo)).collect();
+                        let at = |o: i64| at_close.get((o - q + 4) as usize).copied().unwrap_or(all);
+                        let there = if j - q < i64::from(r.bytes) && !r.outside { v2.clone() } else { None };
+                        if !safe(&v, there, &at, memo) {
+                            return None;
+                        }
+                    }
+                }
+                Some(full(v))
+            }
+            ("fill", [Arg::E(st), Arg::E(stop)]) => {
+                // At the token's first byte `e` stops it and `s` does not start it, in its value
+                // there and in the body's; in the body, of the body's values.
+                let ob = self.bytes_at(&opener, 0, memo);
+                let stops = |s: &Expr, e: &Expr, memo: &mut ByteMemo| !meets(&self.bytes_at(s, 0, memo), &ob) && self.exact_bytes(e).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i]));
+                let (s0, e0) = (val(st, 0, memo)?, val(stop, 0, memo)?);
+                // Started in no part, and stopped at the token's first byte: none in it.
+                let none = |v: Option<Expr>| matches!(v, Some(Expr::Empty));
+                if none(Some(s0.clone())) && none(val(st, 1, memo)) && none(val(st, 2, memo)) && self.exact_bytes(&e0).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i])) {
+                    return Some(Expr::Empty);
+                }
+                if part == 0 {
+                    return self.exact_bytes(&e0).is_some_and(|x| (0..256).all(|i| !ob[i] || x[i])).then_some(s0);
+                }
+                if is_closer(part) {
+                    return None;
+                }
+                let (s1, e1) = (val(st, 1, memo)?, val(stop, 1, memo)?);
+                if !stops(st, &e0, memo) || !stops(&s1, &e1, memo) {
+                    return None;
+                }
+                Some(Expr::Call("fill".to_owned(), vec![Arg::E(s1), Arg::E(e1)]))
+            }
+            _ => None,
+        }
+    }
+
     /// How the region tokens end (`End`), from each row that reads a region and its closers
     /// (`row_geos`), and the bytes their openers' first bytes may be.
     fn find_ends(&mut self, rows: &[(usize, &Stmt)]) -> Result<(), String> {
@@ -1431,7 +1727,7 @@ impl Gen<'_> {
                     let last = std::array::from_fn(|m| self.bytes_at(&g.closer, g.ext - m as i64, &mut memo));
                     let after = (g.ext < 0).then(|| self.bytes_at(&g.closer, 0, &mut memo));
                     seen[g.k] = true;
-                    ends.push(End { k: g.k, after, last });
+                    ends.push(End { k: g.k, ext: g.ext, after, last });
                 }
             }
         }
@@ -2032,33 +2328,56 @@ impl Gen<'_> {
             _ => return Ok(false),
         };
         let mut found = Vec::new();
+        // A region that closes has its closer after the file's last byte: at its start and in it, never.
+        let kept = |x: Expr, closer: bool| if matches!(x, Expr::Empty) || (!closer && self.is_last_byte(&x)) { None } else { Some(x) };
         for k in 0..n {
             let mut parts: [Option<Expr>; 3] = [None, None, None];
+            // The body: one mask, or one at each of its first bytes and one after.
+            let mut body: Vec<(i64, Option<i64>, Expr)> = Vec::new();
             for part in 0..3u8 {
-                let Some(x) = self.in_region(e, Some(k), part) else { return Ok(false) };
-                // A region that closes has its closer after the file's last byte: at its start and in it, never.
-                if !matches!(x, Expr::Empty) && !(part < 2 && self.is_last_byte(&x)) {
-                    parts[usize::from(part)] = Some(x);
+                match self.in_region(e, Some(k), part) {
+                    Some(x) if part == 1 => {
+                        if let Some(x) = kept(x, false) {
+                            body.push((1, None, x));
+                        }
+                    }
+                    Some(x) => parts[usize::from(part)] = kept(x, part == 2),
+                    None if part == 1 => {
+                        let Some(v) = self.body_parts(e, k) else { return Ok(false) };
+                        for (i, x) in v.into_iter().enumerate() {
+                            let q = i as i64 + 1;
+                            let Some(x) = kept(x, false) else { continue };
+                            match body.last_mut() {
+                                Some((_, hi, y)) if format!("{y:?}") == format!("{x:?}") && *hi == Some(q - 1) => *hi = if q == 5 { None } else { Some(q) },
+                                _ => body.push((q, if q == 5 { None } else { Some(q) }, x)),
+                            }
+                        }
+                    }
+                    None => return Ok(false),
                 }
             }
-            if parts.iter().any(Option::is_some) {
+            if parts.iter().any(Option::is_some) || !body.is_empty() {
                 if !read.contains(&k) {
                     return Ok(false);
                 }
-                found.push((k, parts));
+                found.push((k, parts, body));
             }
         }
         if self.region_checks.len() < n {
             self.region_checks.resize(n, Vec::new());
         }
-        for (k, parts) in found {
-            let mut v: [Option<String>; 3] = [None, None, None];
-            for (i, x) in parts.into_iter().enumerate() {
+        for (k, parts, body) in found {
+            let mut v: [Option<String>; 2] = [None, None];
+            for (i, x) in [&parts[0], &parts[2]].into_iter().enumerate() {
                 if let Some(x) = x {
-                    v[i] = Some(self.val(&x)?);
+                    v[i] = Some(self.val(x)?);
                 }
             }
-            self.region_checks[k].push((why.to_owned(), v));
+            let mut b = Vec::new();
+            for (lo, hi, x) in body {
+                b.push((lo, hi, self.val(&x)?));
+            }
+            self.region_checks[k].push(RegionCheck { why: why.to_owned(), at: v[0].clone(), body: b, closer: v[1].clone() });
         }
         if let Some(v) = outside {
             let v = self.val(&v)?;
@@ -2072,17 +2391,21 @@ impl Gen<'_> {
     fn region_tests(&self, kind: &str) -> String {
         let Some(k) = self.opens.as_ref().and_then(|o| o.iter().position(|(q, _, _)| q == kind)) else { return String::new() };
         let mut out = String::new();
-        for (why, [at, inside, closer]) in self.region_checks.get(k).map(Vec::as_slice).unwrap_or(&[]) {
+        for RegionCheck { why, at, body, closer } in self.region_checks.get(k).map(Vec::as_slice).unwrap_or(&[]) {
             let mut tests = Vec::new();
-            match (at, inside) {
+            match (at, body.as_slice()) {
                 // The same mask at the start and after it: one range.
-                (Some(a), Some(i)) if a == i => tests.push(format!("any_in(&{a}, s, c - 1)")),
+                (Some(a), [(1, None, i)]) if a == i => tests.push(format!("any_in(&{a}, s, c - 1)")),
                 _ => {
                     if let Some(m) = at {
                         tests.push(format!("bit(&{m}, s)"));
                     }
-                    if let Some(m) = inside {
-                        tests.push(format!("any_in(&{m}, s + 1, c - 1)"));
+                    for (lo, hi, m) in body {
+                        tests.push(match hi {
+                            None => format!("any_in(&{m}, s + {lo}, c - 1)"),
+                            Some(h) if h == lo => format!("(s + {lo} < c && bit(&{m}, s + {lo}))"),
+                            Some(h) => format!("any_in(&{m}, s + {lo}, (s + {h}).min(c - 1))"),
+                        });
                     }
                 }
             }
@@ -2091,7 +2414,137 @@ impl Gen<'_> {
             }
             let _ = write!(out, "// {why}\nif {} {{\n    refused = true;\n    break;\n}}\n", tests.join(" || "));
         }
+        // Tier 2's fields the loop writes, over this token's parts.
+        for fw in &self.field_writes {
+            let FieldPart { why, at, body, closer } = &fw.parts[k];
+            let f = &fw.var;
+            // A part none: nothing where the field starts as none, else its bits cleared.
+            let w = |m: &Option<String>, a: String, b: String| match m.as_deref() {
+                None => None,
+                Some("0") => Some(format!("clear(&mut {f}, {a}, {b});")),
+                Some("!") => Some(format!("set(&mut {f}, {a}, {b} + 1);")),
+                Some(m) => Some(format!("put(&mut {f}, &{m}, {a}, {b});")),
+            };
+            let mut lines = Vec::new();
+            lines.extend(w(at, "s".into(), "s".into()));
+            for (lo, hi, m) in body {
+                let b = match hi {
+                    None => "c - 1".to_owned(),
+                    Some(h) => format!("(s + {h}).min(c - 1)"),
+                };
+                lines.extend(w(m, format!("s + {lo}"), b));
+            }
+            // The closer: its bytes' values, by where it is after the token's first.
+            let close = |v: &[Option<String>]| -> Vec<String> {
+                if v.iter().all(|m| *m == v[0]) {
+                    return w(&v[0], "c".into(), "last".into()).into_iter().collect();
+                }
+                let at = |r: usize| if r == 0 { "c".to_owned() } else { format!("c + {r}") };
+                v.iter().enumerate().filter_map(|(r, m)| w(m, at(r), if r == 0 { "c".to_owned() } else { format!("(c + {r}).min(last)") })).collect()
+            };
+            let arms: Vec<(Option<i64>, Vec<String>)> = closer.iter().map(|(d, v)| (*d, close(v))).filter(|(d, b)| d.is_some() || !b.is_empty()).collect();
+            match arms.as_slice() {
+                [] => {}
+                [(None, b)] => lines.extend(b.iter().cloned()),
+                [(Some(d), b)] => lines.push(format!("if c - s == {d} {{\n    {}\n}}", b.join("\n    "))),
+                _ => {
+                    let mut m = String::from("match c - s {\n");
+                    for (d, b) in &arms {
+                        let _ = writeln!(m, "    {} => {{\n        {}\n    }}", d.map_or("_".to_owned(), |d| d.to_string()), b.join("\n        "));
+                    }
+                    if arms.iter().all(|(d, _)| d.is_some()) {
+                        m.push_str("    _ => {}\n");
+                    }
+                    m.push('}');
+                    lines.push(m);
+                }
+            }
+            if !lines.is_empty() {
+                let _ = writeln!(out, "// {why}\n{}", lines.join("\n"));
+            }
+        }
         out
+    }
+
+    /// Tier 2's fields (`readers`), each one mask of stage 1 where it is the same in every
+    /// region's every part and outside them; else, where it is none outside them and known in
+    /// each part, written by the token loop over each region token (`FieldWrite`). Each its
+    /// code: the mask's or the loop's variable.
+    fn plan_fields(&mut self, x: &Input) -> Result<Vec<(String, String)>, String> {
+        let n = self.opens.as_ref().map_or(0, Vec::len);
+        let mut out = Vec::new();
+        for rd in readers(x.stmts) {
+            for (f, e) in &rd.masks {
+                if !self.regional(e) || n == 0 {
+                    out.push((f.clone(), self.val(e)?));
+                    continue;
+                }
+                let key = |v: &Expr| format!("{v:?}");
+                let outside = self.in_region(e, None, 0).filter(|v| !self.regional(v));
+                let mut per: Vec<(Expr, Vec<(i64, Option<i64>, Expr)>, Vec<(Option<i64>, Vec<Expr>)>)> = Vec::new();
+                for k in 0..n {
+                    let (Some(p0), Some(p2)) = (self.in_region(e, Some(k), 0), self.closer_parts(e, k)) else { break };
+                    let body = match self.in_region(e, Some(k), 1) {
+                        Some(b) => vec![(1, None, b)],
+                        None => match self.body_parts(e, k) {
+                            Some(v) => v.into_iter().enumerate().map(|(i, b)| (i as i64 + 1, if i == 4 { None } else { Some(i as i64 + 1) }, b)).collect(),
+                            None => break,
+                        },
+                    };
+                    if self.regional(&p0) || p2.iter().any(|(_, v)| v.iter().any(|v| self.regional(v))) || body.iter().any(|b| self.regional(&b.2)) {
+                        break;
+                    }
+                    per.push((p0, body, p2));
+                }
+                let (Some(outside), true) = (outside, per.len() == n) else {
+                    out.push((f.clone(), self.val(e)?));
+                    continue;
+                };
+                let ko = key(&outside);
+                if per.iter().all(|(p0, body, p2)| key(p0) == ko && p2.iter().all(|(_, v)| v.iter().all(|v| key(v) == ko)) && body.iter().all(|b| key(&b.2) == ko)) {
+                    out.push((f.clone(), self.val(&outside)?));
+                    continue;
+                }
+                let all = |v: &Expr| matches!(v, Expr::Not(x) if matches!(**x, Expr::Empty));
+                let mut parts = Vec::new();
+                for (p0, body, p2) in per {
+                    // `None`: as outside, nothing to write; `0`: none; `!`: all; else a mask.
+                    let mut code = |v: &Expr| -> Result<Option<String>, String> {
+                        Ok(match v {
+                            v if key(v) == ko => None,
+                            Expr::Empty => Some("0".to_owned()),
+                            v if all(v) => Some("!".to_owned()),
+                            v => Some(self.val(v)?),
+                        })
+                    };
+                    let at = code(&p0)?;
+                    let mut closer = Vec::new();
+                    for (d, v) in p2 {
+                        closer.push((d, v.iter().map(&mut code).collect::<Result<Vec<_>, _>>()?));
+                    }
+                    let mut b: Vec<(i64, Option<i64>, Option<String>)> = Vec::new();
+                    for (lo, hi, v) in body {
+                        let m = code(&v)?;
+                        match b.last_mut() {
+                            Some((_, h, y)) if *y == m && h.is_some_and(|h| h == lo - 1) => *h = hi,
+                            _ => b.push((lo, hi, m)),
+                        }
+                    }
+                    parts.push(FieldPart { why: format!("`{f}`, for tier 2"), at, body: b, closer });
+                }
+                let var = format!("fw_{}", ident(f));
+                let outside = if matches!(outside, Expr::Empty) {
+                    None
+                } else {
+                    let id = self.node(&outside)?;
+                    self.nodes[id].also.push(var.clone());
+                    Some(self.nodes[id].name.clone())
+                };
+                self.field_writes.push(FieldWrite { var: var.clone(), parts, outside });
+                out.push((f.clone(), var));
+            }
+        }
+        Ok(out)
     }
 
     /// The walk of `regions H { … }`, as the lean lexer reads strings and comments: from the
@@ -2195,8 +2648,18 @@ impl Gen<'_> {
     /// of a kind of its own (`closes`) its bytes, else the region's.
     fn closer_last(&mut self, r: &Region, closes: &[(String, Expr, u8)]) -> Result<String, String> {
         let mut out = String::new();
+        let k = self.kinds.iter().position(|q| q.kind == r.kind);
         for (_, e, n) in closes {
-            let v = self.val(e)?;
+            // At the closer's first byte, the mask as the region knows it there.
+            let at = k.and_then(|k| self.closer_parts(e, k)).and_then(|p| {
+                let first: Vec<String> = p.iter().map(|(_, v)| format!("{:?}", v[0])).collect();
+                first.iter().all(|f| *f == first[0]).then(|| p[0].1[0].clone())
+            });
+            let at = at.filter(|v| !self.regional(v));
+            if matches!(at, Some(Expr::Empty)) {
+                continue;
+            }
+            let v = self.val(at.as_ref().unwrap_or(e))?;
             let _ = write!(out, "if bit(&{v}, c) {{ c + {} }} else ", n - 1);
         }
         let own = match &r.or {
@@ -2536,6 +2999,8 @@ impl Gen<'_> {
             }
             v
         };
+        // Tier 2's fields: the loop writes those its region tokens know (`plan_fields`).
+        let field_plan = self.plan_fields(x)?;
         // The token loop: each top row's branch.
         let mut branches = String::new();
         let mut pair_fns = String::new();
@@ -2797,16 +3262,16 @@ impl Gen<'_> {
             }
             let _ = write!(token_code, "        if {test} {{\n            marks |= 1 << {bit};\n        }}\n");
         }
-        // The masks tier 2 reads (`readers`).
-        let readers = readers(x.stmts);
+        // The masks tier 2 reads (`readers`), as `plan_fields` made them.
         let mut fields: Vec<String> = Vec::new();
         let mut fields_init = String::new();
-        for rd in &readers {
-            for (f, e) in &rd.masks {
-                let v = self.val(e)?;
-                fields.push(f.clone());
-                let _ = writeln!(fields_init, "            {f}: {v},");
-            }
+        for (f, v) in &field_plan {
+            fields.push(f.clone());
+            let _ = writeln!(fields_init, "            {f}: {v},");
+        }
+        let mut fw_decl = String::new();
+        for fw in self.field_writes.iter().filter(|fw| fw.outside.is_none()) {
+            let _ = writeln!(fw_decl, "    // `{}` for tier 2, written over each region token.\n    let mut {} = {};", fw.parts.first().map_or("", |p| p.why.as_str()).trim_start_matches('`').split('`').next().unwrap_or(""), fw.var, "vec![0u64; nw]");
         }
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
@@ -2959,12 +3424,12 @@ impl Gen<'_> {
         out.push_str(&pair_fns);
         out.push_str(&self.stage1());
         out.push_str("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n");
-        let kept: Vec<&str> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.as_str()).collect();
+        let kept: Vec<String> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.clone()).chain(self.nodes.iter().flat_map(|n| &n.also).map(|a| format!("mut {a}"))).collect();
         let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
         out.push_str(&self.body);
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}    while let Some(s) = first_clear(&{skip}, at, n) {{\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches}else {{\n            // A byte no token begins with.\n            refused = true;\n            break;\n        }};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n    }}\n    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}    while let Some(s) = first_clear(&{skip}, at, n) {{\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches}else {{\n            // A byte no token begins with.\n            refused = true;\n            break;\n        }};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n    }}\n    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = format!("{}{span_decl}", if self.opens.is_some() { "    // The region opened last of the kinds with no `after`.\n    let mut plain = usize::MAX;\n" } else { "" }),
         );
@@ -3062,6 +3527,7 @@ fn simplify(e: Expr) -> Expr {
             Expr::Not(b) => *b,
             a => Expr::Not(Box::new(a)),
         },
+        Expr::Call(f, args) if (f == "prev" || f == "next") && matches!(args.first(), Some(Arg::E(Expr::Empty))) => Expr::Empty,
         Expr::And(a, b) if format!("{a:?}") == format!("{b:?}") => *a,
         Expr::Or(a, b) if format!("{a:?}") == format!("{b:?}") => *a,
         Expr::And(a, b) => {
@@ -3264,6 +3730,31 @@ fn count_in(x: &[u64], a: usize, b: usize) -> u32 {
     n
 }
 
+/// `v`'s bits at bytes `a..=b` made `m`'s.
+#[inline(always)]
+fn put(v: &mut [u64], m: &[u64], a: usize, b: usize) {
+    let mut i = a;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        let w = (if k == 64 { !0 } else { (1u64 << k) - 1 }) << r;
+        v[q] = v[q] & !w | m[q] & w;
+        i += k;
+    }
+}
+
+/// `v`'s bits at bytes `a..=b` cleared.
+#[inline(always)]
+fn clear(v: &mut [u64], a: usize, b: usize) {
+    let mut i = a;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        v[q] &= !((if k == 64 { !0 } else { (1u64 << k) - 1 }) << r);
+        i += k;
+    }
+}
+
 /// Bytes `a..b` set in `v` (cut to its words).
 #[inline(always)]
 fn set(v: &mut [u64], a: usize, b: usize) {
@@ -3280,5 +3771,5 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], fills: Vec::new(), ends: None, opener_at: [[true; 256]; 4], start_checks: Vec::new(), end_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], fills: Vec::new(), field_writes: Vec::new(), ends: None, opener_at: [[true; 256]; 4], start_checks: Vec::new(), end_checks: Vec::new() }.source()
 }
