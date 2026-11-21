@@ -1021,7 +1021,6 @@ fn serial_source(programs: &[&BlockNative], io: Option<(&[u16], u16)>) -> (u64, 
                 }
                 return (key, made.0, made.1, made.2);
             }
-            return (key, made.0, made.1, made.2);
         }
     rerail_context::with_local::<Compiles, _>(|c| c.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
     let (source, sw, counted) = generate_serial(programs, io);
@@ -2489,9 +2488,9 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
                         }
                     }
                 }
-            }
-            for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
-                eprintln!("  %{x} = {i:?}");
+                for (x, i) in forms[0].insts.iter().enumerate().filter(|(x, _)| inside[*x]) {
+                    eprintln!("  %{x} = {i:?}");
+                }
             }
     }
     let (mut rerun_seconds, mut reruns, mut rounds, mut launches) = (0.0, 0usize, 1usize, 1usize);

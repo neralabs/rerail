@@ -1106,8 +1106,6 @@ pub struct Exp {
     args: Buf,
     slots: Buf,
     qctl: Buf,
-    /// A launch of the workers past the first: its groups (`px_next`), none once no item is active.
-    wargs: Buf,
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
