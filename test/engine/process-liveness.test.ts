@@ -249,11 +249,11 @@ describe("processStartedAtThroughEngine", () => {
       const failing = () => {
         throw new Error("Unsupported platform or missing native addon");
       };
+      const line = "rerail: the engine could not read or end a process, so a daemon of Rerail 0.1.4 or earlier is kept as it runs: Unsupported platform or missing native addon\n";
       expect(fresh.processStartedAtThroughEngine(7, "win32", failing)).toBeUndefined();
+      expect(written.mock.calls.map(([text]) => String(text))).toEqual([line]);
       expect(fresh.endProcessStartedBy(7, 1_700_000_000_000, 5_000, failing)).toBe("unread");
-      expect(written.mock.calls.map(([text]) => String(text))).toEqual([
-        "rerail: the engine could not read or end a process, so a daemon of Rerail 0.1.4 or earlier is kept as it runs: Unsupported platform or missing native addon\n",
-      ]);
+      expect(written.mock.calls.map(([text]) => String(text))).toEqual([line]);
     } finally {
       written.mockRestore();
     }
