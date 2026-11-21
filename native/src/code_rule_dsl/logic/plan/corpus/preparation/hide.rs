@@ -705,9 +705,23 @@ fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &
     rows
 }
 
+/// A positive atom of a base relation (`bases`' locations): its columns that hold locations in one document, and its
+/// document column. `combining::one_document` reads a document's rows by them too.
+pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, Vec<usize>>) -> (&'b [usize], Option<usize>) {
+    const PAIR: &[usize] = &[0, 1];
+    match rel {
+        // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
+        "tape_of" | "tape" => (PAIR, None),
+        // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
+        // over a guest's root r makes c the guest's node.
+        r if front::is_axis(r) => (PAIR, None),
+        r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
+    }
+}
+
 /// The views the lowering writes as rules (those the program does not take as inputs), and each base relation's
 /// location columns (its node columns and its document's).
-fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
+pub(super) fn bases(prog: &dyn ProgramFields) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
     let inputs = prog.input_names();
     let views: BTreeSet<String> = VIEWS.iter().filter(|r| !inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
     let base: BTreeSet<String> = inputs.iter().cloned().chain(VIEWS.iter().filter(|r| views.contains(**r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
@@ -1271,16 +1285,8 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
     // not its grammar. `(from, to)`: from's facts flow to `to`, its grammar too unless `to` is the document.
     let mut groups: Vec<Vec<Slot>> = Vec::new();
     let mut to_document: Vec<(Slot, Slot)> = Vec::new();
-    const PAIR: &[usize] = &[0, 1];
     for a in positive() {
-        let (cols, document): (&[usize], Option<usize>) = match a.rel.as_str() {
-            // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
-            "tape_of" | "tape" => (PAIR, None),
-            // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
-            // over a guest's root r makes c the guest's node.
-            r if front::is_axis(r) => (PAIR, None),
-            r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
-        };
+        let (cols, document) = located(a.rel.as_str(), base);
         let doc = document.filter(|d| cols.contains(d)).and_then(|d| a.args.get(d).and_then(S::var));
         let vars: Vec<Slot> = cols.iter().filter(|&&c| Some(c) != document).filter_map(|&c| a.args.get(c).and_then(S::var)).collect();
         if let Some(d) = doc {
@@ -1547,6 +1553,45 @@ mod tests {
         assert!(!named.is_empty() && named.iter().all(|r| r.contains("rr_narrow_asg(")), "{named:#?}");
         assert_eq!(v.native_map().unwrap()["named"].reads(), ["rr_narrow_asg"]);
         assert!(v.declares("rr_narrow_asg"));
+    }
+
+    /// A widened original whose every row is of one document, made from that document's rows alone, holds as hiding
+    /// left it the rows of the documents under the narrow bound: its narrow copy is those rows of it, not its rules
+    /// again (corpus0, one pack, 2026-11-21: 586 narrow copies, 15 s, beside their originals). One whose rows join
+    /// another widened original by a value (`pair(n)`, an `asg` of any document with `n`'s text) is made again under
+    /// the narrow bound, as #923 made it: widened, it would read the annotations' `asg`.
+    #[test]
+    fn a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl pair(n: node)\npair(n) :- e(n), text(n, t), asg(m), text(m, t).\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl named(n: node)\nnamed(n) :- asg(n).\n",
+                ".decl paired(n: node)\npaired(n) :- pair(n).\n",
+                ".decl out(n: node)\n.output out\n",
+                "out(n) :- only(n), asg(n).\nout(n) :- only(n), pair(n).\nout(n) :- named(n).\nout(n) :- paired(n).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        p.program(&mut fold);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let (wide, narrow) = ((i64::from(HIDDEN_KEYS) << 32).to_string(), (i64::from(RUN_VALUE_KEYS) << 32).to_string());
+        let asg = rules_of(&v, "asg");
+        assert!(!asg.is_empty() && asg.iter().all(|r| r.contains(&wide)), "the original takes the annotations in: {all:#?}");
+        let copy = rules_of(&v, "rr_narrow_asg");
+        assert_eq!(copy.len(), 1, "{all:#?}");
+        assert!(copy[0].contains(" asg(") && copy[0].contains(&narrow) && !copy[0].contains("e(") && !copy[0].contains(&wide), "the original's rows under the narrow bound: {all:#?}");
+        assert!(rules_of(&v, "named").iter().all(|r| r.contains("rr_narrow_asg(")), "{all:#?}");
+        let pair = rules_of(&v, "rr_narrow_pair");
+        assert!(!pair.is_empty() && pair.iter().all(|r| r.contains("rr_narrow_asg(") && !r.contains(" pair(") && !r.contains(&wide)), "made again, narrow: {all:#?}");
+        assert!(rules_of(&v, "paired").iter().all(|r| r.contains("rr_narrow_pair(")), "{all:#?}");
     }
 
     /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
