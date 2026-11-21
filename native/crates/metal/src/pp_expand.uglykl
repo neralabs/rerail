@@ -23,6 +23,9 @@
 #define D_FNLIKE (2u)
 #define D_VARIADIC (4u)
 #define D_BAD (8u)
+// A variadic definition's body holds a `__VA_OPT__` (`pd_va_opt`), one inside another's.
+#define D_VAOPT (16u)
+#define D_VANEST (32u)
 // An item's parameter where it is none.
 #define NO_PARAM (0xffffu)
 // An item's flags (above its parameter's 16 bits): a paste operator, white space before it.
@@ -170,6 +173,46 @@ UKL_INLINE void pd_items(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_
     if (node_kind(t, i) == K_HASHHASH && k > 0u && k + 1u < d.n_body) item |= I_PASTE;
     if (k > 0u && gap_is_space(data, files[f], node_end(t, i - 1u), node_start(t, i))) item |= I_SPACE;
     items[s] = item;
+}
+
+// A body leaf's place in a `__VA_OPT__` (`vai`): its name (with its `)`'s offset from it: none, the
+// name's; unclosed, the body's end), its `(` or `)`, or its content; 0 none.
+#define VA_NAME (1u << 30)
+#define VA_PAREN (2u << 30)
+#define VA_IN (3u << 30)
+#define VA_OFF (0x3fffffffu)
+// S5: a variadic body's `__VA_OPT__` at leaf `k` (a thread a leaf, over the leaves S4 cleared):
+// its `(` (the next leaf, else none and no content), its `)` (the first back at the depth before;
+// none: the body's end), marked with its content; one inside another's marks its definition
+// (`D_VANEST`, refused where it is substituted).
+UKL_INLINE void pd_va_opt(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, UKL_GLOBAL const uint32_t* bases, UKL_GLOBAL const uint64_t* keys, UKL_GLOBAL const uint32_t* dir_bases, UKL_GLOBAL const uint32_t* dir_total, UKL_GLOBAL PpDef* defs, UKL_GLOBAL const uint32_t* ifirst, UKL_GLOBAL const uint32_t* itotal, UKL_GLOBAL uint32_t* vai, uint32_t n_files, uint64_t va_opt, uint32_t cap, uint32_t s) {
+    if (s >= itotal[0] || s >= cap) return;
+    uint32_t r = pb_item_of(ifirst, dir_total[0], s);
+    uint32_t k = s - ifirst[r];
+    PpDef d = defs[r];
+    if ((d.flags & D_VARIADIC) == 0u || keys[d.body + k] != va_opt) return;
+    uint32_t f = file_of(dir_bases, n_files, r);
+    Tape t = tape_at(data, files, f);
+    PpFile pf = files[f];
+    uint32_t i0 = d.body - bases[f], n = d.n_body;
+    if (node_kind(t, i0 + k) != K_IDENTIFIER) return;
+    ukl_atomic_or(&defs[r].flags, D_VAOPT);
+    uint32_t c = k;
+    if (k + 1u < n && punct_is(t, data, pf, i0 + k + 1u, '(')) {
+        c = n;
+        uint32_t depth = 0u;
+        for (uint32_t q = k + 2u; q < n; q++) {
+            if (punct_is(t, data, pf, i0 + q, '(')) depth++;
+            else if (punct_is(t, data, pf, i0 + q, ')')) {
+                if (depth == 0u) { c = q; break; }
+                depth--;
+            } else if (keys[d.body + q] == va_opt && node_kind(t, i0 + q) == K_IDENTIFIER) ukl_atomic_or(&defs[r].flags, D_VANEST);
+        }
+        vai[s + 1u] = VA_PAREN;
+        for (uint32_t q = k + 2u; q < c; q++) vai[ifirst[r] + q] = VA_IN;
+        if (c < n) vai[ifirst[r] + c] = VA_PAREN;
+    }
+    vai[s] = VA_NAME | ukl_min(c - k, VA_OFF);
 }
 
 // --- The paste relexer ---------------------------------------------------------------------------
@@ -899,6 +942,8 @@ UKL_INLINE uint64_t ka_end(KeyAcc a) {
 typedef struct Ux {
     UKL_GLOBAL const PpFile* files; UKL_GLOBAL const uint8_t* data; UKL_GLOBAL const uint32_t* bases; uint32_t n_files;
     UKL_GLOBAL const uint64_t* keys; UKL_GLOBAL const PpDef* defs; UKL_GLOBAL const uint32_t* items;
+    // Each body leaf's place in a `__VA_OPT__` (`pd_va_opt`).
+    UKL_GLOBAL const uint32_t* vai;
     UKL_GLOBAL const uint64_t* sorted; UKL_GLOBAL const uint32_t* perm; uint32_t n_rows; UKL_GLOBAL const uint64_t* name_keys; UKL_GLOBAL const uint32_t* values;
     UKL_GLOBAL const uint32_t* text_nodes; UKL_GLOBAL const uint32_t* gat; uint32_t n_gaps; UKL_GLOBAL const uint32_t* firsts; uint32_t n_toks;
     UKL_GLOBAL const uint32_t* tdepth; uint64_t va_opt;
@@ -1845,8 +1890,6 @@ typedef struct Role { uint32_t role, count, q; } Role;
 
 // A body's `__VA_OPT__`s (4 at most): each one's item, its `(` and its `)` (its content between),
 // and whether the variadic argument, expanded, has tokens.
-#define MAX_VA_OPT (4u)
-typedef struct Vo { uint32_t n; uint32_t s[MAX_VA_OPT], o[MAX_VA_OPT], c[MAX_VA_OPT]; bool present; } Vo;
 
 UKL_INLINE bool px_arg_empty(Ar a, UKL_GLOBAL PxList* L, uint32_t q) { return a.args[L->args + q].hi <= a.args[L->args + q].lo; }
 
@@ -1858,15 +1901,19 @@ UKL_INLINE bool px_gnu_comma(Ux u, PpDef d, UKL_GLOBAL PxList* L, uint32_t i) {
     return (u.items[d.ifirst + i - 2u] & 0xffffu) == NO_PARAM && ref_is(u, d.body + i - 2u, ',');
 }
 
-UKL_INLINE Role px_role(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L, uint32_t i, Vo vo) {
+// Body item `i`'s place in a `__VA_OPT__` of `L`'s (`VA_*`; 0 none: a call with no variadic
+// argument reads none).
+UKL_INLINE uint32_t px_va_at(Ux u, PpDef d, UKL_GLOBAL const PxList* L, uint32_t i) {
+    return (d.flags & D_VAOPT) != 0u && L->nargs != 0u ? u.vai[d.ifirst + i] : 0u;
+}
+UKL_INLINE Role px_role(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L, uint32_t i, bool present) {
     uint32_t n = d.n_body, it = u.items[d.ifirst + i], q = it & 0xffffu;
     Role r; r.role = R_LIT; r.count = 1u; r.q = q;
     // `__VA_OPT__`: its content where the variadic argument has tokens, else a placemarker; its
     // name and parentheses write nothing.
-    for (uint32_t k = 0u; k < vo.n; k++) {
-        if (i == vo.s[k]) { r.role = vo.present ? R_GONE : R_RAW; r.count = vo.present ? 0u : 1u; r.q = NO_PARAM; return r; }
-        if (i == vo.o[k] || i == vo.c[k] || (i > vo.o[k] && i < vo.c[k] && !vo.present)) { r.role = R_GONE; r.count = 0u; return r; }
-    }
+    uint32_t va = px_va_at(u, d, L, i) & ~VA_OFF;
+    if (va == VA_NAME) { r.role = present ? R_GONE : R_RAW; r.count = present ? 0u : 1u; r.q = NO_PARAM; return r; }
+    if (va == VA_PAREN || (va == VA_IN && !present)) { r.role = R_GONE; r.count = 0u; return r; }
     bool fn = (d.flags & D_FNLIKE) != 0u;
     if ((it & I_PASTE) != 0u) {
         // `##`: an operator, gone in GNU's comma (`, ## __VA_ARGS__`).
@@ -1960,37 +2007,11 @@ UKL_INLINE uint32_t px_paste(Ux u, Ar a, uint32_t l, uint32_t lf, uint32_t r, ui
     return SCRATCH | id;
 }
 
-// The body's `__VA_OPT__`s (`va_opt_content`), by one thread (a variadic definition's only): each
-// one's `(` (the next item, else none and no content) and its `)` (the first back at the depth
-// before; none: the body's end).
-UKL_INLINE Vo px_va_opts(Ux u, Ar a, PpDef d, UKL_GLOBAL PxList* L) {
-    Vo vo;
-    vo.n = 0u; vo.present = false;
-    for (uint32_t k = 0u; k < MAX_VA_OPT; k++) { vo.s[k] = 0u; vo.o[k] = 0u; vo.c[k] = 0u; }
-    if ((d.flags & D_VARIADIC) == 0u || L->nargs == 0u) return vo;
-    uint32_t n = d.n_body;
-    for (uint32_t s = 0u; s < n; s++) {
-        if (!(ref_kind(u, d.body + s) == K_IDENTIFIER && u.keys[d.body + s] == u.va_opt)) continue;
-        if (vo.n == MAX_VA_OPT) { px_refuse(a.ctl, X_VA_OPT); return vo; }
-        uint32_t o = s, c = s;
-        if (s + 1u < n && ref_is(u, d.body + s + 1u, '(')) {
-            o = s + 1u;
-            c = n;
-            uint32_t depth = 0u;
-            for (uint32_t k = o + 1u; k < n; k++) {
-                uint32_t dl = paren_delta(u, d.body + k);
-                depth += dl;
-                if (dl == 0xffffffffu && depth == 0xffffffffu) { c = k; break; }
-            }
-        }
-        vo.s[vo.n] = s; vo.o[vo.n] = o; vo.c[vo.n] = c;
-        vo.n++;
-    }
-    if (vo.n > 0u) {
-        uint32_t q = L->nargs - 1u, id = ukl_atomic_load(&a.args[L->args + q].list);
-        vo.present = id == ARG_FLAT ? !px_arg_empty(a, L, q) : id >= 2u && a.lists[id - 2u].size > 0u;
-    }
-    return vo;
+// Whether list `L`'s variadic argument has tokens, for its `__VA_OPT__`s (none: false).
+UKL_INLINE bool px_va_present(Ar a, PpDef d, UKL_GLOBAL PxList* L) {
+    if ((d.flags & D_VAOPT) == 0u || L->nargs == 0u) return false;
+    uint32_t q = L->nargs - 1u, id = ukl_atomic_load(&a.args[L->args + q].list);
+    return id == ARG_FLAT ? !px_arg_empty(a, L, q) : id >= 2u && a.lists[id - 2u].size > 0u;
 }
 
 // --- The built-ins ---------------------------------------------------------------------------------
@@ -2564,15 +2585,13 @@ UKL_INLINE void px_subst(Ux u, Ar a, uint32_t l, uint32_t lane __UKL_PARAMS) {
 #define SB_KBASE (5u)
 #define SB_KEPT (6u)
 #define SB_VON (7u)
-#define SB_VOS (8u)
-#define SB_VOO (12u)
-#define SB_VOC (16u)
-#define SB_COLS (20u)
+// The calls' columns are these (`CL_*`, the most: `CL_TOTALS`'s 3 words in column 10).
+#define SB_COLS (11u)
 typedef struct Sb {
     UKL_GLOBAL const uint32_t* set; uint32_t ns, qcap;
     // By list, `SB_COLS` columns of `qcap` words: its block, its class, its pieces' origin, its
-    // pieces' first in the array and their count, its kept pieces' first and count, its
-    // `__VA_OPT__`s (`px_va_opts`: their count and whether present, then each one's three items).
+    // pieces' first in the array and their count, its kept pieces' first and count, whether its
+    // `__VA_OPT__`s are present (`px_va_present`).
     UKL_GLOBAL uint32_t* l;
     // By list: its body's items, their first. By item: its pieces, their first.
     UKL_GLOBAL uint32_t* n; UKL_GLOBAL uint32_t* base; UKL_GLOBAL uint32_t* v; UKL_GLOBAL uint32_t* off;
@@ -2585,13 +2604,7 @@ typedef struct Sb {
 } Sb;
 #define SBC(s, c, i) ((s).l[(c) * (s).qcap + (i)])
 
-UKL_INLINE Vo px_sb_vo_of(Sb s, uint32_t i) {
-    Vo vo;
-    uint32_t w = SBC(s, SB_VON, i);
-    vo.n = w & 0xffu; vo.present = (w >> 8) != 0u;
-    for (uint32_t k = 0u; k < MAX_VA_OPT; k++) { vo.s[k] = SBC(s, SB_VOS + k, i); vo.o[k] = SBC(s, SB_VOO + k, i); vo.c[k] = SBC(s, SB_VOC + k, i); }
-    return vo;
-}
+UKL_INLINE bool px_sb_present(Sb s, uint32_t i) { return SBC(s, SB_VON, i) != 0u; }
 // The list of piece `p` of the array, and of item `t`.
 UKL_INLINE uint32_t px_sb_plist(Sb s, uint32_t p) { return pb_item_of(s.l + SB_POFF * s.qcap, s.ns, p); }
 UKL_INLINE uint32_t px_sb_ilist(Sb s, uint32_t t) { return pb_item_of(s.base, s.ns, t); }
@@ -2599,16 +2612,15 @@ UKL_INLINE uint32_t px_sb_ilist(Sb s, uint32_t t) { return pb_item_of(s.base, s.
 // List `i`'s size, for the choice of the phases' form: its body's items.
 UKL_INLINE uint32_t px_sb_size(Ux u, Ar a, Sb s, uint32_t i) { return u.defs[a.lists[s.set[i]].def].n_body; }
 
-// List `i`: its body's items, its `__VA_OPT__`s, its pieces' origin.
+// List `i`: its body's items, whether its `__VA_OPT__`s are present, its pieces' origin.
 UKL_INLINE void px_sb_count(Ux u, Ar a, Sb s, uint32_t i) {
     if (i >= s.ns) return;
     uint32_t l = s.set[i];
     UKL_GLOBAL PxList* L = &a.lists[l];
     PpDef d = u.defs[L->def];
     s.n[i] = d.n_body;
-    Vo vo = px_va_opts(u, a, d, L);
-    SBC(s, SB_VON, i) = vo.n | (vo.present ? 0x100u : 0u);
-    for (uint32_t k = 0u; k < MAX_VA_OPT; k++) { SBC(s, SB_VOS + k, i) = vo.s[k]; SBC(s, SB_VOO + k, i) = vo.o[k]; SBC(s, SB_VOC + k, i) = vo.c[k]; }
+    if ((d.flags & D_VANEST) != 0u && L->nargs != 0u) px_refuse(a.ctl, X_VA_OPT);
+    SBC(s, SB_VON, i) = px_va_present(a, d, L) ? 1u : 0u;
     SBC(s, SB_X1, i) = px_lref_of(u, a, l) + 1u;
 }
 
@@ -2617,7 +2629,7 @@ UKL_INLINE void px_sb_item(Ux u, Ar a, Sb s, uint32_t t) {
     if (t >= s.items) return;
     uint32_t i = px_sb_ilist(s, t);
     UKL_GLOBAL PxList* L = &a.lists[s.set[i]];
-    Role r = px_role(u, a, u.defs[L->def], L, t - s.base[i], px_sb_vo_of(s, i));
+    Role r = px_role(u, a, u.defs[L->def], L, t - s.base[i], px_sb_present(s, i));
     s.v[t] = px_pieces_of(a, L, r);
 }
 
@@ -2643,7 +2655,7 @@ UKL_INLINE void px_sb_piece(Ux u, Ar a, Sb s, uint32_t p) {
     uint32_t j = t - s.base[i], o = p - s.off[t], w = base + (p - SBC(s, SB_POFF, i)), x1 = SBC(s, SB_X1, i);
     UKL_GLOBAL PxList* L = &a.lists[s.set[i]];
     PpDef d = u.defs[L->def];
-    Role r = px_role(u, a, d, L, j, px_sb_vo_of(s, i));
+    Role r = px_role(u, a, d, L, j, px_sb_present(s, i));
     uint32_t sp = (u.items[d.ifirst + j] & I_SPACE) != 0u ? PF_SP : 0u;
     // A literal: a piece of the body (runs of them one piece in the compaction); `##` its
     // operator's.
@@ -2744,21 +2756,21 @@ UKL_INLINE void px_sb_str_lit(Ar a, Sb s, uint32_t nh, uint32_t ntok, uint32_t n
     a.pst[SBC(s, SB_PBASE, i) + (p - SBC(s, SB_POFF, i))] = SCRATCH | id;
 }
 
-// List `i`: a present `__VA_OPT__`'s content's first piece takes `__VA_OPT__`'s space (where the
-// content wrote any: its `)` is placed past it).
-UKL_INLINE void px_sb_va(Ux u, Ar a, Sb s, uint32_t i) {
-    if (i >= s.ns) return;
-    uint32_t base = SBC(s, SB_PBASE, i);
-    Vo vo = px_sb_vo_of(s, i);
-    if (base == NO_POS || !vo.present) return;
-    PpDef d = u.defs[a.lists[s.set[i]].def];
-    uint32_t b = s.base[i], n = s.n[i], po = SBC(s, SB_POFF, i), pe = po + SBC(s, SB_PTOT, i);
-    for (uint32_t k = 0u; k < vo.n; k++) {
-        uint32_t at = s.off[b + vo.s[k]], end = vo.c[k] < n ? s.off[b + vo.c[k]] : pe;
-        if (end <= at) continue;
-        uint32_t w = base + (at - po);
-        a.pn[w] = (a.pn[w] & ~PF_SP) | PF_SPSET | ((u.items[d.ifirst + vo.s[k]] & I_SPACE) != 0u ? PF_SP : 0u);
-    }
+// Item `t`, a present `__VA_OPT__`'s name: its content's first piece takes `__VA_OPT__`'s space
+// (where the content wrote any: its `)` is placed past it).
+UKL_INLINE void px_sb_va(Ux u, Ar a, Sb s, uint32_t t) {
+    if (t >= s.items) return;
+    uint32_t i = px_sb_ilist(s, t), base = SBC(s, SB_PBASE, i);
+    if (base == NO_POS || !px_sb_present(s, i)) return;
+    UKL_GLOBAL const PxList* L = &a.lists[s.set[i]];
+    PpDef d = u.defs[L->def];
+    uint32_t b = s.base[i], j = t - b, va = px_va_at(u, d, L, j);
+    if ((va & ~VA_OFF) != VA_NAME) return;
+    uint32_t n = s.n[i], po = SBC(s, SB_POFF, i), pe = po + SBC(s, SB_PTOT, i), c = j + (va & VA_OFF);
+    uint32_t at = s.off[t], end = c < n ? s.off[b + c] : pe;
+    if (end <= at) return;
+    uint32_t w = base + (at - po);
+    a.pn[w] = (a.pn[w] & ~PF_SP) | PF_SPSET | ((u.items[d.ifirst + j] & I_SPACE) != 0u ? PF_SP : 0u);
 }
 
 // Piece `p`: the pastes of the chain it heads.

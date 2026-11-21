@@ -64,7 +64,8 @@
               AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), CLOSES, AT(const uint32_t, CLOSE_TOTAL), AT(const uint32_t, FLOORS), W(N_UNITS), \
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], \
-              AT(uint32_t, SCANS), AT(uint32_t, SUBS), AT(uint32_t, CALLS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa)
+              AT(uint32_t, SCANS), AT(uint32_t, SUBS), AT(uint32_t, CALLS), AT(uint32_t, FINS), AT(uint32_t, PLACES), &xu, &xa); \
+    xu.vai = AT(const uint32_t, VAI)
 // This SIMD group of the grid, and their count.
 #define SG_ID (g.group * (g.lsz / UKL_SIMD_WIDTH) + g.lid / UKL_SIMD_WIDTH)
 #define SG_N (g.groups * (g.lsz / UKL_SIMD_WIDTH))
@@ -247,7 +248,7 @@
                 BARM();                                                                                \
             }                                                                                          \
         }                                                                                              \
-        EACHM(i, s_.ns) px_sb_va(xu, xa, s_, i);                                                       \
+        EACHM(t, s_.items) px_sb_va(xu, xa, s_, t);                                                    \
         BARM();                                                                                        \
         EACHM(p, s_.pieces) px_sb_paste(xu, xa, s_, p);                                                \
         BARM();                                                                                        \
@@ -618,7 +619,7 @@
 #define IF_UX(u)                                                                                       \
     Ux u;                                                                                              \
     u.files = files; u.data = data; u.bases = AT(const uint32_t, BASES); u.n_files = nf; u.keys = AT(const uint64_t, KEYS); \
-    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.sorted = AT(const uint64_t, SORT_KEYS);          \
+    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.vai = AT(const uint32_t, VAI); u.sorted = AT(const uint64_t, SORT_KEYS);          \
     u.perm = AT(const uint32_t, SORT_VA); u.n_rows = N(N_ROWS); u.name_keys = AT(const uint64_t, NAME_KEYS);                 \
     u.values = AT(const uint32_t, VALUES); u.text_nodes = AT(const uint32_t, IF_NODES); u.gat = AT(const uint32_t, IF_AT);  \
     u.n_gaps = N(N_DIRS); u.firsts = AT(const uint32_t, IF_AT); u.n_toks = N(IF_TOTAL); u.tdepth = AT(const uint32_t, DEPTH); \
@@ -721,7 +722,12 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
     SCANS(2);
     EACH(s, N(PTOTAL)) pd_params(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, PFIRST), AT(const uint32_t, PTOTAL), AT(uint64_t, PKEYS), AT(uint32_t, ROOM), nf, W(VA_LO), W(VA_HI), W(CAP), s);
     BARRIER();
-    EACH(s, N(ITOTAL)) pd_items(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(const uint64_t, PKEYS), AT(uint32_t, ITEMS), AT(uint32_t, ROOM), nf, W(CAP), s);
+    EACH(s, N(ITOTAL)) {
+        pd_items(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(const uint64_t, PKEYS), AT(uint32_t, ITEMS), AT(uint32_t, ROOM), nf, W(CAP), s);
+        if (s < W(CAP)) AT(uint32_t, VAI)[s] = 0u;
+    }
+    BARRIER();
+    EACH(s, N(ITOTAL)) pd_va_opt(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL), AT(uint32_t, VAI), nf, ((uint64_t)(W(VO_LO))) | (((uint64_t)(W(VO_HI))) << 32), W(CAP), s);
     if (last == 2u) return;
     // --- P1 (decision 0467): the include tree, its layout and its conditionals, iterated -----
     // Each iteration from the last one's state: the tree's words and layout (§2), the groups'

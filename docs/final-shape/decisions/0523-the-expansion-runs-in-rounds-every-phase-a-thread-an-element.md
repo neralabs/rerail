@@ -266,6 +266,12 @@ SIMD-group operation switches each thread of the group.
      a literal's escapes) and their scan. One block of scratch bytes and of scratch tokens is
      taken for all of them, then a thread a token writes its bytes and a thread a `#` its quotes,
      its scratch token and its piece's ref, before the pastes read them.
+   - **`__VA_OPT__` is the definition's, found once.** Each substitution of a variadic list walked
+     its body for `__VA_OPT__`s by one thread (`px_va_opts`, at most 4). The definitions' pass now
+     marks each body leaf once (`pd_va_opt`, a thread a `__VA_OPT__` over its content: `VAI`, its
+     name with its `)`'s offset, a parenthesis, or its content), and a substitution's roles read
+     an item's word (`px_va_at`), a list only whether its variadic argument has tokens. The bound
+     of 4 is gone (a test has 5); one inside another's is refused (`D_VANEST`, `X_VA_OPT`).
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

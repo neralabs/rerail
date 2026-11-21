@@ -42,6 +42,8 @@ pub struct Defs {
     bscan: Scan,
     pub pkeys: Buf,
     pub items: Buf,
+    /// Each body leaf's place in a `__VA_OPT__` (`VA_*` in `pp_expand.uglykl`; decision 0523 §2).
+    pub vai: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
     pub room: Buf,
     cap: u32,
@@ -68,19 +70,22 @@ impl Defs {
             bscan: Scan::new(arena)?,
             pkeys: arena.zeroed::<u64>(nodes)?,
             items: words(nodes)?,
+            vai: words(nodes)?,
             room: words(1)?,
             cap: nodes as u32,
         })
     }
 
     /// The definitions' slots of the layout: S1 (`pd_defs`, a thread a row), the scans of the
-    /// counts, S2 (`pd_params`, a thread a parameter list's leaf) and S4 (`pd_items`, a thread a
-    /// body leaf), as phases of `pp_setup`.
+    /// counts, S2 (`pd_params`, a thread a parameter list's leaf), S4 (`pd_items`, a thread a
+    /// body leaf) and the `__VA_OPT__`s (`pd_va_opt`, a thread a body leaf), as phases of
+    /// `pp_setup`.
     pub fn lay(&self, l: &mut Lay) {
         let va = name_key(b"__VA_ARGS__");
+        let vo = name_key(b"__VA_OPT__");
         l.at("DEFS", &self.defs).at("PCOUNT", &self.pcount).at("BCOUNT", &self.bcount).at("PFIRST", &self.pfirst).at("IFIRST", &self.ifirst);
-        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("ROOM", &self.room);
-        l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32);
+        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("VAI", &self.vai).at("ROOM", &self.room);
+        l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32).word("VO_LO", vo as u32).word("VO_HI", (vo >> 32) as u32);
     }
 }
 
@@ -1149,7 +1154,7 @@ pub struct Exp {
 }
 
 /// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
-const SB_COLS: usize = 20;
+const SB_COLS: usize = 11;
 
 /// A round's scan's stores a token (`Exp::sc_tok`), by slot.
 const SC_TOK: [&str; 12] = ["SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK"];
