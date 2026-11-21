@@ -51,6 +51,7 @@ import {
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
   olderDaemonMessage,
+  olderDaemonReplacedMessage,
   openInBrowser,
   openDashboard,
   startDaemon,
@@ -321,6 +322,7 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   );
   const launch = daemonStartLaunch(parsed);
   const result = await startDaemon({ home, packageRoot }, launch);
+  if (result.replaced !== undefined) process.stdout.write(`${olderDaemonReplacedMessage(result.replaced)}\n`);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);

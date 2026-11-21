@@ -449,8 +449,8 @@ earlier one, a lookup of the daemon (`rerail status`, `rerail daemon stop`, a ho
 the pid for the daemon that wrote the state when its own start, read from Windows, comes no later than the `startedAt`
 the state records, since a process keeps its pid for life. That daemon proved nothing, so nothing that carries the
 capability or the native token goes to its URL or pipe, the health probe included: the lookup hands its callers the
-state without either. `rerail daemon stop`, a hook's start, set-up and `rerail install --remove` end it through its
-process: one call opens the process, reads its start and ends it through that handle, so the process ended is the one
+state without either. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail install --remove`
+end it through its process: one call opens the process, reads its start and ends it through that handle, so the process ended is the one
 whose start was read. A later start and a pid this user may not signal drop the state unprobed; a start not read keeps
 it, and nothing is sent. Every other reader sends such an engine nothing.
 

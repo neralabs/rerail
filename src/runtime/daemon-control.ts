@@ -411,6 +411,8 @@ export interface StartDaemonResult {
   /** `false` when a daemon was already running and has been reused. */
   started: boolean;
   daemon: RunningDaemon;
+  /** The daemon of a release before the engine's proof this start ended through its process first ({@link OlderDaemon}). */
+  replaced?: Pick<DaemonState, "pid" | "version">;
 }
 
 /** Whether `pid` is a live process of any user: a process another user runs still holds its pid (`EPERM`). */
@@ -1131,7 +1133,7 @@ export async function startDaemon(
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
-    if (lookup.status === "running" && lookup.older === true) throw new Error(olderDaemonMessage(lookup.state));
+    if (lookup.status === "running" && lookup.older === true) return await replacedOlderDaemon(control, options, lookup, machine);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -1139,11 +1141,31 @@ export async function startDaemon(
 }
 
 /**
- * What a caller that may not end it says of a daemon of a release before the engine's proof ({@link OlderDaemon}): it
- * is sent nothing, and the stop comes first, since a start beside it answers this.
+ * Ends the daemon of a release before the engine's proof that a start found ({@link OlderDaemon}) through its process,
+ * as a hook's start does, then starts this release's daemon in its place: a person who upgraded needs one command.
+ */
+async function replacedOlderDaemon(
+  control: DaemonControl,
+  options: DaemonLaunchOptions,
+  older: OlderDaemon & { status: "running" },
+  machine: DaemonMachine,
+): Promise<StartDaemonResult> {
+  await stopFoundDaemon(control.home, older, machine);
+  const { pid, version } = older.state;
+  return { ...(await spawnDaemon(control, options, machine)), replaced: { pid, version } };
+}
+
+/**
+ * What a caller that does not end it says of a daemon of a release before the engine's proof ({@link OlderDaemon}): it
+ * is sent nothing, and `rerail daemon start` ends it and starts this release's daemon.
  */
 export function olderDaemonMessage(state: Pick<DaemonState, "pid" | "version">): string {
-  return `Rerail daemon pid ${state.pid} runs Rerail ${state.version}, a release before 0.1.5, which Rerail sends nothing; run rerail daemon stop, then rerail daemon start.`;
+  return `Rerail daemon pid ${state.pid} runs Rerail ${state.version}, a release before 0.1.5, which Rerail sends nothing; run rerail daemon start to end it and start this release's daemon.`;
+}
+
+/** What `rerail daemon start` says when it ended a daemon of a release before the engine's proof first. */
+export function olderDaemonReplacedMessage(replaced: Pick<DaemonState, "pid" | "version">): string {
+  return `Ended Rerail daemon pid ${replaced.pid}, which ran Rerail ${replaced.version}, a release before 0.1.5, and started this release's daemon in its place.`;
 }
 
 /**

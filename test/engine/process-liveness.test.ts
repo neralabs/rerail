@@ -183,6 +183,17 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     }
   });
 
+  // The end waits on the process's handle with no limit of its own; only a PowerShell or an end that hangs meets the
+  // call's one bound, the stop's wait, and is ended there.
+  it("ends a PowerShell whose end of a process does not answer at the stop's wait, and reports nothing ended", async () => {
+    const seen: childProcess.SpawnSyncOptions[] = [];
+    await standIn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], seen);
+    const asked = Date.now();
+    expect(endProcessStartedByPowerShell(process.pid, Date.now(), 500)).toBe("unread");
+    expect(Date.now() - asked).toBeLessThan(10_000);
+    expect(seen.map(options => options.timeout)).toEqual([500]);
+  });
+
   it("reads nothing from a PowerShell the machine cannot run, and starts none with no time left", async () => {
     await standIn(join(tmpdir(), "rerail-no-such-powershell", "powershell.exe"), []);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBeUndefined();

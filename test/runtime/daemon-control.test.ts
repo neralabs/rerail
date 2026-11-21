@@ -1082,6 +1082,16 @@ describe("a state file Windows left behind", () => {
     expect(events).toEqual(["end", "launch"]);
   });
 
+  // A person who upgraded runs `rerail daemon start` beside the earlier release's daemon: the start ends it through its
+  // process, as a hook's start does, and launches this release's, so one command is enough.
+  it("ends a daemon whose engine has no proof before `rerail daemon start` launches its own", async () => {
+    const events: string[] = [];
+    const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    const control = { home, packageRoot: OWN_ROOT, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    await expect(startDaemon(control, { dev: true, port: 0 }, machine)).rejects.toThrow(/exited/u);
+    expect(events).toEqual(["end", "launch"]);
+  });
+
   // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
   // when it ran from the hook's own package. Its replacement ends here at the end of its process, which the test makes
   // fail.
@@ -1147,6 +1157,7 @@ describe("a state file Windows left behind", () => {
   it.each<[string, (machine: DaemonMachine) => Promise<unknown>]>([
     ["status", async machine => await lookupDaemon(home, machine)],
     ["rerail daemon stop", async machine => await stopDaemon(home, machine)],
+    ["rerail daemon start", async machine => await startDaemon({ home, packageRoot: OWN_ROOT, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) }, { dev: true, port: 0 }, machine)],
     ["a hook's start", async machine => await hookStart(machine)],
     ["a hook's endpoint lookup", async machine => await runningDaemonEngineEndpoint(undefined, machine)],
     ["a hook's event after the session's start", async machine => await daemonEngineEndpoint(false, undefined, machine)],

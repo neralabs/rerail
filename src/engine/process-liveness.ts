@@ -160,18 +160,18 @@ export function endProcessStartedBy(
 
 /**
  * {@link endProcessStartedBy} through Windows PowerShell, which loads no Rerail engine, for the uninstall: the process
- * object `Get-Process` returns keeps the handle it opened for `.Handle` and reads its start, ends it and waits for it
- * through that one handle, with cmdlets and properties alone, which Constrained Language Mode allows. PowerShell is
- * ended at twice `waitMs`, its own start coming on top of the wait; one ended there, or one that cannot run, ends nothing
- * it reports: `unread`.
+ * object `Get-Process` returns keeps the handle it opened for `.Handle` and reads its start, ends it and waits on that
+ * one handle for the end, with cmdlets and properties alone, which Constrained Language Mode allows. The wait has no
+ * limit of its own: the end is a fact the handle gives. `waitMs` bounds the whole call only so that a PowerShell or an
+ * end that hangs cannot hold the uninstall for good; a PowerShell ended there, or one that cannot run, ends nothing it
+ * reports: `unread`.
  */
 export function endProcessStartedByPowerShell(pid: number, startedAt: number, waitMs: number): ProcessEnd {
   const latest = (BigInt(Math.floor(startedAt)) + BigInt(FILETIME_EPOCH_MS)) * 10_000n + 9_999n;
   const script = `$p = Get-Process -Id ${pid} -ErrorAction Stop; $null = $p.Handle; `
     + `if ($p.StartTime.ToFileTimeUtc() -gt ${latest}) { 'later' } else { Stop-Process -InputObject $p -Force -ErrorAction Stop; `
-    + `Wait-Process -InputObject $p -Timeout ${Math.ceil(waitMs / 1_000)} -ErrorAction SilentlyContinue; `
-    + `if ($p.HasExited) { 'ended' } else { 'running' } }`;
-  const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs * 2 });
+    + `Wait-Process -InputObject $p; 'ended' }`;
+  const run = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: waitMs });
   return processEnd(run.status === 0 ? String(run.stdout ?? "").trim() : "");
 }
 
